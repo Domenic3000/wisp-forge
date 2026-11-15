@@ -61,6 +61,7 @@ void main() {
 				continue;
 			}
 			if (t == 0u || COLLECT[t] == 0u) continue;
+			if (t == M_TREASURE) { atomicAdd(counts.n[ob + (58)], 1u); continue; }   // digging at a chest opens it
 			if (HARD[t] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
 			float rate = KIND[t] == K_LIQUID ? 0.25 : 0.32 / (1.0 + float(HARD[t]) * 1.2);
 			if (R > rate) continue;
@@ -83,10 +84,10 @@ void main() {
 			if (bgm == M_TREASURE) {
 				atomicAdd(counts.n[ob + (54)], 1u);
 				ab = B.x > 0.5 ? (M_OPENCHEST | (ab & 0xff0000u)) : 0u;
-			} else if (t == M_TREASURE) {   // chests from older saves stood in the foreground
+			} else if (t == M_TREASURE) {   // a chest (it stands in the foreground; you walk through it)
 				atomicAdd(counts.n[ob + (54)], 1u);
+				ab = B.x > 0.5 ? (M_OPENCHEST | (((c >> 8) & 255u) << 16)) : 0u;
 				c = withFG(c, 0u, 0u);
-				ab = B.x > 0.5 ? M_OPENCHEST : 0u;
 			}
 		} else if (mode == 8) { // deconstruct: take background tiles (back walls, furniture, plants)
 			if (bgm != 0u && bgm != M_TREASURE) {

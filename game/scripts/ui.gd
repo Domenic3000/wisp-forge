@@ -186,11 +186,6 @@ func _build_hud() -> void:
 	dig_warn.visible = false
 	hud.add_child(dig_warn)
 
-	var help := _label("A/D move · W/Space jump, hold to levitate · LMB cast · RMB excavate · 1-6 / wheel spell · Q/E material · F open chest · C forge · M zoom", 11, DIM)
-	help.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	help.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	help.position += Vector2(14, -8)
-	hud.add_child(help)
 
 func _build_forge() -> void:
 	forge = PanelContainer.new()
@@ -264,9 +259,9 @@ func _build_screens() -> void:
 	var sb := _button("Settings")
 	sb.pressed.connect(toggle_settings)
 	btns.add_child(sb)
-	var controls := _label("A / D move    W / Space jump, hold in the air to levitate    Right mouse excavate (Shift: deconstruct background)    Left mouse cast\n1-6 / wheel choose spell    Q / E choose Conjure material    F open a chest    C open the Wisp Forge    M zoom out    Esc settings    F9 creative stock", 12, DIM)
-	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tv.add_child(controls)
+	var hint := _label("The controls are in Settings (Esc while playing).", 12, DIM)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tv.add_child(hint)
 
 	death = _screen()
 	death.visible = false
@@ -325,6 +320,23 @@ func _build_settings() -> void:
 		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.add_child(hint)
 		sv.add_child(box)
+	# the controls, in two columns
+	var ch := _label("Controls", 18, Color(1, 0.92, 0.66))
+	ch.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sv.add_child(ch)
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 18)
+	grid.add_theme_constant_override("v_separation", 3)
+	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold in the air to levitate"],
+			["Left mouse", "Cast the selected spell"], ["Right mouse", "Excavate (dig at a chest to open it)"],
+			["Shift + right mouse", "Deconstruct background tiles"], ["F", "Open a chest"],
+			["1-6 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
+			["C", "Wisp Forge (crafting)"], ["M", "Zoom out"],
+			["Esc", "Settings and controls"], ["F9", "Creative stock (developer)"]]:
+		grid.add_child(_label(pair[0], 13, GOLD))
+		grid.add_child(_label(pair[1], 13, Color(0.85, 0.88, 1)))
+	sv.add_child(_center(grid))
 	var close := _button("Close")
 	close.pressed.connect(toggle_settings)
 	sv.add_child(_center(close))

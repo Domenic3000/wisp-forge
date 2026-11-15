@@ -62,7 +62,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 						mats[Defs.NAMES[t]] = int(mats.get(Defs.NAMES[t], 0)) + 1
 						var key := Defs.NAMES[tb] if tb > 0 else "air"
 						below[key] = int(below.get(key, 0)) + 1
-			if (raw.decode_u32(boff + (row * N + col) * 4) & 255) == Defs.TREASURE:
+			if t == Defs.TREASURE or (raw.decode_u32(boff + (row * N + col) * 4) & 255) == Defs.TREASURE:
 				tre += 1
 	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below}
 
@@ -152,7 +152,7 @@ func run() -> void:
 				var col := posmod(chest.x + ci, Defs.SH_N[0])
 				var idx := (row * Defs.SH_N[0] + col) * 4
 				var off0: int = Defs.total_cells() * 4
-				if (raw2.decode_u32(off0 + idx) & 255) == Defs.TREASURE:
+				if (raw2.decode_u32(off0 + idx) & 255) == Defs.TREASURE or (raw2.decode_u32(idx) & 255) == Defs.TREASURE:
 					left += 1
 				var off: int = Defs.total_cells() * 4
 				if (raw2.decode_u32(off + idx) & 255) == Defs.OPENCHEST:
@@ -191,6 +191,37 @@ func run() -> void:
 			_ok("right-click leaves a building's back wall alone", false, "no back wall found near the chest")
 	else:
 		_ok("F opens a chest and gives loot", false, "no intact chest found")
+
+	# ---- a chest whose floor is dug out falls (it doesn't float) ----
+	var chest2 := Vector2i(-1, -1)
+	var nfound := 0
+	for info in b.infos:
+		if not info["ruined"] and info["chests"].size() > 0:
+			nfound += 1
+			if nfound == 2:
+				chest2 = info["chests"][0]
+				break
+	if chest2.x >= 0:
+		_go(_cell_pos(chest2.x - 8, chest2.y - 7))
+		await _frames(30)
+		for f in 70:
+			for dx in [0, 2, 4, 6]:
+				# owner slot 3 (nobody): digging next to a chest would otherwise open it
+				g.brushes.append([_cell_pos(chest2.x + dx, chest2.y + 2), 3.2, 1, 0, 4, 0, 0, 3])
+			await _frames(1)
+		await _frames(150)
+		var r5: PackedByteArray = g.gpu.read_world()
+		var at_home := 0
+		var below := 0
+		for cj in range(-4, 16):
+			for ci in 6:
+				var k5 := ((chest2.y + cj) * Defs.SH_N[0] + posmod(chest2.x + ci, Defs.SH_N[0])) * 4
+				if (r5.decode_u32(k5) & 255) == Defs.TREASURE:
+					if cj < 0:
+						at_home += 1
+					else:
+						below += 1
+		_ok("a chest falls when its floor is dug out", at_home < 24 and below > 0, "%d chest cells still in place, %d fell below" % [at_home, below])
 
 	# ---- guards wake up when you come near ----
 	if b.guards.size() > 0:

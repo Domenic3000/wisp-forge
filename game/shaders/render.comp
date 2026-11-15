@@ -253,7 +253,10 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 	float d = th - camA; d -= TAU * floor(d / TAU + 0.5);
 	// far parallax hills
 	if (zoom < 2.5) {
-		float hf = RS0 + 25.0 + 120.0 * hillH(camA + d * 0.35, 90.0, 401);
+		// parallax: the far hills drift at a quarter of your speed, the near ones at half
+		// (P.p[121].w is the camera's angle unwrapped, so hills never jump when it wraps)
+		float camU = P.p[121].w;
+		float hf = RS0 + 25.0 + 120.0 * hillH(camU * 0.25 + d, 257.0, 401);
 		if (r < hf) {
 			vec3 hc = mix(horizon, vec3(0.36, 0.46, 0.66) * (0.35 + 0.65 * day) * P.p[4].rgb, 0.55);
 			col = r > hf - 1.5 ? hc * 1.18 : hc;
@@ -275,7 +278,7 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 	}
 	// near parallax hills
 	if (zoom < 2.5) {
-		float hn = RS0 + 8.0 + 70.0 * hillH(camA + d * 0.6, 60.0, 402);
+		float hn = RS0 + 8.0 + 70.0 * hillH(P.p[121].w * 0.5 + d, 100.0, 402);
 		if (r < hn) {
 			vec3 hc = mix(horizon, vec3(0.2, 0.32, 0.36) * (0.3 + 0.7 * day) * P.p[4].rgb, 0.78);
 			col = r > hn - 1.5 ? hc * 1.25 : hc;

@@ -27,7 +27,7 @@ Needs a graphics card with Vulkan or Direct3D 12 (any GPU from roughly the last 
 |---|---|
 | A / D | Walk |
 | W / Space | Jump. Hold in the air to levitate (uses mana); hold in water to swim |
-| Right mouse | Excavate: pull material into your satchel (hold, or tap for a short burst). Never takes a building's back walls or chests |
+| Right mouse | Excavate: pull material into your satchel (hold, or tap for a short burst). Never takes a building's back walls; digging at a chest opens it |
 | Shift + right mouse | Deconstruct: take background tiles (back walls, furniture, plants), on purpose |
 | Left mouse | Cast the selected spell |
 | 1–6 / mouse wheel | Select spell |
@@ -35,7 +35,7 @@ Needs a graphics card with Vulkan or Direct3D 12 (any GPU from roughly the last 
 | F | Open a treasure chest you're standing next to |
 | C | Open the Wisp Forge (crafting, pauses the game) |
 | M | Zoom out in steps, all the way to the whole planet |
-| Esc | Settings: quality, dithering, pixel size |
+| Esc | Settings (quality, dithering, pixel size) and the list of controls |
 | F9 / F8 / F7 | Developer keys: +200 of every material / move 120 cells down / up |
 
 ## The round planet
@@ -103,11 +103,12 @@ moss, missing torches), then lets the planet's physics run before you arrive, so
 support has already fallen into rubble. Desert ruins are half buried in sand, forest ruins are
 overgrown with vines. The HUD shows the name of the structure you're in.
 
-**Treasure chests** sit in rooms, tombs, mines and vaults. They're furniture in the background, so you
-walk past them instead of bumping into them. Stand next to one and press **F**: it
+**Treasure chests** sit in rooms, tombs, mines and vaults. You walk through them instead of bumping into
+them, but they're real objects: dig out a chest's floor and it falls. Stand next to one and press **F**
+(or dig at it): it
 opens with its full loot (ores, crystals, wisp ore, glass, torches, stone blocks; more in deep places
 and on richer planets) and stays behind as an opened chest. Digging a chest out with right-click
-isn't possible any more; chests only open with F. Chests can hold **rare finds** that exist nowhere else:
+opens it the same way. Chests can hold **rare finds** that exist nowhere else:
 
 - **Scroll of Blink**: unlocks the Blink spell at the Forge (step through space to the cursor).
 - **Scroll of Starfall**: unlocks Starfall (a falling star: a huge fiery blast).

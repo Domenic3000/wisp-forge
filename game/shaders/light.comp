@@ -49,7 +49,7 @@ void main() {
 	float day = clamp(sdot * 1.6 + 0.15, 0.025, 1.0);
 	float dusk = clamp(1.0 - abs(sdot) * 4.0, 0.0, 1.0);
 	vec3 sunCol = vec3(1.0, 0.97 - dusk * 0.25, 0.9 - dusk * 0.45);
-	float rain = P.p[3].x > 0.0 ? 0.25 : 0.0;
+	float rain = clamp(P.p[3].z, 0.0, 1.0) * 0.25;   // eased between biomes, so the light never snaps
 	vec3 L = sunCol * sky * day * (1.0 - rain) + vec3(P.p[3].w);
 	// rooms of buildings above ground: daylight leaks in through doors and windows
 	if (sky < 0.6 && r > R_IN) {

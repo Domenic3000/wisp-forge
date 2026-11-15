@@ -62,7 +62,7 @@ void main() {
 		st = min(st, fromSide(iL));
 		st = min(st, fromSide(iR));
 		st = min(st, fromSide(iU));
-		st = min(st, ws + 1u);
+		if (t != M_TREASURE) st = min(st, ws + 1u);   // furniture doesn't hang off the back wall
 		st = min(st, ST_MAX);
 		uint lf = (c >> 16) & 255u;
 		if (st <= SPAN[t] && lf >= 128u) c = c & 0xff00ffffu;        // held again: stop creaking

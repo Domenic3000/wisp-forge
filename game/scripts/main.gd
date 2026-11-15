@@ -61,6 +61,9 @@ var test_god := false      # the test mode keeps the mage alive except when it c
 var perf_us := 0           # time spent in the GPU step (for the test report)
 var perf_n := 0
 var _tests = null
+var sky_rain := 0.0        # rain as seen in the sky, eased between biomes
+var cam_unwrap := 0.0      # camera angle without the jump at a full turn (for parallax)
+var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
 var settings := {"quality": "high", "dither": "off", "pixel": 0}
 var boss_info := Vector4.ZERO
@@ -315,13 +318,20 @@ func _write_frame_params() -> void:
 		wmat = Defs.SNOW
 	elif b["weather"] == "ash":
 		wmat = Defs.ASH
-	var rr := rain if b["weather"] != "clear" else 0.0
+	# rain fades in and out as you cross between rainy and dry biomes (no sudden grey sky)
+	var rr_target := rain if b["weather"] != "clear" else 0.0
+	sky_rain += (rr_target - sky_rain) * 0.012
+	var rr := sky_rain
 	gpu.setp(3, Vector4(rr * 0.0015 if rr > 0.05 else 0.0, wmat, rr, flash))
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
 	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, 0, 0))
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
 	var cr := c.length()
-	gpu.setp(121, Vector4(spawn_angle, time * 0.00004, minf(Defs.R_TOP - 2.0, cr + VH * 0.55 * zoom), 0))
+	# the camera's angle, unwrapped (it keeps counting past a full turn) so parallax never jumps
+	var ca := atan2(c.y, c.x)
+	cam_unwrap += wrapf(ca - _cam_prev, -PI, PI)
+	_cam_prev = ca
+	gpu.setp(121, Vector4(spawn_angle, time * 0.00004, minf(Defs.R_TOP - 2.0, cr + VH * 0.55 * zoom), cam_unwrap))
 	for k in mini(lights.size(), 32):
 		var L: Array = lights[k]
 		var sp := world_to_screen(L[0])
@@ -366,6 +376,10 @@ func _apply_counts(m: Mage) -> void:
 	if cn[Defs.TREASURE] > 0 and m.local:
 		_open_treasure(cn[Defs.TREASURE])
 		m.inv[Defs.TREASURE] = 0
+	if cn[58] > 0 and m.local and _dig_open_t <= 0:
+		# digging at a chest opens it (the same as pressing F)
+		_dig_open_t = 30
+		_try_open_chest()
 	if cn.size() > 54 and cn[54] > 0 and _chest_pending:
 		_chest_pending = false
 		_open_chest_loot()
@@ -391,6 +405,7 @@ var _chest_pending := false
 var _chest_rare := 0.15
 var _hint_t := 0
 var _creak_t := 0
+var _dig_open_t := 0
 var _smash_warned := false
 
 func _loot_table() -> Array:
@@ -447,7 +462,7 @@ func _nearest_chest() -> Array:
 	var u: int = all[o] & 0xFFFFFFFF
 	if u == 0:
 		return []
-	var d2 := 2047 - (u >> 20)
+	var d2 := 4095 - (u >> 20)
 	var ic := u & 1023
 	var jc := (u >> 10) & 1023
 	_use_grid(player)
@@ -455,7 +470,7 @@ func _nearest_chest() -> Array:
 
 func _try_open_chest() -> void:
 	var nc := _nearest_chest()
-	if nc.is_empty() or int(nc[1]) > 144:
+	if nc.is_empty() or int(nc[1]) > 44 * 44:
 		return
 	var centre: Vector2 = nc[0]
 	var place := region_name()
@@ -520,6 +535,7 @@ func _rare_find(p: float) -> void:
 
 func _check_chest_hint() -> void:
 	_creak_t -= 1
+	_dig_open_t -= 1
 	_hint_t -= 1
 	if _hint_t > 0 or frame % 20 != 0:
 		return
@@ -611,7 +627,10 @@ func _nearest_mage(p: Vector2) -> Mage:
 	return best
 
 func gsolid(ix: int, iy: int) -> bool:
-	var k: int = Defs.KIND[gtype(ix, iy)]
+	var t := gtype(ix, iy)
+	if t == Defs.TREASURE:
+		return false      # chests are furniture: you walk (and enemies walk) through them
+	var k: int = Defs.KIND[t]
 	return k == Defs.K_SOLID or k == Defs.K_POWDER
 
 func type_at(p: Vector2) -> int:
@@ -1017,7 +1036,7 @@ func _update_projectiles() -> void:
 				break
 			if in_grid(pos, 2.0):
 				var t := type_at(pos)
-				if Defs.KIND[t] == Defs.K_SOLID or Defs.KIND[t] == Defs.K_POWDER:
+				if (Defs.KIND[t] == Defs.K_SOLID or Defs.KIND[t] == Defs.K_POWDER) and t != Defs.TREASURE:
 					hit = true
 					break
 				if (pr["type"] == "fireball" or pr["type"] == "efire") and t == Defs.WATER:
@@ -1675,7 +1694,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 5            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 6            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
