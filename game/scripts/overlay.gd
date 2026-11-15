@@ -49,12 +49,15 @@ func _draw() -> void:
 		draw_rect(Rect2(sp.floor() - Vector2(big, big), Vector2(1 + 2 * big, 1 + 2 * big)), c)
 		draw_rect(Rect2(sp.floor(), Vector2.ONE), Color(1, 1, 0.9))
 	# the mage and staff
+	for m in game.players:
+		if m != game.player and not m.dead:
+			_sprite("mage", m.pos, m.facing < 0, false, m.h)
 	if not game.dead:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		if not blink:
 			_sprite("mage", game.player.pos, game.player.facing < 0, false, game.player.h)
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
-		var st: Array = game._staff(aim)
+		var st: Array = game._staff(game.player, aim)
 		var hand: Vector2 = st[2]
 		var dir: Vector2 = st[1]
 		for s in 7:
@@ -86,7 +89,7 @@ func _draw() -> void:
 	var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
 	if game.state == "play" and (rmb or game.known[game.sel] == "conjure"):
 		var aim2: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
-		var rp: Vector2 = game.world_to_screen(game._reach(aim2))
+		var rp: Vector2 = game.world_to_screen(game._reach(game.player, aim2))
 		var r: float = (game.dig_r if rmb else 1.6) / z
 		var col := Color(0.55, 1.0, 0.67, 0.55) if rmb else Color(1.0, 0.94, 0.63, 0.55)
 		for a in 24:

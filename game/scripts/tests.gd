@@ -29,8 +29,8 @@ func _go(p: Vector2) -> void:
 	g.player.vx = 0.0
 	g.player.vy = 0.0
 	g.cam_c = p
-	g.grid_g = p
-	g.grid_a = atan2(p.y, p.x)
+	g.player.grid_g = p
+	g.player.grid_a = atan2(p.y, p.x)
 
 ## counts inside a structure's box: solid built blocks, loose (unsupported) blocks, treasure
 func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
@@ -74,7 +74,7 @@ func run() -> void:
 
 	# ---- a fresh planet ----
 	g._delete_worlds()
-	g.inv.fill(0)
+	g.player.inv.fill(0)
 	g.known = ["spark", "conjure"]
 	var t0 := Time.get_ticks_msec()
 	g._enter_planet(0)
@@ -136,12 +136,12 @@ func run() -> void:
 		await _frames(40)
 		var before := 0
 		for m in Defs.NM:
-			before += g.inv[m]
+			before += g.player.inv[m]
 		g._try_open_chest()
 		await _frames(45)
 		var after := 0
 		for m in Defs.NM:
-			after += g.inv[m]
+			after += g.player.inv[m]
 		var raw2: PackedByteArray = g.gpu.read_world()
 		var left := 0
 		var opened := 0
@@ -197,6 +197,46 @@ func run() -> void:
 	_ok("falling rock hurts the mage", g.hp < hp0, "health %.0f -> %.0f" % [hp0, g.hp])
 	g.test_god = true
 	g.hp = g.max_hp
+
+	# ---- co-op groundwork: a second mage far away gets its own simulation, collisions and loot ----
+	var a2: float = g.spawn_angle + 0.6
+	var rs2: float = g.gpu.surf_at(a2).x
+	var m2 = g.add_mage()
+	m2.pos = Vector2(cos(a2), sin(a2)) * (rs2 + 25.0)
+	await _frames(120)
+	var h2: float = m2.pos.length() - rs2
+	_ok("a second mage far away stands on its own ground", m2.on_ground and h2 > -3.0 and h2 < 20.0, "%.1f cells above the surface" % h2)
+	var up2: Vector2 = m2.pos.normalized()
+	var sp2: Vector2 = m2.pos + up2 * 22.0 + Vector2(-up2.y, up2.x) * 15.0
+	g.brushes.append([sp2, 1.8, 5, Defs.STONE, 0, 9, 0, 1])
+	await _frames(2)
+	g._use_grid(m2)
+	var placed2: bool = g.type_at(sp2) == Defs.STONE
+	g._use_grid(g.player)
+	await _frames(60)
+	g._use_grid(m2)
+	var still2: bool = g.type_at(sp2) == Defs.STONE
+	g._use_grid(g.player)
+	_ok("the far mage's area is simulated too", placed2 and not still2, "placed %s, still there after 1 s %s" % [placed2, still2])
+	var mine0 := 0
+	for k in Defs.NM:
+		mine0 += g.player.inv[k]
+	var theirs0 := 0
+	for k in Defs.NM:
+		theirs0 += m2.inv[k]
+	for f in 12:
+		g.brushes.append([m2.pos - up2 * 10.0, 4.5, 1, 0, 1, 0, 0, 1])
+		await _frames(1)
+	await _frames(2)
+	var mine1 := 0
+	for k in Defs.NM:
+		mine1 += g.player.inv[k]
+	var theirs1 := 0
+	for k in Defs.NM:
+		theirs1 += m2.inv[k]
+	_ok("what a mage digs goes to that mage's satchel", theirs1 > theirs0 and mine1 == mine0, "theirs %d -> %d, yours %d -> %d" % [theirs0, theirs1, mine0, mine1])
+	g.players.erase(m2)
+	await _frames(2)
 
 	# ---- performance ----
 	g.perf_us = 0

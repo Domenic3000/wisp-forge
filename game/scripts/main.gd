@@ -77,48 +77,126 @@ var shake := 0.0
 # collision grid frame (from the last GPU step)
 var grid_g := Vector2.ZERO
 var grid_a := 0.0
+var _gslot := 0            # whose collision grid the physics helpers are reading
 
-# player
-var player := Body.new()
+# players: every mage in the world. players[0] is the one played on this computer; co-op adds more.
+class PlayerInput:
+	var move := 0              # -1 left, 1 right
+	var jump := false          # held
+	var cast := false          # casting the selected spell
+	var dig := false           # excavating (held, or a quick tap)
+	var aim := Vector2.ZERO    # world position of the cursor
 
-func _init() -> void:
-	player.h = 10.0
-	player.w = 5.0
-var hp := 100.0
-var max_hp := 100.0
-var mana := 100.0
-var max_mana := 100.0
-var mana_regen := 0.22
-var breath := 600.0
-var max_breath := 600.0
-var inv := PackedInt32Array()
-var items := {}
-var known := ["spark", "conjure"]
-var tier := 1
-var dig_r := 4.5
-var heat_ward := false
-var iframes := 0
-var air_time := 0
-var dead := false
-var sel := 0
-var mat := Defs.DIRT
-var cast_cd := 0
+class Mage extends Body:
+	var id := 0
+	var slot := 0              # which simulation counters and collision grid are this mage's
+	var local := true          # played on this computer (others come from the network)
+	var input := PlayerInput.new()
+	var grid_g := Vector2.ZERO # where this mage's collision grid was centred
+	var grid_a := 0.0
+	var hp := 100.0
+	var max_hp := 100.0
+	var mana := 100.0
+	var max_mana := 100.0
+	var mana_regen := 0.22
+	var breath := 600.0
+	var max_breath := 600.0
+	var inv := PackedInt32Array()
+	var items := {}
+	var known := ["spark", "conjure"]
+	var tier := 1
+	var dig_r := 4.5
+	var heat_ward := false
+	var iframes := 0
+	var air_time := 0
+	var dead := false
+	var sel := 0
+	var mat := 2               # Defs.DIRT
+	var cast_cd := 0
+	var dig_blocked := 0
+	var pending_place := 0
+	var dig_tap := 0           # a quick right-click still digs for a few frames
+	var jump_held := false
+	var ground_t := 99         # frames since standing on something
+	var jump_buf := 0          # frames a jump press is remembered
+	func _init() -> void:
+		h = 10.0
+		w = 5.0
+
+var player := Mage.new()
+var players: Array = [player]
+
+# the local mage's state, by its old names (so the rest of the game reads naturally)
+var hp: float:
+	get: return player.hp
+	set(v): player.hp = v
+var max_hp: float:
+	get: return player.max_hp
+	set(v): player.max_hp = v
+var mana: float:
+	get: return player.mana
+	set(v): player.mana = v
+var max_mana: float:
+	get: return player.max_mana
+	set(v): player.max_mana = v
+var mana_regen: float:
+	get: return player.mana_regen
+	set(v): player.mana_regen = v
+var breath: float:
+	get: return player.breath
+	set(v): player.breath = v
+var max_breath: float:
+	get: return player.max_breath
+	set(v): player.max_breath = v
+var items: Dictionary:
+	get: return player.items
+	set(v): player.items = v
+var known: Array:
+	get: return player.known
+	set(v): player.known = v
+var tier: int:
+	get: return player.tier
+	set(v): player.tier = v
+var dig_r: float:
+	get: return player.dig_r
+	set(v): player.dig_r = v
+var heat_ward: bool:
+	get: return player.heat_ward
+	set(v): player.heat_ward = v
+var iframes: int:
+	get: return player.iframes
+	set(v): player.iframes = v
+var dead: bool:
+	get: return player.dead
+	set(v): player.dead = v
+var sel: int:
+	get: return player.sel
+	set(v): player.sel = v
+var mat: int:
+	get: return player.mat
+	set(v): player.mat = v
+var dig_tap: int:
+	get: return player.dig_tap
+	set(v): player.dig_tap = v
+var jump_buf: int:
+	get: return player.jump_buf
+	set(v): player.jump_buf = v
 var hurt_flash := 0.0
-var dig_blocked := 0
+var dig_blocked: int:
+	get: return player.dig_blocked
+	set(v): player.dig_blocked = v
 
 var enemies: Array = []
 var projs: Array = []
 var parts: Array = []
 var brushes: Array = []
 var lights: Array = []
-var pending_place := 0
+var pending_place: int:
+	get: return player.pending_place
+	set(v): player.pending_place = v
 var wisp := Vector2.ZERO
 var wisp_t := 0.0
 var spawn_timer := 0
-var _jump_held := false
-var ground_t := 99     # frames since standing on something
-var jump_buf := 0      # frames a jump press is remembered
-var dig_tap := 0      # a quick right-click still digs for a few frames
 
 # weather
 var rain := 0.0
@@ -127,7 +205,7 @@ var weather_timer := 1800
 var flash := 0.0
 
 func _ready() -> void:
-	inv.resize(Defs.NM)
+	player.inv.resize(Defs.NM)
 	get_tree().set_auto_accept_quit(false)   # we save first, then quit (see quit_game)
 	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.05))
 	pix = Node2D.new()
@@ -186,14 +264,26 @@ func _process(_delta: float) -> void:
 
 func _gpu_frame(paused: bool) -> void:
 	_write_frame_params()
+	# simulate around every mage (the local one around the camera) and build each one's grid
+	var centers := [cam_c]
+	var frames := []
+	for k in mini(players.size(), gpu.MAXP):
+		var m: Mage = players[k]
+		m.slot = k
+		if m != player:
+			centers.append(m.pos)
+		frames.append([m.pos, atan2(m.pos.y, m.pos.x)])
 	var t0 := Time.get_ticks_usec()
-	gpu.step(cam_c, brushes.size() > 0 and not paused, false)
+	gpu.step(centers, frames, brushes.size() > 0 and not paused, false)
 	perf_us += Time.get_ticks_usec() - t0
 	perf_n += 1
 	brushes.clear()
-	grid_g = player.pos
-	grid_a = atan2(player.pos.y, player.pos.x)
-	_apply_counts()
+	for k in frames.size():
+		players[k].grid_g = frames[k][0]
+		players[k].grid_a = frames[k][1]
+	for m in players:
+		_apply_counts(m)
+	_use_grid(player)
 	_flush_loot()
 	if view_tex == null or view_tex.get_width() != gpu.VW or view_tex.get_height() != gpu.VH:
 		view_tex = ImageTexture.create_from_image(gpu.view_img)
@@ -232,41 +322,44 @@ func _write_frame_params() -> void:
 	for k in mini(brushes.size(), 16):
 		var B: Array = brushes[k]
 		var bp: Vector2 = B[0]
-		gpu.setp(88 + 2 * k, Vector4(bp.x, bp.y, B[1], B[2]))
+		var owner: int = int(B[7]) if B.size() > 7 else 0
+		gpu.setp(88 + 2 * k, Vector4(bp.x, bp.y, B[1], int(B[2]) + 16 * owner))
 		gpu.setp(89 + 2 * k, Vector4(B[3], B[4], B[5], B[6]))
 	if brushes.size() > 16:
 		brushes.resize(16)
 
-func _apply_counts() -> void:
-	var cn: PackedInt32Array = gpu.counts
-	if cn.size() < 52:
+func _apply_counts(m: Mage) -> void:
+	var all: PackedInt32Array = gpu.counts
+	var o := m.slot * 64
+	if all.size() < o + 64:
 		return
+	var cn := all.slice(o, o + 64)
 	var total := 0
 	for t in Defs.NM:
 		if cn[t] > 0:
-			inv[t] += cn[t]
+			m.inv[t] += cn[t]
 			total += cn[t]
-			if randf() < 0.6:
+			if randf() < 0.6 and m.local:
 				_spawn_suck_particles(t, mini(cn[t], 3))
-	if cn[Defs.TREASURE] > 0:
+	if cn[Defs.TREASURE] > 0 and m.local:
 		_open_treasure(cn[Defs.TREASURE])
-		inv[Defs.TREASURE] = 0
+		m.inv[Defs.TREASURE] = 0
 	if cn.size() > 54 and cn[54] > 0 and _chest_pending:
 		_chest_pending = false
 		_open_chest_loot()
-	if cn.size() > 53 and cn[52] > 0 and not dead:
+	if cn.size() > 53 and cn[52] > 0 and not m.dead:
 		# a falling block lands on you: the longer it fell, the harder it hits
 		var dmg := clampf(2.0 + float(cn[53]) * 0.45 + float(cn[52]) * 0.12, 2.0, 35.0)
-		var was := iframes
-		hurt(dmg, Vector2(0, 1.2), true)
-		if was == 0 and iframes > 0:
+		var was := m.iframes
+		hurt(m, dmg, Vector2(0, 1.2), true)
+		if was == 0 and m.iframes > 0 and m.local:
 			ui.toast("Falling rock! -%d" % int(dmg), Color(1, 0.6, 0.45), 1.5)
 			shake = maxf(shake, 4.0)
 	if cn[50] > 0:
-		dig_blocked = 30
-	if pending_place > 0:
-		inv[mat] = maxi(0, inv[mat] - mini(cn[51], pending_place))
-		pending_place = 0
+		m.dig_blocked = 30
+	if m.pending_place > 0:
+		m.inv[m.mat] = maxi(0, m.inv[m.mat] - mini(cn[51], m.pending_place))
+		m.pending_place = 0
 
 ## Treasure. Opening a chest (F) gives its full loot and may hold a rare find; digging a chest
 ## out smashes it and some of the loot is lost. In ruins, some chests are mimics.
@@ -295,7 +388,7 @@ func _roll_loot(rolls: int, mult: float) -> void:
 			r -= float(e[1])
 			if r <= 0.0:
 				var amt := maxi(1, int(ceil(randi_range(1, int(e[2])) * rich * mult)))
-				inv[int(e[0])] += amt
+				player.inv[int(e[0])] += amt
 				_loot_acc[int(e[0])] = int(_loot_acc.get(int(e[0]), 0)) + amt
 				break
 	_loot_t = 30
@@ -438,8 +531,12 @@ func _update_guards() -> void:
 			continue
 		var gd: Dictionary = builds.guards[gi]
 		var gp: Vector2 = gd["pos"]
-		if gp.distance_to(player.pos) > 190.0 or not in_grid(gp, 24.0):
+		var near := _nearest_mage(gp)
+		_use_grid(near)
+		if gp.distance_to(near.pos) > 190.0 or not in_grid(gp, 24.0):
+			_use_grid(player)
 			continue
+		_use_grid(player)
 		var e: Enemy = spawn_enemy(gd["type"], gp)
 		e.guard_id = gi
 		_guards_alive[gi] = true
@@ -473,7 +570,35 @@ func in_grid(p: Vector2, margin: float) -> bool:
 	return l.x > margin and l.y > margin and l.x < GS - margin and l.y < GS - margin
 
 func gtype(ix: int, iy: int) -> int:
-	return gpu.grid_type(ix, iy)
+	return gpu.grid_type(_gslot, ix, iy)
+
+## point the physics helpers (to_grid, gtype, box_solid...) at a mage's collision grid
+func _use_grid(m: Mage) -> void:
+	grid_g = m.grid_g
+	grid_a = m.grid_a
+	_gslot = m.slot
+
+## another mage joins this world (a co-op player; for now only the test mode uses it)
+func add_mage() -> Mage:
+	var m := Mage.new()
+	m.local = false
+	m.id = players.size()
+	m.inv.resize(Defs.NM)
+	players.append(m)
+	return m
+
+## the living mage nearest to a point (enemies chase it, its grid is used for physics there)
+func _nearest_mage(p: Vector2) -> Mage:
+	var best: Mage = player
+	var bd := 1e18
+	for m in players:
+		if m.dead:
+			continue
+		var d := (m.pos as Vector2).distance_squared_to(p)
+		if d < bd:
+			bd = d
+			best = m
+	return best
 
 func gsolid(ix: int, iy: int) -> bool:
 	var k: int = Defs.KIND[gtype(ix, iy)]
@@ -587,26 +712,46 @@ func _biome_at(a: float) -> Dictionary:
 	return Defs.BIOMES[names[clampi(bi, 0, names.size() - 1)]]
 
 # ================================================================== tick ===
+## this computer's keyboard and mouse become the local mage's intentions for this frame
+## (a remote mage's come from the network instead)
+func _read_local_input(m: Mage) -> void:
+	var inp := m.input
+	inp.aim = screen_to_world(get_viewport().get_mouse_position() / scale_px)
+	inp.move = 0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		inp.move -= 1
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		inp.move += 1
+	inp.jump = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
+	var can_act: bool = not ui.mouse_over_ui() and state == "play"
+	inp.cast = can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	inp.dig = can_act and (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0)
+
 func _tick() -> void:
 	frame += 1
 	time += 1.0
-	if cast_cd > 0:
-		cast_cd -= 1
-	if dig_blocked > 0:
-		dig_blocked -= 1
-	var aim := screen_to_world(get_viewport().get_mouse_position() / scale_px)
-	_update_player(aim)
-	sel = clampi(sel, 0, known.size() - 1)
-	if not dead and not ui.mouse_over_ui():
-		var spell: String = known[sel]
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and state == "play":
-			_cast(spell, aim)
-		if (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or dig_tap > 0) and state == "play":
-			_excavate(aim)
-	if dig_tap > 0:
-		dig_tap -= 1
+	_read_local_input(player)
+	var aim: Vector2 = player.input.aim
+	for m in players:
+		if m.cast_cd > 0:
+			m.cast_cd -= 1
+		if m.dig_blocked > 0:
+			m.dig_blocked -= 1
+		_use_grid(m)
+		_update_player(m)
+		m.sel = clampi(m.sel, 0, m.known.size() - 1)
+		if not m.dead and state == "play":
+			if m.input.cast:
+				_cast(m, m.known[m.sel], m.input.aim)
+			if m.input.dig:
+				_excavate(m, m.input.aim)
+		if m.dig_tap > 0:
+			m.dig_tap -= 1
+	_use_grid(player)
 	_update_enemies()
+	_use_grid(player)
 	_update_projectiles()
+	_use_grid(player)
 	_update_particles()
 	_update_weather()
 	_try_spawn()
@@ -635,9 +780,10 @@ func _update_camera(aim: Vector2) -> void:
 	if cam_c.length() < Defs.R_IN + 10.0:
 		cam_c = up * (Defs.R_IN + 10.0)
 
-func _update_player(aim: Vector2) -> void:
-	var p := player
-	if dead:
+func _update_player(m: Mage) -> void:
+	var p := m
+	var aim: Vector2 = m.input.aim
+	if m.dead:
 		return
 	var a := atan2(p.pos.y, p.pos.x)
 	var R := basis_r(a)
@@ -645,39 +791,35 @@ func _update_player(aim: Vector2) -> void:
 	var head_t := type_at(p.pos - basis_d(a) * (p.h * 0.5 - 2.0))
 	p.in_liquid = Defs.KIND[mid_t] == Defs.K_LIQUID
 	var g := 0.17 * gravity_at(p.pos)
-	var move := 0
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
-		move -= 1
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
-		move += 1
+	var move: int = m.input.move
 	var face := (aim - p.pos).dot(R)
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
 	var speed := 0.6 if p.in_liquid else 1.05
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
-	var jump := Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
+	var jump: bool = m.input.jump
 	if p.on_ground:
-		air_time = 0
-		ground_t = 0
+		m.air_time = 0
+		m.ground_t = 0
 	else:
-		air_time += 1
-		ground_t += 1
+		m.air_time += 1
+		m.ground_t += 1
 	# forgiving jumps: remember the press for a few frames, and allow it shortly after leaving
 	# the ground (loose sand / snow can shift under your feet for a frame)
-	if jump and not _jump_held:
-		jump_buf = 8
-	if jump_buf > 0:
-		jump_buf -= 1
-		if (ground_t <= 6 or p.in_liquid) and p.vy > -1.0:
-			p.vy = -1.8 if p.in_liquid else (-3.55 if items.has("boots") else -3.0)
-			jump_buf = 0
-			ground_t = 99
-			air_time = 0
-	_jump_held = jump
-	if jump and not p.on_ground and not p.in_liquid and air_time > 10 and mana > 0.5:
+	if jump and not m.jump_held:
+		m.jump_buf = 8
+	if m.jump_buf > 0:
+		m.jump_buf -= 1
+		if (m.ground_t <= 6 or p.in_liquid) and p.vy > -1.0:
+			p.vy = -1.8 if p.in_liquid else (-3.55 if m.items.has("boots") else -3.0)
+			m.jump_buf = 0
+			m.ground_t = 99
+			m.air_time = 0
+	m.jump_held = jump
+	if jump and not p.on_ground and not p.in_liquid and m.air_time > 10 and m.mana > 0.5:
 		p.vy -= g + 0.2
 		p.vy = maxf(p.vy, -1.9)
-		mana -= 0.55
+		m.mana -= 0.55
 		if randf() < 0.6:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
 	if p.in_liquid:
@@ -698,39 +840,43 @@ func _update_player(aim: Vector2) -> void:
 	var lava := box_count(bx, by, p.w, p.h, Defs.LAVA)
 	var fire := box_count(bx, by, p.w, p.h, Defs.FIRE)
 	if lava > 0:
-		hurt((0.08 if heat_ward else 0.55) * mini(lava, 6), Vector2.ZERO, false)
+		hurt(m, (0.08 if m.heat_ward else 0.55) * mini(lava, 6), Vector2.ZERO, false)
 	if fire > 0:
-		hurt((0.02 if heat_ward else 0.08) * mini(fire, 6), Vector2.ZERO, false)
+		hurt(m, (0.02 if m.heat_ward else 0.08) * mini(fire, 6), Vector2.ZERO, false)
 	var sa: Vector4 = gpu.surf_at(a)
-	if p.pos.length() < sa.w + 20.0 and not heat_ward:
-		hurt(0.05, Vector2.ZERO, false)
+	if p.pos.length() < sa.w + 20.0 and not m.heat_ward:
+		hurt(m, 0.05, Vector2.ZERO, false)
 	if Defs.KIND[head_t] == Defs.K_LIQUID:
-		breath -= 1.0
-		if breath <= 0:
-			breath = 0
-			hurt(0.25, Vector2.ZERO, false)
+		m.breath -= 1.0
+		if m.breath <= 0:
+			m.breath = 0
+			hurt(m, 0.25, Vector2.ZERO, false)
 	else:
-		breath = minf(max_breath, breath + 4.0)
-	if iframes > 0:
-		iframes -= 1
-	mana = minf(max_mana, mana + mana_regen)
-	if hp < max_hp:
-		hp = minf(max_hp, hp + 0.02)
+		m.breath = minf(m.max_breath, m.breath + 4.0)
+	if m.iframes > 0:
+		m.iframes -= 1
+	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	if m.hp < m.max_hp:
+		m.hp = minf(m.max_hp, m.hp + 0.02)
 
-func hurt(dmg: float, knock: Vector2, hit: bool) -> void:
-	if dead or test_god:
+func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
+	if m.dead or test_god:
 		return
 	if hit:
-		if iframes > 0:
+		if m.iframes > 0:
 			return
-		iframes = 40
-		player.vx += knock.x
-		player.vy += knock.y
-	hp -= dmg
-	hurt_flash = minf(1.0, hurt_flash + (0.6 if hit else 0.05))
-	if hp <= 0:
-		hp = 0
-		_on_death()
+		m.iframes = 40
+		m.vx += knock.x
+		m.vy += knock.y
+	m.hp -= dmg
+	if m.local:
+		hurt_flash = minf(1.0, hurt_flash + (0.6 if hit else 0.05))
+	if m.hp <= 0:
+		m.hp = 0
+		if m.local:
+			_on_death()
+		else:
+			m.dead = true
 
 func _on_death() -> void:
 	dead = true
@@ -745,37 +891,37 @@ func _show_death_screen() -> void:
 
 func revive() -> void:
 	for m in Defs.NM:
-		inv[m] = int(inv[m] * 0.75)
+		player.inv[m] = int(player.inv[m] * 0.75)
 	ui.hide_death()
 	_respawn()
 	state = "play"
 	save_game()
 
 # =============================================================== spells ===
-func _staff(aim: Vector2) -> Array:
-	var a := atan2(player.pos.y, player.pos.x)
-	var hand := player.pos + basis_r(a) * (player.facing * 2.0) + basis_d(a) * 1.0
+func _staff(m: Mage, aim: Vector2) -> Array:
+	var a := atan2(m.pos.y, m.pos.x)
+	var hand := m.pos + basis_r(a) * (m.facing * 2.0) + basis_d(a) * 1.0
 	var dir := (aim - hand).normalized()
 	if dir == Vector2.ZERO:
 		dir = basis_r(a)
 	return [hand + dir * 7.0, dir, hand]
 
-func _cast(id: String, aim: Vector2) -> void:
+func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	var s: Dictionary = Defs.SPELLS[id]
-	if cast_cd > 0 or mana < float(s["mana"]):
+	if m.cast_cd > 0 or m.mana < float(s["mana"]):
 		return
 	if id == "conjure":
-		_conjure(aim)
-		cast_cd = s["cd"]
+		_conjure(m, aim)
+		m.cast_cd = s["cd"]
 		return
 	if id == "blink":
-		if _blink(aim):
-			mana -= float(s["mana"])
-			cast_cd = s["cd"]
+		if _blink(m, aim):
+			m.mana -= float(s["mana"])
+			m.cast_cd = s["cd"]
 		return
-	mana -= float(s["mana"])
-	cast_cd = s["cd"]
-	var st := _staff(aim)
+	m.mana -= float(s["mana"])
+	m.cast_cd = s["cd"]
+	var st := _staff(m, aim)
 	var pd: Dictionary = Defs.PROJ[id]
 	_spawn_proj(id, st[0], st[1] * float(pd["speed"]), "player")
 	var col: Color = s["color"]
@@ -783,8 +929,8 @@ func _cast(id: String, aim: Vector2) -> void:
 		_particle(st[0], Vector2(randf() - 0.5, randf() - 0.5), 12, col, true, 0.0)
 
 ## step through space to the cursor (up to 48 cells), stopping at the last free spot along the way
-func _blink(aim: Vector2) -> bool:
-	var from := player.pos
+func _blink(m: Mage, aim: Vector2) -> bool:
+	var from := m.pos
 	var d := aim - from
 	if d.length() > 48.0:
 		d = d.normalized() * 48.0
@@ -794,13 +940,13 @@ func _blink(aim: Vector2) -> bool:
 		if not in_grid(p, 8.0):
 			continue
 		var l := to_grid(p)
-		if not box_solid(l.x - player.w * 0.5, l.y - player.h * 0.5, player.w, player.h):
+		if not box_solid(l.x - m.w * 0.5, l.y - m.h * 0.5, m.w, m.h):
 			for k in 16:
 				_particle(from, Vector2(randf() - 0.5, randf() - 0.5) * 1.5, 20, Color(0.55, 0.95, 1.0), true, 0.0)
 				_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 1.5, 20, Color(0.55, 0.95, 1.0), true, 0.0)
-			player.pos = p
-			player.vx = 0
-			player.vy = 0
+			m.pos = p
+			m.vx = 0
+			m.vy = 0
 			lights.append([p, 24.0, Color(0.5, 0.9, 1.2)])
 			return true
 	return false
@@ -809,25 +955,25 @@ func _spawn_proj(type: String, p: Vector2, v: Vector2, owner: String) -> void:
 	var pd: Dictionary = Defs.PROJ[type]
 	projs.append({"type": type, "pos": p, "vel": v, "life": int(pd["life"]), "owner": owner})
 
-func _reach(aim: Vector2) -> Vector2:
-	var c := player.pos
+func _reach(m: Mage, aim: Vector2) -> Vector2:
+	var c := m.pos
 	var d := aim - c
 	if d.length() > REACH:
 		d = d.normalized() * REACH
 	return c + d
 
-func _excavate(aim: Vector2) -> void:
-	var p := _reach(aim)
-	brushes.append([p, dig_r, 1, 0, tier, 0, 0])
+func _excavate(m: Mage, aim: Vector2) -> void:
+	var p := _reach(m, aim)
+	brushes.append([p, m.dig_r, 1, 0, m.tier, 0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
 
-func _conjure(aim: Vector2) -> void:
-	if mat <= 0 or inv[mat] <= 0:
+func _conjure(m: Mage, aim: Vector2) -> void:
+	if m.mat <= 0 or m.inv[m.mat] <= 0:
 		return
-	var p := _reach(aim)
-	var budget := mini(inv[mat], 6)
-	pending_place = budget
-	brushes.append([p, 1.6, 5, mat, 0, budget, 4.5])
+	var p := _reach(m, aim)
+	var budget := mini(m.inv[m.mat], 6)
+	m.pending_place = budget
+	brushes.append([p, 1.6, 5, m.mat, 0, budget, 4.5, m.slot])
 
 func _update_projectiles() -> void:
 	for k in range(projs.size() - 1, -1, -1):
@@ -840,7 +986,8 @@ func _update_projectiles() -> void:
 		var steps := maxi(1, int(ceil(vel.length() * 2.0)))
 		var hit := false
 		var hit_enemy = null
-		var hit_player := false
+		var hit_m = null
+		_use_grid(_nearest_mage(pos))
 		for s in steps:
 			pos += vel / steps
 			if pos.length() >= Defs.R_TOP - 1.0 or pos.length() < Defs.R_IN:
@@ -863,14 +1010,18 @@ func _update_projectiles() -> void:
 						break
 				if hit:
 					break
-			elif not dead and _overlaps(pos, player):
-				hit = true
-				hit_player = true
-				break
+			else:
+				for pm in players:
+					if not pm.dead and _overlaps(pos, pm):
+						hit = true
+						hit_m = pm
+						break
+				if hit:
+					break
 		pr["pos"] = pos
 		pr["vel"] = vel
 		if hit or int(pr["life"]) <= 0:
-			_impact(pr, hit, hit_enemy, hit_player)
+			_impact(pr, hit, hit_enemy, hit_m)
 			projs.remove_at(k)
 			continue
 		var col: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
@@ -883,7 +1034,7 @@ func _overlaps(p: Vector2, e: Body) -> bool:
 	var o := p - e.pos
 	return absf(o.dot(basis_r(a))) < e.w * 0.5 + 1.0 and absf(o.dot(basis_d(a))) < e.h * 0.5 + 1.0
 
-func _impact(pr: Dictionary, hit: bool, e, hit_player: bool) -> void:
+func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 	var p: Vector2 = pr["pos"]
 	var type: String = pr["type"]
 	var pd: Dictionary = Defs.PROJ[type]
@@ -912,8 +1063,8 @@ func _impact(pr: Dictionary, hit: bool, e, hit_player: bool) -> void:
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb, 0.0)
 		"efire":
-			if hit_player:
-				hurt(float(pd["dmg"]) * (0.6 if heat_ward else 1.0), Vector2(signf(randf() - 0.5) * 1.5, -1.0), true)
+			if hit_m != null:
+				hurt(hit_m, float(pd["dmg"]) * (0.6 if hit_m.heat_ward else 1.0), Vector2(signf(randf() - 0.5) * 1.5, -1.0), true)
 			else:
 				brushes.append([p, 1.2, 3, Defs.FIRE, 0, 0, 0])
 	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else Color(1, 0.35, 0.12)
@@ -975,13 +1126,13 @@ func _kill_enemy(e: Enemy) -> void:
 	for dr in e.d["drops"]:
 		if randf() < float(dr[2]):
 			var n := 1 + randi() % int(dr[1])
-			inv[int(dr[0])] += n
+			player.inv[int(dr[0])] += n
 			ui.toast("+%d %s" % [n, Defs.NAMES[int(dr[0])]], Defs.COLOR[int(dr[0])])
 	if e.boss:
 		items["heart"] = true
 		planet_state["boss_dead"] = true
-		inv[Defs.EMBER] += 40
-		inv[Defs.OBSIDIAN] += 20
+		player.inv[Defs.EMBER] += 40
+		player.inv[Defs.OBSIDIAN] += 20
 		ui.toast("Vulkhar falls! You claim the EMBER HEART.", Color(1, 0.7, 0.3), 6.0)
 		ui.toast("+40 Ember Crystal, +20 Obsidian. The Core Siphon can now be forged.", Color(1, 0.85, 0.3), 6.0)
 		shake = 18.0
@@ -993,7 +1144,9 @@ func _update_enemies() -> void:
 		if e.dead:
 			enemies.remove_at(k)
 			continue
-		var dist := e.pos.distance_to(player.pos)
+		var tgt := _nearest_mage(e.pos)
+		_use_grid(tgt)
+		var dist := e.pos.distance_to(tgt.pos)
 		if not e.boss and dist > (300.0 if e.guard_id >= 0 else 420.0):
 			if e.guard_id >= 0:
 				_guards_alive.erase(e.guard_id)
@@ -1007,13 +1160,13 @@ func _update_enemies() -> void:
 		if e.slow > 0:
 			e.slow -= 1
 		var lt := to_grid(e.pos)
-		var pl := to_grid(player.pos)
+		var pl := to_grid(tgt.pos)
 		var dx := pl.x - lt.x
 		var dy := pl.y - lt.y
 		e.in_liquid = Defs.KIND[type_at(e.pos)] == Defs.K_LIQUID
 		var g := 0.17 * gravity_at(e.pos)
 		e.facing = -1 if dx < 0 else 1
-		if dead:
+		if tgt.dead:
 			e.vx *= 0.9
 		match e.type:
 			"slime":
@@ -1029,7 +1182,7 @@ func _update_enemies() -> void:
 					e.vy *= 0.9
 			"skeleton":
 				# walks toward you once it notices you, hops over steps and rubble
-				if dist < 170 and not dead:
+				if dist < 170 and not tgt.dead:
 					if e.on_ground:
 						e.vx += (signf(dx) * 0.62 * slow_f - e.vx) * 0.2
 						if e.hit_wall:
@@ -1041,7 +1194,7 @@ func _update_enemies() -> void:
 				if e.on_ground:
 					e.vx *= 0.7
 					e.t -= 1
-					if e.t <= 0 and not dead:
+					if e.t <= 0 and not tgt.dead:
 						e.vx = signf(dx) * (1.5 + randf() * 0.6) * slow_f
 						e.vy = -2.9 - randf() * 0.6
 						e.t = 28 + randf() * 25
@@ -1068,7 +1221,7 @@ func _update_enemies() -> void:
 				e.vx = clampf(e.vx, -sp2, sp2)
 				e.vy = clampf(e.vy, -sp2, sp2)
 				e.shoot_t -= 1
-				if e.shoot_t <= 0 and dist < 150 and not dead:
+				if e.shoot_t <= 0 and dist < 150 and not tgt.dead:
 					_spawn_proj("efire", e.pos, (player.pos - e.pos).normalized() * 1.7, "enemy")
 					e.shoot_t = 140 + randf() * 60
 			"golem":
@@ -1076,7 +1229,7 @@ func _update_enemies() -> void:
 					e.awake = true
 					ui.toast("VULKHAR, THE EMBER GOLEM awakens!", Color(1, 0.48, 0.16), 4.0)
 					shake = 10.0
-				if e.awake and not dead:
+				if e.awake and not tgt.dead:
 					var enraged := e.hp < e.max_hp * 0.4
 					if e.on_ground:
 						e.vx += (signf(dx) * (0.75 if enraged else 0.5) * slow_f - e.vx) * 0.1
@@ -1099,7 +1252,7 @@ func _update_enemies() -> void:
 						shake = 12.0
 						_explode(e.pos - basis_d(atan2(e.pos.y, e.pos.x)) * (-e.h * 0.5 - 1.0), 6.0, 1, 0, 0.0)
 						if absf(dx) < 26 and absf(dy) < 20:
-							hurt(18.0, Vector2(signf(dx) * 3.0, -2.0), true)
+							hurt(tgt, 18.0, Vector2(signf(dx) * 3.0, -2.0), true)
 				e.vy += g
 		if e.d["fly"]:
 			e.vy *= 0.98
@@ -1110,8 +1263,8 @@ func _update_enemies() -> void:
 			var l2 := to_grid(e.pos)
 			if box_count(l2.x - e.w * 0.5, l2.y - e.h * 0.5, e.w, e.h, Defs.LAVA) > 0:
 				_hurt_enemy(e, 0.6, 0, 0)
-		if not dead and absf(dx) < (e.w + player.w) * 0.5 and absf(dy) < (e.h + player.h) * 0.5:
-			hurt(float(e.d["dmg"]), Vector2(signf(dx) * 2.2, -1.6), true)
+		if not tgt.dead and absf(dx) < (e.w + tgt.w) * 0.5 and absf(dy) < (e.h + tgt.h) * 0.5:
+			hurt(tgt, float(e.d["dmg"]), Vector2(signf(dx) * 2.2, -1.6), true)
 		if e.type == "golem":
 			lights.append([e.pos, 40.0, Color(1.0, 0.4, 0.1)])
 		elif e.type == "skeleton":
@@ -1180,7 +1333,7 @@ func _particle(p: Vector2, v: Vector2, life: int, col: Color, self_lit: bool, gr
 func _spawn_suck_particles(t: int, n: int) -> void:
 	if brushes.size() == 0 and not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 		return
-	var aim := _reach(screen_to_world(get_viewport().get_mouse_position() / scale_px))
+	var aim := _reach(player, screen_to_world(get_viewport().get_mouse_position() / scale_px))
 	for k in n:
 		var c: Color = Defs.COLOR[t]
 		parts.append({"pos": aim + Vector2(randf() - 0.5, randf() - 0.5) * dig_r * 2.0, "vel": Vector2(randf() - 0.5, randf() - 0.5), "life": 60, "col": c, "self": true, "grav": 0.0, "home": true})
@@ -1266,7 +1419,7 @@ func recipe_lock_text(r: Dictionary) -> String:
 
 func recipe_affordable(r: Dictionary) -> bool:
 	for k in r["cost"]:
-		if inv[int(k)] < int(r["cost"][k]):
+		if player.inv[int(k)] < int(r["cost"][k]):
 			return false
 	return true
 
@@ -1274,10 +1427,10 @@ func craft(r: Dictionary) -> bool:
 	if recipe_done(r) or not recipe_unlocked(r) or not recipe_affordable(r):
 		return false
 	for k in r["cost"]:
-		inv[int(k)] -= int(r["cost"][k])
+		player.inv[int(k)] -= int(r["cost"][k])
 	if r.has("give"):
 		for k in r["give"]:
-			inv[int(k)] += int(r["give"][k])
+			player.inv[int(k)] += int(r["give"][k])
 	if r.has("spell"):
 		known.append(r["spell"])
 		known.sort_custom(func(x, y): return Defs.SPELL_ORDER.find(x) < Defs.SPELL_ORDER.find(y))
@@ -1339,7 +1492,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif k == KEY_F9:
 			for m in Defs.NM:
 				if Defs.COLLECT[m] == 1 and Defs.PLACE[m] == 1:
-					inv[m] += 200
+					player.inv[m] += 200
 			ui.toast("Creative stock: +200 of every material", Color(0.6, 1, 0.6))
 	elif ev is InputEventMouseButton and ev.pressed and state == "play":
 		if ev.button_index == MOUSE_BUTTON_RIGHT:
@@ -1352,7 +1505,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 func _cycle_material(dir: int) -> void:
 	var owned := []
 	for m in Defs.NM:
-		if inv[m] > 0 and Defs.PLACE[m] == 1:
+		if player.inv[m] > 0 and Defs.PLACE[m] == 1:
 			owned.append(m)
 	if owned.is_empty():
 		return
@@ -1386,7 +1539,7 @@ func start_game(use_save: bool) -> void:
 		_apply_save(s)
 	else:
 		_delete_worlds()
-		inv.fill(0)
+		player.inv.fill(0)
 		known = ["spark", "conjure"]
 		tier = 1
 		dig_r = 4.5
@@ -1453,15 +1606,16 @@ func _enter_planet(index: int) -> void:
 	if loaded and planet_state.has("player"):
 		var pp: Array = planet_state["player"]
 		player.pos = Vector2(float(pp[0]), float(pp[1]))
-		grid_g = player.pos
-		grid_a = atan2(player.pos.y, player.pos.x)
+		player.grid_g = player.pos
+		player.grid_a = atan2(player.pos.y, player.pos.x)
+		_use_grid(player)
 		time = float(planet_state.get("time", time))
 	cam_c = player.pos
 	wisp = player.pos
 	# let fresh liquids settle around the spawn
 	_write_frame_params()
 	for k in 60:
-		gpu.step(player.pos, false, true)
+		gpu.step([player.pos], [], false, true)
 	_gpu_frame(false)
 	if not loaded:
 		save_world(false)
@@ -1472,8 +1626,9 @@ func _respawn() -> void:
 	player.pos = Vector2(cos(spawn_angle), sin(spawn_angle)) * (rs + 30.0)
 	player.vx = 0
 	player.vy = 0
-	grid_g = player.pos
-	grid_a = spawn_angle
+	player.grid_g = player.pos
+	player.grid_a = spawn_angle
+	_use_grid(player)
 	hp = max_hp
 	mana = max_mana
 	breath = max_breath
@@ -1487,7 +1642,7 @@ func travel_next() -> void:
 	save_world(true)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	inv[Defs.CORE] = 0
+	player.inv[Defs.CORE] = 0
 	_enter_planet(int(planet["index"]) + 1)
 	ui.hide_loading()
 	state = "play"
@@ -1520,7 +1675,7 @@ func _save_path() -> String:
 	return _save_dir().path_join("progress.json")
 
 func save_game() -> void:
-	var d := {"planet": planet.get("index", 0), "inv": Array(inv), "known": known, "tier": tier, "dig_r": dig_r,
+	var d := {"planet": planet.get("index", 0), "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
@@ -1541,7 +1696,7 @@ func _load_save():
 func _apply_save(s: Dictionary) -> void:
 	var a: Array = s.get("inv", [])
 	for i in mini(a.size(), Defs.NM):
-		inv[i] = int(a[i])
+		player.inv[i] = int(a[i])
 	known = []
 	for k in s.get("known", ["spark", "conjure"]):
 		known.append(str(k))

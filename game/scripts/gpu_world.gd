@@ -5,6 +5,7 @@ extends RefCounted
 ## excavation counts).
 
 var GS := 384            # collision grid size (cells); grows to cover the whole view
+const MAXP := 4          # players the simulation can serve at once (co-op)
 const LS := 4            # light grid block size (pixels)
 const NPARAM := 128      # vec4 slots in the params buffer
 
@@ -53,7 +54,7 @@ func init() -> bool:
 	rd.buffer_clear(sites_buf, 0, (MAX_SITES + 1) * 16)
 	params_buf = rd.storage_buffer_create(NPARAM * 16)
 	surf_buf = rd.storage_buffer_create(Defs.SH_N[0] * 32)
-	counts_buf = rd.storage_buffer_create(64 * 4)
+	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
 	var prefix: String = Defs.glsl_prefix()
 	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp"]:
 		if not _compile(nm, prefix):
@@ -133,7 +134,7 @@ func resize(w: int, h: int) -> void:
 	for b in [light_a, light_b, view_buf, grid_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
-	grid_buf = rd.storage_buffer_create(GS * GS)
+	grid_buf = rd.storage_buffer_create(GS * GS * MAXP)    # one collision grid per player
 	grid = PackedByteArray()
 	sets["grid"] = _mkset("grid", [[0, world_buf], [1, params_buf], [7, grid_buf], [3, counts_buf]])
 	light_a = rd.storage_buffer_create(LW * LH * 16)
@@ -320,13 +321,44 @@ func _window(center: Vector2, half := -1.0) -> Array:
 		out.append({"s": s, "y0": sy0, "y1": sy1, "x0": x0, "count": count})
 	return out
 
-## One simulation + render step. sim_center: where to simulate; brushes count in params slot 6.
-func step(sim_center: Vector2, with_brushes: bool, sim_only: bool) -> void:
+## Simulated areas around every player. Players close together share one area (so no cell is
+## ever simulated twice in a frame); players far apart each get their own.
+func _windows(centers: Array) -> Array:
+	var base := sqrt(float(VW * VW + VH * VH)) * 0.5 + 56.0
+	var groups := []    # each: [members]
+	for c in centers:
+		var placed := false
+		for gr in groups:
+			for m in gr:
+				if (m as Vector2).distance_to(c) < base * 2.2:
+					gr.append(c)
+					placed = true
+					break
+			if placed:
+				break
+		if not placed:
+			groups.append([c])
+	var out := []
+	for gr in groups:
+		var mean := Vector2.ZERO
+		for m in gr:
+			mean += m
+		mean /= gr.size()
+		var spread := 0.0
+		for m in gr:
+			spread = maxf(spread, (m as Vector2).distance_to(mean))
+		out.append_array(_window(mean, base + spread))
+	return out
+
+## One simulation + render step.
+## sim_centers: where to simulate (one per player; the local one is the camera).
+## grid_frames: [centre, angle] per player slot, for that player's collision grid.
+func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: bool) -> void:
 	frame += 1
 	params[1] = frame
 	_upload_params()
-	rd.buffer_clear(counts_buf, 0, 256)
-	var win := _window(sim_center)
+	rd.buffer_clear(counts_buf, 0, 64 * MAXP * 4)
+	var win := _windows(sim_centers)
 	var cl := rd.compute_list_begin()
 	if with_brushes:
 		for w in win:
@@ -335,7 +367,10 @@ func step(sim_center: Vector2, with_brushes: bool, sim_only: bool) -> void:
 	var rain_mat := int(params[3 * 4 + 1])
 	_sim_passes(cl, win, rain_row, rain_mat)
 	if not sim_only:
-		_dispatch(cl, "grid", "grid", [GS], [], groups(GS / 4, 16), groups(GS, 16))
+		for gs in mini(grid_frames.size(), MAXP):
+			var gf: Array = grid_frames[gs]
+			var gc: Vector2 = gf[0]
+			_dispatch(cl, "grid", "grid", [GS, gs], [gc.x, gc.y, gf[1]], groups(GS / 4, 16), groups(GS, 16))
 		_dispatch(cl, "light", "light", [LW, LH, LS], [], groups(LW, 16), groups(LH, 16))
 		for k in 2:
 			_dispatch(cl, "blur", "blur_h", [LW, LH, 1], [], groups(LW, 16), groups(LH, 16))
@@ -347,7 +382,7 @@ func step(sim_center: Vector2, with_brushes: bool, sim_only: bool) -> void:
 	if sim_only:
 		return
 	counts = rd.buffer_get_data(counts_buf).to_int32_array()
-	grid = rd.buffer_get_data(grid_buf)
+	grid = rd.buffer_get_data(grid_buf, 0, GS * GS * clampi(grid_frames.size(), 1, MAXP))   # only the slots in use
 	light = rd.buffer_get_data(light_a).to_float32_array()
 	var vb := rd.buffer_get_data(view_buf)
 	view_img = Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, vb)
@@ -382,10 +417,11 @@ func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int) -> void:
 					var c2: int = w.count / 2 + 2
 					_dispatch(cl, "boundary", "boundary", [s2, int(floor(w.x0 / 2.0)), c2, 0, frame * 8 + pass_i], [], groups(c2, 64), 1)
 
-func grid_type(i: int, j: int) -> int:
-	if i < 0 or j < 0 or i >= GS or j >= GS or grid.size() < GS * GS:
+func grid_type(slot: int, i: int, j: int) -> int:
+	var k := slot * GS * GS + j * GS + i
+	if i < 0 or j < 0 or i >= GS or j >= GS or k >= grid.size():
 		return 0
-	return grid[j * GS + i]
+	return grid[k]
 
 func light_at(px: Vector2) -> Color:
 	var i := clampi(int(px.x / LS), 0, LW - 1)

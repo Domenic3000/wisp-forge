@@ -1,7 +1,7 @@
 // Terrain magic: excavate, explode, fill, freeze, place, chip.
 // Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR).
 // counts[t] = cells collected per material; counts[50] = blocked by hardness; counts[51] = placed;
-// counts[54] = chest cells opened (mode 7).
+// counts[54] = chest cells opened (mode 7). Each player has their own 64 counters: owner = mode >> 4.
 // pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
 #include "common"
 #include "world"
@@ -24,7 +24,8 @@ void main() {
 	for (int bi = 0; bi < nb; bi++) {
 		vec4 A = P.p[88 + 2 * bi], B = P.p[89 + 2 * bi];
 		float dist = distance(p, A.xy);
-		int mode = int(A.w);
+		int mode = int(A.w) & 15;
+		uint ob = uint(int(A.w) >> 4) * 64u;   // whose satchel this brush fills (64 counters per player)
 		float rad = A.z;
 		uint t = c & 255u;
 		float R = rnd3(uint(i), uint(pc.b.y), uint(bi) * 31u + 5u);
@@ -43,7 +44,7 @@ void main() {
 			if (isBlock(t) && HARD[t] <= power && COLLECT[t] == 1u) {
 				int open = 0;
 				for (int dd = 0; dd < 4; dd++) { if (!isBlock(tAt(nbr(s, y, x, dd)))) open++; }
-				if (open >= 3) { atomicAdd(counts.n[collectAs(t)], 1u); c = withFG(c, 0u, 0u); }
+				if (open >= 3) { atomicAdd(counts.n[ob + (collectAs(t))], 1u); c = withFG(c, 0u, 0u); }
 			}
 			continue;
 		}
@@ -51,17 +52,17 @@ void main() {
 		if (mode == 1) { // excavate
 			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u) {
 				// nothing in front: harvest the background plant / decoration
-				if (HARD[bgm] > power) { atomicAdd(counts.n[50], 1u); continue; }
+				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
 				if (R > 0.3) continue;
-				atomicAdd(counts.n[collectAs(bgm)], 1u);
+				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
 				ab = 0u;
 				continue;
 			}
 			if (t == 0u || COLLECT[t] == 0u) continue;
-			if (HARD[t] > power) { atomicAdd(counts.n[50], 1u); continue; }
+			if (HARD[t] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
 			float rate = KIND[t] == K_LIQUID ? 0.25 : 0.32 / (1.0 + float(HARD[t]) * 1.2);
 			if (R > rate) continue;
-			atomicAdd(counts.n[collectAs(t)], 1u);
+			atomicAdd(counts.n[ob + (collectAs(t))], 1u);
 			c = withFG(c, 0u, 0u);
 		} else if (mode == 2 || mode == 6) { // explode / chip
 			if (t == 0u || KIND[t] == K_LIQUID || KIND[t] == K_GAS) {
@@ -78,7 +79,7 @@ void main() {
 			c = withFG(c, nt, life);
 		} else if (mode == 7) { // open a chest: the treasure is taken, an opened chest stays behind
 			if (t == M_TREASURE) {
-				atomicAdd(counts.n[54], 1u);
+				atomicAdd(counts.n[ob + (54)], 1u);
 				c = withFG(c, 0u, 0u);
 				ab = B.x > 0.5 ? M_OPENCHEST : 0u;
 			}
@@ -94,7 +95,7 @@ void main() {
 			if (!(t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE)) continue;
 			uint m = uint(B.x);
 			if (isBlock(m) && distance(p, P.p[6].zw) < B.w) continue;
-			uint used = atomicAdd(counts.n[51], 1u);
+			uint used = atomicAdd(counts.n[ob + (51)], 1u);
 			if (used < uint(B.z)) c = withFG(c, m, m == M_FIRE ? 30u : 0u);
 		}
 	}

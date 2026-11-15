@@ -1,6 +1,6 @@
 // Samples a GSxGS grid of cell types around the player, aligned with the player's
 // local "up". The CPU uses it for collisions, liquids and hazards.
-// pc.a = (GS, 0, 0, 0); centre/angle in P.p[5]
+// pc.a = (GS, slot, 0, 0); pc.c = (centreX, centreY, angle, 0). Each player slot has its own grid.
 #include "common"
 #include "world"
 #include "params"
@@ -13,8 +13,11 @@ void main() {
 	int GS = pc.a.x;
 	int gx4 = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
 	if (gx4 * 4 >= GS || j >= GS) return;
-	vec2 G = P.p[5].xy;
-	float A = P.p[5].z;
+	vec2 G = pc.c.xy;
+	float A = pc.c.z;
+	int slot = pc.a.y;
+	uint cb = uint(slot) * 64u;
+	int goff = slot * GS * (GS / 4);
 	vec2 R = vec2(sin(A), -cos(A)), D = vec2(-cos(A), -sin(A));
 	uint pk = 0u;
 	for (int q = 0; q < 4; q++) {
@@ -24,8 +27,8 @@ void main() {
 		uint t = full & 255u;
 		if (KIND[t] == K_SOLID && (full & ST_ANCHOR) == 0u && stOf(full) > SPAN[t] && ((full >> 16) & 255u) > 0u
 				&& abs(float(i - GS / 2) + 0.5) <= 3.5 && abs(float(j - GS / 2) + 0.5) <= 7.5) {
-			atomicAdd(counts.n[52], 1u);
-			atomicMax(counts.n[53], (full >> 16) & 255u);
+			atomicAdd(counts.n[cb + 52u], 1u);
+			atomicMax(counts.n[cb + 53u], (full >> 16) & 255u);
 		}
 		// falling sand / snow / rain (nothing under it yet) never blocks or drags bodies
 		if (KIND[t] == K_POWDER || KIND[t] == K_LIQUID) {
@@ -43,5 +46,5 @@ void main() {
 		}
 		pk |= t << (8 * q);
 	}
-	grid.g[j * (GS / 4) + gx4] = pk;
+	grid.g[goff + j * (GS / 4) + gx4] = pk;
 }

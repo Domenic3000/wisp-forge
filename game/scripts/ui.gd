@@ -416,15 +416,15 @@ func update_hud(g) -> void:
 	# satchel
 	var ik := str(g.mat) + "|"
 	for m in Defs.NM:
-		if g.inv[m] > 0:
-			ik += "%d:%d," % [m, g.inv[m]]
+		if g.player.inv[m] > 0:
+			ik += "%d:%d," % [m, g.player.inv[m]]
 	if ik != _inv_key:
 		_inv_key = ik
 		for c in satchel.get_children():
 			c.queue_free()
 		var any := false
 		for m in Defs.NM:
-			if g.inv[m] <= 0:
+			if g.player.inv[m] <= 0:
 				continue
 			any = true
 			var rp := PanelContainer.new()
@@ -453,7 +453,7 @@ func update_hud(g) -> void:
 			var nm := _label(Defs.NAMES[m], 12, GOLD if m == g.mat else Color(0.85, 0.88, 1))
 			nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			row.add_child(nm)
-			row.add_child(_label(str(g.inv[m]), 12, Color(0.8, 0.84, 1)))
+			row.add_child(_label(str(g.player.inv[m]), 12, Color(0.8, 0.84, 1)))
 			rp.gui_input.connect(_on_mat_input.bind(m))
 			satchel.add_child(rp)
 		if not any:
