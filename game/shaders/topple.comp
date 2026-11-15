@@ -1,8 +1,9 @@
 // Unsupported blocks fall. One thread per column walks from the bottom of the window
 // upward, so a whole loose piece moves down one cell together and keeps its shape.
-// Life counts how far a block has fallen; after a long drop, rock and wood break into
+// Before a loose piece drops it creaks for a moment (life 128+), so you can get out from under it.
+// Life 1-127 counts how far a block has fallen; after a long drop, rock and wood break into
 // rubble (DEBRIS) when they land.
-// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, creakFrames, 0)
 #include "common"
 #include "world"
 layout(local_size_x = 64) in;
@@ -19,12 +20,14 @@ void main() {
 	int x = wrapc(pc.a.w + k, SH_N[s]);
 	int yEnd = min(pc.a.z, SH_Y0[s + 1]) - 1;
 	uint fr = uint(pc.b.y);
+	uint creakN = uint(pc.b.z);          // frames a loose piece creaks before it drops (0 = at once)
+	bool runFree = false;                // the loose run below this cell has open space under it
 	for (int y = yEnd; y >= pc.a.y; y--) {
 		int i = cellIdx(s, y, x);
 		uint c = world.cells[i];
-		if (!loose(c)) continue;
+		if (!loose(c)) { runFree = false; continue; }
 		uint t = c & 255u;
-		uint fall = (c >> 16) & 255u;
+		uint life = (c >> 16) & 255u;   // 0 still, 1-127 falling (distance), 128+ creaking
 		bool canMove = false;
 		int ib = -1;
 		uint cb = 0u;
@@ -34,16 +37,26 @@ void main() {
 			uint kb = KIND[cb & 255u];
 			canMove = (cb & 255u) == 0u || kb == K_GAS || kb == K_FIRE || kb == K_LIQUID;
 		}
-		if (canMove) {
-			world.cells[ib] = (c & 0xff00ffffu) | (min(fall + 1u, 255u) << 16);
-			world.cells[i] = cb;
+		// a loose block resting on a loose block shares that block's fate
+		bool belowLoose = ib >= 0 && loose(cb);
+		runFree = canMove || (belowLoose && runFree);
+		if (!runFree) {
+			// resting on something it can't fall through: if it was falling, it has landed
+			if (life > 0u && life < 128u) {
+				bool smash = life > 9u && DEBRIS[t] != t && rnd3(uint(i), fr, 61u) < 0.55;
+				if (smash || ib < 0) world.cells[i] = withFG(c, DEBRIS[t] != t ? DEBRIS[t] : t, 0u);
+				else world.cells[i] = c & 0xff00ffffu;
+			} else if (life >= 128u) {
+				world.cells[i] = c & 0xff00ffffu;
+			}
 			continue;
 		}
-		// landed (or stuck at a shell seam)
-		if (fall > 0u) {
-			bool smash = fall > 9u && DEBRIS[t] != t && rnd3(uint(i), fr, 61u) < 0.55;
-			if (smash || ib < 0) world.cells[i] = withFG(c, DEBRIS[t] != t ? DEBRIS[t] : t, 0u);
-			else world.cells[i] = c & 0xff00ffffu;
-		}
+		// open space below: creak first, then fall
+		if (life == 0u && creakN > 0u) { world.cells[i] = (c & 0xff00ffffu) | (128u << 16); continue; }
+		if (life >= 128u && life < 128u + creakN) { world.cells[i] = (c & 0xff00ffffu) | ((life + 1u) << 16); continue; }
+		if (!canMove) continue;          // the block under it in the run moves first, next pass
+		uint nl = life >= 128u ? 1u : min(life + 1u, 127u);
+		world.cells[ib] = (c & 0xff00ffffu) | (nl << 16);
+		world.cells[i] = cb;
 	}
 }

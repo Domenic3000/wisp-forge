@@ -56,7 +56,11 @@ class BP:
 		if ok(i, j):
 			var k := j * w + i
 			c[k] = (c[k] & 0xff300ff) | ((m & 255) << 8) | (0x40000 if wall and m != 0 else 0)
-	## foreground with a fixed colour variant (chests use it to know which part each cell is)
+	## a background object with a fixed part number, in front of open air (chests)
+	func bgv(i: int, j: int, m: int, v: int) -> void:
+		if ok(i, j):
+			c[j * w + i] = ((m & 255) << 8) | ((v & 255) << 19) | 0x8000000
+	## foreground with a fixed colour variant
 	func fgv(i: int, j: int, m: int, v: int) -> void:
 		if ok(i, j):
 			var k := j * w + i
@@ -286,12 +290,13 @@ func _finish(bp: BP, build: bool) -> void:
 	settle.append([Vector2(cos(a), sin(a)) * r, maxf(bp.w, bp.h) * 0.5 + 26.0])
 
 # ------------------------------------------------------- chests and guards ---
-## a 6 x 4 treasure chest standing on the floor row fl, left column i
+## a 6 x 4 treasure chest standing on the floor row fl, left column i. Chests are background
+## furniture: you walk past them, and open them with F.
 func _chest(bp: BP, i: int, fl: int) -> void:
 	bp.chests.append(Vector2i(i, fl))
 	for cj in 4:
 		for ci in 6:
-			bp.fgv(i + ci, fl - 4 + cj, Defs.TREASURE, ci | (cj << 3))
+			bp.bgv(i + ci, fl - 4 + cj, Defs.TREASURE, ci | (cj << 3))
 
 ## a foe waiting on the floor row fl at column i (local), spawned when you come near
 func _guard(bp: BP, i: int, fl: int, type: String) -> void:

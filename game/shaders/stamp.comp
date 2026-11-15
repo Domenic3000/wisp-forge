@@ -31,5 +31,9 @@ void main() {
 			world.cells[idx] = fc | (v << 8) | anchor;
 		}
 	}
-	if (bc != 255u) aux.a[idx] = bc == 0u ? 0u : (bc | ((d & 0x40000u) != 0u ? BG_WALL : 0u));
+	if (bc != 255u) {
+		uint a = bc == 0u ? 0u : (bc | ((d & 0x40000u) != 0u ? BG_WALL : 0u));
+		if (bc != 0u && (d & 0x8000000u) != 0u) a |= ((d >> 19) & 255u) << 16;   // which part of a chest
+		aux.a[idx] = a;
+	}
 }

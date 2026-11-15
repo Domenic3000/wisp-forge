@@ -4,8 +4,11 @@
 #include "common"
 #include "world"
 #include "params"
+#include "bglayer"
 layout(std430, set = 0, binding = 7) restrict writeonly buffer Grid { uint g[]; } grid;
-// counts[52] = falling blocks overlapping the mage, counts[53] = the longest fall among them
+// counts[52] = falling blocks overlapping the mage, counts[53] = the longest fall among them,
+// counts[55] = nearest chest within 14 cells: (2047 - dist^2) << 20 | centreJ << 10 | centreI,
+// counts[56] = creaking blocks nearby, counts[57] = one of them: random << 20 | j << 10 | i
 layout(std430, set = 0, binding = 3) restrict buffer Counts { uint n[]; } counts;
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -25,10 +28,31 @@ void main() {
 		vec2 pos = G + R * (float(i - GS / 2) + 0.5) + D * (float(j - GS / 2) + 0.5);
 		uint full = cellAt(pos);
 		uint t = full & 255u;
-		if (KIND[t] == K_SOLID && (full & ST_ANCHOR) == 0u && stOf(full) > SPAN[t] && ((full >> 16) & 255u) > 0u
-				&& abs(float(i - GS / 2) + 0.5) <= 3.5 && abs(float(j - GS / 2) + 0.5) <= 7.5) {
+		uint lifeF = (full >> 16) & 255u;
+		float di = float(i - GS / 2) + 0.5, dj = float(j - GS / 2) + 0.5;
+		bool looseF = KIND[t] == K_SOLID && (full & ST_ANCHOR) == 0u && stOf(full) > SPAN[t];
+		if (looseF && lifeF >= 128u && di * di + dj * dj < 120.0 * 120.0) {
+			atomicAdd(counts.n[cb + 56u], 1u);
+			uint hsh = hashu(uint(i) * 7919u ^ uint(j) * 104729u ^ uint(P.p[0].y)) & 0xfffu;
+			atomicMax(counts.n[cb + 57u], (hsh << 20) | (uint(j) << 10) | uint(i));
+		}
+		if (abs(di) <= 14.5 && abs(dj) <= 14.5) {
+			int ci = idxAt(pos);
+			uint a8 = ci < 0 ? 0u : aux.a[ci];
+			if ((a8 & 255u) == M_TREASURE) {
+				// this cell knows which part of its 6 x 4 chest it is: find the chest's centre
+				uint v = (a8 >> 16) & 255u;
+				float pi = float(v & 7u), pj = float((v >> 3) & 3u);
+				// columns grow against the grid's x axis, rows grow along its y axis
+				float ic = float(i) + (pi - 2.5);
+				float jc = float(j) + (1.5 - pj);
+				uint d2 = uint(min(di * di + dj * dj, 2047.0));
+				atomicMax(counts.n[cb + 55u], ((2047u - d2) << 20) | (uint(clamp(jc, 0.0, 1023.0)) << 10) | uint(clamp(ic, 0.0, 1023.0)));
+			}
+		}
+		if (looseF && lifeF > 0u && lifeF < 128u && abs(di) <= 3.5 && abs(dj) <= 7.5) {
 			atomicAdd(counts.n[cb + 52u], 1u);
-			atomicMax(counts.n[cb + 53u], (full >> 16) & 255u);
+			atomicMax(counts.n[cb + 53u], lifeF);
 		}
 		// falling sand / snow / rain (nothing under it yet) never blocks or drags bodies
 		if (KIND[t] == K_POWDER || KIND[t] == K_LIQUID) {

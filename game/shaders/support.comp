@@ -64,7 +64,9 @@ void main() {
 		st = min(st, fromSide(iU));
 		st = min(st, ws + 1u);
 		st = min(st, ST_MAX);
-		if (st != stOf(c)) { c = withST(c, st); world.cells[i] = c; }
+		uint lf = (c >> 16) & 255u;
+		if (st <= SPAN[t] && lf >= 128u) c = c & 0xff00ffffu;        // held again: stop creaking
+		if (st != stOf(c) || (st <= SPAN[t] && lf >= 128u)) { c = withST(c, st); world.cells[i] = c; }
 	}
 	if (wall) {
 		uint bm = a & 255u;

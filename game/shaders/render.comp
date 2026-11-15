@@ -162,7 +162,8 @@ vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 
 vec3 bgObjColor(uint b, uint ab, ivec2 w, uint v, uint bu, uint bd, uint cu, uint cd) {
 	if (b == M_TORCH) return torchColor(w);
-	if (b == M_OPENCHEST) return chestColor(v, true);
+	if (b == M_TREASURE) return chestColor((ab >> 16) & 255u, false);
+	if (b == M_OPENCHEST) return chestColor((ab & 0xff0000u) != 0u ? (ab >> 16) & 255u : v, true);
 	if ((ab & BG_WALL) != 0u) {
 		// a building's back wall: same texture, much darker, shaded under floors
 		vec3 col = blockTex(b, w, v) * 0.58;

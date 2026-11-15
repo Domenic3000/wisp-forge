@@ -50,8 +50,10 @@ void main() {
 		}
 		if (dist > rad) continue;
 		if (mode == 1) { // excavate
-			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u) {
-				// nothing in front: harvest the background plant / decoration
+			bool keepBg = (ab & BG_WALL) != 0u || bgm == M_TREASURE || bgm == M_OPENCHEST;
+			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u && !keepBg) {
+				// nothing in front: harvest the background plant / decoration (never a building's
+				// walls or furniture: those need the deconstruct action)
 				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
 				if (R > 0.3) continue;
 				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
@@ -78,10 +80,20 @@ void main() {
 			else if (B.x > 0.5 && B.x < 1.5 && R < 0.12) { nt = M_FIRE; life = 10u + uint(R * 200.0); }
 			c = withFG(c, nt, life);
 		} else if (mode == 7) { // open a chest: the treasure is taken, an opened chest stays behind
-			if (t == M_TREASURE) {
+			if (bgm == M_TREASURE) {
+				atomicAdd(counts.n[ob + (54)], 1u);
+				ab = B.x > 0.5 ? (M_OPENCHEST | (ab & 0xff0000u)) : 0u;
+			} else if (t == M_TREASURE) {   // chests from older saves stood in the foreground
 				atomicAdd(counts.n[ob + (54)], 1u);
 				c = withFG(c, 0u, 0u);
 				ab = B.x > 0.5 ? M_OPENCHEST : 0u;
+			}
+		} else if (mode == 8) { // deconstruct: take background tiles (back walls, furniture, plants)
+			if (bgm != 0u && bgm != M_TREASURE) {
+				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
+				if (R > 0.35) continue;
+				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
+				ab = 0u;
 			}
 		} else if (mode == 3) { // fill with liquid
 			if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE) c = withFG(c, uint(B.x), uint(B.x) == M_FIRE ? 20u : 0u);

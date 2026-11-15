@@ -27,7 +27,8 @@ Needs a graphics card with Vulkan or Direct3D 12 (any GPU from roughly the last 
 |---|---|
 | A / D | Walk |
 | W / Space | Jump. Hold in the air to levitate (uses mana); hold in water to swim |
-| Right mouse | Excavate: pull material into your satchel (hold, or tap for a short burst) |
+| Right mouse | Excavate: pull material into your satchel (hold, or tap for a short burst). Never takes a building's back walls or chests |
+| Shift + right mouse | Deconstruct: take background tiles (back walls, furniture, plants), on purpose |
 | Left mouse | Cast the selected spell |
 | 1–6 / mouse wheel | Select spell |
 | Q / E, or click the satchel | Choose what Conjure places |
@@ -72,7 +73,8 @@ Every solid block knows how it is supported:
 - **Untouched natural ground is part of the planet** and never falls by itself, so caves, cliffs
   and overhangs stay up however wide they are.
 - **Digging or blasting loosens the ground around it.** Cut a chunk of rock free, or dig out what
-  holds up a ledge, and it drops as one piece, keeping its shape until it lands. After a long fall,
+  holds up a ledge, and it **creaks and sheds dust for a moment**, then drops as one piece, keeping
+  its shape until it lands. After a long fall,
   rock, brick and wood break into gravel and timber. **Falling rock hurts**: the further it fell,
   the harder it hits, so mind what's above you when you undermine something.
 - **Blocks you place have a strength.** Stacking straight up is always fine, but each material can
@@ -101,10 +103,11 @@ moss, missing torches), then lets the planet's physics run before you arrive, so
 support has already fallen into rubble. Desert ruins are half buried in sand, forest ruins are
 overgrown with vines. The HUD shows the name of the structure you're in.
 
-**Treasure chests** sit in rooms, tombs, mines and vaults. Stand next to one and press **F**: it
+**Treasure chests** sit in rooms, tombs, mines and vaults. They're furniture in the background, so you
+walk past them instead of bumping into them. Stand next to one and press **F**: it
 opens with its full loot (ores, crystals, wisp ore, glass, torches, stone blocks; more in deep places
 and on richer planets) and stays behind as an opened chest. Digging a chest out with right-click
-smashes it and loses half the loot. Chests can hold **rare finds** that exist nowhere else:
+isn't possible any more; chests only open with F. Chests can hold **rare finds** that exist nowhere else:
 
 - **Scroll of Blink**: unlocks the Blink spell at the Forge (step through space to the cursor).
 - **Scroll of Starfall**: unlocks Starfall (a falling star: a huge fiery blast).

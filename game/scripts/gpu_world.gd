@@ -142,7 +142,7 @@ func resize(w: int, h: int) -> void:
 			rd.free_rid(b)
 	grid_buf = rd.storage_buffer_create(GS * GS * MAXP)    # one collision grid per player
 	grid = PackedByteArray()
-	sets["grid"] = _mkset("grid", [[0, world_buf], [1, params_buf], [7, grid_buf], [3, counts_buf]])
+	sets["grid"] = _mkset("grid", [[0, world_buf], [1, params_buf], [7, grid_buf], [3, counts_buf], [8, aux_buf]])
 	light_a = rd.storage_buffer_create(LW * LH * 16)
 	light_b = rd.storage_buffer_create(LW * LH * 16)
 	view_buf = rd.storage_buffer_create(VW * VH * 4)
@@ -274,7 +274,7 @@ func settle(centers: Array, half: float, frames: int) -> void:
 	for f in frames:
 		frame += 1
 		var cl := rd.compute_list_begin()
-		_sim_passes(cl, wins, -1, 0)
+		_sim_passes(cl, wins, -1, 0, 0)
 		rd.compute_list_end()
 		rd.submit()
 		rd.sync()
@@ -371,7 +371,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 			_dispatch(cl, "brush", "brush", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	var rain_row := clampi(int(Defs.R_TOP - params[121 * 4 + 2]), 0, Defs.ROWS - 1)
 	var rain_mat := int(params[3 * 4 + 1])
-	_sim_passes(cl, win, rain_row, rain_mat)
+	_sim_passes(cl, win, rain_row, rain_mat, CREAK_FRAMES)
 	if not sim_only:
 		for gs in mini(grid_frames.size(), MAXP):
 			var gf: Array = grid_frames[gs]
@@ -421,7 +421,9 @@ func apply_quality(q: String) -> void:
 		resize(VW, VH)
 
 ## Reactions, structural support, falling blocks, then falling sand and flowing liquids.
-func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int) -> void:
+const CREAK_FRAMES := 48    # a loose piece creaks this long (0.8 s) before it drops
+
+func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int, creak: int) -> void:
 	for w in win:
 		_dispatch(cl, "react", "react", [w.s, w.y0, w.y1, w.x0, w.count, frame, rain_row, rain_mat], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	for it in support_iters:
@@ -429,7 +431,7 @@ func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int) -> void:
 			_dispatch(cl, "support", "support", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	for it in topple_iters:
 		for w in win:
-			_dispatch(cl, "topple", "topple", [w.s, w.y0, w.y1, w.x0, w.count, frame * 2 + it], [], groups(w.count, 64), 1)
+			_dispatch(cl, "topple", "topple", [w.s, w.y0, w.y1, w.x0, w.count, frame * 2 + it, creak * topple_iters], [], groups(w.count, 64), 1)
 	var offs := [[0, 0], [1, 1], [1, 0], [0, 1]]
 	for pass_i in 2 + flow_passes:
 		var full := pass_i < 2

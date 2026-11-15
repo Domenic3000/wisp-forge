@@ -264,7 +264,7 @@ func _build_screens() -> void:
 	var sb := _button("Settings")
 	sb.pressed.connect(toggle_settings)
 	btns.add_child(sb)
-	var controls := _label("A / D move    W / Space jump, hold in the air to levitate    Right mouse excavate    Left mouse cast\n1-6 / wheel choose spell    Q / E choose Conjure material    F open a chest    C open the Wisp Forge    M zoom out    Esc settings    F9 creative stock", 12, DIM)
+	var controls := _label("A / D move    W / Space jump, hold in the air to levitate    Right mouse excavate (Shift: deconstruct background)    Left mouse cast\n1-6 / wheel choose spell    Q / E choose Conjure material    F open a chest    C open the Wisp Forge    M zoom out    Esc settings    F9 creative stock", 12, DIM)
 	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tv.add_child(controls)
 

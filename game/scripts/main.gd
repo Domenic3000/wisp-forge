@@ -87,6 +87,7 @@ class PlayerInput:
 	var jump := false          # held
 	var cast := false          # casting the selected spell
 	var dig := false           # excavating (held, or a quick tap)
+	var decon := false         # deconstructing background tiles (Shift + right mouse)
 	var aim := Vector2.ZERO    # world position of the cursor
 
 class Mage extends Body:
@@ -343,6 +344,18 @@ func _apply_counts(m: Mage) -> void:
 	if all.size() < o + 64:
 		return
 	var cn := all.slice(o, o + 64)
+	_use_grid(m)
+	if m.local and cn[56] > 0:
+		# something loose is about to fall: dust trickles from it and the ground rumbles
+		var u: int = cn[57] & 0xFFFFFFFF
+		var dp := from_grid(Vector2((u & 1023) + 0.5, ((u >> 10) & 1023) + 0.5))
+		for k in mini(4, 1 + cn[56] / 15):
+			_particle(dp + Vector2(randf() - 0.5, randf() - 0.5) * 5.0, Vector2(randf() - 0.5, randf() - 0.5) * 0.15, 40 + randi() % 30, Color(0.62, 0.57, 0.5), false, 0.04)
+		if cn[56] > 20:
+			shake = maxf(shake, 1.2)
+			if _creak_t <= 0 and dp.distance_to(m.pos) < 70.0:
+				ui.toast("Something nearby creaks and shifts…", Color(0.85, 0.75, 0.6), 2.0)
+				_creak_t = 900
 	var total := 0
 	for t in Defs.NM:
 		if cn[t] > 0:
@@ -377,6 +390,7 @@ var _loot_t := 0
 var _chest_pending := false
 var _chest_rare := 0.15
 var _hint_t := 0
+var _creak_t := 0
 var _smash_warned := false
 
 func _loot_table() -> Array:
@@ -422,43 +436,28 @@ func _flush_loot() -> void:
 	ui.toast("Treasure! " + ", ".join(parts_txt), Color(1.0, 0.85, 0.3), 5.0)
 	_loot_acc.clear()
 
-## the treasure cells nearest the mage (in the collision grid), as one connected chest
-func _find_chest(radius: int) -> Array:
-	var pl := to_grid(player.pos)
-	var cx := int(pl.x)
-	var cy := int(pl.y)
-	var best := Vector2i(-1, -1)
-	var bd := 1e9
-	for j in range(cy - radius, cy + radius + 1):
-		for i in range(cx - radius, cx + radius + 1):
-			if gtype(i, j) == Defs.TREASURE:
-				var d := Vector2(i - pl.x, j - pl.y).length_squared()
-				if d < bd:
-					bd = d
-					best = Vector2i(i, j)
-	if best.x < 0:
+## The nearest chest to the local mage within 14 cells, as reported by the GPU's grid pass
+## (each chest cell knows which part of its chest it is, so this is the chest's centre).
+## Returns [world centre, distance squared] or [].
+func _nearest_chest() -> Array:
+	var all: PackedInt32Array = gpu.counts
+	var o := player.slot * 64 + 55
+	if all.size() <= o:
 		return []
-	var cells := [best]
-	var seen := {best: true}
-	var k := 0
-	while k < cells.size() and cells.size() < 40:
-		var c: Vector2i = cells[k]
-		k += 1
-		for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			var q: Vector2i = c + o
-			if not seen.has(q) and gtype(q.x, q.y) == Defs.TREASURE:
-				seen[q] = true
-				cells.append(q)
-	return cells
+	var u: int = all[o] & 0xFFFFFFFF
+	if u == 0:
+		return []
+	var d2 := 2047 - (u >> 20)
+	var ic := u & 1023
+	var jc := (u >> 10) & 1023
+	_use_grid(player)
+	return [from_grid(Vector2(ic + 0.5, jc + 0.5)), d2]
 
 func _try_open_chest() -> void:
-	var cells := _find_chest(12)
-	if cells.is_empty():
+	var nc := _nearest_chest()
+	if nc.is_empty() or int(nc[1]) > 144:
 		return
-	var sum := Vector2.ZERO
-	for c in cells:
-		sum += Vector2(c.x + 0.5, c.y + 0.5)
-	var centre: Vector2 = from_grid(sum / cells.size())
+	var centre: Vector2 = nc[0]
 	var place := region_name()
 	var ruin := place.begins_with("Ruin") or place.begins_with("Forgotten") or place.begins_with("Buried") \
 		or place.begins_with("Collapsed") or place.begins_with("Sunken")
@@ -520,10 +519,12 @@ func _rare_find(p: float) -> void:
 	save_game()
 
 func _check_chest_hint() -> void:
+	_creak_t -= 1
 	_hint_t -= 1
 	if _hint_t > 0 or frame % 20 != 0:
 		return
-	if not _find_chest(9).is_empty():
+	var nc := _nearest_chest()
+	if not nc.is_empty() and int(nc[1]) <= 81:
 		ui.toast("Press F to open the chest", Color(1.0, 0.9, 0.55), 2.5)
 		_hint_t = 900
 
@@ -734,7 +735,10 @@ func _read_local_input(m: Mage) -> void:
 	inp.jump = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
 	var can_act: bool = not ui.mouse_over_ui() and state == "play"
 	inp.cast = can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	inp.dig = can_act and (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0)
+	var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0
+	var shift := Input.is_key_pressed(KEY_SHIFT)
+	inp.dig = can_act and rmb and not shift
+	inp.decon = can_act and rmb and shift
 
 func _tick() -> void:
 	frame += 1
@@ -754,6 +758,8 @@ func _tick() -> void:
 				_cast(m, m.known[m.sel], m.input.aim)
 			if m.input.dig:
 				_excavate(m, m.input.aim)
+			if m.input.decon:
+				_deconstruct(m, m.input.aim)
 		if m.dig_tap > 0:
 			m.dig_tap -= 1
 	_use_grid(player)
@@ -975,6 +981,13 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
 	brushes.append([p, m.dig_r, 1, 0, m.tier, 0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
+
+## Shift + right mouse: take background tiles (a building's back walls, furniture, plants). It is how
+## you clear a wall on purpose; plain right-click never touches a building's walls.
+func _deconstruct(m: Mage, aim: Vector2) -> void:
+	var p := _reach(m, aim)
+	brushes.append([p, m.dig_r * 0.8, 8, 0, m.tier, 0, 0, m.slot])
+	lights.append([p, 10.0, Color(0.9, 0.6, 0.3)])
 
 func _conjure(m: Mage, aim: Vector2) -> void:
 	if m.mat <= 0 or m.inv[m.mat] <= 0:
@@ -1662,7 +1675,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 4            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 5            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

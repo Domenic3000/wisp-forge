@@ -40,6 +40,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	var mats := {}
 	var below := {}
 	var N: int = Defs.SH_N[0]
+	var boff: int = Defs.total_cells() * 4      # the background layer follows the cells
 	for j in int(info["h"]):
 		var row: int = int(info["y0"]) + j
 		if row < 0 or row >= Defs.SH_Y0[1]:
@@ -61,7 +62,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 						mats[Defs.NAMES[t]] = int(mats.get(Defs.NAMES[t], 0)) + 1
 						var key := Defs.NAMES[tb] if tb > 0 else "air"
 						below[key] = int(below.get(key, 0)) + 1
-			if t == Defs.TREASURE:
+			if (raw.decode_u32(boff + (row * N + col) * 4) & 255) == Defs.TREASURE:
 				tre += 1
 	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below}
 
@@ -150,13 +151,44 @@ func run() -> void:
 				var row := chest.y - 4 + cj
 				var col := posmod(chest.x + ci, Defs.SH_N[0])
 				var idx := (row * Defs.SH_N[0] + col) * 4
-				if (raw2.decode_u32(idx) & 255) == Defs.TREASURE:
+				var off0: int = Defs.total_cells() * 4
+				if (raw2.decode_u32(off0 + idx) & 255) == Defs.TREASURE:
 					left += 1
 				var off: int = Defs.total_cells() * 4
 				if (raw2.decode_u32(off + idx) & 255) == Defs.OPENCHEST:
 					opened += 1
 		_ok("F opens a chest and gives loot", left == 0 and after > before, "%d chest cells left, satchel %d -> %d" % [left, before, after])
 		_ok("an opened chest stays behind", opened >= 20, "%d opened-chest cells" % opened)
+		# right-click leaves a building's back wall alone; Shift + right-click (deconstruct) takes it
+		var boff: int = Defs.total_cells() * 4
+		var wall := Vector2i(-1, -1)
+		for dj in range(6, 14):
+			for di in range(-6, 12):
+				var col2 := posmod(chest.x + di, Defs.SH_N[0])
+				var row2 := chest.y - dj
+				var k2 := (row2 * Defs.SH_N[0] + col2) * 4
+				if (raw2.decode_u32(k2) & 255) == 0 and (raw2.decode_u32(boff + k2) & 0x4000) != 0:
+					wall = Vector2i(col2, row2)
+					break
+			if wall.x >= 0:
+				break
+		if wall.x >= 0:
+			var wp := _cell_pos(wall.x, wall.y)
+			for f in 20:
+				g.brushes.append([wp, 2.5, 1, 0, 4, 0, 0, 0])
+				await _frames(1)
+			var r3: PackedByteArray = g.gpu.read_world()
+			var kk := (wall.y * Defs.SH_N[0] + wall.x) * 4
+			var still_wall := (r3.decode_u32(boff + kk) & 0x4000) != 0
+			for f in 30:
+				g.brushes.append([wp, 2.5, 8, 0, 4, 0, 0, 0])
+				await _frames(1)
+			var r4: PackedByteArray = g.gpu.read_world()
+			var gone := (r4.decode_u32(boff + kk) & 255) == 0
+			_ok("right-click leaves a building's back wall alone", still_wall, "")
+			_ok("Shift + right-click deconstructs it", gone, "")
+		else:
+			_ok("right-click leaves a building's back wall alone", false, "no back wall found near the chest")
 	else:
 		_ok("F opens a chest and gives loot", false, "no intact chest found")
 
@@ -185,15 +217,17 @@ func run() -> void:
 	g.brushes.append([mid, 1.8, 5, Defs.STONE, 0, 9, 0])
 	await _frames(2)
 	var placed: bool = g.type_at(mid) == Defs.STONE
-	await _frames(60)
+	await _frames(30)
+	var creaking: bool = g.type_at(mid) == Defs.STONE and g.player.slot == 0 and g.gpu.counts[56] > 0
+	await _frames(90)
 	var still: bool = g.type_at(mid) == Defs.STONE
-	_ok("a block conjured in mid-air falls", placed and not still, "placed %s, still there after 1 s %s" % [placed, still])
+	_ok("a loose block creaks first, then falls", placed and creaking and not still, "placed %s, creaking at 0.5 s %s, still there at 2 s %s" % [placed, creaking, still])
 	g.test_god = false
 	g.hp = g.max_hp
 	g.iframes = 0
 	var hp0: float = g.hp
 	g.brushes.append([g.player.pos + up * 20.0, 1.8, 5, Defs.STONE, 0, 8, 0])
-	await _frames(90)
+	await _frames(150)
 	_ok("falling rock hurts the mage", g.hp < hp0, "health %.0f -> %.0f" % [hp0, g.hp])
 	g.test_god = true
 	g.hp = g.max_hp
@@ -213,7 +247,7 @@ func run() -> void:
 	g._use_grid(m2)
 	var placed2: bool = g.type_at(sp2) == Defs.STONE
 	g._use_grid(g.player)
-	await _frames(60)
+	await _frames(120)
 	g._use_grid(m2)
 	var still2: bool = g.type_at(sp2) == Defs.STONE
 	g._use_grid(g.player)

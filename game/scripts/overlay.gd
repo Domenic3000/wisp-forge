@@ -90,8 +90,10 @@ func _draw() -> void:
 	if game.state == "play" and (rmb or game.known[game.sel] == "conjure"):
 		var aim2: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		var rp: Vector2 = game.world_to_screen(game._reach(game.player, aim2))
-		var r: float = (game.dig_r if rmb else 1.6) / z
+		var r: float = ((game.dig_r * (0.8 if Input.is_key_pressed(KEY_SHIFT) else 1.0)) if rmb else 1.6) / z
 		var col := Color(0.55, 1.0, 0.67, 0.55) if rmb else Color(1.0, 0.94, 0.63, 0.55)
+		if rmb and Input.is_key_pressed(KEY_SHIFT):
+			col = Color(1.0, 0.6, 0.3, 0.6)   # deconstructing background tiles
 		for a in 24:
 			var t := a / 24.0 * TAU
 			draw_rect(Rect2((rp + Vector2(cos(t), sin(t)) * (r + 0.5)).round(), Vector2.ONE), col)
