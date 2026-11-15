@@ -68,23 +68,25 @@ vec3 torchColor(ivec2 w) {
 }
 // a chest is 6 x 4 cells; each cell's variant says which part it is (column 0-5, row 0-3)
 vec3 chestColor(uint v, bool open) {
-	int ci = int(v & 7u), cj = int((v >> 3) & 3u);
+	// an 8 x 6 chest: rows 0-1 the lid, row 2 the gold band with the lock, rows 3-5 the body
+	int ci = int(v & 7u), cj = int((v >> 3) & 7u);
 	vec3 wood = vec3(0.47, 0.29, 0.15), dark = vec3(0.30, 0.18, 0.09);
 	vec3 gold = ramp(M_TREASURE, 2), bright = ramp(M_TREASURE, 3);
-	bool edge = ci == 0 || ci == 5;
+	bool edge = ci == 0 || ci == 7;
 	if (open) {
-		if (cj == 0) return edge ? gold * 0.8 : dark;                 // the lid, thrown back
-		if (cj == 1) return edge ? gold : vec3(0.06, 0.04, 0.03);       // empty inside
+		if (cj == 0) return edge ? gold * 0.8 : dark * 0.9;           // the lid, thrown back
+		if (cj <= 2) return edge ? gold : vec3(0.06, 0.04, 0.03);       // empty inside
 		if (edge) return gold * 0.9;
-		return cj == 3 ? dark : wood;
+		return cj == 5 ? dark : wood;
 	}
-	if (cj == 0) return edge ? gold : (ci % 2 == 0 ? wood * 1.15 : wood * 1.05);
-	if (cj == 1) {
-		if (ci == 2 || ci == 3) return ci == 2 ? bright : vec3(0.12, 0.08, 0.04);   // the lock
+	if (cj == 0) return edge ? gold : wood * 1.2;
+	if (cj == 1) return edge ? gold : (ci % 2 == 0 ? wood * 1.1 : wood * 1.0);
+	if (cj == 2) {
+		if (ci == 3 || ci == 4) return ci == 3 ? bright : vec3(0.12, 0.08, 0.04);   // the lock
 		return gold;
 	}
-	if (edge) return gold * 0.9;
-	return cj == 3 ? dark : wood;
+	if (edge || ci == 3 || ci == 4) return gold * (cj == 3 && (ci == 3 || ci == 4) ? 1.05 : 0.9);
+	return cj == 5 ? dark : wood;
 }
 bool isMasonry(uint t) {
 	return t == M_BRICK || t == M_MASONRY || t == M_MOSSBLOCK || t == M_SANDSTONE || t == M_TILE || t == M_TREASURE;

@@ -6,8 +6,37 @@ var game
 var tex := {}
 
 func _ready() -> void:
-	for k in ["mage", "slime", "bat1", "bat2", "imp", "golem", "skeleton", "mimic"]:
+	for k in Defs.SPRITES:
 		tex[k] = Defs.sprite_texture(k)
+
+# which animation frame a mage shows
+func _mage_frame(m) -> String:
+	if game.frame - m.cast_frame < 10:
+		return "mage_cast"
+	if not m.on_ground and not m.in_liquid:
+		if m.floating:
+			return "mage_float"
+		return "mage_jump" if m.vy < 0.0 else "mage_fall"
+	if absf(m.vx) > 0.15:
+		return "mage_walk%d" % (int(m.anim) % 4 + 1)
+	return "mage_idle2" if int(game.frame / 40) % 3 == 2 else "mage"
+
+# two-frame foes: slimes squash as they hop, imps and bats flap, skeletons and golems step, mimics bite
+func _foe_frame(e) -> String:
+	var key: String = e.d["spr"]
+	match e.type:
+		"bat":
+			return "bat1" if int(e.phase * 2.0) % 2 == 0 else "bat2"
+		"slime":
+			return "slime2" if (not e.on_ground or int(e.anim * 3.0) % 2 == 1) else "slime"
+		"imp":
+			return "imp2" if int(e.phase * 3.0) % 2 == 1 else "imp"
+		"mimic":
+			return "mimic2" if (not e.on_ground or int(game.frame / 6) % 2 == 1) else "mimic"
+		_:
+			if tex.has(key + "2") and absf(e.vx) > 0.1 and int(e.anim) % 2 == 1:
+				return key + "2"
+	return key
 
 func _lit(sp: Vector2) -> Color:
 	var c: Color = game.gpu.light_at(sp)
@@ -37,10 +66,7 @@ func _draw() -> void:
 	var z: float = game.zoom
 	# foes
 	for e in game.enemies:
-		var key: String = e.d["spr"]
-		if e.type == "bat":
-			key = "bat1" if int(e.phase * 2.0) % 2 == 0 else "bat2"
-		_sprite(key, e.pos, e.facing < 0, e.flash > 0, e.h)
+		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h)
 	# projectiles
 	for pr in game.projs:
 		var c: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
@@ -51,16 +77,16 @@ func _draw() -> void:
 	# the mage and staff
 	for m in game.players:
 		if m != game.player and not m.dead:
-			_sprite("mage", m.pos, m.facing < 0, false, m.h)
+			_sprite(_mage_frame(m), m.pos, m.facing < 0, false, m.h)
 	if not game.dead:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		if not blink:
-			_sprite("mage", game.player.pos, game.player.facing < 0, false, game.player.h)
+			_sprite(_mage_frame(game.player), game.player.pos, game.player.facing < 0, false, game.player.h)
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		var st: Array = game._staff(game.player, aim)
 		var hand: Vector2 = st[2]
 		var dir: Vector2 = st[1]
-		for s in 7:
+		for s in 10:
 			_px(hand + dir * s, Color8(120, 82, 44) * _lit(game.world_to_screen(hand)))
 		var sc: Color = Defs.SPELLS[game.known[game.sel]]["color"]
 		_px(st[0], sc)
@@ -90,7 +116,7 @@ func _draw() -> void:
 	if game.state == "play" and (rmb or game.known[game.sel] == "conjure"):
 		var aim2: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		var rp: Vector2 = game.world_to_screen(game._reach(game.player, aim2))
-		var r: float = ((game.dig_r * (0.8 if Input.is_key_pressed(KEY_SHIFT) else 1.0)) if rmb else 1.6) / z
+		var r: float = ((game.dig_r * (0.8 if Input.is_key_pressed(KEY_SHIFT) else 1.0)) if rmb else 2.6) / z
 		var col := Color(0.55, 1.0, 0.67, 0.55) if rmb else Color(1.0, 0.94, 0.63, 0.55)
 		if rmb and Input.is_key_pressed(KEY_SHIFT):
 			col = Color(1.0, 0.6, 0.3, 0.6)   # deconstructing background tiles

@@ -39,5 +39,7 @@ void main() {
 	if ((fl & 4) != 0 && waterR < 0.0) { waterR = RS0 - P.p[8 + 2 * bsel].x - 6.0; waterMat = float(M_LAVA); }
 
 	S.s[2 * i] = vec4(rs, float(bsel), deepR, magmaR);
-	S.s[2 * i + 1] = vec4(coreR, waterR, waterMat, 0.0);
+	// the two biomes this column sits between, and how far across the border it is, so the ground
+	// can blend their layers instead of switching at one column: (b0 * 16 + b1) + t * 0.9
+	S.s[2 * i + 1] = vec4(coreR, waterR, waterMat, float(b0 * 16 + b1) + t * 0.9);
 }

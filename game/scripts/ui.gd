@@ -298,7 +298,7 @@ func _build_settings() -> void:
 			"Low simulates and lights the world in fewer passes, with bigger pixels, for weaker graphics."],
 		["Dithering", "dither", [["Off", "off"], ["Subtle", "subtle"], ["Retro", "retro"]],
 			"Off draws clean colour bands like a SNES. Retro is the old checkerboard look."],
-		["Pixel size", "pixel", [["Auto", 0], ["2", 2], ["3", 3], ["4", 4], ["5", 5]],
+		["Pixel size", "pixel", [["Auto", 0], ["3", 3], ["4", 4], ["5", 5], ["6", 6]],
 			"How big each world pixel is on screen. Bigger shows less of the world, closer up."],
 	]
 	for row in rows:

@@ -41,17 +41,17 @@ void main() {
 			uint a8 = ci < 0 ? 0u : aux.a[ci];
 			bool fgChest = t == M_TREASURE;
 			if (fgChest || (a8 & 255u) == M_TREASURE) {
-				// this cell knows which part of its 6 x 4 chest it is: find the chest's centre
+				// this cell knows which part of its 8 x 6 chest it is: find the chest's centre
 				uint v = fgChest ? (full >> 8) & 255u : (a8 >> 16) & 255u;
-				float pi = float(v & 7u), pj = float((v >> 3) & 3u);
+				float pi = float(v & 7u), pj = float((v >> 3) & 7u);
 				// columns grow against the grid's x axis, rows grow along its y axis
-				float ic = float(i) + (pi - 2.5);
-				float jc = float(j) + (1.5 - pj);
+				float ic = float(i) + (pi - 3.5);
+				float jc = float(j) + (2.5 - pj);
 				uint d2 = uint(min(di * di + dj * dj, 4095.0));
 				atomicMax(counts.n[cb + 55u], ((4095u - d2) << 20) | (uint(clamp(jc, 0.0, 1023.0)) << 10) | uint(clamp(ic, 0.0, 1023.0)));
 			}
 		}
-		if (looseF && lifeF > 0u && lifeF < 128u && abs(di) <= 3.5 && abs(dj) <= 7.5) {
+		if (looseF && lifeF > 0u && lifeF < 128u && abs(di) <= 4.5 && abs(dj) <= 11.5) {
 			atomicAdd(counts.n[cb + 52u], 1u);
 			atomicMax(counts.n[cb + 53u], lifeF);
 		}

@@ -11,7 +11,7 @@ const Buildings := preload("res://scripts/buildings.gd")
 const Tests := preload("res://scripts/tests.gd")
 
 const DAY_LEN := 60.0 * 7.0 * 60.0   # frames per day (7 minutes)
-const REACH := 42.0
+const REACH := 64.0
 var GS := 384
 var HALF := 192.0
 
@@ -22,6 +22,7 @@ class Body:
 	var w := 5.0
 	var h := 12.0
 	var step_h := 3
+	var anim := 0.0            # walk / animation phase
 	var on_ground := false
 	var in_liquid := false
 	var hit_wall := false
@@ -111,7 +112,7 @@ class Mage extends Body:
 	var items := {}
 	var known := ["spark", "conjure"]
 	var tier := 1
-	var dig_r := 4.5
+	var dig_r := 7.5
 	var heat_ward := false
 	var iframes := 0
 	var air_time := 0
@@ -125,9 +126,12 @@ class Mage extends Body:
 	var jump_held := false
 	var ground_t := 99         # frames since standing on something
 	var jump_buf := 0          # frames a jump press is remembered
+	var cast_frame := -100     # when the last spell was cast (for the cast pose)
+	var floating := false      # levitating (for the float pose)
 	func _init() -> void:
-		h = 10.0
-		w = 5.0
+		h = 17.0
+		w = 7.0
+		step_h = 5
 
 var player := Mage.new()
 var players: Array = [player]
@@ -248,7 +252,8 @@ func _ready() -> void:
 
 func _layout() -> void:
 	var s := get_viewport().get_visible_rect().size
-	scale_px = maxi(2, int(round(s.y / 250.0)))
+	# a closer camera since the scale-up: ~216 world rows on a 1080p screen
+	scale_px = maxi(2, int(round(s.y / 220.0)))
 	if int(settings["pixel"]) > 0:
 		scale_px = int(settings["pixel"])
 	elif settings["quality"] == "low":
@@ -451,7 +456,7 @@ func _flush_loot() -> void:
 	ui.toast("Treasure! " + ", ".join(parts_txt), Color(1.0, 0.85, 0.3), 5.0)
 	_loot_acc.clear()
 
-## The nearest chest to the local mage within 14 cells, as reported by the GPU's grid pass
+## The nearest chest to the local mage within 44 cells, as reported by the GPU's grid pass
 ## (each chest cell knows which part of its chest it is, so this is the chest's centre).
 ## Returns [world centre, distance squared] or [].
 func _nearest_chest() -> Array:
@@ -478,7 +483,7 @@ func _try_open_chest() -> void:
 		or place.begins_with("Collapsed") or place.begins_with("Sunken")
 	if ruin and randf() < 0.15:
 		# not a chest at all
-		brushes.append([centre, 4.8, 7, 0, 0, 0, 0])
+		brushes.append([centre, 6.5, 7, 0, 0, 0, 0])
 		var m: Enemy = spawn_enemy("mimic", centre)
 		m.vy = -2.5
 		m.t = 20
@@ -492,7 +497,7 @@ func _try_open_chest() -> void:
 		_chest_rare = 0.4
 	elif "Watchtower" in place or "Mine" in place:
 		_chest_rare = 0.25
-	brushes.append([centre, 4.8, 7, 1, 0, 0, 0])
+	brushes.append([centre, 6.5, 7, 1, 0, 0, 0])
 	_chest_pending = true
 	for k in 14:
 		_particle(centre, Vector2(randf() - 0.5, -randf() * 1.2), 30 + randi() % 20, Color(1, 0.85, 0.35), true, 0.02)
@@ -540,7 +545,7 @@ func _check_chest_hint() -> void:
 	if _hint_t > 0 or frame % 20 != 0:
 		return
 	var nc := _nearest_chest()
-	if not nc.is_empty() and int(nc[1]) <= 81:
+	if not nc.is_empty() and int(nc[1]) <= 196:
 		ui.toast("Press F to open the chest", Color(1.0, 0.9, 0.55), 2.5)
 		_hint_t = 900
 
@@ -829,7 +834,7 @@ func _update_player(m: Mage) -> void:
 	var face := (aim - p.pos).dot(R)
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
-	var speed := 0.6 if p.in_liquid else 1.05
+	var speed := 0.9 if p.in_liquid else 1.5
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
 	var jump: bool = m.input.jump
 	if p.on_ground:
@@ -845,14 +850,15 @@ func _update_player(m: Mage) -> void:
 	if m.jump_buf > 0:
 		m.jump_buf -= 1
 		if (m.ground_t <= 6 or p.in_liquid) and p.vy > -1.0:
-			p.vy = -1.8 if p.in_liquid else (-3.55 if m.items.has("boots") else -3.0)
+			p.vy = -2.3 if p.in_liquid else (-4.6 if m.items.has("boots") else -3.9)
 			m.jump_buf = 0
 			m.ground_t = 99
 			m.air_time = 0
 	m.jump_held = jump
-	if jump and not p.on_ground and not p.in_liquid and m.air_time > 10 and m.mana > 0.5:
-		p.vy -= g + 0.2
-		p.vy = maxf(p.vy, -1.9)
+	m.floating = jump and not p.on_ground and not p.in_liquid and m.air_time > 10 and m.mana > 0.5
+	if m.floating:
+		p.vy -= g + 0.28
+		p.vy = maxf(p.vy, -2.5)
 		m.mana -= 0.55
 		if randf() < 0.6:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
@@ -865,8 +871,10 @@ func _update_player(m: Mage) -> void:
 		p.vy *= 0.75 if visc else 0.9
 	else:
 		p.vy += g
-	p.vy = minf(p.vy, 4.5)
+	p.vy = minf(p.vy, 6.0)
 	move_body(p)
+	if p.on_ground:
+		p.anim += absf(p.vx) * 0.13
 	# hazards
 	var l := to_grid(p.pos)
 	var bx := l.x - p.w * 0.5
@@ -934,16 +942,17 @@ func revive() -> void:
 # =============================================================== spells ===
 func _staff(m: Mage, aim: Vector2) -> Array:
 	var a := atan2(m.pos.y, m.pos.x)
-	var hand := m.pos + basis_r(a) * (m.facing * 2.0) + basis_d(a) * 1.0
+	var hand := m.pos + basis_r(a) * (m.facing * 5.0) + basis_d(a) * 0.5
 	var dir := (aim - hand).normalized()
 	if dir == Vector2.ZERO:
 		dir = basis_r(a)
-	return [hand + dir * 7.0, dir, hand]
+	return [hand + dir * 10.0, dir, hand]
 
 func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	var s: Dictionary = Defs.SPELLS[id]
 	if m.cast_cd > 0 or m.mana < float(s["mana"]):
 		return
+	m.cast_frame = frame
 	if id == "conjure":
 		_conjure(m, aim)
 		m.cast_cd = s["cd"]
@@ -1012,9 +1021,9 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 	if m.mat <= 0 or m.inv[m.mat] <= 0:
 		return
 	var p := _reach(m, aim)
-	var budget := mini(m.inv[m.mat], 6)
+	var budget := mini(m.inv[m.mat], 14)
 	m.pending_place = budget
-	brushes.append([p, 1.6, 5, m.mat, 0, budget, 4.5, m.slot])
+	brushes.append([p, 2.6, 5, m.mat, 0, budget, 9.0, m.slot])
 
 func _update_projectiles() -> void:
 	for k in range(projs.size() - 1, -1, -1):
@@ -1085,19 +1094,19 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb, -0.6)
 			elif hit:
-				brushes.append([p, 1.6, 6, 0, tier, 0, 0])
+				brushes.append([p, 2.4, 6, 0, tier, 0, 0])
 		"fireball":
-			_explode(p, 7.0, maxi(1, tier), 1, 38.0)
+			_explode(p, 10.0, maxi(1, tier), 1, 38.0)
 		"quake":
-			_explode(p, 15.0, mini(3, tier + 1), 2, 70.0)
+			_explode(p, 22.0, mini(3, tier + 1), 2, 70.0)
 		"starfall":
-			_explode(p, 12.0, maxi(2, tier), 1, 80.0)
+			_explode(p, 17.0, maxi(2, tier), 1, 80.0)
 		"tide":
-			brushes.append([p, 5.5, 3, Defs.WATER, 0, 0, 0])
+			brushes.append([p, 8.0, 3, Defs.WATER, 0, 0, 0])
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb * 2.0, -1.0)
 		"frost":
-			brushes.append([p, 7.0, 4, 0, 0, 0, 0])
+			brushes.append([p, 10.0, 4, 0, 0, 0, 0])
 			for en in enemies:
 				if en.pos.distance_to(p) < 13.0:
 					en.slow = 200
@@ -1107,7 +1116,7 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 			if hit_m != null:
 				hurt(hit_m, float(pd["dmg"]) * (0.6 if hit_m.heat_ward else 1.0), Vector2(signf(randf() - 0.5) * 1.5, -1.0), true)
 			else:
-				brushes.append([p, 1.2, 3, Defs.FIRE, 0, 0, 0])
+				brushes.append([p, 1.8, 3, Defs.FIRE, 0, 0, 0])
 	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else Color(1, 0.35, 0.12)
 	for k in 10:
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.8) * 1.5, 14 + randi() % 10, col, true, 0.05)
@@ -1214,20 +1223,20 @@ func _update_enemies() -> void:
 				if e.on_ground:
 					e.vx *= 0.75
 					e.t -= 1
-					if e.t <= 0 and dist < 160:
-						e.vx = signf(dx) * (1.0 + randf() * 0.6) * slow_f
-						e.vy = -2.3 - randf() * 0.8
+					if e.t <= 0 and dist < 200:
+						e.vx = signf(dx) * (1.3 + randf() * 0.8) * slow_f
+						e.vy = -3.0 - randf() * 1.0
 						e.t = 45 + randf() * 50
 				e.vy += g * 0.3 if e.in_liquid else g
 				if e.in_liquid:
 					e.vy *= 0.9
 			"skeleton":
 				# walks toward you once it notices you, hops over steps and rubble
-				if dist < 170 and not tgt.dead:
+				if dist < 210 and not tgt.dead:
 					if e.on_ground:
-						e.vx += (signf(dx) * 0.62 * slow_f - e.vx) * 0.2
+						e.vx += (signf(dx) * 0.85 * slow_f - e.vx) * 0.2
 						if e.hit_wall:
-							e.vy = -2.7
+							e.vy = -3.5
 				elif e.on_ground:
 					e.vx *= 0.8
 				e.vy += g * 0.3 if e.in_liquid else g
@@ -1236,8 +1245,8 @@ func _update_enemies() -> void:
 					e.vx *= 0.7
 					e.t -= 1
 					if e.t <= 0 and not tgt.dead:
-						e.vx = signf(dx) * (1.5 + randf() * 0.6) * slow_f
-						e.vy = -2.9 - randf() * 0.6
+						e.vx = signf(dx) * (1.9 + randf() * 0.8) * slow_f
+						e.vy = -3.7 - randf() * 0.8
 						e.t = 28 + randf() * 25
 				e.vy += g
 			"bat":
@@ -1248,7 +1257,7 @@ func _update_enemies() -> void:
 				else:
 					e.vx += (randf() - 0.5) * 0.1
 					e.vy += (randf() - 0.5) * 0.1
-				var sp := 1.25 * slow_f
+				var sp := 1.6 * slow_f
 				e.vx = clampf(e.vx, -sp, sp)
 				e.vy = clampf(e.vy, -sp, sp)
 				if e.hit_wall:
@@ -1258,11 +1267,11 @@ func _update_enemies() -> void:
 				var ax := signf(dx) if dist > 45 else -signf(dx)
 				e.vx += ax * 0.04
 				e.vy += signf(dy - 20.0 + sin(e.phase) * 10.0) * 0.04
-				var sp2 := 0.75 * slow_f
+				var sp2 := 1.0 * slow_f
 				e.vx = clampf(e.vx, -sp2, sp2)
 				e.vy = clampf(e.vy, -sp2, sp2)
 				e.shoot_t -= 1
-				if e.shoot_t <= 0 and dist < 150 and not tgt.dead:
+				if e.shoot_t <= 0 and dist < 190 and not tgt.dead:
 					_spawn_proj("efire", e.pos, (player.pos - e.pos).normalized() * 1.7, "enemy")
 					e.shoot_t = 140 + randf() * 60
 			"golem":
@@ -1284,8 +1293,8 @@ func _update_enemies() -> void:
 							_spawn_proj("efire", e.pos, to.rotated(ang) * 1.9, "enemy")
 						e.shoot_t = 110 if enraged else 170
 					if e.t <= 0 and e.on_ground:
-						e.vy = -4.2
-						e.vx = signf(dx) * 1.6
+						e.vy = -5.2
+						e.vx = signf(dx) * 2.0
 						e.t = 160 if enraged else 260
 						e.leaping = true
 					if e.leaping and e.on_ground and e.vy == 0:
@@ -1297,9 +1306,10 @@ func _update_enemies() -> void:
 				e.vy += g
 		if e.d["fly"]:
 			e.vy *= 0.98
-		elif e.vy > 4.5:
-			e.vy = 4.5
+		elif e.vy > 6.0:
+			e.vy = 6.0
 		move_body(e)
+		e.anim += absf(e.vx) * 0.2 + 0.02
 		if e.type != "golem" and e.type != "imp":
 			var l2 := to_grid(e.pos)
 			if box_count(l2.x - e.w * 0.5, l2.y - e.h * 0.5, e.w, e.h, Defs.LAVA) > 0:
@@ -1405,7 +1415,7 @@ func _update_particles() -> void:
 func _update_wisp() -> void:
 	wisp_t += 0.05
 	var a := atan2(player.pos.y, player.pos.x)
-	var target := player.pos + basis_r(a) * (-player.facing * 7.0) - basis_d(a) * (10.0 + sin(wisp_t * 2.0) * 2.0)
+	var target := player.pos + basis_r(a) * (-player.facing * 11.0) - basis_d(a) * (17.0 + sin(wisp_t * 2.0) * 3.0)
 	wisp = wisp.lerp(target, 0.08)
 	if randf() < 0.3:
 		_particle(wisp + Vector2(randf(), randf()) * 2.0, Vector2(randf() - 0.5, randf() - 0.5) * 0.2, 20, Color8(120, 200, 255), true, -0.005)
@@ -1433,7 +1443,7 @@ func recipe_done(r: Dictionary) -> bool:
 		"tier2": return tier >= 2
 		"tier3": return tier >= 3
 		"tier4": return tier >= 4
-		"wide": return dig_r >= 7.0
+		"wide": return dig_r >= 11.0
 		"vital": return items.has("vital") or (max_hp >= 150 and not items.has("ring"))
 		"mana": return items.has("mana_crystal") or (max_mana >= 170 and not items.has("circlet"))
 		"ward": return heat_ward
@@ -1480,7 +1490,7 @@ func craft(r: Dictionary) -> bool:
 		"tier2": tier = 2
 		"tier3": tier = 3
 		"tier4": tier = 4
-		"wide": dig_r = 7.0
+		"wide": dig_r = 11.0
 		"vital":
 			max_hp += 50
 			hp = max_hp
@@ -1586,7 +1596,7 @@ func start_game(use_save: bool) -> void:
 		player.inv.fill(0)
 		known = ["spark", "conjure"]
 		tier = 1
-		dig_r = 4.5
+		dig_r = 7.5
 		max_hp = 100
 		max_mana = 100
 		mana_regen = 0.22
@@ -1620,7 +1630,7 @@ func _enter_planet(index: int) -> void:
 	spawn_angle = fposmod(best, TAU)
 	var boss_a := fposmod(spawn_angle + PI, TAU)
 	var mag: float = gpu.surf_at(boss_a).w
-	boss_info = Vector4(boss_a, mag - 4.0, 48.0, 20.0)
+	boss_info = Vector4(boss_a, mag - 6.0, 72.0, 30.0)
 	planet_state = {}
 	var loaded := _load_world(index)
 	if loaded and int(planet_state.get("gen", 1)) != GEN_VERSION:
@@ -1636,7 +1646,7 @@ func _enter_planet(index: int) -> void:
 		gpu.generate(spawn_angle, boss_info, builds.sites)
 		gpu.stamp(builds.structs, int(planet["seed"]))
 		# let the ruins fall into ruin: unsupported pieces drop and break before you arrive
-		gpu.settle(builds.settle, 0.0, 110)
+		gpu.settle(builds.settle, 0.0, 150)
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
 	enemies.clear()
@@ -1645,7 +1655,7 @@ func _enter_planet(index: int) -> void:
 	parts.clear()
 	var bd := Vector2(cos(boss_a), sin(boss_a))
 	if not planet_state.get("boss_dead", false):
-		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + 10.0))
+		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + 14.0))
 	_respawn()
 	if loaded and planet_state.has("player"):
 		var pp: Array = planet_state["player"]
@@ -1694,7 +1704,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 6            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 7            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -1766,7 +1776,9 @@ func _apply_save(s: Dictionary) -> void:
 	for k in s.get("known", ["spark", "conjure"]):
 		known.append(str(k))
 	tier = int(s.get("tier", 1))
-	dig_r = maxf(4.5, float(s.get("dig_r", 4.5)))
+	# saves from before the scale-up stored 4.5 / 7.0; the mage is bigger now (7.5 / 11)
+	var sd := float(s.get("dig_r", 7.5))
+	dig_r = 11.0 if sd >= 7.0 else 7.5
 	max_hp = float(s.get("max_hp", 100))
 	max_mana = float(s.get("max_mana", 100))
 	mana_regen = float(s.get("mana_regen", 0.22))

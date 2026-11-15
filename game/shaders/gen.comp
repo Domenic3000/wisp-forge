@@ -32,10 +32,11 @@ bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float entr = fbm(normalize(p) * RS0 / 34.0, SEED + 11, 1);
 	if (d < 12.0 && entr < 0.72) return false;
 	float df = clamp(d / max(rs - coreR, 1.0), 0.0, 1.0);
-	float n1 = fbm(p / 46.0, SEED + 10, 2);
-	if (abs(n1 - 0.5) < 0.017 + 0.014 * df) return true;
+	// tunnels and caverns sized for the 17-cell-tall mage (scaled up 1.4x)
+	float n1 = fbm(p / 62.0, SEED + 10, 2);
+	if (abs(n1 - 0.5) < 0.022 + 0.016 * df) return true;
 	if (d > 30.0) {
-		float n2 = fbm(p / 80.0, SEED + 12, 2);
+		float n2 = fbm(p / 110.0, SEED + 12, 2);
 		if (n2 > 0.675 - 0.07 * df) return true;
 	}
 	return false;
@@ -175,10 +176,21 @@ void main() {
 	float th = angleOf(p);
 	vec4 sa = surfA(th), sb = surfB(th);
 	int b = int(sa.y);
+	// near a biome border, each cell picks one of the two biomes with ragged noise, so the layers
+	// (topsoil, dirt, stone, underground biome) interfinger instead of meeting at a straight seam
+	{
+		float k = floor(sb.w);
+		float bt = clamp((sb.w - k) / 0.9, 0.0, 1.0);
+		int b0 = int(k) / 16, b1 = int(k) % 16;
+		if (b0 != b1) {
+			float rag = (fbm(p / 11.0, SEED + 61, 2) - 0.5) * 0.9 + (fbm(p / 47.0, SEED + 62, 2) - 0.5) * 0.6;
+			b = (bt + rag) < 0.5 ? b0 : b1;
+		}
+	}
 	float rs = sa.x;
 	vec4 B = biomeB(b);
 	int ug = int(B.w) & 15;
-	int floraType = int(B.w) >> 4;
+	int floraType = int(biomeB(int(sa.y)).w) >> 4;   // plants follow the column's biome (whole trees)
 	uint m = 0u;
 	uint bgm = 0u;   // background decoration (no collisions)
 

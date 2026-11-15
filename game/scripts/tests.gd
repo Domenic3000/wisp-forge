@@ -39,6 +39,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	var tre := 0
 	var mats := {}
 	var below := {}
+	var at := []
 	var N: int = Defs.SH_N[0]
 	var boff: int = Defs.total_cells() * 4      # the background layer follows the cells
 	for j in int(info["h"]):
@@ -53,18 +54,22 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 				solid += 1
 				# unsupported AND over open space (so it should have fallen); an unsupported block
 				# resting on something solid simply can't fall, which is fine
-				if ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.SH_Y0[1]:
+				# (a block already falling, life 1-127, is on its way down: that's fine too)
+				var lf := (c >> 16) & 255
+				if ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.SH_Y0[1] and not (lf > 0 and lf < 128):
 					var cb := raw.decode_u32(((row + 1) * N + col) * 4)
 					var tb := cb & 255
 					var kb: int = Defs.KIND[tb]
 					if tb == 0 or kb == Defs.K_GAS or kb == Defs.K_FIRE or kb == Defs.K_LIQUID:
 						loose += 1
+						if at.size() < 4:
+							at.append(Vector2i(i, j))
 						mats[Defs.NAMES[t]] = int(mats.get(Defs.NAMES[t], 0)) + 1
 						var key := Defs.NAMES[tb] if tb > 0 else "air"
 						below[key] = int(below.get(key, 0)) + 1
 			if t == Defs.TREASURE or (raw.decode_u32(boff + (row * N + col) * 4) & 255) == Defs.TREASURE:
 				tre += 1
-	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below}
+	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below, "at": at}
 
 func run() -> void:
 	var t_all := Time.get_ticks_msec()
@@ -106,7 +111,9 @@ func run() -> void:
 		var sc := _scan(raw, info)
 		loose_total += int(sc["loose"])
 		if int(sc["loose"]) > 0:
-			loose_where.append("%d in a %s structure %dx%d" % [sc["loose"], "ruined" if info["ruined"] else "intact", info["w"], info["h"]])
+			var a0: Vector2i = sc["at"][0]
+			var nm: String = b.label_at(_cell_pos(int(info["x0"]) + a0.x, int(info["y0"]) + a0.y))
+			loose_where.append("%d in a %s structure %dx%d (%s) at local %s" % [sc["loose"], "ruined" if info["ruined"] else "intact", info["w"], info["h"], nm, str(sc["at"])])
 			for k in sc["mats"]:
 				loose_mats[k] = int(loose_mats.get(k, 0)) + int(sc["mats"][k])
 			for k in sc["below"]:
@@ -117,7 +124,7 @@ func run() -> void:
 			worst = minf(worst, ratio)
 			if ratio >= 0.97:
 				intact_ok += 1
-			treasure_missing += maxi(0, info["chests"].size() * 24 - int(sc["treasure"]))
+			treasure_missing += maxi(0, info["chests"].size() * Defs.CHEST_W * Defs.CHEST_H - int(sc["treasure"]))
 	_ok("intact buildings stand after settling", intact_ok == intact, "%d of %d keep at least 97%% of their blocks, worst %.1f%%" % [intact_ok, intact, worst * 100.0])
 	_ok("intact buildings keep their chests", treasure_missing == 0, "%d chest cells missing" % treasure_missing)
 	_ok("nothing is left hanging after settling", loose_total == 0, "%d unsupported blocks over open space" % loose_total)
@@ -133,7 +140,7 @@ func run() -> void:
 			chest = info["chests"][0]
 			break
 	if chest.x >= 0:
-		_go(_cell_pos(chest.x - 4, chest.y - 7))
+		_go(_cell_pos(chest.x - 6, chest.y - 10))
 		await _frames(40)
 		var before := 0
 		for m in Defs.NM:
@@ -146,9 +153,9 @@ func run() -> void:
 		var raw2: PackedByteArray = g.gpu.read_world()
 		var left := 0
 		var opened := 0
-		for cj in 4:
-			for ci in 6:
-				var row := chest.y - 4 + cj
+		for cj in Defs.CHEST_H:
+			for ci in Defs.CHEST_W:
+				var row := chest.y - Defs.CHEST_H + cj
 				var col := posmod(chest.x + ci, Defs.SH_N[0])
 				var idx := (row * Defs.SH_N[0] + col) * 4
 				var off0: int = Defs.total_cells() * 4
@@ -158,12 +165,12 @@ func run() -> void:
 				if (raw2.decode_u32(off + idx) & 255) == Defs.OPENCHEST:
 					opened += 1
 		_ok("F opens a chest and gives loot", left == 0 and after > before, "%d chest cells left, satchel %d -> %d" % [left, before, after])
-		_ok("an opened chest stays behind", opened >= 20, "%d opened-chest cells" % opened)
+		_ok("an opened chest stays behind", opened >= Defs.CHEST_W * Defs.CHEST_H - 6, "%d opened-chest cells" % opened)
 		# right-click leaves a building's back wall alone; Shift + right-click (deconstruct) takes it
 		var boff: int = Defs.total_cells() * 4
 		var wall := Vector2i(-1, -1)
-		for dj in range(6, 14):
-			for di in range(-6, 12):
+		for dj in range(8, 20):
+			for di in range(-8, 16):
 				var col2 := posmod(chest.x + di, Defs.SH_N[0])
 				var row2 := chest.y - dj
 				var k2 := (row2 * Defs.SH_N[0] + col2) * 4
@@ -202,10 +209,10 @@ func run() -> void:
 				chest2 = info["chests"][0]
 				break
 	if chest2.x >= 0:
-		_go(_cell_pos(chest2.x - 8, chest2.y - 7))
+		_go(_cell_pos(chest2.x - 12, chest2.y - 10))
 		await _frames(30)
 		for f in 70:
-			for dx in [0, 2, 4, 6]:
+			for dx in [0, 2, 4, 6, 8]:
 				# owner slot 3 (nobody): digging next to a chest would otherwise open it
 				g.brushes.append([_cell_pos(chest2.x + dx, chest2.y + 2), 3.2, 1, 0, 4, 0, 0, 3])
 			await _frames(1)
@@ -213,15 +220,15 @@ func run() -> void:
 		var r5: PackedByteArray = g.gpu.read_world()
 		var at_home := 0
 		var below := 0
-		for cj in range(-4, 16):
-			for ci in 6:
+		for cj in range(-Defs.CHEST_H, 20):
+			for ci in Defs.CHEST_W:
 				var k5 := ((chest2.y + cj) * Defs.SH_N[0] + posmod(chest2.x + ci, Defs.SH_N[0])) * 4
 				if (r5.decode_u32(k5) & 255) == Defs.TREASURE:
 					if cj < 0:
 						at_home += 1
 					else:
 						below += 1
-		_ok("a chest falls when its floor is dug out", at_home < 24 and below > 0, "%d chest cells still in place, %d fell below" % [at_home, below])
+		_ok("a chest falls when its floor is dug out", at_home < Defs.CHEST_W * Defs.CHEST_H and below > 0, "%d chest cells still in place, %d fell below" % [at_home, below])
 
 	# ---- guards wake up when you come near ----
 	if b.guards.size() > 0:
@@ -248,11 +255,20 @@ func run() -> void:
 	g.brushes.append([mid, 1.8, 5, Defs.STONE, 0, 9, 0])
 	await _frames(2)
 	var placed: bool = g.type_at(mid) == Defs.STONE
-	await _frames(30)
-	var creaking: bool = g.type_at(mid) == Defs.STONE and g.player.slot == 0 and g.gpu.counts[56] > 0
-	await _frames(90)
+	# watch it frame by frame: it should creak while it is still in place, then drop
+	var creaking := false
+	var gone_at := -1
+	var max_creak := 0
+	for f in 120:
+		await _frames(1)
+		var here: bool = g.type_at(mid) == Defs.STONE
+		max_creak = maxi(max_creak, g.gpu.counts[56])
+		if here and g.gpu.counts[56] > 0:
+			creaking = true
+		if not here and gone_at < 0:
+			gone_at = f
 	var still: bool = g.type_at(mid) == Defs.STONE
-	_ok("a loose block creaks first, then falls", placed and creaking and not still, "placed %s, creaking at 0.5 s %s, still there at 2 s %s" % [placed, creaking, still])
+	_ok("a loose block creaks first, then falls", placed and creaking and not still, "placed %s, creaked %s (max %d cells), left its spot at frame %d" % [placed, creaking, max_creak, gone_at])
 	g.test_god = false
 	g.hp = g.max_hp
 	g.iframes = 0
