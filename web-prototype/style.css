@@ -1,0 +1,81 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #05060c; color: #e8ecff;
+  font-family: "Consolas", "Lucida Console", "Courier New", monospace; font-size: 13px; user-select: none; }
+canvas#game { position: fixed; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; cursor: none; }
+.hidden { display: none !important; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#hud > * { pointer-events: auto; }
+#bars { position: absolute; left: 14px; top: 12px; width: 240px; pointer-events: none !important; }
+.bar { position: relative; height: 16px; margin-bottom: 5px; background: #12131f; border: 2px solid #2a2c44; box-shadow: 0 2px 0 #0008; }
+.bar > div { height: 100%; transition: width .12s linear; }
+.bar span { position: absolute; inset: 0; text-align: center; line-height: 12px; font-size: 11px; text-shadow: 1px 1px 0 #000; }
+.bar.hp > div { background: linear-gradient(#ff6b6b, #c22d3a); }
+.bar.mp > div { background: linear-gradient(#8ab4ff, #3a5bd9); }
+.bar.br > div { background: linear-gradient(#bff, #4ac); }
+.bar.br { display: none; height: 10px; }
+.bar.br span { line-height: 6px; font-size: 9px; }
+#info { position: absolute; left: 14px; top: 76px; line-height: 1.5; text-shadow: 1px 1px 0 #000, 0 0 4px #000; pointer-events: none !important; }
+#info b { color: #ffd23a; }
+
+#hotbar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; gap: 6px; }
+.slot { position: relative; width: 92px; padding: 6px 6px 5px; background: #11131fdd; border: 2px solid #2a2c44; cursor: pointer; }
+.slot.sel { border-color: #ffd23a; box-shadow: 0 0 10px #ffd23a55; }
+.slot .key { position: absolute; top: 2px; right: 5px; font-size: 10px; color: #889; }
+.slot .gem { display: inline-block; width: 10px; height: 10px; margin-right: 5px; box-shadow: 0 0 6px currentColor; vertical-align: middle; }
+.slot .nm { font-size: 11px; vertical-align: middle; }
+.slot .mc { display: block; font-size: 10px; color: #8a90b8; margin-top: 3px; }
+
+#satchelWrap { position: absolute; right: 12px; top: 12px; width: 190px; background: #0d0f19cc; border: 2px solid #2a2c44; }
+.ph { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; background: #1a1d30; color: #ffd23a; font-weight: bold; letter-spacing: 1px; }
+#satchel { max-height: 55vh; overflow-y: auto; padding: 3px; }
+.mat { display: flex; align-items: center; gap: 6px; padding: 2px 5px; cursor: pointer; }
+.mat:hover { background: #ffffff10; }
+.mat.sel { background: #ffd23a22; outline: 1px solid #ffd23a88; }
+.sw { display: inline-block; width: 10px; height: 10px; border: 1px solid #0008; flex: none; }
+.mn { flex: 1; font-size: 11px; }
+.mq { font-size: 11px; color: #cfd6ff; }
+.empty { padding: 8px; color: #778; font-size: 11px; }
+
+#toasts { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none !important; }
+.toast { padding: 3px 10px; background: #0b0c16cc; border: 1px solid #2a2c44; text-shadow: 1px 1px 0 #000; transition: opacity .6s; }
+.toast.fade { opacity: 0; }
+
+#bossbar { display: none; position: absolute; left: 50%; top: 120px; transform: translateX(-50%); width: 420px; text-align: center; pointer-events: none !important; }
+#bossName { color: #ffb14a; margin-bottom: 4px; letter-spacing: 2px; text-shadow: 0 0 6px #f60; }
+.bar.boss > div { background: linear-gradient(#ffb14a, #c2401a); }
+#digwarn { display: none; position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%); color: #ffb0a0; text-shadow: 1px 1px 0 #000; pointer-events: none !important; }
+#help { position: absolute; left: 14px; bottom: 8px; font-size: 10px; color: #8088aa; text-shadow: 1px 1px 0 #000; max-width: 30vw; pointer-events: none !important; }
+
+.panel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(860px, 94vw); max-height: 86vh; overflow: hidden; display: flex; flex-direction: column; background: #0c0e18f2; border: 3px solid #3a3d60; box-shadow: 0 0 0 3px #0008, 0 0 40px #5b3fa855; }
+#forgeList { overflow-y: auto; padding: 4px 14px 14px; }
+#forgeList h3 { margin: 14px 0 6px; color: #b8a6ff; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; }
+.recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.recipe { padding: 8px; background: #151829; border: 2px solid #262a44; display: flex; flex-direction: column; gap: 4px; }
+.recipe.ready { border-color: #4a7a4a; }
+.recipe.done { opacity: .5; }
+.recipe.locked { opacity: .65; }
+.rn { color: #ffe9a8; font-weight: bold; }
+.rd { color: #a8aed0; font-size: 11px; }
+.rc { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; }
+.cost.ok { color: #a6f0a6; }
+.cost.no { color: #f0a6a6; }
+.cost .sw { margin-right: 3px; vertical-align: -1px; }
+.tag { font-size: 11px; color: #ccb; }
+button { font: inherit; color: #1a1020; background: #ffd23a; border: none; padding: 5px 12px; cursor: pointer; box-shadow: 0 3px 0 #a07a10; }
+button:hover { filter: brightness(1.1); }
+button:disabled { background: #444760; color: #889; box-shadow: 0 3px 0 #22243a; cursor: default; }
+.ph button { padding: 3px 9px; font-size: 11px; }
+
+.screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center;
+  background: radial-gradient(ellipse at 50% 40%, #1b1640 0%, #07070f 70%); }
+#death { background: #05060cd0; }
+.logo { font-size: 64px; font-weight: bold; letter-spacing: 10px; color: #ffe9a8;
+  text-shadow: 4px 4px 0 #5b3fa8, 8px 8px 0 #1b1640, 0 0 30px #8ab4ff88; }
+.logo.small { font-size: 30px; letter-spacing: 4px; }
+.sub { color: #b8a6ff; letter-spacing: 1px; }
+.blurb { max-width: 560px; color: #a8aed0; line-height: 1.6; }
+.btns { display: flex; gap: 12px; margin-top: 6px; }
+.btns button { font-size: 15px; padding: 9px 22px; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 28px; margin-top: 10px; color: #8a90b8; font-size: 12px; text-align: left; }
+.controls b { color: #e8ecff; }

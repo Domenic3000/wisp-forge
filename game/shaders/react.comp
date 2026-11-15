@@ -1,0 +1,159 @@
+// Per-cell reactions: fire, burning, lava/water, melting, gas lifetimes, rain spawning.
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, rainRow, rainMat); rain rate = P.p[3].x
+#include "common"
+#include "world"
+#include "params"
+#include "surf_ro"
+#include "bglayer"
+layout(local_size_x = 16, local_size_y = 16) in;
+
+void setc(int i, uint c, uint t, uint life) { world.cells[i] = withFG(c, t, life); }
+
+// neighbour coordinates across shells: dir 0 up, 1 down, 2 left, 3 right
+ivec3 stepC(int s, int y, int x, int dir) {
+	int n = SH_N[s];
+	if (dir == 2) return ivec3(s, y, x == 0 ? n - 1 : x - 1);
+	if (dir == 3) return ivec3(s, y, x == n - 1 ? 0 : x + 1);
+	if (dir == 0) {
+		int yy = y - 1;
+		if (yy < 0) return ivec3(-1);
+		if (yy < SH_Y0[s]) return ivec3(s - 1, yy, x * 2);
+		return ivec3(s, yy, x);
+	}
+	int yy = y + 1;
+	if (yy >= ROWS) return ivec3(-1);
+	if (yy >= SH_Y0[s + 1]) return ivec3(s + 1, yy, x / 2);
+	return ivec3(s, yy, x);
+}
+uint cellC(ivec3 q) { return q.x < 0 ? 0u : world.cells[cellIdx(q.x, q.y, q.z)]; }
+float dayAt(int s, int y, int x) { return clamp(dot(normalize(cellCenter(s, y, x)), sunDir()) * 1.6 + 0.15, 0.0, 1.0); }
+int idxC(ivec3 q) { return q.x < 0 ? -1 : cellIdx(q.x, q.y, q.z); }
+// background support of a neighbour (31 = none)
+uint supAt(ivec3 q) {
+	if (q.x < 0) return 31u;
+	uint a = aux.a[cellIdx(q.x, q.y, q.z)];
+	return (a & 255u) != 0u ? min((a >> 8) & 63u, 31u) : 31u;
+}
+
+void main() {
+	int s = pc.a.x;
+	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	int k = int(gl_GlobalInvocationID.x);
+	if (y >= pc.a.z || k >= pc.b.x) return;
+	int x = wrapc(pc.a.w + k, SH_N[s]);
+	int i = cellIdx(s, y, x);
+	uint c = world.cells[i];
+	uint t = c & 255u;
+	uint fr = uint(pc.b.y);
+	float R = rnd3(uint(i), fr, 17u);
+
+	// ---- background objects need support: distance to solid ground through other background cells ----
+	uint ab = aux.a[i];
+	uint bgm = ab & 255u;
+	if (bgm != 0u && (ab & BG_WALL) == 0u && (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID)) {
+		ivec3 qU = stepC(s, y, x, 0), qD = stepC(s, y, x, 1), qL = stepC(s, y, x, 2), qR = stepC(s, y, x, 3);
+		uint cU = cellC(qU), cD = cellC(qD), cL = cellC(qL), cR = cellC(qR);
+		uint ns;
+		if (isBlock(cU & 255u) || isBlock(cD & 255u) || isBlock(cL & 255u) || isBlock(cR & 255u)) ns = 0u;
+		else {
+			uint mn = min(min(supAt(qU), supAt(qD)), min(supAt(qL), supAt(qR)));
+			ivec3 qUL = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 2), qUR = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 3);
+			ivec3 qDL = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 2), qDR = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 3);
+			mn = min(mn, min(min(supAt(qUL), supAt(qUR)), min(supAt(qDL), supAt(qDR))));
+			ns = min(mn + 1u, 31u);
+		}
+		if (ns != ((ab >> 8) & 63u)) { ab = (ab & ~0x3f00u) | (ns << 8); aux.a[i] = ab; }
+		if (ns >= 31u && rnd3(uint(i), fr, 41u) < 0.3) {
+			// nothing holds it up any more: it breaks loose as falling debris
+			aux.a[i] = 0u;
+			if (t == 0u || KIND[t] == K_GAS) world.cells[i] = BGDEBRIS[bgm] | (c & 0xff00u);
+			return;
+		}
+	}
+	if (t == 0u) {
+		if (y == pc.b.z && R < P.p[3].x) {
+			vec2 p = cellCenter(s, y, x);
+			if (length(p) > surfA(angleOf(p)).x + 3.0) { setc(i, c, uint(pc.b.w), 1u); return; }  // life 1 = fresh precipitation
+		}
+		// background plants and wooden walls catch fire from burning neighbours, then are gone
+		if (bgm != 0u && FUEL[bgm] > 0u) {
+			int nu0 = nbr(s, y, x, 0), nd0 = nbr(s, y, x, 1), nl0 = nbr(s, y, x, 2), nr0 = nbr(s, y, x, 3);
+			uint a0 = tAt(nu0), a1 = tAt(nd0), a2 = tAt(nl0), a3 = tAt(nr0);
+			bool hot = a0 == M_FIRE || a1 == M_FIRE || a2 == M_FIRE || a3 == M_FIRE;
+			bool lava = a0 == M_LAVA || a1 == M_LAVA || a2 == M_LAVA || a3 == M_LAVA;
+			if ((hot && R < IGN[bgm] * 1.5) || (lava && R < IGN[bgm] * 3.0)) {
+				if (bgm != M_TORCH) { world.cells[i] = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); aux.a[i] = 0u; }
+			}
+		}
+		return;
+	}
+	uint kd = KIND[t];
+	bool inert = kd == K_SOLID && FUEL[t] == 0u && t != M_ICE && t != M_FROST && t != M_GRASS && t != M_SAND;
+	if (inert) return;
+	uint life = (c >> 16) & 255u;
+	int nu = nbr(s, y, x, 0), nd = nbr(s, y, x, 1), nl = nbr(s, y, x, 2), nr = nbr(s, y, x, 3);
+	uint tu = tAt(nu), td = tAt(nd), tl = tAt(nl), tr = tAt(nr);
+	bool nWater = tu == M_WATER || td == M_WATER || tl == M_WATER || tr == M_WATER;
+	bool nLava = tu == M_LAVA || td == M_LAVA || tl == M_LAVA || tr == M_LAVA;
+	bool nFire = tu == M_FIRE || td == M_FIRE || tl == M_FIRE || tr == M_FIRE;
+
+	if (t == M_FIRE) {
+		if (nWater) { setc(i, c, M_STEAM, 30u); return; }
+		if (life <= 1u) {
+			float r2 = rnd3(uint(i), fr, 23u);
+			if (r2 < 0.3) setc(i, c, M_SMOKE, 40u + uint(r2 * 150.0));
+			else if (r2 < 0.34) setc(i, c, M_ASH, 0u);
+			else setc(i, c, 0u, 0u);
+			return;
+		}
+		setc(i, c, M_FIRE, life - 1u);
+		return;
+	}
+	if (FUEL[t] > 0u) {
+		if ((nFire && R < IGN[t]) || (nLava && R < IGN[t] * 2.0)) { setc(i, c, M_FIRE, FUEL[t]); return; }
+		if (t == M_GRASS && R < 0.01 && nu >= 0 && isBlock(tu) && tu != M_LEAF && tu != M_WOOD) setc(i, c, M_DIRT, 0u);
+		return;
+	}
+	if (kd == K_GAS) {
+		if (life <= 1u) {
+			if (t == M_STEAM && R < 0.3) setc(i, c, M_WATER, 0u); else setc(i, c, 0u, 0u);
+		} else setc(i, c, t, life - 1u);
+		return;
+	}
+	if (t == M_LAVA) {
+		if (nWater) setc(i, c, M_OBSIDIAN, 0u);
+		return;
+	}
+	if (t == M_WATER) {
+		if (nLava) { setc(i, c, M_STEAM, 60u + uint(R * 60.0)); return; }
+		bool nFrost = tu == M_FROST || td == M_FROST || tl == M_FROST || tr == M_FROST;
+		if (nFrost && R < 0.02) { setc(i, c, M_ICE, 0u); return; }
+		// thin puddles soak into soil
+		if (tu == 0u && (td == M_DIRT || td == M_GRASS || td == M_SAND) && R < 0.002) { setc(i, c, 0u, 0u); return; }
+		if (life == 1u) {
+			// rain water: merges into lakes instead of raising them forever, and dries up in the sun
+			if (td == M_WATER && R < 0.04) { setc(i, c, 0u, 0u); return; }
+			if (tu == 0u && R < 0.0025 * dayAt(s, y, x)) { setc(i, c, 0u, 0u); return; }
+		}
+		return;
+	}
+	if (t == M_SAND) { if (nLava && R < 0.003) setc(i, c, M_GLASS, 0u); return; }
+	if (t == M_ICE || t == M_SNOW) { if ((nLava || nFire) && R < 0.05) { setc(i, c, M_WATER, 0u); return; } }
+	if ((t == M_SNOW || t == M_ASH) && tu == 0u) {
+		// exposed snow melts in sunlight (slowly in cold biomes); ash slowly blows away
+		vec2 p = cellCenter(s, y, x);
+		int b = int(surfA(angleOf(p)).y);
+		bool cold = (int(P.p[9 + 2 * b].w) & 15) == 2;
+		float rate = t == M_SNOW ? (cold ? 0.00002 : 0.0007) * dayAt(s, y, x) : 0.0002;
+		if (R < rate) { setc(i, c, t == M_SNOW ? M_WATER : 0u, 1u); return; }
+		// fresh snowfall / ashfall packs down once a drift is deep
+		if (life == 1u && rnd3(uint(i), fr, 29u) < 0.03) {
+			ivec3 q = ivec3(s, y, x);
+			int depth = 0;
+			for (int k = 0; k < 6; k++) { q = stepC(q.x, q.y, q.z, 1); if (q.x < 0 || (cellC(q) & 255u) != t) break; depth++; }
+			if (depth >= 5) { setc(i, c, 0u, 0u); return; }
+		}
+	}
+	if (t == M_ICE || t == M_SNOW) return;
+	if (t == M_FROST) return;
+}

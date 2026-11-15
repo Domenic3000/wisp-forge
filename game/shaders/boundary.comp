@@ -1,0 +1,28 @@
+// Moves material across the seam between shell s (outer) and shell s+1 (inner,
+// half as many columns). Thread m owns outer cells 2m, 2m+1 and inner cell m.
+// pc.a = (outerShell, innerX0, count, 0)  pc.b = (frame, 0, 0, 0)
+#include "common"
+#include "world"
+layout(local_size_x = 64) in;
+
+void main() {
+	int s = pc.a.x;
+	int k = int(gl_GlobalInvocationID.x);
+	if (k >= pc.a.z) return;
+	int Ni = SH_N[s + 1];
+	int m = wrapc(pc.a.y + k, Ni);
+	int yo = SH_Y0[s + 1] - 1, yi = SH_Y0[s + 1];
+	int io0 = cellIdx(s, yo, 2 * m), io1 = cellIdx(s, yo, 2 * m + 1), ii = cellIdx(s + 1, yi, m);
+	uint o0 = world.cells[io0], o1 = world.cells[io1], in_ = world.cells[ii];
+	float r = rnd3(uint(ii), uint(pc.b.x), 9u);
+	bool first0 = r < 0.5;
+	uint t0 = o0 & 255u, t1 = o1 & 255u, ti = in_ & 255u;
+	bool f0 = (KIND[t0] == K_POWDER || KIND[t0] == K_LIQUID) && canDisp(t0, ti);
+	bool f1 = (KIND[t1] == K_POWDER || KIND[t1] == K_LIQUID) && canDisp(t1, ti);
+	if (f0 && (first0 || !f1)) { world.cells[io0] = in_; world.cells[ii] = o0; return; }
+	if (f1) { world.cells[io1] = in_; world.cells[ii] = o1; return; }
+	if (KIND[ti] == K_GAS) {
+		if (t0 == 0u && (first0 || t1 != 0u)) { world.cells[io0] = in_; world.cells[ii] = o0; return; }
+		if (t1 == 0u) { world.cells[io1] = in_; world.cells[ii] = o1; }
+	}
+}

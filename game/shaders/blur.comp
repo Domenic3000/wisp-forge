@@ -1,0 +1,19 @@
+// Separable 5-tap blur of the light grid. pc.a = (LW, LH, horizontal, 0)
+#include "common"
+layout(std430, set = 0, binding = 4) restrict readonly buffer Src { vec4 l[]; } src;
+layout(std430, set = 0, binding = 5) restrict writeonly buffer Dst { vec4 l[]; } dst;
+layout(local_size_x = 16, local_size_y = 16) in;
+
+void main() {
+	int LW = pc.a.x, LH = pc.a.y;
+	int i = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
+	if (i >= LW || j >= LH) return;
+	const float w[5] = float[5](1.0, 4.0, 6.0, 4.0, 1.0);
+	vec4 acc = vec4(0.0);
+	for (int k = -2; k <= 2; k++) {
+		int ii = pc.a.z == 1 ? clamp(i + k, 0, LW - 1) : i;
+		int jj = pc.a.z == 1 ? j : clamp(j + k, 0, LH - 1);
+		acc += src.l[jj * LW + ii] * w[k + 2];
+	}
+	dst.l[j * LW + i] = acc / 16.0;
+}

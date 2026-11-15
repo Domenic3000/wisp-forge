@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wisp Forge</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="bars">
+    <div class="bar hp"><div id="hpFill"></div><span id="hpText"></span></div>
+    <div class="bar mp"><div id="mpFill"></div><span id="mpText"></span></div>
+    <div class="bar br" id="breathBar"><div id="brFill"></div><span>Breath</span></div>
+  </div>
+  <div id="info"></div>
+  <div id="satchelWrap"><div class="ph">Satchel</div><div id="satchel"></div></div>
+  <div id="hotbar"></div>
+  <div id="toasts"></div>
+  <div id="bossbar"><div id="bossName"></div><div class="bar boss"><div id="bossFill"></div></div></div>
+  <div id="digwarn">Too hard for your staff. Forge a stronger focus (C)</div>
+  <div id="help">A/D move · W/Space jump, hold to levitate · LMB cast · RMB excavate · 1-6 / wheel spell · Q/E material · C forge</div>
+</div>
+
+<div id="forge" class="panel hidden">
+  <div class="ph"><span>✦ The Wisp Forge</span><button id="forgeClose">Close [C]</button></div>
+  <div id="forgeList"></div>
+</div>
+
+<div id="title" class="screen">
+  <div class="logo">WISP FORGE</div>
+  <div class="sub">A mage. A wisp. A planet made of every last grain.</div>
+  <div class="blurb">
+    Excavate the living world, gather its materials and forge them into spells.
+    Dig through glowing caverns and the Umbral Deep, survive the Molten Mantle,
+    defeat its guardian and harvest the planet core to open a gate to the next world.
+  </div>
+  <div class="btns"><button id="newBtn">New Journey</button><button id="continueBtn" style="display:none">Continue</button></div>
+  <div class="controls">
+    <div><b>A / D</b> move</div><div><b>W / Space</b> jump · hold in air to levitate (mana)</div>
+    <div><b>Right mouse</b> excavate &amp; collect</div><div><b>Left mouse</b> cast selected spell</div>
+    <div><b>1–6 / wheel</b> choose spell</div><div><b>Q / E</b> choose Conjure material</div>
+    <div><b>C</b> open the Wisp Forge (pauses)</div><div><b>F9</b> creative stock (testing)</div>
+  </div>
+</div>
+
+<div id="death" class="screen hidden">
+  <div class="logo small">Your light fades…</div>
+  <div class="sub">The wisp carries you back to the surface. A quarter of your satchel is lost.</div>
+  <div class="btns"><button id="reviveBtn">Rise again</button></div>
+</div>
+
+<div id="loading" class="screen hidden"><div class="logo small" id="loadingText">Forging a planet…</div></div>
+
+<script src="js/materials.js"></script>
+<script src="js/noise.js"></script>
+<script src="js/planets.js"></script>
+<script src="js/world.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/spells.js"></script>
+<script src="js/crafting.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

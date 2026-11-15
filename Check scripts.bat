@@ -1,0 +1,8 @@
+@echo off
+cd /d "%~dp0"
+for %%E in (engine\Godot_v4*_console.exe) do set GODOT=%%E
+echo checking > saves\check.txt
+for %%S in (defs gpu_world buildings main ui overlay) do (
+  echo ==== %%S >> saves\check.txt
+  "%GODOT%" --headless --path game --check-only --script res://scripts/%%S.gd >> saves\check.txt 2>&1
+)

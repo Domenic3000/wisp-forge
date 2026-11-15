@@ -1,0 +1,90 @@
+// Structural support. Runs a few times per frame over the simulated window.
+// Each solid stores a support distance S:
+//   * anchored natural terrain (never disturbed) is S = 0: it is part of the planet;
+//   * a block resting on something takes that thing's S unchanged (stacking straight up is free);
+//   * otherwise it takes the smallest S of its side / upper neighbours + 1 (reaching out, hanging).
+// A block whose S goes above its material's SPAN has nothing holding it: "topple" drops it.
+// A building's back wall (background, BG_WALL) is part of the structure too, the way a real
+// wall has depth: it carries the blocks in front of it (+1), rests on the wall below it (free),
+// and leans on its neighbours (+1). That is what holds up the wall above a doorway.
+// Every loop of support costs at least +1, so a piece that is cut free counts up until it falls.
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+#include "common"
+#include "world"
+#include "bglayer"
+layout(local_size_x = 16, local_size_y = 16) in;
+
+bool buoyant(uint t) { return t == M_ICE || t == M_WOOD || t == M_PLANK || t == M_LEAF; }
+uint fgS(uint c) { return (c & ST_ANCHOR) != 0u ? 0u : stOf(c); }
+bool solidC(uint c) { return KIND[c & 255u] == K_SOLID; }
+
+// support offered by the cell under a block (ST_MAX = none)
+uint fromBelow(int i, uint t) {
+	if (i < 0) return 0u;                    // resting on the planet's heart
+	uint cb = world.cells[i];
+	uint kb = KIND[cb & 255u];
+	if (kb == K_SOLID) return fgS(cb);
+	if (kb == K_POWDER) return 0u;            // settled sand, gravel, snow
+	if (kb == K_LIQUID && buoyant(t)) return 0u; // ice and wood float
+	return ST_MAX;
+}
+uint fromSide(int i) {
+	if (i < 0) return ST_MAX;
+	uint c = world.cells[i];
+	return solidC(c) ? fgS(c) + 1u : ST_MAX;
+}
+// support distance of a built back wall at cell i (ST_MAX = none)
+uint wallS(int i) {
+	if (i < 0) return ST_MAX;
+	uint a = aux.a[i];
+	if ((a & BG_WALL) == 0u || (a & 255u) == 0u) return ST_MAX;
+	return (a >> 8) & 63u;
+}
+
+void main() {
+	int s = pc.a.x;
+	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	int k = int(gl_GlobalInvocationID.x);
+	if (y >= pc.a.z || k >= pc.b.x) return;
+	int x = wrapc(pc.a.w + k, SH_N[s]);
+	int i = cellIdx(s, y, x);
+	uint c = world.cells[i];
+	uint t = c & 255u;
+	uint a = aux.a[i];
+	bool solid = KIND[t] == K_SOLID;
+	bool wall = (a & BG_WALL) != 0u && (a & 255u) != 0u;
+	if (!solid && !wall) return;
+	int iD = nbr(s, y, x, 1), iL = nbr(s, y, x, 2), iR = nbr(s, y, x, 3), iU = nbr(s, y, x, 0);
+	uint ws = wall ? (a >> 8) & 63u : ST_MAX;
+
+	if (solid && (c & ST_ANCHOR) == 0u) {
+		uint st = fromBelow(iD, t);
+		st = min(st, fromSide(iL));
+		st = min(st, fromSide(iR));
+		st = min(st, fromSide(iU));
+		st = min(st, ws + 1u);
+		st = min(st, ST_MAX);
+		if (st != stOf(c)) { c = withST(c, st); world.cells[i] = c; }
+	}
+	if (wall) {
+		uint bm = a & 255u;
+		uint n = solid ? fgS(c) + 1u : ST_MAX;
+		n = min(n, wallS(iD));
+		n = min(n, wallS(iL) + 1u);
+		n = min(n, wallS(iR) + 1u);
+		n = min(n, wallS(iU) + 1u);
+		// a back wall also leans on solid blocks around it
+		n = min(n, fromSide(iD));
+		n = min(n, fromSide(iL) + 1u);
+		n = min(n, fromSide(iR) + 1u);
+		n = min(n, fromSide(iU) + 1u);
+		n = min(n, ST_MAX);
+		if (n != ws) { a = (a & ~0x3f00u) | (n << 8); aux.a[i] = a; }
+		if (n > SPAN[bm] && rnd3(uint(i), uint(pc.b.y), 77u) < 0.1) {
+			// nothing holds this piece of wall: it crumbles
+			aux.a[i] = 0u;
+			uint kc = KIND[t];
+			if (t == 0u || kc == K_GAS) world.cells[i] = BGDEBRIS[bm] | (c & 0xff00u);
+		}
+	}
+}

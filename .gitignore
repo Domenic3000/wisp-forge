@@ -1,0 +1,10 @@
+# Godot engine binaries (too large for GitHub; see engine/README.md)
+engine/*.exe
+engine/*.zip
+# player saves and test reports
+saves/
+# Godot editor cache
+game/.godot/
+*.tmp
+# folders other tools drop in here
+Claude's outputs/

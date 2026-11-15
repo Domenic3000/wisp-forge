@@ -1,0 +1,7 @@
+// ---- binding 2: surface table, two vec4 per shell-0 column ----
+// A = (surfaceR, biome, deepR, magmaR)   B = (coreR, waterlineR, waterMat, 0)
+layout(std430, set = 0, binding = 2) restrict readonly buffer Surf { vec4 s[]; } S;
+
+int surfCol(float th) { return min(int(th / TAU * float(SH_N[0])), SH_N[0] - 1); }
+vec4 surfA(float th) { return S.s[2 * surfCol(th)]; }
+vec4 surfB(float th) { return S.s[2 * surfCol(th) + 1]; }

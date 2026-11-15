@@ -1,0 +1,79 @@
+// Coarse light grid: sunlight (local to each point on the round planet),
+// glow from emissive materials, and point lights (wisp, spells, foes).
+// pc.a = (LW, LH, LS, 0)
+#include "common"
+#include "world"
+#include "params"
+#include "surf_ro"
+#include "bglayer"
+layout(std430, set = 0, binding = 4) restrict writeonly buffer LightOut { vec4 l[]; } lo;
+layout(local_size_x = 16, local_size_y = 16) in;
+
+bool blockAt(vec2 p) { return isBlock(cellTypeAt(p)); }
+
+void main() {
+	int LW = pc.a.x, LH = pc.a.y, LS = pc.a.z;
+	int i = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
+	if (i >= LW || j >= LH) return;
+	vec2 pxc = vec2(float(i * LS) + float(LS) * 0.5, float(j * LS) + float(LS) * 0.5);
+	vec2 pos = screenToWorld(pxc);
+	float r = length(pos);
+	vec2 up = pos / max(r, 1.0);
+	float zoom = P.p[1].w;
+
+	// --- sunlight: open sky above this point? ---
+	float sky = 0.0;
+	if (r >= R_TOP - 1.0) sky = 1.0;
+	else if (r > R_IN) {
+		float rs = surfA(angleOf(pos)).x;
+		float top = min(rs + 70.0, R_TOP);
+		bool blocked = false;
+		float rr = r + 26.0;
+		for (int k = 0; k < 500 && rr < top; k++) {
+			if (blockAt(up * rr)) { blocked = true; break; }
+			rr += 2.0;
+		}
+		if (!blocked) {
+			float dd = 0.0;
+			for (int q = 25; q >= 0; q--) { if (blockAt(up * (r + float(q)))) { dd = float(q) + 1.0; break; } }
+			sky = 1.0 - dd / 26.0;
+			// tree canopies (background leaves) cast a soft shade
+			float leaves = 0.0;
+			for (int q = 1; q < 40; q += 2) { if (bgAtPos(up * (r + float(q))) == M_LEAF) leaves += 1.0; }
+			sky *= max(0.45, 1.0 - leaves * 0.07);
+		}
+	}
+	vec2 sd = sunDir();
+	float sdot = dot(up, sd);
+	float day = clamp(sdot * 1.6 + 0.15, 0.025, 1.0);
+	float dusk = clamp(1.0 - abs(sdot) * 4.0, 0.0, 1.0);
+	vec3 sunCol = vec3(1.0, 0.97 - dusk * 0.25, 0.9 - dusk * 0.45);
+	float rain = P.p[3].x > 0.0 ? 0.25 : 0.0;
+	vec3 L = sunCol * sky * day * (1.0 - rain) + vec3(P.p[3].w);
+	// rooms of buildings above ground: daylight leaks in through doors and windows
+	if (sky < 0.6 && r > R_IN) {
+		int pi = idxAt(pos);
+		uint pa = pi < 0 ? 0u : aux.a[pi];
+		if ((pa & BG_WALL) != 0u && r > surfA(angleOf(pos)).x - 24.0) L += sunCol * day * (0.6 - sky) * 0.7 * (1.0 - rain);
+	}
+
+	// --- glow from emissive cells in this block ---
+	vec3 em = vec3(0.0);
+	for (int v = 0; v < LS; v++) for (int u = 0; u < LS; u++) {
+		vec2 q = screenToWorld(vec2(float(i * LS + u) + 0.5, float(j * LS + v) + 0.5));
+		int qi = idxAt(q);
+		uint cc = qi < 0 ? 0u : world.cells[qi];
+		uint vt = (cc & 255u) != 0u ? (cc & 255u) : bgAtIdx(qi);
+		em += GLOW[vt];
+	}
+	L += em * (16.0 / float(LS * LS)) * 0.16;
+
+	// --- point lights (screen space) ---
+	int nl = int(P.p[2].w);
+	for (int k = 0; k < nl; k++) {
+		vec4 a = P.p[24 + 2 * k];
+		float d = distance(pxc, a.xy) / max(a.z / zoom, 1.0);
+		if (d < 1.0) L += P.p[25 + 2 * k].rgb * (1.0 - d) * (1.0 - d);
+	}
+	lo.l[j * LW + i] = vec4(L, 1.0);
+}

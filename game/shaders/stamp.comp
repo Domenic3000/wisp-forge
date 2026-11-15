@@ -1,0 +1,35 @@
+// Writes one generated structure (house, tower, castle, ruin, catacomb...) into the planet.
+// The blueprint is a w x h grid in shell 0, column x0.., row y0.. (row grows toward the core).
+// Each blueprint cell: bits 0-7 foreground (255 = keep what is there), bits 8-15 background
+// (255 = keep), bit 16 = fill only where there is no solid ground yet, bit 17 = anchored
+// (foundations count as part of the planet), bit 18 = background is a built back wall,
+// bits 19-26 = colour variant, used when bit 27 is set (chests use it to know which part they are).
+// pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, 0, 0)
+#include "common"
+#include "world"
+#include "bglayer"
+layout(std430, set = 0, binding = 9) restrict readonly buffer Blue { uint d[]; } blue;
+layout(local_size_x = 16, local_size_y = 16) in;
+
+void main() {
+	int i = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
+	int w = pc.a.z, h = pc.a.w;
+	if (i >= w || j >= h) return;
+	int row = pc.a.y + j;
+	if (row < 0 || row >= SH_Y0[1]) return;
+	int col = wrapc(pc.a.x + i, SH_N[0]);
+	uint d = blue.d[pc.b.x + j * w + i];
+	uint fc = d & 255u, bc = (d >> 8) & 255u;
+	int idx = cellIdx(0, row, col);
+	if (fc != 255u) {
+		uint c = world.cells[idx];
+		uint kc = KIND[c & 255u];
+		bool fillOnly = (d & 0x10000u) != 0u;
+		if (!fillOnly || !(kc == K_SOLID || kc == K_POWDER)) {
+			uint v = (d & 0x8000000u) != 0u ? ((d >> 19) & 255u) : (hashu(uint(col) * 2654435761u ^ uint(row) * 40503u ^ uint(pc.b.y)) & 255u);
+			uint anchor = ((d & 0x20000u) != 0u && KIND[fc] == K_SOLID) ? ST_ANCHOR : 0u;
+			world.cells[idx] = fc | (v << 8) | anchor;
+		}
+	}
+	if (bc != 255u) aux.a[idx] = bc == 0u ? 0u : (bc | ((d & 0x40000u) != 0u ? BG_WALL : 0u));
+}

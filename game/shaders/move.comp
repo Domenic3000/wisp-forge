@@ -1,0 +1,70 @@
+// Margolus-block movement: each thread owns a 2x2 block, so no two threads touch
+// the same cell. Offsets cycle every pass so particles keep moving.
+// Block rows: a b (outer / up)   c d (inner / down, toward the core)
+// pc.a = (shell, yBase, yLimit, x0)  pc.b = (count, frame, ox, oy)  pc.c.x = flowOnly
+#include "common"
+#include "world"
+layout(local_size_x = 16, local_size_y = 16) in;
+
+uint T_(uint c) { return c & 255u; }
+// swap two cells (the background layer is a separate buffer, so it stays where it is)
+void sw(inout uint x, inout uint y) { uint t = x; x = y; y = t; }
+bool faller(uint c) { uint k = KIND[c & 255u]; return k == K_POWDER || k == K_LIQUID; }
+bool liquid(uint c) { return KIND[c & 255u] == K_LIQUID; }
+bool riser(uint c) { uint t = c & 255u; return KIND[t] == K_GAS || (t == M_FIRE && ((c >> 16) & 255u) < 24u); }
+bool emptyish(uint c) { uint t = c & 255u; return t == 0u || KIND[t] == K_GAS; }
+bool disp(uint a, uint b) { return canDisp(a & 255u, b & 255u); }
+float slide(uint c) { uint t = c & 255u; if (t == M_SNOW || t == M_ASH) return 0.3; if (t == M_GRAVEL) return 0.65; return 1.0; }
+float flowP(uint c) { uint t = c & 255u; if (t == M_LAVA) return 0.3; if (t == M_MUD) return 0.15; return 0.95; }
+float moveP(uint a, uint b) { // slowdown when sinking through liquid / viscous liquids
+	uint ta = a & 255u, tb = b & 255u;
+	float p = 1.0;
+	if (KIND[tb] == K_LIQUID) p = 0.45;
+	if (ta == M_LAVA) p *= 0.6; else if (ta == M_MUD) p *= 0.35;
+	return p;
+}
+
+void main() {
+	int s = pc.a.x;
+	int bx = int(gl_GlobalInvocationID.x), by = int(gl_GlobalInvocationID.y);
+	if (bx * 2 >= pc.b.x) return;
+	int y = pc.a.y + by * 2 + pc.b.w;
+	if (y < SH_Y0[s] || y + 1 >= pc.a.z) return;
+	int N = SH_N[s];
+	int x = wrapc(pc.a.w + bx * 2 + pc.b.z, N);
+	int x2 = x + 1 == N ? 0 : x + 1;
+	int ia = cellIdx(s, y, x), ib = cellIdx(s, y, x2), ic = cellIdx(s, y + 1, x), id = cellIdx(s, y + 1, x2);
+	uint a = world.cells[ia], b = world.cells[ib], c = world.cells[ic], d = world.cells[id];
+	if (((a | b | c | d) & 255u) == 0u) return;
+	uint fr = uint(pc.b.y);
+	uint seedi = uint(ia);
+	float r1 = rnd3(seedi, fr, 1u), r2 = rnd3(seedi, fr, 2u), r3 = rnd3(seedi, fr, 3u), r4 = rnd3(seedi, fr, 4u);
+	float r5 = rnd3(seedi, fr, 5u), r6 = rnd3(seedi, fr, 6u), r7 = rnd3(seedi, fr, 7u);
+	bool flowOnly = pc.c.x > 0.5;
+
+	if (!flowOnly) {
+		// 1. straight falls
+		if (faller(a) && disp(a, c) && r1 < moveP(a, c)) sw(a, c);
+		if (faller(b) && disp(b, d) && r2 < moveP(b, d)) sw(b, d);
+		// 2. diagonal slides
+		if (r3 < 0.5) {
+			if (faller(a) && !disp(a, c) && disp(a, d) && r4 < slide(a)) sw(a, d);
+			else if (faller(b) && !disp(b, d) && disp(b, c) && r4 < slide(b)) sw(b, c);
+		} else {
+			if (faller(b) && !disp(b, d) && disp(b, c) && r4 < slide(b)) sw(b, c);
+			else if (faller(a) && !disp(a, c) && disp(a, d) && r4 < slide(a)) sw(a, d);
+		}
+		// 3. gases and loose flames rise
+		if (riser(c) && T_(a) == 0u && r5 < 0.8) sw(a, c);
+		if (riser(d) && T_(b) == 0u && r6 < 0.8) sw(b, d);
+		if (riser(a) && T_(b) == 0u && r7 < 0.3) sw(a, b);
+		else if (riser(b) && T_(a) == 0u && r7 < 0.3) sw(a, b);
+	}
+	// 4. liquids spread sideways
+	if (liquid(c) && emptyish(d) && r5 < flowP(c)) sw(c, d);
+	else if (liquid(d) && emptyish(c) && r5 < flowP(d)) sw(c, d);
+	if (liquid(a) && emptyish(b) && !disp(a, c) && r6 < flowP(a)) sw(a, b);
+	else if (liquid(b) && emptyish(a) && !disp(b, d) && r6 < flowP(b)) sw(a, b);
+
+	world.cells[ia] = a; world.cells[ib] = b; world.cells[ic] = c; world.cells[id] = d;
+}

@@ -1,0 +1,11 @@
+// ---- binding 1: per-frame parameters (array of vec4, see gpu_world.gd for layout) ----
+layout(std430, set = 0, binding = 1) restrict readonly buffer Params { vec4 p[]; } P;
+
+// camera: p[1] = (Cx, Cy, angle, zoom), p[2] = (VW, VH, LS, numLights)
+vec2 camR() { float a = P.p[1].z; return vec2(sin(a), -cos(a)); }
+vec2 camD() { float a = P.p[1].z; return vec2(-cos(a), -sin(a)); }
+vec2 screenToWorld(vec2 px) {
+	vec2 o = (px - P.p[2].xy * 0.5) * P.p[1].w;
+	return P.p[1].xy + camR() * o.x + camD() * o.y;
+}
+vec2 sunDir() { float a = P.p[0].z; return vec2(cos(a), sin(a)); }

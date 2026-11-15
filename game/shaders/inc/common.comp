@@ -1,0 +1,71 @@
+// ---- shared helpers (pure functions, no buffer access) ----
+// Main cell layout: bits 0-7 foreground material, 8-15 colour variant, 16-23 life
+// (for falling blocks: how far they have fallen), 24-29 SUPPORT distance (how far
+// this solid reaches out from something resting on the ground; above SPAN[t] it
+// breaks loose), bit 30 ANCHORED (untouched natural terrain: part of the planet).
+// The background layer (trees, back walls...) lives in a second buffer, see "aux".
+#define ST_ANCHOR 0x40000000u
+#define ST_MAX 63u
+uint stOf(uint c) { return (c >> 24) & 63u; }
+uint withST(uint c, uint st) { return (c & 0xc0ffffffu) | (min(st, ST_MAX) << 24); }
+// changing a cell's material resets its structure state (not anchored, support 0)
+uint withFG(uint c, uint t, uint life) { return t | (c & 0xff00u) | (life << 16); }
+// what excavating a material puts in the satchel
+uint collectAs(uint t) { return t == M_TIMBER ? M_WOOD : (t == M_LITTER ? M_LEAF : (t == M_OPENCHEST ? M_PLANK : t)); }
+layout(push_constant, std430) uniform PC { ivec4 a; ivec4 b; vec4 c; vec4 d; } pc;
+
+uint hashu(uint x) {
+	x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+	return x;
+}
+float rnd3(uint a, uint b, uint c) { return float(hashu(a ^ hashu(b ^ hashu(c)))) * (1.0 / 4294967296.0); }
+float h2(ivec2 p, int s) {
+	return float(hashu(uint(p.x) * 73856093u ^ hashu(uint(p.y) * 19349663u ^ uint(s) * 83492791u))) * (1.0 / 4294967296.0);
+}
+float vnoise(vec2 p, int s) {
+	vec2 i = floor(p); vec2 f = p - i; vec2 u = f * f * (3.0 - 2.0 * f);
+	ivec2 ii = ivec2(i);
+	float a = h2(ii, s), b = h2(ii + ivec2(1, 0), s), c = h2(ii + ivec2(0, 1), s), d = h2(ii + ivec2(1, 1), s);
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm(vec2 p, int s, int oct) {
+	float sum = 0.0, amp = 1.0, norm = 0.0;
+	for (int o = 0; o < oct; o++) { sum += vnoise(p, s + o * 101) * amp; norm += amp; amp *= 0.5; p *= 2.03; }
+	return sum / norm;
+}
+
+int shellOf(int y) {
+	if (y < SH_Y0[1]) return 0;
+	if (y < SH_Y0[2]) return 1;
+	if (y < SH_Y0[3]) return 2;
+	return 3;
+}
+int wrapc(int x, int n) { x = x % n; return x < 0 ? x + n : x; }
+int cellIdx(int s, int y, int x) { return SH_OFF[s] + (y - SH_Y0[s]) * SH_N[s] + x; }
+vec2 cellCenter(int s, int y, int x) {
+	float r = R_TOP - (float(y) + 0.5);
+	float th = (float(x) + 0.5) / float(SH_N[s]) * TAU;
+	return vec2(cos(th), sin(th)) * r;
+}
+float angleOf(vec2 p) { float t = atan(p.y, p.x); return t < 0.0 ? t + TAU : t; }
+// index of the cell containing world position p, or -1 outside the simulated shells
+int idxAt(vec2 p) {
+	float r = length(p);
+	if (r >= R_TOP || r < R_IN) return -1;
+	int y = min(int(R_TOP - r), ROWS - 1);
+	int s = shellOf(y);
+	int x = min(int(angleOf(p) / TAU * float(SH_N[s])), SH_N[s] - 1);
+	return cellIdx(s, y, x);
+}
+vec3 palColor(uint t, uint v) {
+	uint c = PAL[t * 4u + (v & 3u)];
+	return vec3(float((c >> 16) & 255u), float((c >> 8) & 255u), float(c & 255u)) / 255.0;
+}
+// is material t able to move into a cell holding u (falling / flowing)
+bool canDisp(uint t, uint u) {
+	uint ku = KIND[u];
+	if (u == 0u || ku == K_GAS || ku == K_FIRE) return true;
+	if (ku == K_LIQUID && DENS[u] < DENS[t]) return true;
+	return false;
+}
+bool isBlock(uint t) { return KIND[t] == K_SOLID || KIND[t] == K_POWDER; }

@@ -1,0 +1,37 @@
+# Wisp Forge: notes for development sessions
+
+Godot 4.7.2 game, a pixel-simulated mage on a round planet. The whole world is simulated in GLSL
+compute shaders through a local RenderingDevice. The roadmap and design decisions live in the
+claude.ai project doc `claude/roadmap-and-decisions.md`.
+
+## Layout
+- `game/` is the Godot project (no imported resources, no `class_name`; scripts are preloaded, `Defs` is an autoload).
+- `game/scripts/defs.gd`: materials, biomes, planets, spells, recipes, enemies, sprites. `glsl_prefix()`
+  generates the GLSL tables, so CPU and GPU always agree. `NM` is the material count.
+- `game/scripts/gpu_world.gd`: shader compile (custom `#include "name"` from `shaders/inc/`), buffers,
+  generation, `step()`, `stamp()`, `settle()`, save readback.
+- `game/scripts/buildings.gd`: procedural structures (blueprints stamped by `shaders/stamp.comp`).
+  Deterministic per planet, and re-planned on load for labels and guards. Bump `GEN_VERSION` in main.gd when it changes.
+- `game/scripts/main.gd`: game loop, physics, spells, enemies, chests, guards, saving.
+
+## Cell format
+- Main buffer (binding 0), uint per cell:
+  - bits 0-7: material
+  - bits 8-15: colour variant (chests encode their part: col | row << 3)
+  - bits 16-23: life (fall distance for falling blocks)
+  - bits 24-29: support distance
+  - bit 30: anchored (untouched natural ground)
+- Background buffer (binding 8, `inc/bglayer.comp`):
+  - bits 0-7: material
+  - bits 8-13: support
+  - bit 14: built back wall
+- A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`).
+
+## Gotchas
+- Windows reserves file names like `aux`, `con`, `nul`, `prn`. Never name a shader include that way.
+- Local variables must not shadow Object methods (`set`, `_set`, `get`) or each other inside one function.
+- Shaders: `/home/claude/tools/glcheck` plus `build_shaders.py` syntax-check them with Mesa, if those tools exist in the session.
+- Scripts: run `Check scripts.bat` on the PC; it writes `saves/check.txt`. Under `--check-only`,
+  "Identifier not found: Defs" is expected (the autoload isn't loaded); real parse errors show up as Parse Error.
+- Testing on the user's laptop: files are committed to `E:\Wisp Forge` through the device bridge. Wait about 12 s after
+  writing to `/mnt/user-data/outputs` before committing, otherwise stale copies get written.

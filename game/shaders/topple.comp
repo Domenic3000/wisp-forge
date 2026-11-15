@@ -1,0 +1,49 @@
+// Unsupported blocks fall. One thread per column walks from the bottom of the window
+// upward, so a whole loose piece moves down one cell together and keeps its shape.
+// Life counts how far a block has fallen; after a long drop, rock and wood break into
+// rubble (DEBRIS) when they land.
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+#include "common"
+#include "world"
+layout(local_size_x = 64) in;
+
+bool loose(uint c) {
+	uint t = c & 255u;
+	return KIND[t] == K_SOLID && (c & ST_ANCHOR) == 0u && stOf(c) > SPAN[t];
+}
+
+void main() {
+	int s = pc.a.x;
+	int k = int(gl_GlobalInvocationID.x);
+	if (k >= pc.b.x) return;
+	int x = wrapc(pc.a.w + k, SH_N[s]);
+	int yEnd = min(pc.a.z, SH_Y0[s + 1]) - 1;
+	uint fr = uint(pc.b.y);
+	for (int y = yEnd; y >= pc.a.y; y--) {
+		int i = cellIdx(s, y, x);
+		uint c = world.cells[i];
+		if (!loose(c)) continue;
+		uint t = c & 255u;
+		uint fall = (c >> 16) & 255u;
+		bool canMove = false;
+		int ib = -1;
+		uint cb = 0u;
+		if (y < SH_Y0[s + 1] - 1) {
+			ib = cellIdx(s, y + 1, x);
+			cb = world.cells[ib];
+			uint kb = KIND[cb & 255u];
+			canMove = (cb & 255u) == 0u || kb == K_GAS || kb == K_FIRE || kb == K_LIQUID;
+		}
+		if (canMove) {
+			world.cells[ib] = (c & 0xff00ffffu) | (min(fall + 1u, 255u) << 16);
+			world.cells[i] = cb;
+			continue;
+		}
+		// landed (or stuck at a shell seam)
+		if (fall > 0u) {
+			bool smash = fall > 9u && DEBRIS[t] != t && rnd3(uint(i), fr, 61u) < 0.55;
+			if (smash || ib < 0) world.cells[i] = withFG(c, DEBRIS[t] != t ? DEBRIS[t] : t, 0u);
+			else world.cells[i] = c & 0xff00ffffu;
+		}
+	}
+}

@@ -1,0 +1,103 @@
+// Terrain magic: excavate, explode, fill, freeze, place, chip.
+// Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR).
+// counts[t] = cells collected per material; counts[50] = blocked by hardness; counts[51] = placed;
+// counts[54] = chest cells opened (mode 7).
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+#include "common"
+#include "world"
+#include "params"
+#include "bglayer"
+layout(std430, set = 0, binding = 3) restrict buffer Counts { uint n[]; } counts;
+layout(local_size_x = 16, local_size_y = 16) in;
+
+void main() {
+	int s = pc.a.x;
+	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	int k = int(gl_GlobalInvocationID.x);
+	if (y >= pc.a.z || k >= pc.b.x) return;
+	int x = wrapc(pc.a.w + k, SH_N[s]);
+	int i = cellIdx(s, y, x);
+	vec2 p = cellCenter(s, y, x);
+	int nb = int(P.p[6].x);
+	uint c = world.cells[i];
+	uint ab = aux.a[i];
+	for (int bi = 0; bi < nb; bi++) {
+		vec4 A = P.p[88 + 2 * bi], B = P.p[89 + 2 * bi];
+		float dist = distance(p, A.xy);
+		int mode = int(A.w);
+		float rad = A.z;
+		uint t = c & 255u;
+		float R = rnd3(uint(i), uint(pc.b.y), uint(bi) * 31u + 5u);
+		uint power = uint(B.y);
+		uint bgm = ab & 255u;
+		// digging and blasts disturb the ground around them: natural rock nearby is no longer
+		// treated as part of the planet, so a piece you cut free will fall
+		if ((mode == 1 || mode == 2 || mode == 6) && (c & ST_ANCHOR) != 0u && dist < rad * 2.0 + 24.0) c &= ~ST_ANCHOR;
+		if (mode == 2 && B.x > 0.5 && B.x < 1.5 && dist < rad + 2.5 && R < 0.5) {
+			// fire spells set burnable things alight (foreground and background plants)
+			if (FUEL[t] > 0u && t != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[t] << 16); continue; }
+			if (t == 0u && bgm != 0u && FUEL[bgm] > 0u && bgm != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); ab = 0u; continue; }
+		}
+		if (mode == 1 && dist > rad && dist < rad + 1.6) {
+			// knock off lone pixels around the hole so the mage doesn't snag on them
+			if (isBlock(t) && HARD[t] <= power && COLLECT[t] == 1u) {
+				int open = 0;
+				for (int dd = 0; dd < 4; dd++) { if (!isBlock(tAt(nbr(s, y, x, dd)))) open++; }
+				if (open >= 3) { atomicAdd(counts.n[collectAs(t)], 1u); c = withFG(c, 0u, 0u); }
+			}
+			continue;
+		}
+		if (dist > rad) continue;
+		if (mode == 1) { // excavate
+			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u) {
+				// nothing in front: harvest the background plant / decoration
+				if (HARD[bgm] > power) { atomicAdd(counts.n[50], 1u); continue; }
+				if (R > 0.3) continue;
+				atomicAdd(counts.n[collectAs(bgm)], 1u);
+				ab = 0u;
+				continue;
+			}
+			if (t == 0u || COLLECT[t] == 0u) continue;
+			if (HARD[t] > power) { atomicAdd(counts.n[50], 1u); continue; }
+			float rate = KIND[t] == K_LIQUID ? 0.25 : 0.32 / (1.0 + float(HARD[t]) * 1.2);
+			if (R > rate) continue;
+			atomicAdd(counts.n[collectAs(t)], 1u);
+			c = withFG(c, 0u, 0u);
+		} else if (mode == 2 || mode == 6) { // explode / chip
+			if (t == 0u || KIND[t] == K_LIQUID || KIND[t] == K_GAS) {
+				if (mode == 2 && B.x > 0.5 && B.x < 1.5 && t == 0u && R < 0.18) c = withFG(c, M_FIRE, 12u + uint(R * 100.0));
+				continue;
+			}
+			if (!isBlock(t) || HARD[t] > power) continue;
+			if (mode == 6 && R > 0.7) continue;
+			float edge = dist / max(rad, 0.001);
+			uint nt = 0u; uint life = 0u;
+			if (B.x > 1.5 && edge > 0.75 && (t == M_STONE || t == M_DEEPSTONE) && R < 0.5) nt = M_GRAVEL;
+			else if (mode == 6 && HARD[t] >= 1u && R < 0.2) nt = M_GRAVEL;
+			else if (B.x > 0.5 && B.x < 1.5 && R < 0.12) { nt = M_FIRE; life = 10u + uint(R * 200.0); }
+			c = withFG(c, nt, life);
+		} else if (mode == 7) { // open a chest: the treasure is taken, an opened chest stays behind
+			if (t == M_TREASURE) {
+				atomicAdd(counts.n[54], 1u);
+				c = withFG(c, 0u, 0u);
+				ab = B.x > 0.5 ? M_OPENCHEST : 0u;
+			}
+		} else if (mode == 3) { // fill with liquid
+			if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE) c = withFG(c, uint(B.x), uint(B.x) == M_FIRE ? 20u : 0u);
+		} else if (mode == 4) { // freeze
+			if (t == M_WATER) c = withFG(c, M_ICE, 0u);
+			else if (t == M_LAVA) c = withFG(c, M_OBSIDIAN, 0u);
+			else if (t == M_FIRE) c = withFG(c, 0u, 0u);
+			else if (t == M_STEAM) c = withFG(c, M_SNOW, 0u);
+			else if (t == M_MUD) c = withFG(c, M_DIRT, 0u);
+		} else if (mode == 5) { // conjure from the satchel
+			if (!(t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE)) continue;
+			uint m = uint(B.x);
+			if (isBlock(m) && distance(p, P.p[6].zw) < B.w) continue;
+			uint used = atomicAdd(counts.n[51], 1u);
+			if (used < uint(B.z)) c = withFG(c, m, m == M_FIRE ? 30u : 0u);
+		}
+	}
+	world.cells[i] = c;
+	aux.a[i] = ab;
+}
