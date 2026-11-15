@@ -95,72 +95,218 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 	return m;
 }
 
+// ---- trees: one kind per biome, sized for the 17-cell mage -----------------------------
+// Each tree is evaluated per cell. q = (da, dy) is the offset from the tree's base: da along
+// the surface, dy up. hh, h3 and h4 are the tree's own random numbers.
+float segDist(vec2 q, vec2 a, vec2 b) {
+	vec2 pa = q - a, ba = b - a;
+	float t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+	return length(pa - ba * t);
+}
+
+// broad oak: a flared trunk, two branches and a lumpy crown of overlapping blobs; some are giants
+uint oakTree(vec2 q, float hh, float h3, float h4, float nz) {
+	bool giant = h3 < 0.12;
+	float h = giant ? 58.0 + floor(hh * 14.0) : 30.0 + floor(hh * 24.0);
+	float tw = giant ? 5.0 : (h > 42.0 ? 4.0 : 3.0);
+	float R = 9.0 + h * 0.16;
+	float da = q.x, dy = q.y;
+	float hw = tw * 0.5 + max(0.0, 3.0 - dy) * 0.7;
+	if (dy >= 0.0 && dy < h - R * 0.3 && abs(da) < hw) return M_WOOD;
+	float side = h4 < 0.5 ? 1.0 : -1.0;
+	if (segDist(q, vec2(0.0, h * 0.5), vec2(side * R * 0.55, h - R * 0.35)) < (giant ? 1.4 : 1.0)) return M_WOOD;
+	if (segDist(q, vec2(0.0, h * 0.62), vec2(-side * R * 0.5, h - R * 0.2)) < 0.9) return M_WOOD;
+	float rag = 1.0 - nz * 0.28;
+	vec2 c0 = vec2(0.0, h), c1 = vec2(-R * 0.55, h - R * 0.3), c2 = vec2(R * 0.55, h - R * 0.25), c3 = vec2(R * 0.2 * side, h + R * 0.35);
+	float e = min(min(length((q - c0) / vec2(R, R * 0.8)), length((q - c1) / vec2(R * 0.62, R * 0.5))),
+	              min(length((q - c2) / vec2(R * 0.62, R * 0.52)), length((q - c3) / vec2(R * 0.6, R * 0.45))));
+	if (e < rag) return M_LEAF;
+	return 0u;
+}
+
+// pine: a straight trunk under tiers of needles, each tier wide at the bottom; snow on the tiers
+uint pineTree(vec2 q, float hh, float h3, bool snowy) {
+	float h = 28.0 + floor(hh * 30.0) + (h3 < 0.1 ? 18.0 : 0.0);
+	float tw = h > 45.0 ? 3.0 : 2.0;
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	float dy0 = 5.0 + h * 0.08;
+	float P = 5.0 + h * 0.05;
+	if (dy >= dy0 && dy <= h + 2.0) {
+		float w = (h + 2.0 - dy) * 0.26 * (1.0 - 0.45 * fract((dy - dy0) / P)) + 0.6;
+		if (abs(da) < w) {
+			float dyU = dy + 1.0;
+			float wU = dyU > h + 2.0 ? 0.0 : (h + 2.0 - dyU) * 0.26 * (1.0 - 0.45 * fract((dyU - dy0) / P)) + 0.6;
+			return (snowy && abs(da) >= wU) ? M_SNOW : M_LEAF;
+		}
+	}
+	if (dy < h && abs(da) < tw * 0.5) return M_WOOD;
+	return 0u;
+}
+
+// saguaro: a thick column with arms that elbow out and turn up
+uint cactusTree(vec2 q, float hh, float h3) {
+	float h = 10.0 + floor(hh * 12.0);
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	if (dy < h && abs(da) < 1.5) return M_CACTUS;
+	if (dy < h + 1.0 && abs(da) < 0.9) return M_CACTUS;
+	float a1 = floor(h * (0.3 + h3 * 0.15)), a2 = floor(h * (0.45 + hh * 0.15));
+	if (dy >= a1 && dy < a1 + 2.0 && da <= -1.5 && da > -4.5) return M_CACTUS;
+	if (dy >= a1 && dy < a1 + floor(h * 0.4) && da <= -3.0 && da > -5.0) return M_CACTUS;
+	if (h > 14.0) {
+		if (dy >= a2 && dy < a2 + 2.0 && da >= 1.5 && da < 4.5) return M_CACTUS;
+		if (dy >= a2 && dy < a2 + floor(h * 0.3) && da >= 3.0 && da < 5.0) return M_CACTUS;
+	}
+	return 0u;
+}
+
+// palm: a leaning, curving trunk with drooping fronds
+uint palmTree(vec2 q, float hh, float h3) {
+	float h = 20.0 + floor(hh * 14.0);
+	float lean = (h3 < 0.5 ? 1.0 : -1.0) * (3.0 + h3 * 6.0);
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	if (dy < h) {
+		float t = dy / h;
+		if (abs(da - lean * t * t) < 1.1) return M_WOOD;
+	}
+	vec2 top = vec2(lean, h);
+	if (length(q - top - vec2(0.0, 1.0)) < 2.0) return M_LEAF;
+	for (int k = 0; k < 3; k++) {
+		float fk = float(k);
+		float L = 8.0 + fk * 2.5;
+		for (int sd = -1; sd <= 1; sd += 2) {
+			float x = (da - lean) * float(sd);
+			if (x < 0.0 || x > L) continue;
+			float yf = h + 2.0 + fk * 0.8 - 0.07 * (1.0 + 0.5 * fk) * x * x;
+			if (abs(dy - yf) < 0.8) return M_LEAF;
+		}
+	}
+	return 0u;
+}
+
+// willow: a thick trunk, a low dome of leaves and long strands hanging from it
+uint willowTree(vec2 q, float hh, float h3, int bb, float nz) {
+	float h = 22.0 + floor(hh * 14.0);
+	float R = 11.0 + h3 * 5.0;
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	if (dy < h && abs(da) < 1.5 + max(0.0, 2.0 - dy) * 0.6) return M_WOOD;
+	float e = length((q - vec2(0.0, h)) / vec2(R, R * 0.55));
+	if (dy >= h - 2.0 && e < 1.0 - nz * 0.2) return M_LEAF;
+	if (abs(da) < R * 0.95 && dy < h - 1.0) {
+		int ci = int(floor(da + 200.0));
+		float hs = h2(ivec2(bb * 7 + ci, 91), SEED);
+		float Ls = R * 0.5 + h2(ivec2(bb * 7 + ci, 92), SEED) * R * 0.9;
+		if (hs < 0.55 && dy > max(2.0, h - 1.0 - Ls)) return M_LEAF;
+	}
+	return 0u;
+}
+
+// charred tree: a burnt black trunk with bare, jagged branches
+uint charredTree(vec2 q, float hh, int bb) {
+	float h = 18.0 + floor(hh * 22.0);
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	if (dy < h && abs(da) < (h > 30.0 ? 1.5 : 1.0) + max(0.0, 2.0 - dy) * 0.5) return M_COAL;
+	for (int k = 0; k < 4; k++) {
+		float hk = h2(ivec2(bb, 90 + k), SEED);
+		float y0 = h * (0.35 + 0.15 * float(k));
+		float sd = (k % 2 == 0) ? 1.0 : -1.0;
+		if (hk < 0.3) sd = -sd;
+		float L = 5.0 + hk * 8.0;
+		vec2 a = vec2(0.0, y0), b = vec2(sd * L * 0.8, y0 + L * 0.7);
+		if (segDist(q, a, b) < 0.7) return M_COAL;
+		if (segDist(q, b, b + vec2(sd * 2.5, 3.5 - hk * 3.0)) < 0.6) return M_COAL;
+	}
+	return 0u;
+}
+
 // trees and other surface plants, evaluated per cell from hashed "buckets" along the surface arc
 uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 	float arc = th * RS0;
-	float BW = 13.0;
+	// spacing and density per kind: oaks, pines, cacti, (reeds), charred, palms
+	float BW = floraType == 2 ? 14.0 : (floraType == 4 ? 26.0 : (floraType == 1 ? 19.0 : 18.0));
+	float dens = floraType == 1 ? 0.8 : (floraType == 2 ? 0.7 : (floraType == 4 ? 0.55 : (floraType == 5 ? 0.4 : (floraType == 3 ? 0.27 : 0.3))));
 	float nB = floor(TAU * RS0 / BW);
 	float L = nB * BW;
 	int b = int(floor(arc / BW));
 	float spawnA = P.p[121].x;
-	for (int k = -1; k <= 1; k++) {
+	float nz = h2(ivec2(int(arc), int(r)), SEED + 5);
+	for (int k = -2; k <= 2; k++) {
 		int bb = int(mod(float(b + k), nB));
 		float hb = h2(ivec2(bb, 77), SEED);
+		if (hb >= dens || floraType == 0) continue;
 		float st = (float(bb) + 0.2 + 0.6 * h2(ivec2(bb, 78), SEED)) * BW;
 		float da = arc - st; da -= floor(da / L + 0.5) * L;
-		if (abs(da) > 9.0) continue;
+		if (abs(da) > 26.0) continue;
 		float tth = st / RS0;
 		float sp = abs(tth - spawnA); sp = min(sp, TAU - sp);
-		if (sp * RS0 < 12.0) continue;
-		if (onSite(tth, 9.0)) continue;
+		if (sp * RS0 < 30.0) continue;
+		if (onSite(tth, 26.0)) continue;
 		vec4 ta = surfA(tth), tb = surfB(tth);
 		if (tb.y > ta.x + 0.5) continue; // trunk would be underwater
 		float base = floor(ta.x);
-		float dy = r - base;
-		float hh = h2(ivec2(bb, 79), SEED);
-		if (floraType == 1 && hb < 0.6) {
-			float h = 12.0 + floor(hh * 9.0);
-			if (dy >= 0.0 && dy < h && da >= -0.5 && da < 1.5) return M_WOOD;
-			if (dy >= 0.0 && dy < 1.0 && da >= -1.5 && da < 2.5) return M_WOOD;
-			float rr = h > 18.0 ? 7.0 : 5.0;
-			float e = (da - 0.5) * (da - 0.5) / ((rr + 1.0) * (rr + 1.0)) + (dy - h) * (dy - h) / (rr * rr);
-			if (e < 1.0 - h2(ivec2(int(arc), int(r)), SEED + 5) * 0.35) return M_LEAF;
-			if (abs(dy - h * 0.55) < 0.6 && da > 1.5 && da < 4.5) return M_WOOD;
-		} else if (floraType == 2 && hb < 0.45) {
-			float h = 9.0 + floor(hh * 10.0);
-			if (dy >= 0.0 && dy < h && da >= 0.0 && da < 1.0) return M_WOOD;
-			if (dy >= 2.0 && dy <= h + 1.0) {
-				float k2 = floor(dy);
-				float w = floor((h + 2.0 - k2) * 0.45) + (mod(k2, 2.0) > 0.5 ? 1.0 : 0.0);
-				if (abs(floor(da)) <= w) return (mod(k2, 2.0) < 0.5 && abs(floor(da)) == w && ta.x > RS0 + 20.0) ? M_SNOW : M_LEAF;
-			}
-		} else if (floraType == 3 && hb < 0.2) {
-			float h = 5.0 + floor(hh * 6.0);
-			if (dy >= 0.0 && dy < h && da >= 0.0 && da < 1.0) return M_CACTUS;
-			float a = floor(h * 0.5);
-			if (floor(dy) == a && da >= -2.0 && da < 0.0) return M_CACTUS;
-			if (dy >= a && dy < a + 3.0 && da >= -2.0 && da < -1.0) return M_CACTUS;
-			if (floor(dy) == a + 1.0 && da >= 1.0 && da < 3.0) return M_CACTUS;
-			if (dy >= a + 1.0 && dy < a + 3.0 && da >= 2.0 && da < 3.0) return M_CACTUS;
-		} else if (floraType == 5 && hb < 0.25) {
-			float h = 7.0 + floor(hh * 8.0);
-			if (dy >= 0.0 && dy < h && da >= 0.0 && da < 1.0) return M_WOOD;
-			float t = h - dy;
-			if (t > 0.0 && t < 5.0 && abs(abs(da - 0.5) - t + 1.0) < 0.6) return M_WOOD;
+		vec2 q = vec2(da, r - base);
+		if (q.y > 95.0) continue;
+		float hh = h2(ivec2(bb, 79), SEED), h3 = h2(ivec2(bb, 83), SEED), h4 = h2(ivec2(bb, 84), SEED);
+		uint m = 0u;
+		if (floraType == 1) m = oakTree(q, hh, h3, h4, nz);
+		else if (floraType == 2) {
+			vec4 A = biomeA(int(ta.y));
+			bool snowy = uint(A.z) == M_SNOW || ((int(A.w) & 1) != 0 && ta.x > RS0 + 20.0);
+			m = pineTree(q, hh, h3, snowy);
 		}
+		else if (floraType == 3) m = hb < 0.06 ? palmTree(q, hh, h3) : cactusTree(q, hh, h3);
+		else if (floraType == 4) m = willowTree(q, hh, h3, bb, nz);
+		else if (floraType == 5) m = charredTree(q, hh, bb);
+		else if (floraType == 6) m = palmTree(q, hh, h3);
+		if (m != 0u) return m;
 	}
-	// small plants on every column
+	// undergrowth and small plants
 	if (onSite(th, 1.0)) return 0u;
 	int col = int(floor(arc));
 	vec4 sa = surfA(th);
 	float dy = r - floor(sa.x);
+	if (dy < 0.0) return 0u;
+	if (floraType == 1 || floraType == 2 || floraType == 4) {
+		// bushes (and young pines in pine country)
+		float bw2 = 9.0;
+		int b2 = int(floor(arc / bw2));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b2 + k;
+			float hb = h2(ivec2(bb, 85), SEED);
+			if (hb > (floraType == 4 ? 0.3 : 0.5)) continue;
+			float cx = (float(bb) + 0.5) * bw2;
+			float dx = arc - cx;
+			vec4 ba = surfA(cx / RS0);
+			float by = r - floor(ba.x);
+			if (floraType == 2) {
+				float hs = 4.0 + floor(hb * 8.0);
+				if (by >= 1.0 && by < hs && abs(dx) < (hs - by) * 0.4 + 0.5) return M_LEAF;
+				if (by >= 0.0 && by < 1.0 && abs(dx) < 0.6) return M_WOOD;
+			} else {
+				float rx = 2.5 + hb * 4.0, ry = 2.0 + hb * 3.0;
+				float e = (dx * dx) / (rx * rx) + (by - ry * 0.6) * (by - ry * 0.6) / (ry * ry);
+				if (by >= 0.0 && e < 1.0 - nz * 0.25) return M_LEAF;
+			}
+		}
+		// grass tufts
+		float hr = h2(ivec2(col, 86), SEED);
+		if (floraType != 2 && hr < 0.35 && dy < 1.0 + floor(hr * 9.0)) return M_LEAF;
+	}
+	if (floraType == 3) {
+		float hr = h2(ivec2(col, 87), SEED);
+		if (hr < 0.04 && dy < 2.0 + floor(hr * 60.0)) return M_CACTUS;
+	}
 	if (floraType == 4) {
 		float hr = h2(ivec2(col, 80), SEED);
-		if (hr < 0.3 && dy >= 0.0 && dy < 2.0 + floor(hr * 13.0)) return M_LEAF;
+		if (hr < 0.3 && dy < 3.0 + floor(hr * 20.0)) return M_LEAF;
 	}
 	if (floraType == 6 && inWater) {
 		float hr = h2(ivec2(col, 81), SEED);
-		if (hr < 0.2 && dy >= 0.0 && dy < 4.0 + floor(hr * 50.0)) return M_LEAF;
+		if (hr < 0.2 && dy < 4.0 + floor(hr * 50.0)) return M_LEAF;
 	}
 	return 0u;
 }
@@ -236,7 +382,7 @@ void main() {
 		// above ground: seas / ponds / lava lakes, then plants
 		bool wet = sb.y > 0.0 && r < sb.y;
 		if (wet) m = uint(sb.z);
-		if (r < rs + 40.0) bgm = flora(p, r, th, floraType, wet);
+		if (r < rs + 100.0) bgm = flora(p, r, th, floraType, wet);
 	}
 
 	// the mantle guardian's arena

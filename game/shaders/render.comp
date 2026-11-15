@@ -278,12 +278,37 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 			col = a > 0.85 ? cc : cc * 0.78;
 		}
 	}
-	// near parallax hills
+	// near parallax hills, with a far-off tree line where the land is wooded
 	if (zoom < 2.5) {
-		float hn = RS0 + 8.0 + 70.0 * hillH(P.p[121].w * 0.5 + d, 100.0, 402);
-		if (r < hn) {
+		float uN = P.p[121].w * 0.5 + d;
+		float hn = RS0 + 8.0 + 70.0 * hillH(uN, 100.0, 402);
+		int ft = int(P.p[9 + 2 * int(surfA(th).y)].w) >> 4;
+		float tl = 0.0;
+		if (ft == 1 || ft == 2 || ft == 4 || ft == 5) {
+			float arcN = uN * RS0;
+			float bw = ft == 2 ? 5.0 : 7.0;
+			float bi = floor(arcN / bw);
+			for (int k = -2; k <= 2; k++) {
+				float bk = bi + float(k);
+				float hr = h2(ivec2(int(bk), 403), 9);
+				if (hr > (ft == 5 ? 0.35 : 0.85)) continue;
+				float cx = (bk + 0.5) * bw;
+				float th2 = 8.0 + hr * 13.0;
+				float dx = abs(arcN - cx);
+				float top = 0.0;
+				if (ft == 2) top = th2 - dx * 2.6;                       // pines: narrow triangles
+				else if (ft == 5) top = dx < 0.6 ? th2 : 0.0;            // dead trees: bare poles
+				else {                                                   // round crowns on short stems
+					float rr = th2 * 0.42;
+					top = dx < rr ? th2 - rr + sqrt(rr * rr - dx * dx) * 0.9 : (dx < 0.7 ? th2 - rr : 0.0);
+				}
+				tl = max(tl, top);
+			}
+		}
+		if (r < hn + tl) {
 			vec3 hc = mix(horizon, vec3(0.2, 0.32, 0.36) * (0.3 + 0.7 * day) * P.p[4].rgb, 0.78);
-			col = r > hn - 1.5 ? hc * 1.25 : hc;
+			if (r >= hn) col = hc * 0.9;                     // the distant trees, a shade darker
+			else col = (r > hn - 1.5 && tl < 0.5) ? hc * 1.25 : hc;
 		}
 	}
 	return floor(col * 20.0 + DITH) / 20.0;

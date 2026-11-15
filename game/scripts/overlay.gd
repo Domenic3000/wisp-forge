@@ -42,18 +42,36 @@ func _lit(sp: Vector2) -> Color:
 	var c: Color = game.gpu.light_at(sp)
 	return Color(clampf(c.r, 0.12, 1.0), clampf(c.g, 0.12, 1.0), clampf(c.b, 0.12, 1.0))
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float) -> void:
+## Where a body's feet are drawn on screen. Sprites hang from the feet, not the centre: a body
+## standing on the ground has its feet snapped onto the same cell row as the ground under it,
+## so it can't flicker a pixel up and down against the terrain while the camera eases (with
+## an odd body height the centre sits right on a half pixel, and rounding it flipped back and
+## forth). Returns [drawn position, unsnapped position].
+func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
+	var up := wpos.normalized()
+	var feet := wpos - up * (body_h * 0.5)
+	var raw: Vector2 = game.world_to_screen(feet)
+	if grounded:
+		# cell rows are whole numbers of radius (R_TOP is a whole number)
+		feet = up * roundf(feet.length())
+	var sp: Vector2 = game.world_to_screen(feet)
+	var cam_a := atan2(game.cam_c.y, game.cam_c.x)
+	if absf(cam_a - atan2(wpos.y, wpos.x)) < 0.02:
+		sp = sp.round()
+	return [sp, raw]
+
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false) -> void:
 	var t: Texture2D = tex[key]
-	var sp: Vector2 = game.world_to_screen(wpos)
+	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
 	var cam_a := atan2(game.cam_c.y, game.cam_c.x)
 	var rot := cam_a - atan2(wpos.y, wpos.x)
 	var z: float = game.zoom
 	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / z
-	draw_set_transform(sp.round() if absf(rot) < 0.02 else sp, rot, sc)
-	var mod := Color(4, 4, 4) if white else _lit(sp)
+	draw_set_transform(sp, rot, sc)
+	var mod := Color(4, 4, 4) if white else _lit(game.world_to_screen(wpos))
 	# feet (last opaque row, above the outline) rest on the bottom of the body box
 	var ts := t.get_size()
-	draw_texture(t, Vector2(-floorf(ts.x * 0.5), body_h * 0.5 - ts.y + 1.0), mod)
+	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _px(wpos: Vector2, col: Color) -> void:
@@ -66,7 +84,7 @@ func _draw() -> void:
 	var z: float = game.zoom
 	# foes
 	for e in game.enemies:
-		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h)
+		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)
 	# projectiles
 	for pr in game.projs:
 		var c: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
@@ -77,19 +95,23 @@ func _draw() -> void:
 	# the mage and staff
 	for m in game.players:
 		if m != game.player and not m.dead:
-			_sprite(_mage_frame(m), m.pos, m.facing < 0, false, m.h)
+			_sprite(_mage_frame(m), m.pos, m.facing < 0, false, m.h, m.on_ground)
 	if not game.dead:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		if not blink:
-			_sprite(_mage_frame(game.player), game.player.pos, game.player.facing < 0, false, game.player.h)
+			_sprite(_mage_frame(game.player), game.player.pos, game.player.facing < 0, false, game.player.h, game.player.on_ground)
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		var st: Array = game._staff(game.player, aim)
 		var hand: Vector2 = st[2]
 		var dir: Vector2 = st[1]
+		# the staff moves with the sprite: same feet anchor, same snapping
+		var ft := _feet(game.player.pos, game.player.h, game.player.on_ground)
+		var shift: Vector2 = ft[0] - ft[1]
+		var wood := Color8(120, 82, 44) * _lit(game.world_to_screen(hand))
 		for s in 10:
-			_px(hand + dir * s, Color8(120, 82, 44) * _lit(game.world_to_screen(hand)))
+			draw_rect(Rect2((game.world_to_screen(hand + dir * s) + shift).floor(), Vector2.ONE), wood)
 		var sc: Color = Defs.SPELLS[game.known[game.sel]]["color"]
-		_px(st[0], sc)
+		draw_rect(Rect2((game.world_to_screen(st[0]) + shift).floor(), Vector2.ONE), sc)
 	# wisp companion
 	var ws: Vector2 = game.world_to_screen(game.wisp)
 	var wf := ws.floor()
