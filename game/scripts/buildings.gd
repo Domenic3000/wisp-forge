@@ -24,6 +24,7 @@ var sites := []                   # Vector2(x0, x1): surface columns kept free o
 var settle := []                  # [world position, half size] windows to settle after stamping
 var labels := []                  # {x0, x1, ymin, ymax, name}: for the region name on the HUD
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
+var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
 var used := []                    # occupied surface column ranges
 var spawn_col := 0
 var boss_col := 0
@@ -31,6 +32,8 @@ var biome_names := []
 var _quiet := false               # the first structure near your arrival has no guards
 
 class BP:
+	var chests := []          # Vector2i(left column, floor row), local
+	var ruined := false
 	var x0 := 0
 	var y0 := 0
 	var w := 0
@@ -178,6 +181,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	settle.clear()
 	labels.clear()
 	guards.clear()
+	infos.clear()
 	used.clear()
 	used.append(Vector2i(spawn_col - 70, spawn_col + 70))
 	# something to discover a short walk from where you arrive
@@ -266,6 +270,15 @@ func _finish(bp: BP, build: bool) -> void:
 	if not build:
 		return
 	structs.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c})
+	var solid := 0
+	for v in bp.c:
+		var f: int = v & 255
+		if f != 255 and Defs.KIND[f] == Defs.K_SOLID and (v & (F_FILL | F_ANCHOR)) == 0:
+			solid += 1
+	var ch := []
+	for q in bp.chests:
+		ch.append(Vector2i(posmod(bp.x0 + q.x, N0), bp.y0 + q.y))
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
 	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
@@ -275,6 +288,7 @@ func _finish(bp: BP, build: bool) -> void:
 # ------------------------------------------------------- chests and guards ---
 ## a 6 x 4 treasure chest standing on the floor row fl, left column i
 func _chest(bp: BP, i: int, fl: int) -> void:
+	bp.chests.append(Vector2i(i, fl))
 	for cj in 4:
 		for ci in 6:
 			bp.fgv(i + ci, fl - 4 + cj, Defs.TREASURE, ci | (cj << 3))
@@ -496,6 +510,7 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 	var base := _median_ground(x0 + YARD, w + 4) - 1
 	var up := floors * STOREY + w / 2 + 10
 	var bp := BP.new(x0, base - up, tw, up + 40)
+	bp.ruined = ruined
 	var lb := up
 	var ox := YARD + 2
 	_yard(bp, 0, tw - 1, lb)
@@ -548,6 +563,7 @@ func _tower(x: int, b: String, ruined: bool, build: bool) -> bool:
 	var base := _median_ground(x0 + YARD, w + 4) - 1
 	var up := floors * STOREY + w + 12
 	var bp := BP.new(x0, base - up, tw, up + 40)
+	bp.ruined = ruined
 	var ox := YARD + 2
 	_yard(bp, 0, tw - 1, up)
 	_foundation(bp, ox - 1, up, w + 2, st["found"])
@@ -577,6 +593,7 @@ func _castle(x: int, b: String, ruined: bool, build: bool) -> bool:
 	var base := g.x + (g.y - g.x) / 3 - 1   # sits high: tall foundations on the low side
 	var up := 4 * STOREY + 16
 	var bp := BP.new(x0, base - up, tw, up + 70)
+	bp.ruined = ruined
 	var lb := up
 	_yard(bp, 0, tw - 1, lb)
 	var ox := YARD
@@ -632,6 +649,7 @@ func _temple(x: int, ruined: bool, build: bool) -> bool:
 	var steps := half / 3
 	var up := steps * 3 + 8
 	var bp := BP.new(x0, base - up, tw, up + 40)
+	bp.ruined = ruined
 	var lb := up
 	var ox := YARD
 	_foundation(bp, ox, lb, W, m)
@@ -671,6 +689,7 @@ func _stilt(x: int, ruined: bool, build: bool) -> bool:
 	var base := gnd.x - 1 - lift
 	var up := STOREY + w / 2 + 10
 	var bp := BP.new(x0, base - up, tw, up + lift + 40)
+	bp.ruined = ruined
 	var lb := up
 	var ox := YARD + 2
 	# stilts every few columns down into the mud
@@ -701,6 +720,7 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 		return false
 	var g0 := ground_row(x)
 	var bp := BP.new(x0, g0 - 18, tw, depth + 38)
+	bp.ruined = ruined
 	var gl := 18                      # local ground row at the shaft
 	var sx := dl + 3                  # shaft left column
 	# headframe
@@ -776,6 +796,7 @@ func _catacomb(x: int, b: String, ruined: bool, build: bool) -> bool:
 	var x0 := x - shrine / 2 - cl - 18
 	var g0 := _median_ground(x - shrine / 2, shrine) - 1
 	var bp := BP.new(x0, g0 - STOREY - 8, tw, STOREY + depth + 34)
+	bp.ruined = ruined
 	var lb := STOREY + 8
 	var sx := cl + 18
 	_yard(bp, sx - YARD, sx + shrine + YARD - 1, lb)

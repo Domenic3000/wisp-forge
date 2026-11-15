@@ -17,6 +17,7 @@ Double-click **`Play Wisp Forge.bat`**. Everything it needs is in this folder:
 | `web-prototype\` | The original browser prototype (flat planet), kept for reference |
 | `saves\` | Your progress and saved worlds |
 | `Check scripts.bat` | For development: checks the game's scripts for errors (writes `saves\check.txt`) |
+| `Run tests.bat` | For development: builds a fresh test planet (your saves aren't touched), checks that buildings stand, chests open, guards appear, blocks fall, saves round-trip and the frame rate holds, then writes `saves\test_report.txt` |
 
 Needs a graphics card with Vulkan or Direct3D 12 (any GPU from roughly the last eight years).
 

@@ -8,6 +8,7 @@ const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Buildings := preload("res://scripts/buildings.gd")
+const Tests := preload("res://scripts/tests.gd")
 
 const DAY_LEN := 60.0 * 7.0 * 60.0   # frames per day (7 minutes)
 const REACH := 42.0
@@ -55,6 +56,11 @@ var frame := 0
 var time := 0.0
 var spawn_angle := 0.0
 var builds = null          # the planet's planned structures (ruins, castles, towns...)
+var testing := false       # started by "Run tests.bat" (--test): uses saves/test, reports, quits
+var test_god := false      # the test mode keeps the mage alive except when it checks damage
+var perf_us := 0           # time spent in the GPU step (for the test report)
+var perf_n := 0
+var _tests = null
 var boss_info := Vector4.ZERO
 var scale_px := 4
 var VW := 480
@@ -146,6 +152,12 @@ func _ready() -> void:
 	gpu.resize(VW, VH)
 	GS = gpu.GS
 	HALF = GS / 2.0
+	if "--test" in OS.get_cmdline_user_args():
+		testing = true
+		_tests = Tests.new()   # kept as a member: a local would be freed before the tests run
+		_tests.g = self
+		_tests.run.call_deferred()
+		return
 	ui.show_title(_load_save() != null)
 
 func _layout() -> void:
@@ -174,7 +186,10 @@ func _process(_delta: float) -> void:
 
 func _gpu_frame(paused: bool) -> void:
 	_write_frame_params()
+	var t0 := Time.get_ticks_usec()
 	gpu.step(cam_c, brushes.size() > 0 and not paused, false)
+	perf_us += Time.get_ticks_usec() - t0
+	perf_n += 1
 	brushes.clear()
 	grid_g = player.pos
 	grid_a = atan2(player.pos.y, player.pos.x)
@@ -703,7 +718,7 @@ func _update_player(aim: Vector2) -> void:
 		hp = minf(max_hp, hp + 0.02)
 
 func hurt(dmg: float, knock: Vector2, hit: bool) -> void:
-	if dead:
+	if dead or test_god:
 		return
 	if hit:
 		if iframes > 0:
@@ -1486,7 +1501,16 @@ var planet_state := {}            # per-planet facts saved with the world (boss 
 var _save_task := -1
 
 ## Saves live in "Wisp Forge/saves" so the whole game stays in one portable folder.
+## The test mode uses its own folder inside it, so your real saves are never touched.
 func _save_dir() -> String:
+	var d := _real_save_dir()
+	if testing:
+		d = d.path_join("test")
+		if not DirAccess.dir_exists_absolute(d):
+			DirAccess.make_dir_recursive_absolute(d)
+	return d
+
+func _real_save_dir() -> String:
 	var d := ProjectSettings.globalize_path("res://").path_join("../saves").simplify_path()
 	if not DirAccess.dir_exists_absolute(d):
 		DirAccess.make_dir_recursive_absolute(d)
