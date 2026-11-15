@@ -121,8 +121,8 @@ Castles and vaults hide the best chests, then temples and catacombs. In ruins, s
 in the mine tunnels. They appear as you come near and stay dead once you've beaten them. The first
 building near where you arrive on a planet is always unguarded.
 
-Rooms are 18 cells floor to floor (the mage is 12), cottages are 22 to 32 cells wide, and castles
-spread over about 140 columns: two corner towers, outer walls with gates, courtyards, and a great keep.
+Rooms are 28 cells floor to floor (the mage is 17 tall), doors are 22, cottages are 32 to 44 cells
+wide, chests are 8 x 6, and castles spread over about 200 columns: two corner towers, outer walls with gates, courtyards, and a great keep.
 
 Buildings have **back walls**, which are part of the structure, the way a real wall has depth: they
 hold up the wall above a doorway and the floors in front of them. Knock enough of a building away and

@@ -303,7 +303,7 @@ func _finish(bp: BP, build: bool) -> void:
 	settle.append([Vector2(cos(a), sin(a)) * r, maxf(bp.w, bp.h) * 0.5 + 26.0])
 
 # ------------------------------------------------------- chests and guards ---
-## a 6 x 4 treasure chest standing on the floor row fl, left column i. A chest is a real object
+## an 8 x 6 treasure chest standing on the floor row fl, left column i. A chest is a real object
 ## (it falls if you dig out its floor), but you walk through it; open it with F or by digging at it.
 func _chest(bp: BP, i: int, fl: int) -> void:
 	bp.chests.append(Vector2i(i, fl))
