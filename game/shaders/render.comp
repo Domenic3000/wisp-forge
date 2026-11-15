@@ -14,7 +14,8 @@ layout(std430, set = 0, binding = 6) restrict writeonly buffer View { uint px[];
 layout(local_size_x = 16, local_size_y = 16) in;
 
 const float BAYER[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-float DITH;
+float DITH;      // ordered-dither offset for this pixel, scaled by the Dithering setting (0.5 = none)
+float LSTEPS;    // lighting steps
 float TIME;
 
 vec3 lightAt(vec2 px, int LW, int LH, float LS) {
@@ -286,7 +287,11 @@ void main() {
 	int VW = pc.a.x, VH = pc.a.y;
 	int ix = int(gl_GlobalInvocationID.x), iy = int(gl_GlobalInvocationID.y);
 	if (ix >= VW || iy >= VH) return;
-	DITH = (BAYER[(iy & 3) * 4 + (ix & 3)] + 0.5) / 16.0;
+	// Dithering setting (P.p[122].x): 0 off (clean hard bands, SNES-style), 1 subtle, 2 retro
+	float dmode = P.p[122].x;
+	float amp = dmode > 1.5 ? 1.0 : (dmode > 0.5 ? 0.35 : 0.0);
+	DITH = 0.5 + ((BAYER[(iy & 3) * 4 + (ix & 3)] + 0.5) / 16.0 - 0.5) * amp;
+	LSTEPS = dmode > 1.5 ? 9.0 : 12.0;
 	TIME = P.p[0].x;
 	vec2 px = vec2(float(ix) + 0.5, float(iy) + 0.5);
 	vec2 pos = screenToWorld(px);
@@ -340,7 +345,7 @@ void main() {
 	if (flag == 0) {
 		vec3 L = lightAt(px, pc.a.z, pc.a.w, P.p[2].z);
 		L = sqrt(max(L, vec3(0.0)) + 0.008);
-		L = min(floor(L * 9.0 + DITH) / 9.0, vec3(1.3));
+		L = min(floor(L * LSTEPS + DITH) / LSTEPS, vec3(1.3));
 		col *= L;
 	}
 	col.r += P.p[6].y * 0.2;

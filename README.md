@@ -34,6 +34,7 @@ Needs a graphics card with Vulkan or Direct3D 12 (any GPU from roughly the last 
 | F | Open a treasure chest you're standing next to |
 | C | Open the Wisp Forge (crafting, pauses the game) |
 | M | Zoom out in steps, all the way to the whole planet |
+| Esc | Settings: quality, dithering, pixel size |
 | F9 / F8 / F7 | Developer keys: +200 of every material / move 120 cells down / up |
 
 ## The round planet
@@ -123,12 +124,22 @@ Buildings have **back walls**, which are part of the structure, the way a real w
 hold up the wall above a doorway and the floors in front of them. Knock enough of a building away and
 the rest comes down; wooden houses burn.
 
+## Settings
+
+Press **Esc** in the game, or **Settings** on the title screen. Your choices are saved in `saves\settings.json`.
+
+- **Quality**: High, Medium or Low. Low runs fewer simulation and lighting passes per frame and uses
+  bigger pixels, for weaker graphics cards (and phones later).
+- **Dithering**: Off (the default) draws clean colour bands, SNES-style. Subtle adds a little texture,
+  and Retro is the old checkerboard look.
+- **Pixel size**: Auto, or a fixed 2 to 5 screen pixels per world pixel. Bigger is closer up.
+
 ## Art style
 
 16-bit / SNES-inspired: four-tone material ramps with textured stone, dirt, bark and bricks,
 lit top edges and shaded undersides, grass tufts and flowers, two-tone clouds, two parallax hill layers,
-outlined sprites, banded dithered lighting, and final colour reduced to 15-bit (32 levels per channel)
-with an ordered dither.
+outlined sprites, lighting in hard bands, and final colour reduced to 15-bit (32 levels per channel).
+Dithering is off by default; see Settings.
 
 ## Progression
 

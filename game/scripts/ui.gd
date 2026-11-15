@@ -25,6 +25,8 @@ var death: Control
 var loading: Control
 var loading_lbl: Label
 var continue_btn: Button
+var settings_panel: Control
+var _opt_btns := []       # [button, key, value]
 var _hot_key := ""
 var _inv_key := ""
 var _toast_items: Array = []
@@ -259,7 +261,10 @@ func _build_screens() -> void:
 	continue_btn = _button("Continue")
 	continue_btn.pressed.connect(func(): game.start_game(true))
 	btns.add_child(continue_btn)
-	var controls := _label("A / D move    W / Space jump, hold in the air to levitate    Right mouse excavate    Left mouse cast\n1-6 / wheel choose spell    Q / E choose Conjure material    F open a chest    C open the Wisp Forge    M zoom out    F9 creative stock", 12, DIM)
+	var sb := _button("Settings")
+	sb.pressed.connect(toggle_settings)
+	btns.add_child(sb)
+	var controls := _label("A / D move    W / Space jump, hold in the air to levitate    Right mouse excavate    Left mouse cast\n1-6 / wheel choose spell    Q / E choose Conjure material    F open a chest    C open the Wisp Forge    M zoom out    Esc settings    F9 creative stock", 12, DIM)
 	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tv.add_child(controls)
 
@@ -276,12 +281,69 @@ func _build_screens() -> void:
 	rb.pressed.connect(func(): game.revive())
 	dv.add_child(_center(rb))
 
+	_build_settings()
+
 	loading = _screen()
 	loading.visible = false
 	var lv: VBoxContainer = loading.get_child(0)
 	loading_lbl = _label("Forging a planet…", 28, Color(1, 0.92, 0.66))
 	loading_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lv.add_child(loading_lbl)
+
+## Quality, dithering and pixel size. Opened from the title screen, or with Esc while playing.
+func _build_settings() -> void:
+	settings_panel = _screen()
+	settings_panel.visible = false
+	var sv: VBoxContainer = settings_panel.get_child(0)
+	var head := _label("Settings", 30, Color(1, 0.92, 0.66))
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sv.add_child(head)
+	var rows := [
+		["Quality", "quality", [["High", "high"], ["Medium", "medium"], ["Low", "low"]],
+			"Low simulates and lights the world in fewer passes, with bigger pixels, for weaker graphics."],
+		["Dithering", "dither", [["Off", "off"], ["Subtle", "subtle"], ["Retro", "retro"]],
+			"Off draws clean colour bands like a SNES. Retro is the old checkerboard look."],
+		["Pixel size", "pixel", [["Auto", 0], ["2", 2], ["3", 3], ["4", 4], ["5", 5]],
+			"How big each world pixel is on screen. Bigger shows less of the world, closer up."],
+	]
+	for row in rows:
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", 4)
+		var h := HBoxContainer.new()
+		h.alignment = BoxContainer.ALIGNMENT_CENTER
+		h.add_theme_constant_override("separation", 8)
+		var name_lbl := _label(row[0], 16, Color(0.85, 0.88, 1))
+		name_lbl.custom_minimum_size = Vector2(110, 0)
+		h.add_child(name_lbl)
+		for opt in row[2]:
+			var b := _button(opt[0])
+			b.pressed.connect(_on_option.bind(row[1], opt[1]))
+			h.add_child(b)
+			_opt_btns.append([b, row[1], opt[1]])
+		box.add_child(h)
+		var hint := _label(row[3], 11, DIM)
+		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(hint)
+		sv.add_child(box)
+	var close := _button("Close")
+	close.pressed.connect(toggle_settings)
+	sv.add_child(_center(close))
+	_refresh_settings()
+
+func _on_option(key: String, value) -> void:
+	game.set_setting(key, value)
+	_refresh_settings()
+
+func _refresh_settings() -> void:
+	for it in _opt_btns:
+		var b: Button = it[0]
+		var on: bool = str(game.settings.get(it[1], "")) == str(it[2])
+		b.modulate = Color(1, 1, 1) if on else Color(0.55, 0.55, 0.7)
+
+func toggle_settings() -> void:
+	settings_panel.visible = not settings_panel.visible
+	if settings_panel.visible:
+		_refresh_settings()
 
 # --------------------------------------------------------------- screens --
 func show_title(has_save: bool) -> void:
@@ -553,6 +615,8 @@ func _set_panel_style(p: PanelContainer, sb: StyleBox) -> void:
 
 ## True when the pointer is over a clickable HUD element (satchel, spell slots).
 func mouse_over_ui() -> bool:
+	if settings_panel and settings_panel.visible:
+		return true
 	if hud == null or not hud.visible:
 		return false
 	var m := get_viewport().get_mouse_position()

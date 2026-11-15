@@ -61,6 +61,8 @@ var test_god := false      # the test mode keeps the mage alive except when it c
 var perf_us := 0           # time spent in the GPU step (for the test report)
 var perf_n := 0
 var _tests = null
+# player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
+var settings := {"quality": "high", "dither": "off", "pixel": 0}
 var boss_info := Vector4.ZERO
 var scale_px := 4
 var VW := 480
@@ -221,6 +223,8 @@ func _ready() -> void:
 	ui.game = self
 	add_child(ui)
 	gpu = GpuWorld.new()
+	_load_settings()
+	gpu.apply_quality(settings["quality"])
 	_layout()
 	get_viewport().size_changed.connect(_layout)
 	if not gpu.init():
@@ -241,6 +245,10 @@ func _ready() -> void:
 func _layout() -> void:
 	var s := get_viewport().get_visible_rect().size
 	scale_px = maxi(2, int(round(s.y / 250.0)))
+	if int(settings["pixel"]) > 0:
+		scale_px = int(settings["pixel"])
+	elif settings["quality"] == "low":
+		scale_px += 1   # bigger pixels: fewer of them to simulate light for and draw
 	VW = int(ceil(s.x / scale_px))
 	VH = int(ceil(s.y / scale_px))
 	pix.scale = Vector2(scale_px, scale_px)
@@ -309,6 +317,7 @@ func _write_frame_params() -> void:
 	var rr := rain if b["weather"] != "clear" else 0.0
 	gpu.setp(3, Vector4(rr * 0.0015 if rr > 0.05 else 0.0, wmat, rr, flash))
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
+	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, 0, 0))
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
 	var cr := c.length()
 	gpu.setp(121, Vector4(spawn_angle, time * 0.00004, minf(Defs.R_TOP - 2.0, cr + VH * 0.55 * zoom), 0))
@@ -1465,6 +1474,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if k == KEY_C or (k == KEY_ESCAPE and state == "forge"):
 				toggle_forge()
 				return
+		if k == KEY_ESCAPE and state == "play":
+			ui.toggle_settings()
+			return
 		if state != "play":
 			return
 		if k == KEY_SPACE or k == KEY_W or k == KEY_UP:
@@ -1654,6 +1666,27 @@ const GEN_VERSION := 4            # bump when the structure generator changes; o
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
+
+## ---- settings ----
+func _load_settings() -> void:
+	var path := _real_save_dir().path_join("settings.json")
+	if FileAccess.file_exists(path):
+		var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if typeof(d) == TYPE_DICTIONARY:
+			for k in settings:
+				if d.has(k):
+					settings[k] = d[k]
+	settings["pixel"] = int(settings["pixel"])   # JSON numbers come back as floats
+
+func set_setting(key: String, value) -> void:
+	settings[key] = value
+	var f := FileAccess.open(_real_save_dir().path_join("settings.json"), FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(settings))
+	if key == "quality":
+		gpu.apply_quality(value)
+	if key == "quality" or key == "pixel":
+		_layout()
 
 ## Saves live in "Wisp Forge/saves" so the whole game stays in one portable folder.
 ## The test mode uses its own folder inside it, so your real saves are never touched.

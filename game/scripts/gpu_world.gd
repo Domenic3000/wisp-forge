@@ -6,7 +6,13 @@ extends RefCounted
 
 var GS := 384            # collision grid size (cells); grows to cover the whole view
 const MAXP := 4          # players the simulation can serve at once (co-op)
-const LS := 4            # light grid block size (pixels)
+var LS := 4              # light grid block size (pixels); Low quality uses 6
+# quality settings (see apply_quality)
+var flow_passes := 4     # extra liquid-spreading passes per frame
+var support_iters := 3   # structural support relaxation passes per frame
+var topple_iters := 2    # falling-block passes per frame
+var blur_passes := 2     # light blur passes
+var sun_step := 2.0      # sunlight march step (cells)
 const NPARAM := 128      # vec4 slots in the params buffer
 
 var rd: RenderingDevice
@@ -372,7 +378,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 			var gc: Vector2 = gf[0]
 			_dispatch(cl, "grid", "grid", [GS, gs], [gc.x, gc.y, gf[1]], groups(GS / 4, 16), groups(GS, 16))
 		_dispatch(cl, "light", "light", [LW, LH, LS], [], groups(LW, 16), groups(LH, 16))
-		for k in 2:
+		for k in blur_passes:
 			_dispatch(cl, "blur", "blur_h", [LW, LH, 1], [], groups(LW, 16), groups(LH, 16))
 			_dispatch(cl, "blur", "blur_v", [LW, LH, 0], [], groups(LW, 16), groups(LH, 16))
 		_dispatch(cl, "render", "render", [VW, VH, LW, LH], [], groups(VW, 16), groups(VH, 16))
@@ -387,18 +393,45 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 	var vb := rd.buffer_get_data(view_buf)
 	view_img = Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, vb)
 
+## High / Medium / Low: how much work each frame does. Low is for weaker graphics (and phones later).
+func apply_quality(q: String) -> void:
+	match q:
+		"low":
+			flow_passes = 2
+			support_iters = 2
+			topple_iters = 1
+			blur_passes = 1
+			sun_step = 3.0
+			LS = 6
+		"medium":
+			flow_passes = 3
+			support_iters = 2
+			topple_iters = 2
+			blur_passes = 1
+			sun_step = 2.5
+			LS = 4
+		_:
+			flow_passes = 4
+			support_iters = 3
+			topple_iters = 2
+			blur_passes = 2
+			sun_step = 2.0
+			LS = 4
+	if rd != null:
+		resize(VW, VH)
+
 ## Reactions, structural support, falling blocks, then falling sand and flowing liquids.
 func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int) -> void:
 	for w in win:
 		_dispatch(cl, "react", "react", [w.s, w.y0, w.y1, w.x0, w.count, frame, rain_row, rain_mat], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
-	for it in 3:
+	for it in support_iters:
 		for w in win:
 			_dispatch(cl, "support", "support", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
-	for it in 2:
+	for it in topple_iters:
 		for w in win:
 			_dispatch(cl, "topple", "topple", [w.s, w.y0, w.y1, w.x0, w.count, frame * 2 + it], [], groups(w.count, 64), 1)
 	var offs := [[0, 0], [1, 1], [1, 0], [0, 1]]
-	for pass_i in 6:
+	for pass_i in 2 + flow_passes:
 		var full := pass_i < 2
 		var o: Array = offs[(frame * 2 + pass_i) % 4]
 		for w in win:

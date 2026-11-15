@@ -29,9 +29,10 @@ void main() {
 		float top = min(rs + 70.0, R_TOP);
 		bool blocked = false;
 		float rr = r + 26.0;
+		float stepR = max(P.p[122].y, 1.0);   // sunlight march step (quality setting)
 		for (int k = 0; k < 500 && rr < top; k++) {
 			if (blockAt(up * rr)) { blocked = true; break; }
-			rr += 2.0;
+			rr += stepR;
 		}
 		if (!blocked) {
 			float dd = 0.0;
