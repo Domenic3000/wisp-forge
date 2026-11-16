@@ -11,6 +11,8 @@ func _ready() -> void:
 
 # which animation frame a mage shows
 func _mage_frame(m) -> String:
+	if m.iframes > 28 and m.iframes <= 40:
+		return "mage_hurt"            # just hit (a hit gives 40 frames of grace)
 	if game.frame - m.cast_frame < 10:
 		return "mage_cast"
 	if not m.on_ground and not m.in_liquid:
@@ -55,16 +57,15 @@ func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
 		# cell rows are whole numbers of radius (R_TOP is a whole number)
 		feet = up * roundf(feet.length())
 	var sp: Vector2 = game.world_to_screen(feet)
-	var cam_a := atan2(game.cam_c.y, game.cam_c.x)
-	if absf(cam_a - atan2(wpos.y, wpos.x)) < 0.02:
+	if game.unrolled() or absf(wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)) < 0.02:
 		sp = sp.round()
 	return [sp, raw]
 
 func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
-	var cam_a := atan2(game.cam_c.y, game.cam_c.x)
-	var rot := cam_a - atan2(wpos.y, wpos.x)
+	# upright in the unrolled view; turned with the planet's curve in the round map view
+	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
 	var z: float = game.zoom
 	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / z
 	draw_set_transform(sp, rot, sc)

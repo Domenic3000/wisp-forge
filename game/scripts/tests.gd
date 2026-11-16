@@ -40,6 +40,8 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	var mats := {}
 	var below := {}
 	var at := []
+	var allm := {}
+	var bgn := 0
 	var N: int = Defs.SH_N[0]
 	var boff: int = Defs.total_cells() * 4      # the background layer follows the cells
 	for j in int(info["h"]):
@@ -50,8 +52,14 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 			var col := posmod(int(info["x0"]) + i, N)
 			var c := raw.decode_u32((row * N + col) * 4)
 			var t := c & 255
+			var bgm := raw.decode_u32(boff + (row * N + col) * 4) & 255
+			if bgm != 0:
+				bgn += 1
+				var bk := "bg " + Defs.NAMES[bgm]
+				allm[bk] = int(allm.get(bk, 0)) + 1
 			if Defs.KIND[t] == Defs.K_SOLID and (c & 0x40000000) == 0:
 				solid += 1
+				allm[Defs.NAMES[t]] = int(allm.get(Defs.NAMES[t], 0)) + 1
 				# unsupported AND over open space (so it should have fallen); an unsupported block
 				# resting on something solid simply can't fall, which is fine
 				# (a block already falling, life 1-127, is on its way down: that's fine too)
@@ -69,7 +77,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 						below[key] = int(below.get(key, 0)) + 1
 			if t == Defs.TREASURE or (raw.decode_u32(boff + (row * N + col) * 4) & 255) == Defs.TREASURE:
 				tre += 1
-	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below, "at": at}
+	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below, "at": at, "all": allm, "bg": bgn}
 
 func run() -> void:
 	var t_all := Time.get_ticks_msec()
@@ -132,6 +140,36 @@ func run() -> void:
 		lines.append("      where: " + "; ".join(loose_where))
 		lines.append("      materials: " + str(loose_mats))
 		lines.append("      resting on: " + str(loose_below))
+
+	# ---- structures stay put when you walk up to them (ruins used to fall apart on arrival) ----
+	var visits := []
+	for info in b.infos:
+		if info["ruined"] and visits.size() < 12:
+			visits.append(info)
+	for info in b.infos:
+		if not info["ruined"] and visits.size() < 15:
+			visits.append(info)
+	var worst_v := 1.0
+	var worst_txt := ""
+	for info in visits:
+		var sc0 := _scan(g.gpu.read_world(), info)
+		_go(_cell_pos(int(info["x0"]) + int(info["w"]) / 2, int(info["y0"]) - 6))
+		await _frames(200)
+		var sc1 := _scan(g.gpu.read_world(), info)
+		var n0 := int(sc0["solid"]) + int(sc0["bg"])
+		var n1 := int(sc1["solid"]) + int(sc1["bg"])
+		var ratio := float(n1) / maxf(1.0, float(n0))
+		if ratio < worst_v:
+			worst_v = ratio
+			var lost := []
+			for k in sc0["all"]:
+				var dn := int(sc0["all"][k]) - int(sc1["all"].get(k, 0))
+				if dn > 3:
+					lost.append("%s -%d" % [k, dn])
+			worst_txt = "%s %s %dx%d lost %s" % ["ruined" if info["ruined"] else "intact", b.label_at(_cell_pos(int(info["x0"]) + 2, int(info["y0"]) + int(info["h"]) - 4)), info["w"], info["h"], ", ".join(lost)]
+	_ok("structures stay put when you arrive", worst_v >= 0.97, "%d visited, worst keeps %.1f%%" % [visits.size(), worst_v * 100.0])
+	if worst_v < 0.97:
+		lines.append("      " + worst_txt)
 
 	# ---- open a chest ----
 	var chest := Vector2i(-1, -1)
@@ -220,7 +258,7 @@ func run() -> void:
 		var r5: PackedByteArray = g.gpu.read_world()
 		var at_home := 0
 		var below := 0
-		for cj in range(-Defs.CHEST_H, 20):
+		for cj in range(-Defs.CHEST_H, 90):
 			for ci in Defs.CHEST_W:
 				var k5 := ((chest2.y + cj) * Defs.SH_N[0] + posmod(chest2.x + ci, Defs.SH_N[0])) * 4
 				if (r5.decode_u32(k5) & 255) == Defs.TREASURE:
@@ -377,6 +415,26 @@ func run() -> void:
 	var wall := float(Time.get_ticks_usec() - tf) / 240.0 / 1000.0
 	var step_ms := float(g.perf_us) / maxf(1.0, float(g.perf_n)) / 1000.0
 	_ok("holds 60 fps at the surface", wall < 18.5, "%.1f ms per frame, simulation + render %.1f ms" % [wall, step_ms])
+
+	# ---- the Wisp Forge lists its recipes and crafts ----
+	g.ui.show_forge()
+	await _frames(2)
+	var cards := 0
+	for c in g.ui.forge_list.get_children():
+		if c is GridContainer:
+			cards += c.get_child_count()
+	g.ui.hide_forge()
+	var wide: Dictionary = {}
+	for r in Defs.RECIPES:
+		if r["id"] == "wide":
+			wide = r
+	var crafted := false
+	if not wide.is_empty():
+		g.dig_r = 7.5
+		for k in wide["cost"]:
+			g.player.inv[int(k)] += int(wide["cost"][k])
+		crafted = g.craft(wide) and g.dig_r >= 11.0
+	_ok("the Wisp Forge lists recipes and crafts", cards == Defs.RECIPES.size() and crafted, "%d of %d recipe cards, crafting %s" % [cards, Defs.RECIPES.size(), "works" if crafted else "failed"])
 
 	# ---- save and load give back the same world ----
 	var a: PackedByteArray = g.gpu.read_world()

@@ -120,8 +120,11 @@ func _build_hud() -> void:
 	mp_lbl = _label("", 11, Color.WHITE)
 	hp_bar.add_child(hp_lbl)
 	mp_bar.add_child(mp_lbl)
-	hp_lbl.set_anchors_preset(Control.PRESET_CENTER)
-	mp_lbl.set_anchors_preset(Control.PRESET_CENTER)
+	# the numbers fill their bar and sit centred in it
+	for l in [hp_lbl, mp_lbl]:
+		l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bars.add_child(hp_bar)
 	bars.add_child(mp_bar)
 	bars.add_child(br_bar)

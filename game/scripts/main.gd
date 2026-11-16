@@ -77,6 +77,7 @@ var VH := 270
 var cam_c := Vector2(0, 1400)
 var cam_a := PI / 2
 var zoom := 1.0
+var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
 var zoom_levels := [1.0, 2.0, 4.0, 8.0, 14.0]
 var zoom_i := 0
 var shake := 0.0
@@ -159,6 +160,9 @@ var breath: float:
 var max_breath: float:
 	get: return player.max_breath
 	set(v): player.max_breath = v
+var inv: PackedInt32Array:   # the local mage's satchel (the Forge and HUD read it)
+	get: return player.inv
+	set(v): player.inv = v
 var items: Dictionary:
 	get: return player.items
 	set(v): player.items = v
@@ -331,6 +335,12 @@ func _write_frame_params() -> void:
 	gpu.setp(0, Vector4(time, gpu.frame, sun_a, planet.get("seed", 1)))
 	var sh := Vector2(randf() - 0.5, randf() - 0.5) * shake
 	var c := cam_c + sh
+	if unrolled():
+		# lock the drawn camera to whole cells, so the terrain never shimmers between pixels
+		var step := TAU / Defs.SH_N[0]
+		var ca := roundf(atan2(c.y, c.x) / step) * step
+		c = Vector2(cos(ca), sin(ca)) * roundf(c.length())
+	view_c = c
 	gpu.setp(1, Vector4(c.x, c.y, atan2(c.y, c.x), zoom))
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, mini(lights.size(), 32)))
 	var b := _biome_at(atan2(player.pos.y, player.pos.x))
@@ -489,9 +499,26 @@ func _nearest_chest() -> Array:
 	_use_grid(player)
 	return [from_grid(Vector2(ic + 0.5, jc + 0.5)), d2]
 
-func _try_open_chest() -> void:
+## A chest you can open: close by (within CHEST_REACH cells of the mage's middle) and in plain
+## sight, with nothing solid in between (so not through a wall you can't dig yet).
+const CHEST_REACH := 16
+func _chest_in_reach() -> Array:
 	var nc := _nearest_chest()
-	if nc.is_empty() or int(nc[1]) > 44 * 44:
+	if nc.is_empty() or int(nc[1]) > CHEST_REACH * CHEST_REACH:
+		return []
+	_use_grid(player)
+	var a := to_grid(player.pos)
+	var b := to_grid(nc[0])
+	var n := int(ceil(a.distance_to(b) * 2.0))
+	for k in range(1, n):
+		var q := a.lerp(b, float(k) / n)
+		if gsolid(int(floor(q.x)), int(floor(q.y))):
+			return []
+	return nc
+
+func _try_open_chest() -> void:
+	var nc := _chest_in_reach()
+	if nc.is_empty():
 		return
 	var centre: Vector2 = nc[0]
 	var place := region_name()
@@ -560,8 +587,8 @@ func _check_chest_hint() -> void:
 	_hint_t -= 1
 	if _hint_t > 0 or frame % 20 != 0:
 		return
-	var nc := _nearest_chest()
-	if not nc.is_empty() and int(nc[1]) <= 196:
+	var nc := _chest_in_reach()
+	if not nc.is_empty():
 		ui.toast("Press F to open the chest", Color(1.0, 0.9, 0.55), 2.5)
 		_hint_t = 900
 
@@ -608,15 +635,32 @@ func basis_r(a: float) -> Vector2:
 func basis_d(a: float) -> Vector2:
 	return Vector2(-cos(a), -sin(a))
 
+## The view near the surface is unrolled (see screenToWorld in shaders/inc/params.comp): x follows
+## the angle (one pixel = one surface column), y the height, so buildings stand straight anywhere
+## on screen. Zoomed out to the map, the planet is drawn round.
+func unrolled() -> bool:
+	return zoom < 2.5
+
+func _view() -> Vector2:
+	return cam_c if view_c == Vector2.ZERO else view_c
+
 func world_to_screen(p: Vector2) -> Vector2:
-	var o := p - cam_c
-	var a := atan2(cam_c.y, cam_c.x)
+	var c := _view()
+	var a := atan2(c.y, c.x)
+	if unrolled():
+		var d := wrapf(atan2(p.y, p.x) - a, -PI, PI)
+		return Vector2(-d / (TAU / Defs.SH_N[0]), c.length() - p.length()) / zoom + Vector2(VW, VH) * 0.5
+	var o := p - c
 	return Vector2(o.dot(basis_r(a)), o.dot(basis_d(a))) / zoom + Vector2(VW, VH) * 0.5
 
 func screen_to_world(px: Vector2) -> Vector2:
-	var a := atan2(cam_c.y, cam_c.x)
+	var c := _view()
+	var a := atan2(c.y, c.x)
 	var o := (px - Vector2(VW, VH) * 0.5) * zoom
-	return cam_c + basis_r(a) * o.x + basis_d(a) * o.y
+	if unrolled():
+		var th := a - o.x * (TAU / Defs.SH_N[0])
+		return Vector2(cos(th), sin(th)) * (c.length() - o.y)
+	return c + basis_r(a) * o.x + basis_d(a) * o.y
 
 func to_grid(p: Vector2) -> Vector2:
 	var o := p - grid_g
@@ -976,7 +1020,7 @@ func revive() -> void:
 # =============================================================== spells ===
 func _staff(m: Mage, aim: Vector2) -> Array:
 	var a := atan2(m.pos.y, m.pos.x)
-	var hand := m.pos + basis_r(a) * (m.facing * 5.0) + basis_d(a) * 0.5
+	var hand := m.pos + basis_r(a) * (m.facing * 7.0) + basis_d(a) * (-0.5)   # the hand in the sprite
 	var dir := (aim - hand).normalized()
 	if dir == Vector2.ZERO:
 		dir = basis_r(a)
@@ -1205,8 +1249,16 @@ func _kill_enemy(e: Enemy) -> void:
 		planet_state["slain"] = slain
 	if e.type == "mimic":
 		_rare_find(0.6)
-	for k in (120 if e.boss else 16):
-		_particle(e.pos, Vector2(randf() - 0.5, -randf()) * 2.0, 30 + randi() % 30, Color(1, 0.7, 0.3), true, 0.05)
+	# it bursts apart in its own colours (bones, slime, embers...), with a puff of sparks
+	var spr: Dictionary = Defs.SPRITES.get(e.d["spr"], {})
+	var cols := []
+	if spr.has("pal"):
+		for ck in spr["pal"]:
+			cols.append(Color(spr["pal"][ck]))
+	for k in (120 if e.boss else 34):
+		var c: Color = cols[randi() % cols.size()] if not cols.is_empty() and k % 3 != 0 else Color(1, 0.7, 0.3)
+		var off := Vector2(randf() - 0.5, randf() - 0.5) * Vector2(e.w, e.h)
+		_particle(e.pos + off, (Vector2(randf() - 0.5, -randf() * 0.9) * 2.4) + off * 0.06, 35 + randi() % 35, c, k % 3 == 0, 0.08)
 	for dr in e.d["drops"]:
 		if randf() < float(dr[2]):
 			var n := 1 + randi() % int(dr[1])
@@ -1744,7 +1796,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 9            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 10            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

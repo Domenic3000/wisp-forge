@@ -43,7 +43,11 @@ void main() {
 		if (!runFree) {
 			// resting on something it can't fall through: if it was falling, it has landed
 			if (life > 0u && life < 128u) {
-				bool smash = life > 9u && DEBRIS[t] != t && rnd3(uint(i), fr, 61u) < 0.55;
+				// built blocks (planks, bricks, stone blocks, tiles, glass) break up even after a short
+				// drop, so an undermined building crumbles instead of sliding down in neat columns
+				bool built = t == M_PLANK || t == M_BRICK || t == M_MASONRY || t == M_MOSSBLOCK || t == M_SANDSTONE || t == M_TILE || t == M_GLASS;
+				float rs = rnd3(uint(i), fr, 61u);
+				bool smash = DEBRIS[t] != t && ((life > 9u && rs < 0.55) || (built && life > 2u && rs < 0.7));
 				if (smash || ib < 0) world.cells[i] = withFG(c, DEBRIS[t] != t ? DEBRIS[t] : t, 0u);
 				else world.cells[i] = c & 0xff00ffffu;
 			} else if (life >= 128u) {
