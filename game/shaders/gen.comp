@@ -271,6 +271,7 @@ uint charredTree(vec2 q, float hh, int bb) {
 	return 0u;
 }
 
+uint floraId = 0u;   // which tree the cell flora() returned belongs to (aux bits 16-31, see react.comp)
 // trees and other surface plants, evaluated per cell from hashed "buckets" along the surface arc
 uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 	float arc = th * RS0;
@@ -284,6 +285,11 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 	int b = int(floor(arc / BW));
 	float spawnA = P.p[121].x;
 	float nz = h2(ivec2(int(arc), int(r)), SEED + 5);
+	// where crowns overlap, a cell goes to the tree whose trunk is nearest (and wood always wins),
+	// so each tree stays one connected piece of its own (react.comp keeps trees apart by id)
+	uint best = 0u;
+	float bestScore = 1e9;
+	uint bestId = 0u;
 	for (int k = -2; k <= 2; k++) {
 		int bb = int(mod(float(b + k), nB));
 		float hb = h2(ivec2(bb, 77), SEED);
@@ -314,8 +320,12 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 		else if (ft == 4) m = willowTree(q, hh, h3, bb, nz);
 		else if (ft == 5) m = charredTree(q, hh, bb);
 		else if (ft == 6) m = palmTree(q, hh, h3);
-		if (m != 0u) return m;
+		if (m != 0u) {
+			float sc = abs(da) - ((m == M_WOOD || m == M_COAL || m == M_CACTUS) ? 1000.0 : 0.0);
+			if (sc < bestScore) { bestScore = sc; best = m; bestId = 0x8000u | uint(bb + 1); }
+		}
 	}
+	if (best != 0u) { floraId = bestId; return best; }
 	// undergrowth and small plants
 	if (onSite(th, 1.0)) return 0u;
 	int col = int(floor(arc));
@@ -336,13 +346,16 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 			float by = r - floor(ba.x);
 			if (floraType == 2) {
 				float hs = 4.0 + floor(hb * 8.0);
+				floraId = 0xC000u | uint(bb + 100000) % 16000u;
 				if (by >= 1.0 && by < hs && abs(dx) < (hs - by) * 0.4 + 0.5) return M_LEAF;
 				if (by >= 0.0 && by < 1.0 && abs(dx) < 0.6) return M_WOOD;
 			} else {
 				float rx = 2.5 + hb * 4.0, ry = 2.0 + hb * 3.0;
 				float e = (dx * dx) / (rx * rx) + (by - ry * 0.6) * (by - ry * 0.6) / (ry * ry);
+				floraId = 0xC000u | uint(bb + 100000) % 16000u;
 				if (by >= 0.0 && e < 1.0 - nz * 0.25) return M_LEAF;
 			}
+			floraId = 0u;
 		}
 		// grass tufts
 		float hr = h2(ivec2(col, 86), SEED);
@@ -453,5 +466,5 @@ void main() {
 	int ci = cellIdx(s, y, x);
 	// untouched natural solids are anchored: part of the planet until something disturbs them
 	world.cells[ci] = m | (v << 8) | (KIND[m] == K_SOLID ? ST_ANCHOR : 0u);
-	aux.a[ci] = bgm;
+	aux.a[ci] = bgm | (bgm != 0u && floraId != 0u ? floraId << 16 : 0u);
 }

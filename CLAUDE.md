@@ -28,6 +28,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   - bits 8-13: support
   - bit 14: built back wall
   - bit 15: anchored (generated structures stay as built until digging nearby clears it, like bit 30 in front)
+  - bits 16-31: plant id (bit 31 set; 0x8000 range = a tree, 0xC000 range = a bush), written by gen.comp.
+    `shaders/plants.comp` (6 passes per frame) only lets cells of the same plant hold each other up, and a
+    tree is only held by its wood touching the ground, so a cut tree drops whole and fast.
 - A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`),
   but only for materials the digging staff could dig (so a vault's obsidian never comes loose early).
 

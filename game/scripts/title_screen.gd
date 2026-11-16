@@ -41,15 +41,64 @@ float rockBottom(float x, float W, float H) {
 bool isRock(vec2 p, float W, float H) {
 	return p.x < W * 0.5 && p.y >= rockTop(p.x, W, H) && p.y < rockBottom(p.x, W, H);
 }
-// a pine: 1 where it covers p (tiers of boughs on a trunk), 0 elsewhere
-float pine(vec2 p, float tx, float ty, float hgt) {
+// a shaded pixel pine. Returns colour and coverage (a = 0 where it doesn't cover p).
+// Tiers of boughs, each lit on top and shadowed underneath, with ragged drooping tips, a rim of
+// cool planet light on the right, a trunk showing between the lower tiers and a sway in the wind.
+vec4 pine(vec2 p, float tx, float ty, float hgt, float seed, float fade) {
 	float dyt = ty - p.y;
-	if (dyt <= 0.0 || dyt >= hgt) return 0.0;
-	float tier = fract((dyt - 3.0) / 6.0);
-	float wdt = (hgt - dyt) * 0.24 * (1.0 - 0.45 * tier) + 0.6;
-	if (dyt > 3.0 && abs(p.x - tx) < wdt) return 1.0;
-	if (abs(p.x - tx) < 1.0 && dyt <= 4.0) return 2.0;
-	return 0.0;
+	if (dyt < 0.0 || dyt > hgt + 2.0) return vec4(0.0);
+	float sway = floor(sin(t * 0.9 + seed) * (dyt / hgt) * (dyt / hgt) * 1.6 + 0.5);
+	float dx = p.x - tx - sway;
+	float trunkW = max(1.0, floor(hgt * 0.035));
+	float base = max(3.0, floor(hgt * 0.12));
+	float P = max(5.0, floor(hgt * 0.16));
+	vec3 dark = vec3(0.02, 0.07, 0.08), mid = vec3(0.04, 0.16, 0.15), lit = vec3(0.10, 0.29, 0.23), tip = vec3(0.22, 0.45, 0.32);
+	if (dyt >= base) {
+		float tp = fract((dyt - base) / P);                 // 0 at the bottom of a tier, 1 at its top
+		float taper = (hgt + 1.0 - dyt) / hgt;
+		float w = taper * hgt * 0.30 * (0.40 + 0.60 * (1.0 - tp)) + 0.5;
+		w += (hash(vec2(floor(dyt), seed)) - 0.5) * 1.4 * taper;  // ragged needles
+		if (abs(dx) < w) {
+			float e = abs(dx) / max(w, 1.0);
+			// four tones: the tier above shades the top of each tier, the drooping tips catch the light
+			float li = 0.55 - tp * 0.55 + (dx < 0.0 ? 0.2 : -0.05) + e * 0.25 + (hash(floor(p) + seed) - 0.5) * 0.3;
+			if (tp > 0.78 && dyt < hgt - 2.0) li -= 0.45;
+			vec3 c = li < 0.2 ? dark : (li < 0.5 ? mid : (li < 0.8 ? lit : tip));
+			if (dx > 0.0 && w - abs(dx) < 1.0 && tp < 0.75) c = mix(c, vec3(0.32, 0.44, 0.64), 0.6);  // planet rim light
+			c = mix(c, vec3(0.10, 0.08, 0.18), fade);
+			return vec4(c, 1.0);
+		}
+	}
+	if (abs(dx + 0.25) < trunkW && dyt < hgt * 0.8) {
+		vec3 c = dx < 0.0 ? vec3(0.17, 0.10, 0.08) : vec3(0.26, 0.16, 0.11);
+		return vec4(mix(c, vec3(0.10, 0.08, 0.18), fade), 1.0);
+	}
+	return vec4(0.0);
+}
+// a round broadleaf tree: a lumpy crown of three blobs with light from the upper left
+vec4 broadleaf(vec2 p, float tx, float ty, float hgt, float seed) {
+	float dyt = ty - p.y;
+	float sway = floor(sin(t * 0.7 + seed) * 1.2 * clamp(dyt / hgt, 0.0, 1.0) + 0.5);
+	vec2 q = vec2(p.x - tx - sway, dyt);
+	float R = hgt * 0.42;
+	vec2 c0 = vec2(0.0, hgt - R * 0.9), c1 = vec2(-R * 0.62, hgt - R * 1.25), c2 = vec2(R * 0.6, hgt - R * 1.15);
+	float n = (noise(p / 2.5 + seed) - 0.5) * 0.25;
+	float e0 = length((q - c0) / vec2(R, R * 0.85)), e1 = length((q - c1) / vec2(R * 0.7, R * 0.6)), e2 = length((q - c2) / vec2(R * 0.7, R * 0.6));
+	float e = min(e0, min(e1, e2));
+	if (e < 1.0 + n) {
+		vec2 lc = q - (e == e0 ? c0 : (e == e1 ? c1 : c2));
+		// clumps of leaves, each lit from the upper left, in four tones
+		float clump = noise(p / 3.2 + seed * 3.0);
+		float li = 0.5 - lc.x / R * 0.35 + lc.y / R * 0.45 + (clump - 0.5) * 0.9 - e * 0.25;
+		li += (hash(floor(p) + seed) - 0.5) * 0.15;
+		vec3 c = li < 0.15 ? vec3(0.07, 0.10, 0.06) : (li < 0.42 ? vec3(0.15, 0.24, 0.10) : (li < 0.68 ? vec3(0.28, 0.40, 0.15) : vec3(0.46, 0.57, 0.24)));
+		return vec4(c, 1.0);
+	}
+	float tw = max(1.5, hgt * 0.05) + max(0.0, 3.0 - dyt) * 0.6;
+	if (dyt >= 0.0 && dyt < hgt - R && abs(q.x) < tw) return vec4(q.x < 0.0 ? vec3(0.16, 0.10, 0.08) : vec3(0.27, 0.17, 0.11), 1.0);
+	// a branch to each side blob
+	if (dyt > 0.0 && (abs(q.y - (hgt - R * 1.4) - (q.x) * 0.6) < 0.8 && q.x > 0.0 && q.x < R * 0.5)) return vec4(0.24, 0.15, 0.10, 1.0);
+	return vec4(0.0);
 }
 
 void fragment() {
@@ -173,13 +222,25 @@ void fragment() {
 		float hr = hash(vec2(floor(p.x), 4.0));
 		if (rockTop(p.x, W, H) < bot - 3.0 && p.y >= bot && p.y < bot + hr * 10.0 && hr > 0.8) col = vec3(0.16, 0.12, 0.14);
 	}
-	// pines on the cliff, the far one darker
-	float pa = pine(p, floor(W * 0.115), rockTop(floor(W * 0.115), W, H) + 1.0, H * 0.20);
-	if (pa > 0.0) col = pa > 1.5 ? vec3(0.14, 0.09, 0.08) : mix(vec3(0.05, 0.13, 0.11), vec3(0.08, 0.20, 0.15), step(0.0, p.x - W * 0.115));
-	float pb = pine(p, floor(W * 0.06), rockTop(floor(W * 0.06), W, H) + 1.0, H * 0.32);
-	if (pb > 0.0) col = pb > 1.5 ? vec3(0.20, 0.12, 0.09) : mix(vec3(0.07, 0.19, 0.13), vec3(0.12, 0.30, 0.18), step(0.0, p.x - W * 0.06));
-	float pc2 = pine(p, floor(W * 0.155), rockTop(floor(W * 0.155), W, H) + 1.0, H * 0.14);
-	if (pc2 > 0.0) col = pc2 > 1.5 ? vec3(0.20, 0.12, 0.09) : mix(vec3(0.08, 0.22, 0.14), vec3(0.14, 0.34, 0.20), step(0.0, p.x - W * 0.155));
+	// trees on the cliff: a broad tree framing the left edge, pines in front of it
+	vec4 tr = broadleaf(p, floor(W * 0.025), rockTop(floor(W * 0.025), W, H) + 1.0, H * 0.46, 3.0);
+	if (tr.a > 0.0) col = tr.rgb;
+	tr = pine(p, floor(W * 0.115), rockTop(floor(W * 0.115), W, H) + 1.0, floor(H * 0.24), 7.0, 0.25);
+	if (tr.a > 0.0) col = tr.rgb;
+	tr = pine(p, floor(W * 0.075), rockTop(floor(W * 0.075), W, H) + 1.0, floor(H * 0.36), 1.0, 0.0);
+	if (tr.a > 0.0) col = tr.rgb;
+	tr = pine(p, floor(W * 0.16), rockTop(floor(W * 0.16), W, H) + 1.0, floor(H * 0.15), 5.0, 0.0);
+	if (tr.a > 0.0) col = tr.rgb;
+	// bushes at the trees' feet
+	for (int bi = 0; bi < 4; bi++) {
+		float bx = floor(W * (0.04 + 0.045 * float(bi)));
+		float by = rockTop(bx, W, H);
+		vec2 bq = (p - vec2(bx, by - 1.0)) / vec2(4.0 + float(bi % 2) * 2.0, 3.0);
+		if (bq.y < 0.2 && length(bq) < 1.0 + (noise(p / 1.5) - 0.5) * 0.4) {
+			col = mix(vec3(0.06, 0.16, 0.10), vec3(0.22, 0.44, 0.22), clamp(-bq.y - bq.x * 0.4, 0.0, 1.0));
+			if (hash(p + 2.0) > 0.93) col = vec3(0.95, 0.60, 0.75);
+		}
+	}
 	// soft vignette and a gentle colour step (pixel-art palette feel)
 	vec2 uv = UV - 0.5;
 	col *= 1.0 - 0.45 * pow(length(uv) * 1.25, 2.2);

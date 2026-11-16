@@ -10,6 +10,7 @@ var LS := 4              # light grid block size (pixels); Low quality uses 6
 # quality settings (see apply_quality)
 var flow_passes := 4     # extra liquid-spreading passes per frame
 var support_iters := 3   # structural support relaxation passes per frame
+const PLANT_ITERS := 6   # background plant support passes per frame (plants.comp)
 var topple_iters := 2    # falling-block passes per frame
 var blur_passes := 2     # light blur passes
 var sun_step := 2.0      # sunlight march step (cells)
@@ -62,7 +63,7 @@ func init() -> bool:
 	surf_buf = rd.storage_buffer_create(Defs.SH_N[0] * 32)
 	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
 	var prefix: String = Defs.glsl_prefix()
-	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp"]:
+	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants"]:
 		if not _compile(nm, prefix):
 			return false
 	_make_static_sets()
@@ -124,6 +125,7 @@ func _make_static_sets() -> void:
 	sets["move"] = _mkset("move", [[0, world_buf]])
 	sets["boundary"] = _mkset("boundary", [[0, world_buf]])
 	sets["support"] = _mkset("support", [[0, world_buf], [8, aux_buf]])
+	sets["plants"] = _mkset("plants", [[0, world_buf], [8, aux_buf]])
 	sets["topple"] = _mkset("topple", [[0, world_buf]])
 	sets["brush"] = _mkset("brush", [[0, world_buf], [1, params_buf], [3, counts_buf], [8, aux_buf]])
 
@@ -426,6 +428,10 @@ const CREAK_FRAMES := 48    # a loose piece creaks this long (0.8 s) before it d
 func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int, creak: int) -> void:
 	for w in win:
 		_dispatch(cl, "react", "react", [w.s, w.y0, w.y1, w.x0, w.count, frame, rain_row, rain_mat], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+	# background plants: several passes, so a cut tree knows it is cut within a few frames
+	for it in PLANT_ITERS:
+		for w in win:
+			_dispatch(cl, "plants", "plants", [w.s, w.y0, w.y1, w.x0, w.count, frame * PLANT_ITERS + it], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	for it in support_iters:
 		for w in win:
 			_dispatch(cl, "support", "support", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))

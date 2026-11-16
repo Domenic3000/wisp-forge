@@ -28,13 +28,6 @@ ivec3 stepC(int s, int y, int x, int dir) {
 uint cellC(ivec3 q) { return q.x < 0 ? 0u : world.cells[cellIdx(q.x, q.y, q.z)]; }
 float dayAt(int s, int y, int x) { return clamp(dot(normalize(cellCenter(s, y, x)), sunDir()) * 1.6 + 0.15, 0.0, 1.0); }
 int idxC(ivec3 q) { return q.x < 0 ? -1 : cellIdx(q.x, q.y, q.z); }
-// background support of a neighbour (62 = none)
-uint supAt(ivec3 q) {
-	if (q.x < 0) return 62u;
-	uint a = aux.a[cellIdx(q.x, q.y, q.z)];
-	return (a & 255u) != 0u ? min((a >> 8) & 63u, 62u) : 62u;
-}
-
 void main() {
 	int s = pc.a.x;
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
@@ -47,32 +40,9 @@ void main() {
 	uint fr = uint(pc.b.y);
 	float R = rnd3(uint(i), fr, 17u);
 
-	// ---- background objects need support: distance to solid ground through other background cells ----
-	// Growing straight up is free (a trunk, a stack of leaves), reaching sideways, hanging or
-	// leaning diagonally costs 1, so a tall tree stands while a cut-off piece counts up and drops.
+	// (background plants are held up by plants.comp, which runs several times per frame)
 	uint ab = aux.a[i];
 	uint bgm = ab & 255u;
-	if (bgm != 0u && (ab & BG_WALL) == 0u && (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID)) {
-		ivec3 qU = stepC(s, y, x, 0), qD = stepC(s, y, x, 1), qL = stepC(s, y, x, 2), qR = stepC(s, y, x, 3);
-		uint cU = cellC(qU), cD = cellC(qD), cL = cellC(qL), cR = cellC(qR);
-		uint ns;
-		// touching ground holds it; so does growing up out of mud or water (marsh willows, reeds, kelp)
-		if (isBlock(cU & 255u) || isBlock(cD & 255u) || isBlock(cL & 255u) || isBlock(cR & 255u) || KIND[cD & 255u] == K_LIQUID) ns = 0u;
-		else {
-			uint mn = min(supAt(qU), min(supAt(qL), supAt(qR)));
-			ivec3 qUL = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 2), qUR = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 3);
-			ivec3 qDL = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 2), qDR = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 3);
-			mn = min(mn, min(min(supAt(qUL), supAt(qUR)), min(supAt(qDL), supAt(qDR))));
-			ns = min(min(supAt(qD), mn + 1u), 62u);
-		}
-		if (ns != ((ab >> 8) & 63u)) { ab = (ab & ~0x3f00u) | (ns << 8); aux.a[i] = ab; }
-		if (ns >= 62u && rnd3(uint(i), fr, 41u) < 0.3) {
-			// nothing holds it up any more: it breaks loose as falling debris
-			aux.a[i] = 0u;
-			if (t == 0u || KIND[t] == K_GAS) world.cells[i] = BGDEBRIS[bgm] | (c & 0xff00u);
-			return;
-		}
-	}
 	if (t == 0u) {
 		if (y == pc.b.z && R < P.p[3].x) {
 			vec2 p = cellCenter(s, y, x);

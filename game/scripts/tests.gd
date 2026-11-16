@@ -210,7 +210,8 @@ func run() -> void:
 	var worst_v := 1.0
 	var worst_txt := ""
 	for info in visits:
-		var sc0 := _scan(g.gpu.read_world(), info)
+		var raw_v0: PackedByteArray = g.gpu.read_world()
+		var sc0 := _scan(raw_v0, info)
 		_go(_cell_pos(int(info["x0"]) + int(info["w"]) / 2, int(info["y0"]) - 6))
 		await _frames(200)
 		var sc1 := _scan(g.gpu.read_world(), info)
@@ -224,7 +225,31 @@ func run() -> void:
 				var dn := int(sc0["all"][k]) - int(sc1["all"].get(k, 0))
 				if dn > 3:
 					lost.append("%s -%d" % [k, dn])
-			worst_txt = "%s %s %dx%d lost %s" % ["ruined" if info["ruined"] else "intact", b.label_at(_cell_pos(int(info["x0"]) + 2, int(info["y0"]) + int(info["h"]) - 4)), info["w"], info["h"], ", ".join(lost)]
+			# where the lost tree stood: its lowest wood cell that is gone now, and what was under it
+			var raw_v1: PackedByteArray = g.gpu.read_world()
+			var boffv: int = Defs.total_cells() * 4
+			var Nv: int = Defs.SH_N[0]
+			var low := ""
+			var lowrow := -1
+			for jj in int(info["h"]):
+				var rowv: int = int(info["y0"]) + jj
+				if rowv < 0 or rowv >= Defs.SH_Y0[1]:
+					continue
+				for ii in int(info["w"]):
+					var colv := posmod(int(info["x0"]) + ii, Nv)
+					var kv := (rowv * Nv + colv) * 4
+					var a0 := raw_v0.decode_u32(boffv + kv)
+					if (a0 & 255) == Defs.WOOD and (raw_v1.decode_u32(boffv + kv) & 255) == 0 and rowv > lowrow:
+						lowrow = rowv
+						var colm := []
+						for dr in range(-1, 10):
+							colm.append(str(raw_v0.decode_u32(((rowv + dr) * Nv + colv) * 4) & 255))
+						var nsites := []
+						for st2 in b.sites:
+							if absf(float(colv) - st2.x) < 300 or absf(float(colv) - st2.y) < 300:
+								nsites.append("%d-%d" % [int(st2.x), int(st2.y)])
+						low = "lowest lost wood at column +%d (abs %d) row +%d (ground row +%d), id %x, S%d, fg column from just above: %s, box x0 %d, sites %s" % [ii, colv, jj, b.ground_row(colv) - int(info["y0"]), a0 >> 16, (a0 >> 8) & 63, "/".join(colm), int(info["x0"]), ",".join(nsites)]
+			worst_txt = low + "; %s %s %dx%d lost %s" % ["ruined" if info["ruined"] else "intact", b.label_at(_cell_pos(int(info["x0"]) + 2, int(info["y0"]) + int(info["h"]) - 4)), info["w"], info["h"], ", ".join(lost)]
 	_ok("structures stay put when you arrive", worst_v >= 0.97, "%d visited, worst keeps %.1f%%" % [visits.size(), worst_v * 100.0])
 	if worst_v < 0.97:
 		lines.append("      " + worst_txt)
@@ -436,6 +461,7 @@ func run() -> void:
 	var tree_lines := []
 	var tree_ok := true
 	var biomes_seen := 0
+	var forest_col := -1
 	for bname in ["forest", "marsh", "mountain", "tundra", "desert", "ashland", "ocean"]:
 		var best_col := -1
 		var best_n := 0
@@ -450,6 +476,8 @@ func run() -> void:
 		if best_col < 0 or best_n < 40:
 			continue
 		biomes_seen += 1
+		if bname == "forest":
+			forest_col = best_col
 		var gr2: int = b.ground_row(best_col + 60)
 		_go(_cell_pos(best_col + 60, gr2 - 30))
 		await _frames(200)
@@ -458,6 +486,92 @@ func run() -> void:
 		if after_t < int(best_n * 0.97):
 			tree_ok = false
 	_ok("trees stand when you come near, in every biome", tree_ok and biomes_seen > 0, ", ".join(tree_lines))
+
+	# ---- a tree whose trunk is cut comes down quickly, even where its crown touches another ----
+	var cut_txt := "no forest found"
+	var cut_ok := false
+	if forest_col >= 0:
+		var rw: PackedByteArray = g.gpu.read_world()
+		var tcol := -1
+		var tid := 0
+		var most := 0
+		for i in 120:
+			var col := posmod(forest_col + i, N0)
+			var grc: int = b.ground_row(col)
+			var nw := 0
+			var idc := 0
+			for j in range(grc - 40, grc):
+				var a := rw.decode_u32(toff + (j * N0 + col) * 4)
+				if (a & 255) == Defs.WOOD and (a & 0x80000000) != 0:
+					nw += 1
+					idc = a >> 16
+			if nw > most:
+				most = nw
+				tcol = col
+				tid = idc
+		if tcol >= 0 and most >= 15:
+			var grt: int = b.ground_row(tcol)
+			var count_tree := func(raw: PackedByteArray) -> int:
+				var n := 0
+				for j in range(grt - 110, grt - 9):
+					for i in range(-40, 41):
+						if (raw.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4) >> 16) == tid:
+							n += 1
+				return n
+			_go(_cell_pos(tcol - 30, grt - 10))
+			await _frames(30)
+			var zone := func(raw: PackedByteArray) -> String:
+				var nwz := 0
+				var nfg := 0
+				for j in range(grt - 10, grt - 3):
+					for i in range(-5, 6):
+						var kk := (j * N0 + posmod(tcol + i, N0)) * 4
+						if (raw.decode_u32(toff + kk) & 255) == Defs.WOOD:
+							nwz += 1
+						if (raw.decode_u32(kk) & 255) != 0:
+							nfg += 1
+				# support of the tree's wood well above the cut
+				var sup := []
+				for j in [grt - 14, grt - 20, grt - 30]:
+					var a2 := raw.decode_u32(toff + (j * N0 + tcol) * 4)
+					sup.append("%d:%d" % [a2 & 255, (a2 >> 8) & 63])
+				# the best-held cell of that tree above the cut, and what is around it
+				var best := 99
+				var where := ""
+				for j in range(grt - 110, grt - 9):
+					for i in range(-40, 41):
+						var cc := posmod(tcol + i, N0)
+						var a3 := raw.decode_u32(toff + (j * N0 + cc) * 4)
+						if (a3 >> 16) != tid:
+							continue
+						var sv := (a3 >> 8) & 63
+						if sv < best:
+							best = sv
+							var nb := []
+							for o in [[0, -1], [0, 1], [-1, 0], [1, 0]]:
+								nb.append(str(raw.decode_u32(((j + o[1]) * N0 + posmod(cc + o[0], N0)) * 4) & 255))
+							where = "S%d mat %d at %d,%d fg %s" % [sv, a3 & 255, i, grt - j, "/".join(nb)]
+				return "wood in cut %d, front cells %d, sup %s, best %s" % [nwz, nfg, ",".join(sup), where]
+			var before_n: int = count_tree.call(g.gpu.read_world())
+			var z0: String = zone.call(g.gpu.read_world())
+			# hold the dig on the trunk for a moment (each frame harvests about a third of it)
+			for fk in 15:
+				for dc in [-2, 0, 2]:
+					g.brushes.append([_cell_pos(tcol + dc, grt - 7), 2.5, 1, 0, 4, 0, 0, 0])
+				await _frames(1)
+			_go(_cell_pos(tcol - 30, grt - 10))
+			await _frames(40)
+			var mid_n: int = count_tree.call(g.gpu.read_world())
+			var z1: String = zone.call(g.gpu.read_world())
+			await _frames(50)
+			var after_n: int = count_tree.call(g.gpu.read_world())
+			cut_ok = before_n > 50 and after_n < before_n / 10
+			cut_txt = "column %d: %d cells of that tree above the cut, %d after 0.7 s, %d after 1.5 s" % [tcol, before_n, mid_n, after_n]
+			if not (before_n > 50 and after_n < before_n / 10):
+				cut_txt += " (before: %s; after: %s)" % [z0, z1]
+		else:
+			cut_txt = "no tall trunk found"
+	_ok("a cut tree falls quickly, even when its crown touches a neighbour", cut_ok, cut_txt)
 
 	# ---- sand (and other powders) is generated resting: nothing pours when you arrive ----
 	var sand_col := -1

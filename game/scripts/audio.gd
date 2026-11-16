@@ -175,7 +175,7 @@ func _noise(sec: float, cutoff: float, decay: float, gain: float) -> PackedFloat
 	for i in a.size():
 		var t := float(i) / RATE
 		lp += (randf() * 2.0 - 1.0 - lp) * k
-		a[i] = lp * exp(-t * decay) * gain
+		a[i] = lp * exp(-t * decay) * gain * minf(1.0, t * 250.0)
 	return a
 
 ## a tone that slides from f0 to f1 (sine, square or saw)
@@ -207,6 +207,15 @@ func _chime(notes: Array, gap: float, ring: float, gain: float) -> PackedFloat32
 			a[i] += (sin(t * f * TAU) + 0.35 * sin(t * f * 2.0 * TAU) + 0.12 * sin(t * f * 3.01 * TAU)) * env * gain
 	return a
 
+## smooths a sound (a one-pole low-pass): smaller k is darker and softer
+func _lowpass(a: PackedFloat32Array, k: float) -> PackedFloat32Array:
+	var out := a.duplicate()
+	var lp := 0.0
+	for i in out.size():
+		lp += (out[i] - lp) * k
+		out[i] = lp
+	return out
+
 func _mix(a: PackedFloat32Array, b: PackedFloat32Array) -> PackedFloat32Array:
 	var out := a.duplicate() if a.size() >= b.size() else b.duplicate()
 	var other := b if a.size() >= b.size() else a
@@ -216,12 +225,14 @@ func _mix(a: PackedFloat32Array, b: PackedFloat32Array) -> PackedFloat32Array:
 
 func _build_sfx() -> void:
 	seed(4242)
-	sfx["dig"] = _wav(_mix(_noise(0.13, 0.35, 28.0, 0.9), _sweep(0.08, 180.0, 90.0, "square", 40.0, 0.12)))
+	# a soft, earthy scoop: dark noise with a gentle start and a low thump under it
+	sfx["dig"] = _wav(_lowpass(_mix(_noise(0.16, 0.06, 20.0, 0.75), _sweep(0.12, 120.0, 70.0, "sine", 26.0, 0.22)), 0.35))
 	sfx["step"] = _wav(_noise(0.06, 0.12, 60.0, 0.5))
 	sfx["land"] = _wav(_mix(_noise(0.12, 0.08, 30.0, 0.9), _sweep(0.1, 120.0, 60.0, "sine", 30.0, 0.4)))
 	sfx["jump"] = _wav(_sweep(0.12, 260.0, 520.0, "sine", 14.0, 0.28))
 	sfx["levitate"] = _wav(_mix(_noise(0.25, 0.05, 6.0, 0.25), _sweep(0.25, 600.0, 640.0, "sine", 8.0, 0.06)))
-	sfx["spark"] = _wav(_sweep(0.16, 1400.0, 380.0, "square", 18.0, 0.22))
+	# a light magical twinkle: two soft bell notes over a rising sine and a breath of air
+	sfx["spark"] = _wav(_mix(_mix(_chime([1318.5, 1975.5], 0.03, 0.2, 0.07), _sweep(0.18, 700.0, 1250.0, "sine", 16.0, 0.07)), _lowpass(_noise(0.14, 0.5, 24.0, 0.05), 0.5)))
 	sfx["fire"] = _wav(_mix(_noise(0.4, 0.06, 6.0, 0.8), _sweep(0.3, 300.0, 140.0, "saw", 8.0, 0.12)))
 	sfx["water"] = _wav(_noise(0.45, 0.25, 5.0, 0.55))
 	sfx["frost"] = _wav(_mix(_chime([1568.0, 2093.0], 0.04, 0.3, 0.12), _noise(0.3, 0.6, 12.0, 0.2)))

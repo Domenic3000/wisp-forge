@@ -1,0 +1,97 @@
+// Background plants (trees, bushes, cave growths) need support: a distance to solid ground
+// through other cells of the same plant. Growing straight up is free (a trunk, a stack of
+// leaves); reaching sideways, hanging or leaning diagonally costs 1, so a tall tree stands
+// while a cut-off piece counts up and drops. Runs six times per frame so a cut tree
+// comes down quickly.
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame * passes + pass, 0, 0)
+#include "common"
+#include "world"
+#include "bglayer"
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// neighbour coordinates across shells: dir 0 up, 1 down, 2 left, 3 right
+ivec3 stepC(int s, int y, int x, int dir) {
+	int n = SH_N[s];
+	if (dir == 2) return ivec3(s, y, x == 0 ? n - 1 : x - 1);
+	if (dir == 3) return ivec3(s, y, x == n - 1 ? 0 : x + 1);
+	if (dir == 0) {
+		int yy = y - 1;
+		if (yy < 0) return ivec3(-1);
+		if (yy < SH_Y0[s]) return ivec3(s - 1, yy, x * 2);
+		return ivec3(s, yy, x);
+	}
+	int yy = y + 1;
+	if (yy >= ROWS) return ivec3(-1);
+	if (yy >= SH_Y0[s + 1]) return ivec3(s + 1, yy, x / 2);
+	return ivec3(s, yy, x);
+}
+uint cellC(ivec3 q) { return q.x < 0 ? 0u : world.cells[cellIdx(q.x, q.y, q.z)]; }
+// which plant a background cell belongs to (bit 31 + bits 16-30, set by the generator; 0 = none).
+// Plants only hold each other up within one plant, so cutting a trunk drops that whole tree even
+// where its crown touches a neighbour's.
+uint plantId(uint a) { return (a & 0x80000000u) != 0u ? (a >> 16) : 0u; }
+// support of a neighbour of the same plant (62 = none)
+uint supAt(ivec3 q, uint id) {
+	if (q.x < 0) return 62u;
+	uint a = aux.a[cellIdx(q.x, q.y, q.z)];
+	return ((a & 255u) != 0u && plantId(a) == id) ? min((a >> 8) & 63u, 62u) : 62u;
+}
+
+void main() {
+	int s = pc.a.x;
+	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	int k = int(gl_GlobalInvocationID.x);
+	if (y >= pc.a.z || k >= pc.b.x) return;
+	int x = wrapc(pc.a.w + k, SH_N[s]);
+	int i = cellIdx(s, y, x);
+	uint ab = aux.a[i];
+	uint bgm = ab & 255u;
+	if (bgm == 0u) return;
+	uint c = world.cells[i];
+	uint t = c & 255u;
+	uint fr = uint(pc.b.y);
+	if (bgm != 0u && (ab & BG_WALL) == 0u && (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID)) {
+		ivec3 qU = stepC(s, y, x, 0), qD = stepC(s, y, x, 1), qL = stepC(s, y, x, 2), qR = stepC(s, y, x, 3);
+		uint cU = cellC(qU), cD = cellC(qD), cL = cellC(qL), cR = cellC(qR);
+		uint ns;
+		// touching ground holds it; so does growing up out of mud or water (marsh willows, reeds, kelp).
+		// A tree is only held by its wood: a crown resting on a slope doesn't keep a cut tree up.
+		// Falling things (leaf litter, timber, raindrops) brushing past don't count either.
+		bool tree = (ab >> 30) == 2u;
+		bool grounded;
+		if (tree) {
+			uint tD = cD & 255u;
+			bool solidN = KIND[cU & 255u] == K_SOLID || KIND[tD] == K_SOLID || KIND[cL & 255u] == K_SOLID || KIND[cR & 255u] == K_SOLID;
+			bool restsOn = (KIND[tD] == K_POWDER && tD != M_LITTER && tD != M_TIMBER) || (KIND[tD] == K_LIQUID && ((cD >> 16) & 255u) != 1u);
+			if (!restsOn && tD == 0u && qD.x >= 0) {
+				// marsh mud settles a little: a root one cell above the ground still holds
+				uint cD2 = cellC(stepC(qD.x, qD.y, qD.z, 1));
+				uint t2 = cD2 & 255u;
+				restsOn = KIND[t2] == K_SOLID || (KIND[t2] == K_POWDER && t2 != M_LITTER && t2 != M_TIMBER) || (KIND[t2] == K_LIQUID && ((cD2 >> 16) & 255u) != 1u);
+			}
+			grounded = bgm != M_LEAF && bgm != M_SNOW && (solidN || restsOn);
+		} else {
+			grounded = isBlock(cU & 255u) || isBlock(cD & 255u) || isBlock(cL & 255u) || isBlock(cR & 255u) || KIND[cD & 255u] == K_LIQUID;
+		}
+		if (grounded) ns = 0u;
+		else {
+			uint id = plantId(ab);
+			uint mn = min(supAt(qU, id), min(supAt(qL, id), supAt(qR, id)));
+			ivec3 qUL = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 2), qUR = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 3);
+			ivec3 qDL = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 2), qDR = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 3);
+			mn = min(mn, min(min(supAt(qUL, id), supAt(qUR, id)), min(supAt(qDL, id), supAt(qDR, id))));
+			ns = min(min(supAt(qD, id), mn + 1u), 62u);
+		}
+		uint olds = (ab >> 8) & 63u;
+		// trees and bushes (plants with an id) break up quickly once nothing holds them; a
+		// building's vines and moss crumble gently
+		bool fast = (ab & 0x80000000u) != 0u;
+		if (ns != olds) { ab = (ab & ~0x3f00u) | (ns << 8); aux.a[i] = ab; }
+		if (ns >= 62u && olds >= 62u && rnd3(uint(i), fr, 41u) < (fast ? 0.6 : 0.08)) {
+			// nothing holds it up any more: it breaks loose as falling debris
+			aux.a[i] = 0u;
+			if (t == 0u || KIND[t] == K_GAS) world.cells[i] = BGDEBRIS[bgm] | (c & 0xff00u);
+			return;
+		}
+	}
+}

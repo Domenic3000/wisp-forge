@@ -1,0 +1,273 @@
+#version 450
+#define NM 48
+#define TAU 6.28318530718
+#define R_TOP 1800.0
+#define R_IN 80.0
+#define RS0 1304.0
+#define ROWS 1720
+#define K_EMPTY 0u
+#define K_SOLID 1u
+#define K_POWDER 2u
+#define K_LIQUID 3u
+#define K_GAS 4u
+#define K_FIRE 5u
+#define M_AIR 0u
+#define M_STONE 1u
+#define M_DIRT 2u
+#define M_GRASS 3u
+#define M_SAND 4u
+#define M_WATER 5u
+#define M_LAVA 6u
+#define M_WOOD 7u
+#define M_LEAF 8u
+#define M_FIRE 9u
+#define M_SMOKE 10u
+#define M_STEAM 11u
+#define M_OBSIDIAN 12u
+#define M_DEEPSTONE 13u
+#define M_COPPER 14u
+#define M_COAL 15u
+#define M_EMBER 16u
+#define M_FROST 17u
+#define M_WISP 18u
+#define M_MUD 19u
+#define M_ICE 20u
+#define M_MAGMAROCK 21u
+#define M_CORE 22u
+#define M_SHROOM 23u
+#define M_GRAVEL 24u
+#define M_BRICK 25u
+#define M_GLASS 26u
+#define M_SNOW 27u
+#define M_CRYSTAL 28u
+#define M_ASH 29u
+#define M_PLANK 30u
+#define M_CACTUS 31u
+#define M_TIMBER 32u
+#define M_LITTER 33u
+#define M_MASONRY 34u
+#define M_SANDSTONE 35u
+#define M_TILE 36u
+#define M_MOSSBLOCK 37u
+#define M_TREASURE 38u
+#define M_TORCH 39u
+#define M_OPENCHEST 40u
+const int SH_Y0[5] = int[5](0, 1148, 1474, 1638, 1720);
+const int SH_N[4] = int[4](8192, 4096, 2048, 1024);
+const int SH_OFF[5] = int[5](0,1,2,3,4);
+const uint KIND[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint DENS[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint HARD[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint FUEL[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint SELFL[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint COLLECT[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint SPAN[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint DEBRIS[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const uint BGDEBRIS[48] = uint[48](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+const float IGN[48] = float[48](0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5);
+const float ALPHA[48] = float[48](0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5);
+const vec3 GLOW[48] = vec3[48](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
+const uint PAL[192] = uint[192](1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u);
+// Structural support. Runs a few times per frame over the simulated window.
+// Each solid stores a support distance S:
+//   * anchored natural terrain (never disturbed) is S = 0: it is part of the planet;
+//   * a block resting on something takes that thing's S unchanged (stacking straight up is free);
+//   * otherwise it takes the smallest S of its side / upper neighbours + 1 (reaching out, hanging).
+// A block whose S goes above its material's SPAN has nothing holding it: "topple" drops it.
+// A building's back wall (background, BG_WALL) is part of the structure too, the way a real
+// wall has depth: it carries the blocks in front of it (+1), rests on the wall below it (free),
+// and leans on its neighbours (+1). That is what holds up the wall above a doorway.
+// Every loop of support costs at least +1, so a piece that is cut free counts up until it falls.
+// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+// ---- shared helpers (pure functions, no buffer access) ----
+// Main cell layout: bits 0-7 foreground material, 8-15 colour variant, 16-23 life
+// (for falling blocks: how far they have fallen), 24-29 SUPPORT distance (how far
+// this solid reaches out from something resting on the ground; above SPAN[t] it
+// breaks loose), bit 30 ANCHORED (untouched natural terrain: part of the planet).
+// The background layer (trees, back walls...) lives in a second buffer, see "aux".
+#define ST_ANCHOR 0x40000000u
+#define ST_MAX 63u
+uint stOf(uint c) { return (c >> 24) & 63u; }
+uint withST(uint c, uint st) { return (c & 0xc0ffffffu) | (min(st, ST_MAX) << 24); }
+// changing a cell's material resets its structure state (not anchored, support 0)
+uint withFG(uint c, uint t, uint life) { return t | (c & 0xff00u) | (life << 16); }
+// what excavating a material puts in the satchel
+uint collectAs(uint t) { return t == M_TIMBER ? M_WOOD : (t == M_LITTER ? M_LEAF : (t == M_OPENCHEST ? M_PLANK : t)); }
+layout(std140, binding = 15) uniform PC { ivec4 a; ivec4 b; vec4 c; vec4 d; } pc;
+
+uint hashu(uint x) {
+	x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+	return x;
+}
+float rnd3(uint a, uint b, uint c) { return float(hashu(a ^ hashu(b ^ hashu(c)))) * (1.0 / 4294967296.0); }
+float h2(ivec2 p, int s) {
+	return float(hashu(uint(p.x) * 73856093u ^ hashu(uint(p.y) * 19349663u ^ uint(s) * 83492791u))) * (1.0 / 4294967296.0);
+}
+float vnoise(vec2 p, int s) {
+	vec2 i = floor(p); vec2 f = p - i; vec2 u = f * f * (3.0 - 2.0 * f);
+	ivec2 ii = ivec2(i);
+	float a = h2(ii, s), b = h2(ii + ivec2(1, 0), s), c = h2(ii + ivec2(0, 1), s), d = h2(ii + ivec2(1, 1), s);
+	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm(vec2 p, int s, int oct) {
+	float sum = 0.0, amp = 1.0, norm = 0.0;
+	for (int o = 0; o < oct; o++) { sum += vnoise(p, s + o * 101) * amp; norm += amp; amp *= 0.5; p *= 2.03; }
+	return sum / norm;
+}
+
+int shellOf(int y) {
+	if (y < SH_Y0[1]) return 0;
+	if (y < SH_Y0[2]) return 1;
+	if (y < SH_Y0[3]) return 2;
+	return 3;
+}
+int wrapc(int x, int n) { x = x % n; return x < 0 ? x + n : x; }
+int cellIdx(int s, int y, int x) { return SH_OFF[s] + (y - SH_Y0[s]) * SH_N[s] + x; }
+vec2 cellCenter(int s, int y, int x) {
+	float r = R_TOP - (float(y) + 0.5);
+	float th = (float(x) + 0.5) / float(SH_N[s]) * TAU;
+	return vec2(cos(th), sin(th)) * r;
+}
+float angleOf(vec2 p) { float t = atan(p.y, p.x); return t < 0.0 ? t + TAU : t; }
+// index of the cell containing world position p, or -1 outside the simulated shells
+int idxAt(vec2 p) {
+	float r = length(p);
+	if (r >= R_TOP || r < R_IN) return -1;
+	int y = min(int(R_TOP - r), ROWS - 1);
+	int s = shellOf(y);
+	int x = min(int(angleOf(p) / TAU * float(SH_N[s])), SH_N[s] - 1);
+	return cellIdx(s, y, x);
+}
+vec3 palColor(uint t, uint v) {
+	uint c = PAL[t * 4u + (v & 3u)];
+	return vec3(float((c >> 16) & 255u), float((c >> 8) & 255u), float(c & 255u)) / 255.0;
+}
+// is material t able to move into a cell holding u (falling / flowing)
+bool canDisp(uint t, uint u) {
+	uint ku = KIND[u];
+	if (u == 0u || ku == K_GAS || ku == K_FIRE) return true;
+	if (ku == K_LIQUID && DENS[u] < DENS[t]) return true;
+	return false;
+}
+bool isBlock(uint t) { return KIND[t] == K_SOLID || KIND[t] == K_POWDER; }
+
+// ---- binding 0: the planet's cells (type | variant<<8 | life<<16) ----
+layout(std430, binding = 0) restrict buffer World { uint cells[]; } world;
+
+uint cellTypeAt(vec2 p) {
+	int i = idxAt(p);
+	if (i < 0) return length(p) < R_IN ? M_CORE : 0u;
+	return world.cells[i] & 255u;
+}
+// neighbour index: dir 0 = up (outward), 1 = down (inward), 2 = left, 3 = right. -1 if none.
+int nbr(int s, int y, int x, int dir) {
+	int n = SH_N[s];
+	if (dir == 2) return cellIdx(s, y, x == 0 ? n - 1 : x - 1);
+	if (dir == 3) return cellIdx(s, y, x == n - 1 ? 0 : x + 1);
+	if (dir == 0) {
+		int yy = y - 1;
+		if (yy < 0) return -1;
+		if (yy < SH_Y0[s]) return cellIdx(s - 1, yy, x * 2);
+		return cellIdx(s, yy, x);
+	}
+	int yy = y + 1;
+	if (yy >= ROWS) return -1;
+	if (yy >= SH_Y0[s + 1]) return cellIdx(s + 1, yy, x / 2);
+	return cellIdx(s, yy, x);
+}
+uint cellAt(vec2 p) {
+	int i = idxAt(p);
+	if (i < 0) return length(p) < R_IN ? M_CORE : 0u;
+	return world.cells[i];
+}
+uint tAt(int i) { return i < 0 ? 0u : (world.cells[i] & 255u); }
+
+// ---- binding 8: the background layer, one uint per cell ----
+// bits 0-7 background material (tree, plant, cave decoration or a building's back wall),
+// bits 8-13 support distance (63 = nothing holds it up), bit 14 = built back wall,
+// bit 15 = anchored (a generated building's wall: it stays as built until you dig near it).
+layout(std430, binding = 8) restrict buffer Aux { uint a[]; } aux;
+#define BG_WALL 0x4000u
+#define BG_ANCHOR 0x8000u
+uint bgAtIdx(int i) { return i < 0 ? 0u : (aux.a[i] & 255u); }
+uint bgAtPos(vec2 p) { int i = idxAt(p); return i < 0 ? 0u : (aux.a[i] & 255u); }
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+bool buoyant(uint t) { return t == M_ICE || t == M_WOOD || t == M_PLANK || t == M_LEAF; }
+uint fgS(uint c) { return (c & ST_ANCHOR) != 0u ? 0u : stOf(c); }
+bool solidC(uint c) { return KIND[c & 255u] == K_SOLID; }
+
+// support offered by the cell under a block (ST_MAX = none)
+uint fromBelow(int i, uint t) {
+	if (i < 0) return 0u;                    // resting on the planet's heart
+	uint cb = world.cells[i];
+	uint kb = KIND[cb & 255u];
+	if (kb == K_SOLID) return fgS(cb);
+	if (kb == K_POWDER) return 0u;            // settled sand, gravel, snow
+	if (kb == K_LIQUID && buoyant(t)) return 0u; // ice and wood float
+	return ST_MAX;
+}
+uint fromSide(int i) {
+	if (i < 0) return ST_MAX;
+	uint c = world.cells[i];
+	return solidC(c) ? fgS(c) + 1u : ST_MAX;
+}
+// support distance of a built back wall at cell i (ST_MAX = none)
+uint wallS(int i) {
+	if (i < 0) return ST_MAX;
+	uint a = aux.a[i];
+	if ((a & BG_WALL) == 0u || (a & 255u) == 0u) return ST_MAX;
+	return (a >> 8) & 63u;
+}
+
+void main() {
+	int s = pc.a.x;
+	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	int k = int(gl_GlobalInvocationID.x);
+	if (y >= pc.a.z || k >= pc.b.x) return;
+	int x = wrapc(pc.a.w + k, SH_N[s]);
+	int i = cellIdx(s, y, x);
+	uint c = world.cells[i];
+	uint t = c & 255u;
+	uint a = aux.a[i];
+	bool solid = KIND[t] == K_SOLID;
+	bool wall = (a & BG_WALL) != 0u && (a & 255u) != 0u;
+	if (!solid && !wall) return;
+	int iD = nbr(s, y, x, 1), iL = nbr(s, y, x, 2), iR = nbr(s, y, x, 3), iU = nbr(s, y, x, 0);
+	uint ws = wall ? (a >> 8) & 63u : ST_MAX;
+
+	if (solid && (c & ST_ANCHOR) == 0u) {
+		uint st = fromBelow(iD, t);
+		st = min(st, fromSide(iL));
+		st = min(st, fromSide(iR));
+		st = min(st, fromSide(iU));
+		if (t != M_TREASURE) st = min(st, ws + 1u);   // furniture doesn't hang off the back wall
+		st = min(st, ST_MAX);
+		uint lf = (c >> 16) & 255u;
+		if (st <= SPAN[t] && lf >= 128u) c = c & 0xff00ffffu;        // held again: stop creaking
+		if (st != stOf(c) || (st <= SPAN[t] && lf >= 128u)) { c = withST(c, st); world.cells[i] = c; }
+	}
+	if (wall) {
+		uint bm = a & 255u;
+		uint n = (a & BG_ANCHOR) != 0u ? 0u : (solid ? fgS(c) + 1u : ST_MAX);
+		n = min(n, wallS(iD));
+		n = min(n, wallS(iL) + 1u);
+		n = min(n, wallS(iR) + 1u);
+		n = min(n, wallS(iU) + 1u);
+		// a back wall also leans on solid blocks around it
+		n = min(n, fromSide(iD));
+		n = min(n, fromSide(iL) + 1u);
+		n = min(n, fromSide(iR) + 1u);
+		n = min(n, fromSide(iU) + 1u);
+		n = min(n, ST_MAX);
+		if (n != ws) { a = (a & ~0x3f00u) | (n << 8); aux.a[i] = a; }
+		if (n > SPAN[bm] && rnd3(uint(i), uint(pc.b.y), 77u) < 0.1) {
+			// nothing holds this piece of wall: it crumbles
+			aux.a[i] = 0u;
+			uint kc = KIND[t];
+			if (t == 0u || kc == K_GAS) world.cells[i] = BGDEBRIS[bm] | (c & 0xff00u);
+		}
+	}
+}
+
