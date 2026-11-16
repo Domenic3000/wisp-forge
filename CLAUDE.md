@@ -25,6 +25,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   - bits 0-7: material
   - bits 8-13: support
   - bit 14: built back wall
+  - bit 15: anchored (generated structures stay as built until digging nearby clears it, like bit 30 in front)
 - A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`).
 
 ## Gotchas
