@@ -34,6 +34,17 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`),
   but only for materials the digging staff could dig (so a vault's obsidian never comes loose early).
 
+## Generation rules
+- Keep everything modular and procedural: structures are assembled from parts in buildings.gd (`_roof`
+  with eaves and ridge, `_window` shapes, `_back_frame` timbering or stone courses, `_chimney`, `_porch`,
+  wings, `_landings`, `_carve_inside` for rooms inside a solid mass like a pyramid). Style choices live in
+  `_style()`; blueprints are sized with `_roof_h()` so roofs are never cut off.
+- Chests: `_chest(bp, i, floor_row, sure)` keeps only CHEST_KEEP of the optional ones; `_place_chests` then
+  moves each to a clear spot on the same floor (solid floor, open air around and above, nothing loose
+  overhead, indoors if planned indoors) or drops it.
+- `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
+  (`platform_below`), and down + jump drops through (`drop_t`).
+
 ## Gotchas
 - Windows reserves file names like `aux`, `con`, `nul`, `prn`. Never name a shader include that way.
 - Local variables must not shadow Object methods (`set`, `_set`, `get`) or each other inside one function.

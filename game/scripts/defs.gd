@@ -52,6 +52,7 @@ const MOSSBLOCK := 37
 const TREASURE := 38
 const TORCH := 39
 const OPENCHEST := 40
+const SCAFFOLD := 41      # a one-way platform: you jump up through it and drop down through it
 
 const MAT_NAMES := {
 	0: "AIR", 1: "STONE", 2: "DIRT", 3: "GRASS", 4: "SAND", 5: "WATER", 6: "LAVA", 7: "WOOD", 8: "LEAF",
@@ -59,7 +60,7 @@ const MAT_NAMES := {
 	16: "EMBER", 17: "FROST", 18: "WISP", 19: "MUD", 20: "ICE", 21: "MAGMAROCK", 22: "CORE",
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
-	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST",
+	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD",
 }
 
 # ---- planet geometry (polar shells; column count halves as radius halves) ----
@@ -146,6 +147,10 @@ func _init() -> void:
 	# an opened chest stays behind as a background decoration
 	_def(OPENCHEST, "Opened Chest", K_SOLID, ["#6b4423", "#3a2416", "#e8b830", "#1a120c"], {})
 	PLACE[OPENCHEST] = 0
+	# a one-way platform (landings, walkways): solid to sand and water, but you and the foes
+	# jump up through it and can drop down through it (down + jump)
+	_def(SCAFFOLD, "Scaffold", K_SOLID, ["#a87442", "#8a5c32", "#bc864e", "#4a2e18"], {"fuel": 90, "ign": 0.05})
+	SPAN[SCAFFOLD] = 20
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0

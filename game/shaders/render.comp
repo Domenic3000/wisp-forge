@@ -58,6 +58,8 @@ int pattern(uint t, ivec2 w, uint v) {
 	if (t == M_GRASS) return (hashu(uint(w.x) * 7u) & 1u) == 0u ? 2 : 1;
 	if (t == M_WOOD || t == M_CACTUS) { int k = w.x % 3; return k == 0 ? 0 : (k == 1 ? 2 : 1); }
 	if (t == M_PLANK) return (w.y % 3 == 0 || (w.x + (w.y / 3) * 5) % 9 == 0) ? 0 : 2;
+	// scaffold: boards with a lit top edge and a dark seam every 5 cells (reads as a walkway)
+	if (t == M_SCAFFOLD) return (w.x % 5 == 0) ? 0 : ((w.y % 2 == 0) ? 3 : 1);
 	if (t == M_LEAF) return int(vnoise(fw / 2.2, 13) * 3.6);
 	if (t == M_GLASS) return ((w.x + w.y) % 5 == 0) ? 3 : 1;
 	return int(vnoise(fw / 1.4, 17) * 3.99);

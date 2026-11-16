@@ -57,11 +57,11 @@ bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float k = ks * kt;
 	if (k < 0.02) return false;
 	float df = clamp(d / max(rs - coreR, 1.0), 0.0, 1.0);
-	// tunnels and caverns sized for the 17-cell-tall mage (scaled up 1.4x)
-	float n1 = fbm(p / 62.0, SEED + 10, 2);
+	// tunnels and caverns sized for the 24-cell-tall mage: roomy enough to jump and fight in
+	float n1 = fbm(p / 90.0, SEED + 10, 2);
 	if (abs(n1 - 0.5) < (0.022 + 0.016 * df) * k) return true;
 	if (d > 24.0) {
-		float n2 = fbm(p / 110.0, SEED + 12, 2);
+		float n2 = fbm(p / 160.0, SEED + 12, 2);
 		if (n2 > 0.675 - 0.07 * df + (1.0 - k) * 0.3 + (1.0 - smoothstep(24.0, 40.0, d)) * 0.1) return true;
 	}
 	return false;
@@ -89,7 +89,8 @@ uint packedSolid(uint m) {
 uint settleSafe(uint m, vec2 p, float r, float th, float rs) {
 	if (KIND[m] != K_POWDER) return m;
 	vec2 dn = -p / r;
-	if (!solidAt(p + dn)) return packedSolid(m);                       // over a cave
+	vec2 sd = vec2(-dn.y, dn.x);
+	if (!solidAt(p + dn) || !solidAt(p + dn + sd) || !solidAt(p + dn - sd)) return packedSolid(m);   // over or beside a cave
 	float d = rs - r;
 	if (d < 14.0) {
 		float stp = 1.0 / RS0;
@@ -100,7 +101,7 @@ uint settleSafe(uint m, vec2 p, float r, float th, float rs) {
 	return m;
 }
 
-float oreN(vec2 p, int k) { return fbm(p / 6.5 + vec2(float(k) * 17.3, float(k) * 9.1), SEED + 20 + k, 2); }
+float oreN(vec2 p, int k) { return fbm(p / 9.0 + vec2(float(k) * 17.3, float(k) * 9.1), SEED + 20 + k, 2); }
 
 uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 	float rs = sa.x, deepR = sa.z, magmaR = sa.w, coreR = sb.x;
@@ -410,12 +411,12 @@ void main() {
 		if (m != M_CORE && carvedAt(p, r, rs, sb.x)) {
 			m = 0u;
 			// liquid pools resting on cave floors
-			float pn = fbm(p / 40.0, SEED + 30, 1);
+			float pn = fbm(p / 58.0, SEED + 30, 1);
 			if (pn > 0.62) {
-				float depth = 2.0 + floor(h2(ivec2(int(p.x / 9.0), int(p.y / 9.0)), SEED + 31) * 5.0);
+				float depth = 3.0 + floor(h2(ivec2(int(p.x / 13.0), int(p.y / 13.0)), SEED + 31) * 7.0);
 				vec2 dn = -normalize(p);
 				bool floor_ = false;
-				for (int k = 1; k <= 6; k++) { if (float(k) > depth) break; if (solidAt(p + dn * float(k))) { floor_ = true; break; } }
+				for (int k = 1; k <= 9; k++) { if (float(k) > depth) break; if (solidAt(p + dn * float(k))) { floor_ = true; break; } }
 				if (floor_) {
 					float lavaMul = P.p[7].z;
 					if (r > sa.z) m = ug == 2 ? M_ICE : M_WATER;
@@ -426,17 +427,17 @@ void main() {
 			// cave plants and crystals growing from the floor (background layer)
 			if (m == 0u && r < rs - 10.0) {
 				vec2 dn = -normalize(p);
-				for (int k = 1; k <= 4; k++) {
+				for (int k = 1; k <= 7; k++) {
 					if (solidAt(p + dn * float(k))) {
 						float fr = floor(r - float(k));
 						float hv = h2(ivec2(int(th * RS0), int(fr)), SEED + 40);
 						float hgt = 0.0; uint mat = 0u;
 						bool shallow = r > sa.z;
-						if (ug == 0 && shallow && hv < 0.11) { mat = M_SHROOM; hgt = 1.0 + mod(floor(hv * 40.0), 3.0); }
-						else if (ug == 1 && hv < 0.06) { mat = M_CRYSTAL; hgt = 1.0 + mod(floor(hv * 90.0), 4.0); }
-						else if (ug == 2 && shallow && hv < 0.05) { mat = M_ICE; hgt = 1.0 + mod(floor(hv * 90.0), 3.0); }
-						else if (ug == 3 && hv < 0.04) { mat = M_EMBER; hgt = 1.0 + mod(floor(hv * 90.0), 2.0); }
-						else if (!shallow && r > sa.w && hv < 0.018) { mat = M_SHROOM; hgt = 1.0 + mod(floor(hv * 300.0), 2.0); }
+						if (ug == 0 && shallow && hv < 0.11) { mat = M_SHROOM; hgt = 2.0 + mod(floor(hv * 40.0), 4.0); }
+						else if (ug == 1 && hv < 0.06) { mat = M_CRYSTAL; hgt = 2.0 + mod(floor(hv * 90.0), 6.0); }
+						else if (ug == 2 && shallow && hv < 0.05) { mat = M_ICE; hgt = 2.0 + mod(floor(hv * 90.0), 4.0); }
+						else if (ug == 3 && hv < 0.04) { mat = M_EMBER; hgt = 1.0 + mod(floor(hv * 90.0), 3.0); }
+						else if (!shallow && r > sa.w && hv < 0.018) { mat = M_SHROOM; hgt = 2.0 + mod(floor(hv * 300.0), 3.0); }
 						if (float(k) <= hgt) bgm = mat;
 						break;
 					}

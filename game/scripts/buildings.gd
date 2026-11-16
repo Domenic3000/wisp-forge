@@ -18,6 +18,7 @@ const F_WALL := 0x40000           # background is a built back wall
 const STOREY := 40                # floor to floor; the mage is 24 tall with the hat, so rooms feel roomy
 const DOOR := 30                  # doorway height
 const GAP := 14                   # the hole in each upper floor that you levitate through
+const CHEST_KEEP := 0.45          # share of the possible chest spots that get a chest
 
 var surf: PackedFloat32Array
 var rng := RandomNumberGenerator.new()
@@ -125,7 +126,47 @@ func _style(bname: String, kind: String) -> Dictionary:
 		st["roof_kind"] = "battle" if rng.randf() < 0.55 or bname == "ashland" or bname == "desert" else "steep"
 	# walls and floors sized for 40-cell storeys: homes 3 thick, towers and castles 4
 	st["thick"] = 4 if kind == "fort" else 3
+	# --- variations: every building picks its own details from these parts ---
+	var wooden: bool = st["wall"] == Defs.PLANK or st["wall"] == Defs.WOOD
+	# roof covering: clay tiles, wooden shingles or slate
+	if st["roof"] == Defs.TILE and kind == "home":
+		st["roof"] = [Defs.TILE, Defs.TILE, Defs.PLANK, Defs.MASONRY][rng.randi_range(0, 3)]
+	st["trim"] = Defs.WOOD if st["roof"] != Defs.WOOD else Defs.PLANK       # eaves and barge boards
+	st["ridge"] = Defs.MASONRY if st["roof"] == Defs.TILE else (Defs.TILE if st["roof"] == Defs.MASONRY else Defs.WOOD)
+	# windows: cross-paned, arched, round or tall; wooden houses often have shutters
+	var wins := ["cross", "arch", "tall"] if bname != "desert" else ["arch", "round", "tall"]
+	if kind == "fort":
+		wins = ["arch", "tall", "round"]
+	else:
+		wins.append("round")
+	st["window"] = wins[rng.randi_range(0, wins.size() - 1)]
+	st["shutters"] = wooden and kind == "home" and rng.randf() < 0.55
+	# the back wall: half-timbered, banded with stone courses, or plain
+	var frames := ["plain"]
+	if wooden:
+		frames = ["timber", "timber", "plain"]
+	elif kind == "fort" or st["wall"] == Defs.MASONRY or st["wall"] == Defs.BRICK:
+		frames = ["course", "course", "plain"]
+	elif st["wall"] == Defs.SANDSTONE:
+		frames = ["course", "plain"]
+	st["frame"] = frames[rng.randi_range(0, frames.size() - 1)]
+	st["course"] = Defs.BRICK if st["back"] == Defs.MASONRY else (Defs.MASONRY if st["back"] == Defs.BRICK else st["found"])
+	st["chimney"] = kind == "home" and bname != "desert" and st["roof_kind"] != "flat" and st["roof_kind"] != "dome" and rng.randf() < 0.65
 	return st
+
+## How many rows a roof of this kind rises above the top slab of a building w wide (so the
+## blueprint is always tall enough for the whole roof, chimney included).
+func _roof_h(w: int, st: Dictionary) -> int:
+	var h := 6
+	match st["roof_kind"]:
+		"pitch": h = (w + 4) / 2 + 3
+		"steep": h = w + 6
+		"dome": h = w / 2 + 3
+		"battle": h = 5
+		"flat": h = 4
+	if st.get("chimney", false):
+		h += 10
+	return h
 
 # ------------------------------------------------------------- terrain info ---
 func ground_row(col: int) -> int:
@@ -322,18 +363,77 @@ func _anchor_and_tidy(bp: BP) -> void:
 		var g := (v >> 8) & 255
 		if (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0):
 			bp.c[k] = v | F_ANCHOR
-	# a chest needs a floor: keep it only where most of its width stands on something solid
-	# (a chest left over a ruin's broken floor isn't placed at all)
+	_place_chests(bp)
+
+## Chests go only where they will stay found: standing on solid built floor (or natural ground)
+## across their whole width, with open air around and above them, and nothing loose (rubble,
+## sand, gravel) overhead that could bury them unless you dig it down yourself. A spot that
+## fails slides sideways along the same floor to the nearest good one, or the chest is left out.
+## Chests also keep their distance from each other.
+func _place_chests(bp: BP) -> void:
 	var keep := []
 	for q in bp.chests:
-		var under := 0
-		for ci in Defs.CHEST_W:
-			var f := bp.getf(q.x + ci, q.y)
-			if (f != 255 and f != 0 and Defs.KIND[f] != Defs.K_EMPTY and Defs.KIND[f] != Defs.K_GAS and Defs.KIND[f] != Defs.K_LIQUID) or (f == 255 and q.y >= ground_row(bp.x0 + q.x + ci) - bp.y0):
-				under += 1
-		if under >= Defs.CHEST_W / 2:
-			keep.append(q)
+		var found := false
+		# a chest planned indoors (a built back wall behind it) stays indoors
+		var indoors := _backed(bp, q.x, q.y - 1, 1)
+		for d in range(0, 25):
+			for sgn in ([1] if d == 0 else [1, -1]):
+				var i: int = q.x + d * sgn
+				if indoors and not _backed(bp, i - 2, q.y - 1, Defs.CHEST_W + 4):
+					continue
+				if _chest_spot_ok(bp, i, q.y, keep):
+					keep.append(Vector2i(i, q.y))
+					found = true
+					break
+			if found:
+				break
 	bp.chests = keep
+
+## is there a built back wall behind all n columns from i on, in row j?
+func _backed(bp: BP, i: int, j: int, n: int) -> bool:
+	for k in n:
+		var g := bp.getb(i + k, j)
+		if g == 0 or g == 255:
+			return false
+	return true
+
+func _floor_at(bp: BP, i: int, j: int) -> bool:
+	var f := bp.getf(i, j)
+	if f == 255:
+		return j >= ground_row(bp.x0 + i) - bp.y0    # natural ground
+	return f != 0 and Defs.KIND[f] == Defs.K_SOLID and f != Defs.SCAFFOLD
+
+func _open_at(bp: BP, i: int, j: int) -> bool:
+	var f := bp.getf(i, j)
+	if f == 255:
+		return j < ground_row(bp.x0 + i) - bp.y0 - 1    # natural air above the surface
+	return f == 0
+
+func _chest_spot_ok(bp: BP, i: int, fl: int, taken: Array) -> bool:
+	if i < 1 or i + Defs.CHEST_W >= bp.w - 1:
+		return false
+	for t in taken:
+		if t.y == fl and absi(t.x - i) < Defs.CHEST_W + 8:
+			return false
+	for ci in range(i, i + Defs.CHEST_W):
+		if not _floor_at(bp, ci, fl):
+			return false
+	# open air around and above: room to see it and open it
+	for j in range(fl - Defs.CHEST_H - 5, fl):
+		for ci in range(i - 2, i + Defs.CHEST_W + 2):
+			if not _open_at(bp, ci, j):
+				return false
+	# nothing loose overhead, up to the ceiling
+	for ci in range(i - 1, i + Defs.CHEST_W + 1):
+		var j := fl - Defs.CHEST_H - 6
+		while j >= 0:
+			var f := bp.getf(ci, j)
+			if f != 0 and f != 255:
+				if Defs.KIND[f] == Defs.K_POWDER or Defs.KIND[f] == Defs.K_LIQUID:
+					return false
+				break
+			j -= 1
+	return true
 
 ## One round of support on the blueprint (Dial's algorithm over front and back cells). Returns
 ## how many cells it removed.
@@ -484,7 +584,10 @@ func _finish(bp: BP, build: bool) -> void:
 # ------------------------------------------------------- chests and guards ---
 ## a 12 x 9 treasure chest standing on the floor row fl, left column i. A chest is a real object
 ## (it falls if you dig out its floor), but you walk through it; open it with F or by digging at it.
-func _chest(bp: BP, i: int, fl: int) -> void:
+func _chest(bp: BP, i: int, fl: int, sure := false) -> void:
+	# treasure is meant to be found, not tripped over: most possible chests are left out
+	if not sure and rng.randf() > CHEST_KEEP:
+		return
 	bp.chests.append(Vector2i(i, fl))
 
 ## a foe waiting on the floor row fl at column i (local), spawned when you come near
@@ -500,6 +603,46 @@ func _guard(bp: BP, i: int, fl: int, type: String) -> void:
 	guards.append({"pos": Vector2(cos(a), sin(a)) * r, "type": type})
 
 # -------------------------------------------------------- building pieces ---
+## The first row (from the top) where column i of the blueprint is built solid, or h.
+func _top_solid(bp: BP, i: int) -> int:
+	for j in bp.h:
+		var f := bp.getf(i, j)
+		if f != 0 and f != 255 and Defs.KIND[f] == Defs.K_SOLID:
+			return j
+	return bp.h
+
+## Hollow out [i0, i1] x [j0, j1] inside a solid mass (a pyramid, a mound), keeping a shell at
+## least `shell` rows thick under its outer surface, and put a back wall of m behind what's
+## hollowed. open_top: clear the whole box anyway (a doorway or cutting); the back wall still only
+## goes where the mass was above it, so it never stands out against the sky.
+func _carve_inside(bp: BP, i0: int, i1: int, j0: int, j1: int, m: int, shell: int, open_top: bool) -> void:
+	for i in range(i0, i1 + 1):
+		var t := _top_solid(bp, i)
+		var j_from := j0 if open_top else maxi(j0, t + shell)
+		for j in range(j_from, j1 + 1):
+			bp.fg(i, j, 0)
+			if j > t + 1:
+				bp.bg(i, j, m)
+
+## Scaffold landings down a shaft [i0, i1] from row j0 to j1: one-way platforms jutting from
+## alternate sides every 22 rows, so you can climb a shaft by jumping and drop down it with
+## down + jump. Each landing reaches about 60% across, two cells thick, on a bracket.
+func _landings(bp: BP, i0: int, i1: int, j0: int, j1: int, spacing := 22) -> void:
+	var span := maxi(6, int((i1 - i0 + 1) * 0.6))
+	var j := j0
+	var left := true
+	while j < j1:
+		var a := i0 if left else i1 - span + 1
+		var b2 := a + span - 1
+		bp.rect(a, j, b2, j + 1, Defs.SCAFFOLD)
+		# a diagonal bracket behind it, from the wall up to the landing's middle
+		var wall_i := i0 if left else i1
+		var dir := 1 if left else -1
+		for k in mini(5, span / 2):
+			bp.bg(wall_i + dir * k, j + 2 + (4 - k), Defs.WOOD)
+		left = not left
+		j += spacing
+
 ## A building's shell: walls, floors (with a gap to float up through), doors, back wall
 ## with windows, torches, maybe a treasure chest. ox = left column (local), base = local row
 ## of the ground floor, w = width, floors = storeys. Returns the local row of the top slab.
@@ -535,16 +678,14 @@ func _building(bp: BP, ox: int, base: int, w: int, floors: int, st: Dictionary, 
 	if doors & 2:
 		bp.rect(ox + w - th, base - DOOR, ox + w - 1, base - 1, 0)
 		bp.rect_bg(ox + w - th, base - DOOR, ox + w - 1, base - 1, Defs.WOOD)
-	# windows in the back wall, torches, treasure and whoever guards it
+	# framing on the back wall, then windows, torches, treasure and whoever guards it
+	_back_frame(bp, ox + th, top, ox + w - 1 - th, base, floors, st)
 	for k in floors:
 		var fl := base - k * STOREY
-		var i := ox + th + 3
-		while i + 7 < ox + w - th - 2:
+		var i := ox + th + 4
+		while i + 7 < ox + w - th - 3:
 			if rng.randf() < 0.55:
-				bp.rect_bg(i - 1, fl - 31, i + 7, fl - 16, st["post"])
-				bp.rect_bg(i, fl - 30, i + 6, fl - 17, 0)
-				bp.rect_bg(i + 3, fl - 30, i + 3, fl - 17, st["post"])
-				bp.rect_bg(i, fl - 24, i + 6, fl - 24, st["post"])
+				_window(bp, i, fl, st)
 			i += 18
 		if not ruined and rng.randf() < 0.85:
 			var ti := rng.randi_range(ox + th + 2, ox + w - th - 3)
@@ -562,6 +703,106 @@ func _building(bp: BP, ox: int, base: int, w: int, floors: int, st: Dictionary, 
 			_guard(bp, ox + w / 2 + rng.randi_range(-w / 4, w / 4), fl, guard)
 	return top
 
+## A window in the back wall, 9 wide, its sill 16 rows above the floor row fl. The style's
+## "window" picks the shape; "shutters" hangs a pair beside it.
+func _window(bp: BP, i: int, fl: int, st: Dictionary) -> void:
+	var fr: int = st["post"]
+	match st.get("window", "cross"):
+		"arch":
+			bp.rect_bg(i - 1, fl - 33, i + 7, fl - 16, fr)
+			bp.rect_bg(i, fl - 30, i + 6, fl - 17, 0)
+			bp.rect_bg(i + 1, fl - 32, i + 5, fl - 31, 0)
+			bp.rect_bg(i + 2, fl - 33, i + 4, fl - 33, 0)
+			bp.rect_bg(i + 3, fl - 32, i + 3, fl - 17, fr)
+			bp.rect_bg(i - 2, fl - 16, i + 8, fl - 15, st.get("course", fr))      # sill
+		"round":
+			for dj in range(-6, 7):
+				for di in range(-6, 7):
+					var d := Vector2(di, dj).length()
+					if d < 5.6:
+						bp.bg(i + 3 + di, fl - 24 + dj, fr if (d >= 4.3 or di == 0 or dj == 0) else 0)
+		"tall":
+			bp.rect_bg(i, fl - 35, i + 6, fl - 14, fr)
+			bp.rect_bg(i + 1, fl - 34, i + 5, fl - 15, 0)
+			bp.rect_bg(i + 1, fl - 28, i + 5, fl - 28, fr)
+			bp.rect_bg(i - 1, fl - 14, i + 7, fl - 13, st.get("course", fr))      # sill
+		_:
+			bp.rect_bg(i - 1, fl - 31, i + 7, fl - 16, fr)
+			bp.rect_bg(i, fl - 30, i + 6, fl - 17, 0)
+			bp.rect_bg(i + 3, fl - 30, i + 3, fl - 17, fr)
+			bp.rect_bg(i, fl - 24, i + 6, fl - 24, fr)
+	if st.get("shutters", false):
+		for side in [i - 4, i + 8]:
+			for j in range(fl - 31, fl - 15):
+				bp.rect_bg(side, j, side + 2, j, Defs.WOOD if j % 3 != 0 else Defs.PLANK)
+
+## Texture on a building's back wall between columns i0 and i1: half-timbering (posts, beams
+## and braces in dark wood) or stone courses (a band of a second stone at each storey, with
+## pilasters), as the style's "frame" says.
+func _back_frame(bp: BP, i0: int, top: int, i1: int, base: int, floors: int, st: Dictionary) -> void:
+	match st.get("frame", "plain"):
+		"timber":
+			for k in floors:
+				var fl := base - k * STOREY
+				var ceil_j := fl - STOREY + 3
+				bp.rect_bg(i0, fl - 20, i1, fl - 20, Defs.WOOD)
+				bp.rect_bg(i0, ceil_j, i1, ceil_j, Defs.WOOD)
+				var p := i0 + 1
+				var n := 0
+				while p <= i1:
+					bp.rect_bg(p, ceil_j, p, fl - 1, Defs.WOOD)
+					# a brace across every other bay, in the lower half
+					if n % 2 == 0 and p + 12 <= i1:
+						for d in 12:
+							bp.bg(p + d, fl - 2 - d * 18 / 12, Defs.WOOD)
+					p += 14
+					n += 1
+				bp.rect_bg(i1, ceil_j, i1, fl - 1, Defs.WOOD)
+		"course":
+			var cm: int = st.get("course", st["back"])
+			for k in floors:
+				var fl := base - k * STOREY
+				bp.rect_bg(i0, fl - 11, i1, fl - 10, cm)
+				bp.rect_bg(i0, fl - STOREY + 4, i1, fl - STOREY + 4, cm)
+			var q := i0 + 9
+			while q < i1 - 3:
+				bp.rect_bg(q, top + 1, q + 1, base - 1, cm)
+				q += 24
+
+## A chimney stack through one side of a pitched roof: masonry or brick from the top slab up,
+## standing a few rows proud of the roof, with a cap.
+func _chimney(bp: BP, ox: int, top: int, w: int, st: Dictionary) -> void:
+	var ci := ox + int(w * (0.22 if rng.randf() < 0.5 else 0.7))
+	var m := Defs.BRICK if st["wall"] != Defs.BRICK else Defs.MASONRY
+	# where the roof's outer surface is over this column
+	var rs := top
+	for j in range(0, top):
+		var f := bp.getf(ci + 2, j)
+		if f != 0 and f != 255:
+			rs = j
+			break
+	var ct := rs - 8
+	bp.rect(ci, ct, ci + 4, top - 1, m)
+	bp.rect_bg(ci, ct, ci + 4, top - 1, m)
+	bp.rect(ci - 1, ct - 1, ci + 5, ct - 1, Defs.MASONRY)
+	bp.fg(ci + 2, ct - 1, 0)
+
+## A porch over a door: a little sloped roof on brackets jutting `depth` cells out from the wall
+## at column wall_i (side -1 = out to the left, 1 = to the right), with a post at its outer
+## corner standing against the background so you walk past it.
+func _porch(bp: BP, wall_i: int, base: int, side: int, st: Dictionary, depth := 9) -> void:
+	var j := base - DOOR - 3
+	var m: int = st["roof"]
+	for d in range(1, depth + 1):
+		var i := wall_i + side * d
+		bp.fg(i, j, st.get("trim", Defs.WOOD))
+		var rise := (depth - d) / 3
+		for r in range(1, rise + 2):
+			bp.fg(i, j - r, m)
+	bp.rect_bg(wall_i + side * (depth - 1), j + 1, wall_i + side * (depth - 1), base - 1, Defs.WOOD)
+	for d in 4:
+		bp.bg(wall_i + side * (1 + d), j + 1 + d, Defs.WOOD)
+
 ## does columns [i0, i1] overlap the gap left in floor k (floors above the ground floor have one)?
 func _over_gap(i0: int, i1: int, ox: int, w: int, th: int, k: int) -> bool:
 	var g0 := ox + th + 1 if k % 2 == 1 else ox + w - th - 1 - GAP
@@ -575,6 +816,10 @@ func _roof(bp: BP, ox: int, top: int, w: int, st: Dictionary) -> int:
 		"pitch", "steep":
 			var t := 0
 			var over := 2 if kind == "pitch" else 1
+			var trim: int = st.get("trim", m)
+			# eaves: the roof's foot overhangs a little further, in a darker board
+			bp.rect(ox - over - 1, top - 1, ox - over, top - 1, trim)
+			bp.rect(ox + w - 1 + over, top - 1, ox + w + over, top - 1, trim)
 			while true:
 				var step := t if kind == "pitch" else t / 2
 				var L := ox - over + step
@@ -582,8 +827,12 @@ func _roof(bp: BP, ox: int, top: int, w: int, st: Dictionary) -> int:
 				var j := top - 1 - t
 				bp.rect_bg(L, j, R, j, st["back"])
 				if R - L < 3:
-					bp.rect(L, j, R, j, m)
-					hi = j
+					# the ridge: a capping row and a finial on top
+					bp.rect(L - 1, j, R + 1, j, st.get("ridge", m))
+					bp.fg((L + R) / 2, j - 1, st.get("ridge", m))
+					if R - L >= 2:
+						bp.fg((L + R) / 2 + 1, j - 1, st.get("ridge", m))
+					hi = j - 1
 					break
 				# roof slopes 3 tiles thick, to match the thicker walls
 				bp.rect(L, j, mini(L + 2, R), j, m)
@@ -782,23 +1031,51 @@ const YARD := 12
 func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in := 0) -> bool:
 	var w := w_in if w_in > 0 else rng.randi_range(46, 62)
 	var floors := 1 if rng.randf() < 0.55 else 2
-	var tw := w + 2 * YARD + 4
-	var x0 := x - tw / 2
-	if not _site_ok(x0 + YARD, w + 4, 18):
-		return false
 	var st := _style(b, "home")
-	var base := _median_ground(x0 + YARD, w + 4) - 1
-	var up := floors * STOREY + w / 2 + 10
+	var th: int = st["thick"]
+	# parts: sometimes a lower wing on one side (the house is then two storeys), sometimes a
+	# porch over the other door, maybe a chimney (in the style)
+	var aw := 0
+	var aside := 0
+	if b != "desert" and w_in == 0 and rng.randf() < 0.4:
+		aw = rng.randi_range(24, 30)
+		aside = -1 if rng.randf() < 0.5 else 1
+		floors = 2
+	var porch := b != "desert" and rng.randf() < 0.45
+	var full := w + (aw - th if aw > 0 else 0)
+	var tw := full + 2 * YARD + 4
+	var x0 := x - tw / 2
+	if not _site_ok(x0 + YARD, full + 4, 18):
+		return false
+	var base := _median_ground(x0 + YARD, full + 4) - 1
+	var up := floors * STOREY + _roof_h(w, st) + 12
 	var bp := BP.new(x0, base - up, tw, up + 40)
 	bp.ruined = ruined
 	var lb := up
-	var ox := YARD + 2
+	var left := YARD + 2
+	var ox := left + (aw - th if aside < 0 else 0)
 	_yard(bp, 0, tw - 1, lb)
-	_foundation(bp, ox - 1, lb, w + 2, st["found"])
+	_foundation(bp, left - 1, lb, full + 2, st["found"])
+	var hi := lb
+	if aw > 0:
+		# the wing first: the house's own wall then stands where the two meet, with a doorway
+		var ax := left if aside < 0 else ox + w - th
+		var at := _building(bp, ax, lb, aw, 1, st, 1 if aside < 0 else 2, ruined, "", 0.3)
+		var wst := st.duplicate()
+		wst["chimney"] = false
+		hi = mini(hi, _roof(bp, ax, at, aw, wst))
 	var top := _building(bp, ox, lb, w, floors, st, 3, ruined, "", 0.3)
-	var hi := _roof(bp, ox, top, w, st)
+	hi = mini(hi, _roof(bp, ox, top, w, st))
+	if st["chimney"]:
+		_chimney(bp, ox, top, w, st)
+		hi -= 10
+	if porch:
+		if aside >= 0:
+			_porch(bp, ox - 1, lb, -1, st)
+		if aside <= 0 and (aside < 0 or rng.randf() < 0.5):
+			_porch(bp, ox + w, lb, 1, st)
 	if ruined:
-		_ruin(bp, ox - 2, ox + w + 1, hi, lb - 1, b)
+		_ruin(bp, left - 3, left + full + 2, hi, lb - 1, b)
 	if label:
 		_claim(x0, tw, ("Ruined " if ruined else "Abandoned ") + ("Cottage" if b != "desert" else "Dwelling"), bp.y0, base + 2)
 	else:
@@ -841,7 +1118,7 @@ func _tower(x: int, b: String, ruined: bool, build: bool) -> bool:
 		return false
 	var st := _style(b, "fort")
 	var base := _median_ground(x0 + YARD, w + 4) - 1
-	var up := floors * STOREY + w + 12
+	var up := floors * STOREY + _roof_h(w, st) + 12
 	var bp := BP.new(x0, base - up, tw, up + 40)
 	bp.ruined = ruined
 	var ox := YARD + 2
@@ -890,7 +1167,7 @@ func _castle(x: int, b: String, ruined: bool, build: bool) -> bool:
 	hi = mini(hi, _roof(bp, kx, kt, keep_w, st))
 	# the lord's hoard on the top floor, well guarded
 	var hf := lb - 2 * STOREY
-	_chest(bp, kx + keep_w / 2 - 15, hf)
+	_chest(bp, kx + keep_w / 2 - 15, hf, true)
 	_chest(bp, kx + keep_w / 2 + 3, hf)
 	_guard(bp, kx + keep_w / 2 - 24, hf, "skeleton")
 	_guard(bp, kx + keep_w / 2 + 24, hf, "skeleton")
@@ -927,32 +1204,31 @@ func _temple(x: int, ruined: bool, build: bool) -> bool:
 	var m := Defs.SANDSTONE
 	var base := _median_ground(x0 + YARD, W) - 1
 	var steps := half / 3
-	var up := steps * 3 + 8
+	var up := steps * 4 + 8
 	var bp := BP.new(x0, base - up, tw, up + 40)
 	bp.ruined = ruined
 	var lb := up
 	var ox := YARD
 	_foundation(bp, ox, lb, W, m)
+	# steps 3 across and 4 up: a steep, stepped pyramid
 	for s in steps:
-		bp.solid(ox + s * 3, lb - s * 3 - 2, ox + W - 1 - s * 3, lb - s * 3, m)
+		bp.solid(ox + s * 3, lb - s * 4 - 3, ox + W - 1 - s * 3, lb - s * 4, m)
 	bp.solid(ox, lb, ox + W - 1, lb, m)
-	# entrance passage and the inner sanctum
+	# entrance passage and the inner sanctum, carved inside the pyramid's outline: the sanctum's
+	# ceiling steps up under the slopes (a corbelled vault), and where the passage runs out under
+	# the low outer steps it becomes an open cutting, with no back wall standing up into the sky
 	var cx := ox + half
-	bp.rect(ox, lb - DOOR, cx - 22, lb - 1, 0)
-	bp.rect_bg(ox + 3, lb - DOOR, cx - 22, lb - 1, m)
-	bp.rect(cx - 22, lb - 36, cx + 22, lb - 1, 0)
-	bp.rect_bg(cx - 22, lb - 36, cx + 22, lb - 1, m)
-	_chest(bp, cx - 20, lb)
-	_chest(bp, cx + 8, lb)
-	if rng.randf() < 0.6:
-		_chest(bp, cx - 6, lb)
-	_guard(bp, cx - 10, lb, "skeleton")
-	_guard(bp, cx + 13, lb, "skeleton")
+	_carve_inside(bp, ox, cx - 17, lb - DOOR, lb - 1, m, 4, true)
+	_carve_inside(bp, cx - 16, cx + 16, lb - 44, lb - 1, m, 6, false)
+	_chest(bp, cx - 14, lb, true)
+	_chest(bp, cx + 4, lb)
+	_guard(bp, cx - 8, lb, "skeleton")
+	_guard(bp, cx + 10, lb, "skeleton")
 	if not ruined:
-		bp.bg(cx - 22, lb - 24, Defs.TORCH)
-		bp.bg(cx + 22, lb - 24, Defs.TORCH)
+		bp.bg(cx - 15, lb - 24, Defs.TORCH)
+		bp.bg(cx + 15, lb - 24, Defs.TORCH)
 	if ruined:
-		_ruin(bp, ox, ox + W - 1, lb - steps * 3, lb - 37, "desert")
+		_ruin(bp, ox, ox + W - 1, lb - steps * 4, lb - 46, "desert")
 	_claim(x0, tw, "Buried Temple" if ruined else "Sun Temple", bp.y0, base + 2)
 	_finish(bp, build)
 	return true
@@ -967,7 +1243,7 @@ func _stilt(x: int, ruined: bool, build: bool) -> bool:
 	var gnd := _ground_range(x0 + YARD, w + 4)
 	var lift := rng.randi_range(10, 16)
 	var base := gnd.x - 1 - lift
-	var up := STOREY + w / 2 + 10
+	var up := STOREY + _roof_h(w, st) + 12
 	var bp := BP.new(x0, base - up, tw, up + lift + 40)
 	bp.ruined = ruined
 	var lb := up
@@ -981,6 +1257,9 @@ func _stilt(x: int, ruined: bool, build: bool) -> bool:
 	bp.rect(ox + w - 1, lb + 1, ox + w - 1, ground_row(bp.x0 + ox + w - 1) - bp.y0 + 4, Defs.WOOD, F_ANCHOR)
 	var top := _building(bp, ox, lb, w, 1, st, 3, ruined, "", 0.35)
 	var hi := _roof(bp, ox, top, w, st)
+	if st["chimney"]:
+		_chimney(bp, ox, top, w, st)
+		hi -= 10
 	if ruined:
 		_ruin(bp, ox - 2, ox + w + 1, hi, lb, "marsh")
 	_claim(x0, tw, "Sunken Hut" if ruined else "Stilt Hut", bp.y0, base + lift + 4)
@@ -990,7 +1269,7 @@ func _stilt(x: int, ruined: bool, build: bool) -> bool:
 ## Abandoned mine: a headframe at the top, a shaft with plank landings, and drifts propped
 ## up with timber.
 func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
-	var sw := 13
+	var sw := 20
 	var depth := rng.randi_range(60, 130)
 	var dl := rng.randi_range(40, 80)
 	var dr := rng.randi_range(40, 80)
@@ -1014,26 +1293,20 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 	# where a cave has eaten away the rock beside the shaft
 	bp.rect(sx, gl - 1, sx + sw - 1, gl + depth, 0)
 	bp.rect_bg(sx, gl + 1, sx + sw - 1, gl + depth - 33, Defs.PLANK)
-	var j := gl + 22
-	var left := true
-	while j < gl + depth - 6:
-		if left:
-			bp.rect(sx, j, sx + sw - 9, j, Defs.PLANK)
-		else:
-			bp.rect(sx + 8, j, sx + sw - 1, j, Defs.PLANK)
-		left = not left
-		j += 22
+	_landings(bp, sx, sx + sw - 1, gl + 22, gl + depth - 6)
 	# drifts at the bottom
 	var fj := gl + depth
-	bp.rect(sx - dl, fj - 32, sx + sw + dr - 1, fj - 1, 0)
+	bp.rect(sx - dl, fj - 40, sx + sw + dr - 1, fj - 1, 0)
 	var p := sx - dl + 2
 	while p < sx + sw + dr - 2:
 		if p < sx - 2 or p > sx + sw + 1:
-			bp.rect(p, fj - 31, p, fj - 1, Defs.WOOD)
-			bp.rect(p - 3, fj - 32, p + 3, fj - 32, Defs.PLANK)
+			# props stand against the back of the drift (you walk past them), holding a cap
+			# beam up under the roof
+			bp.rect_bg(p, fj - 39, p + 1, fj - 1, Defs.WOOD)
+			bp.rect(p - 3, fj - 40, p + 4, fj - 40, Defs.PLANK)
 			if not ruined and rng.randf() < 0.5:
-				bp.bg(p + 2, fj - 20, Defs.TORCH)
-		p += 13
+				bp.bg(p + 3, fj - 24, Defs.TORCH)
+		p += 16
 	# what the miners left behind, and what moved in after
 	_chest(bp, sx - dl + 3, fj)
 	if rng.randf() < 0.6:
@@ -1052,7 +1325,7 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 		for n in rng.randi_range(1, 3):
 			var ci := rng.randi_range(2, tw - 3)
 			var rr := rng.randf_range(4.0, 8.0)
-			for jj in range(fj - 34, fj + 1):
+			for jj in range(fj - 42, fj + 1):
 				for ii in range(ci - 9, ci + 10):
 					if bp.ok(ii, jj) and bp.getf(ii, jj) == 0 and Vector2(ii - ci, (jj - (fj - 10)) * 1.5).length() < rr:
 						bp.fg(ii, jj, Defs.GRAVEL)
@@ -1066,7 +1339,7 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 ## Catacombs: a small shrine on the surface, a lined stairwell down, and stone corridors
 ## with tombs, burial rooms, treasure, and the dead who keep it.
 func _catacomb(x: int, b: String, ruined: bool, build: bool) -> bool:
-	var shrine := 30
+	var shrine := 36
 	if not _site_ok(x - shrine / 2 - YARD, shrine + 2 * YARD, 8):
 		return false
 	var st := _style(b, "fort")
@@ -1098,20 +1371,21 @@ func _catacomb(x: int, b: String, ruined: bool, build: bool) -> bool:
 	# corridors left and right, with a burial room at each end
 	var c0 := sx - cl
 	var c1 := sx + shrine + cr
-	bp.solid(c0 - 2, fj - 34, c1 + 2, fj + 2, m)
-	for e0 in [c0, c1 - 40]:
-		bp.solid(e0 - 2, fj - 42, e0 + 42, fj + 2, m)
-		bp.rect(e0, fj - 40, e0 + 40, fj - 1, 0)
+	bp.solid(c0 - 2, fj - 42, c1 + 2, fj + 2, m)
+	for e0 in [c0, c1 - 54]:
+		bp.solid(e0 - 2, fj - 52, e0 + 56, fj + 2, m)
+		bp.rect(e0, fj - 50, e0 + 54, fj - 1, 0)
 	# open the corridor through the room walls and the stairwell down into it
-	bp.rect(c0, fj - 32, c1, fj - 1, 0)
+	bp.rect(c0, fj - 40, c1, fj - 1, 0)
 	bp.rect(s0, lb, s1, fj - 1, 0)
-	for e0 in [c0, c1 - 40]:
-		_chest(bp, e0 + 16, fj)
+	_landings(bp, s0, s1, lb + 20, fj - 40)
+	for e0 in [c0, c1 - 54]:
+		_chest(bp, e0 + 20, fj, e0 == c0)
 		_guard(bp, e0 + 6, fj, "skeleton")
 	# wall niches (tombs), torches and the corridor's watchers
-	var p := c0 + 44
+	var p := c0 + 58
 	var n := 0
-	while p < c1 - 44:
+	while p < c1 - 58:
 		if p < s0 - 3 or p > s1 + 3:
 			bp.rect_bg(p, fj - 20, p + 7, fj - 12, Defs.OBSIDIAN)
 			if not ruined and rng.randf() < 0.6:
@@ -1122,7 +1396,7 @@ func _catacomb(x: int, b: String, ruined: bool, build: bool) -> bool:
 		p += 18
 	_guard(bp, (c0 + s0) / 2, fj, "bat")
 	if ruined:
-		_ruin(bp, c0 - 2, c1 + 2, fj - 42, fj, b, false)
+		_ruin(bp, c0 - 2, c1 + 2, fj - 52, fj, b, false)
 		_ruin(bp, sx, sx + shrine - 1, top - 2, lb, b)
 	_claim(x - shrine / 2 - YARD, shrine + 2 * YARD, "Forgotten Catacombs" if ruined else "Catacombs", g0 - 40, g0 + depth + 6)
 	labels.append({"x0": posmod(x0, N0), "w": tw, "ymin": g0 + 8, "ymax": g0 + depth + 6, "name": "Forgotten Catacombs" if ruined else "Catacombs"})
@@ -1136,16 +1410,17 @@ func _vault(x: int, build: bool) -> void:
 	if not _deep_free(x - 30, 60):
 		return
 	deep.append(Vector2i(x - 30, x + 30))
-	var w := 47
-	var h := 34
+	var w := 60
+	var h := 44
 	var g := ground_row(x)
 	var y := g + rng.randi_range(140, 260)
 	var bp := BP.new(x - w / 2, y, w, h)
 	bp.solid(0, 0, w - 1, h - 1, Defs.OBSIDIAN)
 	bp.rect(2, 2, w - 3, h - 3, 0)
 	bp.rect_bg(2, 2, w - 3, h - 3, Defs.BRICK)
-	for k in 3:
-		_chest(bp, 4 + k * 13, h - 2)
+	# the one place treasure is sure: two chests, well apart
+	_chest(bp, 6, h - 2, true)
+	_chest(bp, w - 6 - Defs.CHEST_W, h - 2, true)
 	bp.bg(3, h - 22, Defs.TORCH)
 	bp.bg(w - 4, h - 22, Defs.TORCH)
 	labels.append({"x0": posmod(x - w / 2, N0), "w": w, "ymin": y, "ymax": y + h, "name": "Sealed Vault"})

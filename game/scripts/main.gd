@@ -30,6 +30,8 @@ class Body:
 	var in_liquid := false
 	var hit_wall := false
 	var facing := 1
+	var drop_t := 0           # frames left falling through one-way platforms (down + jump)
+	var on_platform := false  # standing on a one-way platform
 
 ## A treasure chest: one solid object (not a pile of cells), so it can only ever fall, land and
 ## open whole. You walk through it; F (or digging at it) opens it.
@@ -98,6 +100,8 @@ var cam_c := Vector2(0, 1400)
 var cam_a := PI / 2
 var zoom := 1.0
 var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1)
+var test_jump := false     # the test mode presses jump
+var test_down := false     # ... and down
 var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
 var zoom_levels := [1.0, 2.0, 4.0, 8.0, 14.0]
 var zoom_i := 0
@@ -112,6 +116,7 @@ var _gslot := 0            # whose collision grid the physics helpers are readin
 class PlayerInput:
 	var move := 0              # -1 left, 1 right
 	var jump := false          # held
+	var down := false          # held: with a jump, drop through the platform you stand on
 	var cast := false          # casting the selected spell
 	var dig := false           # excavating (held, or a quick tap)
 	var decon := false         # deconstructing background tiles (Shift + right mouse)
@@ -596,7 +601,8 @@ func _try_open_chest() -> void:
 		# not a chest at all
 		chests.erase(c)
 		audio.play("mimic", centre)
-		var m: Enemy = spawn_enemy("mimic", centre)
+		# a mimic is wider than its chest: make room for it right where the chest was
+		var m: Enemy = spawn_enemy("mimic", free_spot(centre, 16.0, 9.0, 14))
 		m.vy = -2.5
 		m.t = 20
 		shake = maxf(shake, 6.0)
@@ -785,14 +791,44 @@ func _nearest_mage(p: Vector2) -> Mage:
 
 func gsolid(ix: int, iy: int) -> bool:
 	var t := gtype(ix, iy)
-	if t == Defs.TREASURE:
-		return false      # chests are furniture: you walk (and enemies walk) through them
+	if t == Defs.TREASURE or t == Defs.SCAFFOLD:
+		return false      # chests are furniture: you walk (and enemies walk) through them;
+		                  # platforms only hold you from above (see platform_below)
 	var k: int = Defs.KIND[t]
 	return k == Defs.K_SOLID or k == Defs.K_POWDER
 
 func type_at(p: Vector2) -> int:
 	var l := to_grid(p)
 	return gtype(int(floor(l.x)), int(floor(l.y)))
+
+## The nearest spot (searching outward, upward first) where a w x h body centred at p fits, in
+## world coordinates; p itself if nothing within `reach` cells is free.
+func free_spot(p: Vector2, w: float, h: float, reach: int) -> Vector2:
+	var l := to_grid(p)
+	if not box_solid(l.x - w * 0.5, l.y - h * 0.5, w, h):
+		return p
+	for rr in range(1, reach + 1):
+		for dy in range(-rr, rr + 1):
+			for sx in [1, -1]:
+				var dx: int = (rr - absi(dy)) * sx
+				# upward offsets first (dy negative is up)
+				var q := Vector2(l.x + dx, l.y + dy)
+				if not box_solid(q.x - w * 0.5, q.y - h * 0.5, w, h):
+					return from_grid(q)
+	return p
+
+## Does a body w wide whose bottom edge moves down from y_from to y_to cross the top of a
+## one-way platform cell (a scaffold row it wasn't already in)?
+func platform_below(x: float, y_from: float, y_to: float, w: float) -> bool:
+	var r := int(floor(y_to - 0.0001))
+	if float(r) < y_from - 0.0001:
+		return false          # the bottom was already inside that row: it came from below
+	var x0 := int(floor(x))
+	var x1 := int(floor(x + w - 0.001))
+	for xx in range(x0, x1 + 1):
+		if gtype(xx, r) == Defs.SCAFFOLD:
+			return true
+	return false
 
 func box_solid(x: float, y: float, w: float, h: float) -> bool:
 	var x0 := int(floor(x))
@@ -841,10 +877,20 @@ func move_body(e: Body) -> void:
 				break
 		dx -= st
 	e.on_ground = false
+	e.on_platform = false
+	if e.drop_t > 0:
+		e.drop_t -= 1
 	# vertical: when the head clips a corner, slide around it instead of stopping
 	var dy := e.vy
 	while absf(dy) > 0.000001:
 		var st2 := 0.5 * signf(dy) if absf(dy) > 0.5 else dy
+		if st2 > 0 and e.drop_t <= 0 and platform_below(x, y + e.h, y + e.h + st2, e.w):
+			# landing on a one-way platform from above
+			y = floorf(y + e.h + st2 - 0.0001) - e.h
+			e.on_ground = true
+			e.on_platform = true
+			e.vy = 0.0
+			break
 		if not box_solid(x, y + st2, e.w, e.h):
 			y += st2
 		else:
@@ -864,6 +910,9 @@ func move_body(e: Body) -> void:
 		dy -= st2
 	if not e.on_ground and e.vy >= 0 and box_solid(x, y + 0.6, e.w, e.h):
 		e.on_ground = true
+	if not e.on_ground and e.vy >= 0 and e.drop_t <= 0 and platform_below(x, y + e.h - 0.05, y + e.h + 0.6, e.w):
+		e.on_ground = true
+		e.on_platform = true
 	# pushed into terrain (sand piled on, something placed): find the nearest free spot
 	if box_solid(x, y, e.w, e.h):
 		var freed := false
@@ -916,6 +965,11 @@ func _read_local_input(m: Mage) -> void:
 	if test_move != 0:
 		inp.move = test_move    # the test mode walks the mage
 	inp.jump = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
+	inp.down = Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)
+	if test_jump:
+		inp.jump = true
+	if test_down:
+		inp.down = true
 	var can_act: bool = not ui.mouse_over_ui() and state == "play"
 	inp.cast = can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0
@@ -1007,6 +1061,12 @@ func _update_player(m: Mage) -> void:
 	# the ground (loose sand / snow can shift under your feet for a frame)
 	if jump and not m.jump_held:
 		m.jump_buf = 8
+	if m.jump_buf > 0 and m.input.down and p.on_platform:
+		# down + jump on a platform: drop through it
+		m.jump_buf = 0
+		p.drop_t = 12
+		p.on_ground = false
+		p.vy = maxf(p.vy, 1.0)
 	if m.jump_buf > 0:
 		m.jump_buf -= 1
 		if (m.ground_t <= 6 or p.in_liquid) and p.vy > -1.0:
@@ -1470,12 +1530,12 @@ func _update_enemies() -> void:
 					e.vx *= 0.75
 					e.t -= 1
 					if e.t <= 0 and dist < 200:
-						var sd := _walker_nav(e, dx, dist, 0.0, 4.4, g)
-						e.vx = sd * (1.3 + randf() * 0.8) * slow_f
-						var hop := 3.0 + randf() * 1.0
-						var wall := _wall_height(e, sd, 40.0)
+						var sd := _walker_nav(e, dx, dist, 0.0, 5.4, g)
+						e.vx = sd * (1.4 + randf() * 0.9) * slow_f
+						var hop := 3.8 + randf() * 1.3
+						var wall := _wall_height(e, sd, 56.0)
 						if wall > 0:
-							hop = minf(4.4, sqrt(2.0 * g * (wall + 5.0)))   # hop up onto the ledge
+							hop = minf(5.4, sqrt(2.0 * g * (wall + 5.0)))   # hop up onto the ledge
 						elif wall < 0:
 							e.nav_dir = -sd
 							e.wander_t = 90
@@ -1569,6 +1629,10 @@ func _update_enemies() -> void:
 			e.vy = 6.0
 		move_body(e)
 		e.anim += absf(e.vx) * 0.2 + 0.02
+		if e.stuck > 30 and (e.type == "mimic" or e.guard_id >= 0):
+			# mimics and guards are placed on purpose: work them free instead of losing them
+			e.pos = free_spot(e.pos, e.w, e.h, 16)
+			e.stuck = 0
 		if e.stuck > 30 and not e.boss:
 			# wedged in the ground (buried by rubble, a cave-in): it's gone
 			if e.guard_id >= 0:
@@ -1971,7 +2035,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 16            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 17            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

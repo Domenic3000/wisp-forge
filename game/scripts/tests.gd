@@ -594,6 +594,49 @@ func run() -> void:
 	else:
 		_ok("generated sand stays put when you arrive", true, "no desert on this planet")
 
+	# ---- one-way platforms: land on one, drop through it (down + jump), jump up through it ----
+	var pcol := int(fposmod(g.spawn_angle, TAU) / TAU * Defs.SH_N[0]) + 40
+	var pg: int = b.ground_row(pcol)
+	for pc2 in range(pcol - 16, pcol + 17):
+		pg = mini(pg, b.ground_row(pc2))
+	var prow := pg - 16
+	_go(_cell_pos(pcol, pg - 40))
+	await _frames(10)
+	# a stone pillar from the ground up to the strip (conjuring places at most 9 cells a frame)
+	var pil_g: int = maxi(b.ground_row(pcol + 14), b.ground_row(pcol + 15)) + 1
+	for jr in range(pil_g, prow, -1):
+		for dc2 in [13, 14, 15]:
+			g.brushes.append([_cell_pos(pcol + dc2, jr), 0.6, 5, Defs.STONE, 0, 9, 0])
+		await _frames(1)
+	for k in range(-5, 16):
+		g.brushes.append([_cell_pos(pcol + k, prow), 0.6, 5, Defs.SCAFFOLD, 0, 9, 0])
+		g.brushes.append([_cell_pos(pcol + k, prow + 1), 0.6, 5, Defs.SCAFFOLD, 0, 9, 0])
+		await _frames(1)
+	await _frames(3)
+	_go(_cell_pos(pcol, prow - 30))
+	await _frames(80)
+	var strip_n := 0
+	for k in range(-5, 16):
+		if g.type_at(_cell_pos(pcol + k, prow)) == Defs.SCAFFOLD:
+			strip_n += 1
+	var landed: bool = g.player.on_platform
+	var row_on := int(Defs.R_TOP - (g.player.pos.length() - g.player.h * 0.5))
+	g.test_down = true
+	g.test_jump = true
+	await _frames(3)
+	g.test_jump = false
+	g.test_down = false
+	await _frames(60)
+	var row_down := int(Defs.R_TOP - (g.player.pos.length() - g.player.h * 0.5))
+	var dropped: bool = row_down > prow + 4 and g.player.on_ground and not g.player.on_platform
+	g.test_jump = true
+	await _frames(3)
+	g.test_jump = false
+	await _frames(90)
+	var back_up: bool = g.player.on_platform
+	_ok("platforms: land on one, drop through it, jump up through it", landed and dropped and back_up,
+		"strip at row %d (%d of 21 cells there): stood at row %d (on it %s), after down + jump row %d (through %s), after a jump on it again %s" % [prow, strip_n, row_on, landed, row_down, dropped, back_up])
+
 	# ---- unsupported blocks fall, and falling rock hurts ----
 	var sp := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
 	var rs: float = g.gpu.surf_at(g.spawn_angle).x
