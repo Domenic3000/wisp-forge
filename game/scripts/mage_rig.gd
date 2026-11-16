@@ -54,7 +54,7 @@ class Chain:
 		p[0] = anchor
 		q[0] = anchor
 		for i in range(1, p.size()):
-			var cur := p[i] + shift * 0.6
+			var cur := p[i] + shift
 			var vel := (cur - q[i]) * damp
 			q[i] = cur
 			var target: Vector2 = p[i - 1] + rest[i - 1]
@@ -69,8 +69,8 @@ class Chain:
 				np = p[i - 1] + d.normalized() * L
 			p[i] = np
 
-var hat := Chain.new(HAT_REST, 0.28, 0.04, 0.22, 0.86)
-var beard := Chain.new(BEARD_REST, 0.35, 0.06, 0.18, 0.84)
+var hat := Chain.new(HAT_REST, 0.10, 0.03, 0.10, 0.62)
+var beard := Chain.new(BEARD_REST, 0.14, 0.05, 0.10, 0.6)
 var scarf := Chain.new(SCARF_REST, 0.03, 0.10, 0.55, 0.9)
 var staff_a := -0.1       # radians from straight up; positive leans the top forward
 var staff_w := 0.0
@@ -88,8 +88,8 @@ func update(pose: String, vel: Vector2, aim: Vector2, wind := Vector2.ZERO) -> v
 	_prev_v = vel
 	var air := -vel.limit_length(4.0) + wind
 	var run := absf(vel.x)
-	hat.step(_v(_anch["hat"]) + Vector2(0.5, 0.5), acc * 0.9, air, 0.0, _t)
-	beard.step(_v(_anch["chin"]) + Vector2(0.5, 0.5), acc * 0.6, air, 0.0, _t)
+	hat.step(_v(_anch["hat"]) + Vector2(0.5, 0.5), acc * 0.45, air, 0.0, _t)
+	beard.step(_v(_anch["chin"]) + Vector2(0.5, 0.5), acc * 0.35, air, 0.0, _t)
 	scarf.step(_v(_anch["neck"]) + Vector2(0.5, 0.5), acc, air, 0.06 + run * 0.12 + wind.length() * 0.2, _t)
 	# the staff: an angular spring toward a lean that suits what he's doing
 	var target := -0.08
@@ -99,7 +99,12 @@ func update(pose: String, vel: Vector2, aim: Vector2, wind := Vector2.ZERO) -> v
 		target = -0.12 - run * 0.12
 	if vel.y < -0.5 and aim == Vector2.ZERO:
 		target -= 0.15
-	staff_w += (target - staff_a) * (0.22 if aim != Vector2.ZERO else 0.07) - staff_w * 0.2 - acc.x * 0.05 + acc.y * 0.02
+	# close to critically damped: it settles without whipping back and forth
+	var casting := aim != Vector2.ZERO
+	var k := 0.09 if casting else 0.035
+	var c := 0.55 if casting else 0.36
+	staff_w += (target - staff_a) * k - staff_w * c - acc.x * 0.02 + acc.y * 0.008
+	staff_w = clampf(staff_w, -0.12, 0.12)
 	staff_a += staff_w
 
 func _v(a) -> Vector2:
