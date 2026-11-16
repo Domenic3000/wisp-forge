@@ -25,6 +25,7 @@ var structs := []                 # {x0, y0, w, h, data} ready for the GPU stamp
 var sites := []                   # Vector2(x0, x1): surface columns kept free of trees
 var settle := []                  # [world position, half size] windows to settle after stamping
 var labels := []                  # {x0, x1, ymin, ymax, name}: for the region name on the HUD
+var chest_list := []             # {pos (world centre), ruined}: treasure chests (objects, not cells)
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
 var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
 var used := []                    # occupied surface column ranges
@@ -193,6 +194,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	infos.clear()
 	used.clear()
 	deep.clear()
+	chest_list.clear()
 	used.append(Vector2i(spawn_col - 70, spawn_col + 70))
 	# something to discover a short walk from where you arrive
 	for tries in 40:
@@ -320,10 +322,16 @@ func _anchor_and_tidy(bp: BP) -> void:
 		var g := (v >> 8) & 255
 		if (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0):
 			bp.c[k] = v | F_ANCHOR
-	# forget chests that were removed
+	# a chest needs a floor: keep it only where most of its width stands on something solid
+	# (a chest left over a ruin's broken floor isn't placed at all)
 	var keep := []
 	for q in bp.chests:
-		if bp.getf(q.x, q.y - 1) == Defs.TREASURE:
+		var under := 0
+		for ci in Defs.CHEST_W:
+			var f := bp.getf(q.x + ci, q.y)
+			if (f != 255 and f != 0 and Defs.KIND[f] != Defs.K_EMPTY and Defs.KIND[f] != Defs.K_GAS and Defs.KIND[f] != Defs.K_LIQUID) or (f == 255 and q.y >= ground_row(bp.x0 + q.x + ci) - bp.y0):
+				under += 1
+		if under >= Defs.CHEST_W / 2:
 			keep.append(q)
 	bp.chests = keep
 
@@ -462,6 +470,10 @@ func _finish(bp: BP, build: bool) -> void:
 	var ch := []
 	for q in bp.chests:
 		ch.append(Vector2i(posmod(bp.x0 + q.x, N0), bp.y0 + q.y))
+		# the chest object: its middle, standing on the floor row
+		var ang := float(posmod(bp.x0 + q.x, N0) + Defs.CHEST_W / 2) / N0 * TAU
+		var rr := Defs.R_TOP - float(bp.y0 + q.y) + Defs.CHEST_H * 0.5 + 0.05
+		chest_list.append({"pos": Vector2(cos(ang), sin(ang)) * rr, "ruined": bp.ruined})
 	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
@@ -474,9 +486,6 @@ func _finish(bp: BP, build: bool) -> void:
 ## (it falls if you dig out its floor), but you walk through it; open it with F or by digging at it.
 func _chest(bp: BP, i: int, fl: int) -> void:
 	bp.chests.append(Vector2i(i, fl))
-	for cj in Defs.CHEST_H:
-		for ci in Defs.CHEST_W:
-			bp.fgv(i + ci, fl - Defs.CHEST_H + cj, Defs.TREASURE, ci | (cj << 4))
 
 ## a foe waiting on the floor row fl at column i (local), spawned when you come near
 func _guard(bp: BP, i: int, fl: int, type: String) -> void:

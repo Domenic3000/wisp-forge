@@ -17,7 +17,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 ## Cell format
 - Main buffer (binding 0), uint per cell:
   - bits 0-7: material
-  - bits 8-15: colour variant (chests are 12 x 9 and encode their part: col | row << 4)
+  - bits 8-15: colour variant
+- Treasure chests are objects, not cells: `Chest` in main.gd (a 12 x 9 Body with its own physics, sprites
+  "chest" / "chest_open"), planned by buildings.gd (`chest_list`) and saved in the world's `planet_state["chests"]`.
   - bits 16-23: life (fall distance for falling blocks)
   - bits 24-29: support distance
   - bit 30: anchored (untouched natural ground)
@@ -26,7 +28,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   - bits 8-13: support
   - bit 14: built back wall
   - bit 15: anchored (generated structures stay as built until digging nearby clears it, like bit 30 in front)
-- A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`).
+- A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`),
+  but only for materials the digging staff could dig (so a vault's obsidian never comes loose early).
 
 ## Gotchas
 - Windows reserves file names like `aux`, `con`, `nul`, `prn`. Never name a shader include that way.

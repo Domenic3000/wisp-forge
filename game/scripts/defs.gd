@@ -325,9 +325,33 @@ const RECIPES := [
 # ---- sprites (drawn as text; tools/sprites.py checks them). The mage is 16x24 with animation
 # frames: idle (2), walk (4), jump, fall, levitate (float), cast and hurt, drawn 16 wide (a slim
 # cape behind, an arm and hand in front). Enemies have 2 frames each.
-const CHEST_W := 12  # treasure chests are 12 x 9 cells (each cell stores its part: col | row << 4)
+const CHEST_W := 12  # treasure chests are 12 x 9 objects (sprites "chest" / "chest_open"), not cells
 const CHEST_H := 9
 const SPRITES := {
+	"chest": {"rows": [
+			"gWWIWWWWIWWg",
+			"gwwiwwwwiwwg",
+			"gWWiWWWWiWWg",
+			"gddiddGGiddg",
+			"GggggggGgggG",
+			"gwwiwwkowwwg",
+			"gWWiWWGgiWWg",
+			"gwwIwwwwIwwg",
+			"oodddddddddo",
+		],
+		"pal": {"g": "#e8b830", "G": "#fff2a0", "o": "#9a6c24", "w": "#7e4e28", "W": "#9e6634", "d": "#54331a", "i": "#52505c", "I": "#807e8c", "k": "#140c08", "n": "#1e1410", "c": "#ffd85a"}},
+	"chest_open": {"rows": [
+			"oddddddddddd",
+			"gnnnnnnnnnng",
+			"gnnnnnnnnnng",
+			"gnncnngnncng",
+			"GggcgggcgggG",
+			"gwwiwwwwiwwg",
+			"gWWiWWWWiWWg",
+			"gwwIwwwwIwwg",
+			"oodddddddddo",
+		],
+		"pal": {"g": "#e8b830", "G": "#fff2a0", "o": "#9a6c24", "w": "#7e4e28", "W": "#9e6634", "d": "#54331a", "i": "#52505c", "I": "#807e8c", "k": "#140c08", "n": "#1e1410", "c": "#ffd85a"}},
 	"mage": {"rows": [
 			"........hH......",
 			".......hHHl.....",

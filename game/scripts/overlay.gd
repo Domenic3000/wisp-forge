@@ -83,6 +83,12 @@ func _draw() -> void:
 	if game == null or game.state == "title" or game.state == "loading" or game.state == "error":
 		return
 	var z: float = game.zoom
+	# treasure chests (whole objects)
+	for c in game.chests:
+		var csp: Vector2 = game.world_to_screen(c.pos)
+		if csp.x < -20 or csp.y < -20 or csp.x > game.VW + 20 or csp.y > game.VH + 20:
+			continue
+		_sprite("chest_open" if c.opened else "chest", c.pos, false, false, c.h, c.on_ground)
 	# foes
 	for e in game.enemies:
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)

@@ -57,6 +57,16 @@ func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
 				out[j * N + col] = true
 	return out
 
+## the chest object standing at a planned chest spot (left column, floor row), or null
+func _chest_obj(spot: Vector2i):
+	if spot.x < 0:
+		return null
+	var want := _cell_pos(spot.x + Defs.CHEST_W / 2, spot.y - 5)
+	for c in g.chests:
+		if (c.pos as Vector2).distance_to(want) < 4.0:
+			return c
+	return null
+
 func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	# the structure's own built cells (recorded when it was generated): how many still hold a
 	# solid, and which of them hang unsupported over open space
@@ -170,11 +180,11 @@ func run() -> void:
 			worst = minf(worst, ratio)
 			if ratio >= 0.97:
 				intact_ok += 1
-			treasure_missing += maxi(0, info["chests"].size() * Defs.CHEST_W * Defs.CHEST_H - int(sc["treasure"]))
+
 	_ok("every structure (ruins too) stands as built after generating", intact_ok == intact, "%d of %d keep at least 97%% of their blocks, worst %.1f%%" % [intact_ok, intact, worst * 100.0])
 	if intact_ok != intact:
 		lines.append("      worst: " + worst_built)
-	_ok("intact buildings keep their chests", treasure_missing == 0, "%d chest cells missing" % treasure_missing)
+	_ok("every planned chest is in the world", g.chests.size() == b.chest_list.size() and g.chests.size() > 0, "%d chests, %d planned" % [g.chests.size(), b.chest_list.size()])
 	_ok("nothing is left hanging after settling", loose_total == 0, "%d unsupported blocks over open space" % loose_total)
 	if loose_total > 0:
 		lines.append("      where: " + "; ".join(loose_where))
@@ -295,7 +305,8 @@ func run() -> void:
 		if not info["ruined"] and info["chests"].size() > 0:
 			chest = info["chests"][0]
 			break
-	if chest.x >= 0:
+	var cobj = _chest_obj(chest)
+	if cobj != null:
 		_go(_cell_pos(chest.x - 6, chest.y - 10))
 		await _frames(40)
 		var before := 0
@@ -306,27 +317,14 @@ func run() -> void:
 		var after := 0
 		for m in Defs.NM:
 			after += g.player.inv[m]
-		var raw2: PackedByteArray = g.gpu.read_world()
-		var left := 0
-		var opened := 0
-		for cj in Defs.CHEST_H:
-			for ci in Defs.CHEST_W:
-				var row := chest.y - Defs.CHEST_H + cj
-				var col := posmod(chest.x + ci, Defs.SH_N[0])
-				var idx := (row * Defs.SH_N[0] + col) * 4
-				var off0: int = Defs.total_cells() * 4
-				if (raw2.decode_u32(off0 + idx) & 255) == Defs.TREASURE or (raw2.decode_u32(idx) & 255) == Defs.TREASURE:
-					left += 1
-				var off: int = Defs.total_cells() * 4
-				if (raw2.decode_u32(off + idx) & 255) == Defs.OPENCHEST:
-					opened += 1
-		_ok("F opens a chest and gives loot", left == 0 and after > before, "%d chest cells left, satchel %d -> %d" % [left, before, after])
-		_ok("an opened chest stays behind", opened >= Defs.CHEST_W * Defs.CHEST_H - 6, "%d opened-chest cells" % opened)
+		_ok("F opens a chest and gives loot", cobj.opened and after > before, "opened %s, satchel %d -> %d" % [cobj.opened, before, after])
+		_ok("an opened chest stays behind", g.chests.has(cobj) and cobj.opened, "")
 		# right-click leaves a building's back wall alone; Shift + right-click (deconstruct) takes it
+		var raw2: PackedByteArray = g.gpu.read_world()
 		var boff: int = Defs.total_cells() * 4
 		var wall := Vector2i(-1, -1)
-		for dj in range(8, 20):
-			for di in range(-8, 16):
+		for dj in range(12, 26):
+			for di in range(-8, 20):
 				var col2 := posmod(chest.x + di, Defs.SH_N[0])
 				var row2 := chest.y - dj
 				var k2 := (row2 * Defs.SH_N[0] + col2) * 4
@@ -355,7 +353,7 @@ func run() -> void:
 	else:
 		_ok("F opens a chest and gives loot", false, "no intact chest found")
 
-	# ---- a chest whose floor is dug out falls (it doesn't float) ----
+	# ---- a chest whose floor is dug out falls, whole (it doesn't float or come apart) ----
 	var chest2 := Vector2i(-1, -1)
 	var nfound := 0
 	for info in b.infos:
@@ -364,8 +362,10 @@ func run() -> void:
 			if nfound == 2:
 				chest2 = info["chests"][0]
 				break
-	if chest2.x >= 0:
-		_go(_cell_pos(chest2.x - 12, chest2.y - 10))
+	var c2obj = _chest_obj(chest2)
+	if c2obj != null:
+		var r_before: float = c2obj.pos.length()
+		_go(_cell_pos(chest2.x - 14, chest2.y - 10))
 		await _frames(30)
 		for f in 70:
 			for dx in range(-2, Defs.CHEST_W + 3, 2):
@@ -373,18 +373,10 @@ func run() -> void:
 				g.brushes.append([_cell_pos(chest2.x + dx, chest2.y + 2), 3.2, 1, 0, 4, 0, 0, 3])
 			await _frames(1)
 		await _frames(150)
-		var r5: PackedByteArray = g.gpu.read_world()
-		var at_home := 0
-		var below := 0
-		for cj in range(-Defs.CHEST_H, 90):
-			for ci in Defs.CHEST_W:
-				var k5 := ((chest2.y + cj) * Defs.SH_N[0] + posmod(chest2.x + ci, Defs.SH_N[0])) * 4
-				if (r5.decode_u32(k5) & 255) == Defs.TREASURE:
-					if cj < 0:
-						at_home += 1
-					else:
-						below += 1
-		_ok("a chest falls when its floor is dug out", at_home < Defs.CHEST_W * Defs.CHEST_H and below > 0, "%d chest cells still in place, %d fell below" % [at_home, below])
+		var dropped: float = r_before - c2obj.pos.length()
+		_ok("a chest falls when its floor is dug out", dropped > 2.0 and not c2obj.opened, "it dropped %.1f cells, in one piece" % dropped)
+	else:
+		_ok("a chest falls when its floor is dug out", false, "no second intact chest found")
 
 	# ---- guards wake up when you come near ----
 	if b.guards.size() > 0:

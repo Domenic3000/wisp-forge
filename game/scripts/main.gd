@@ -29,6 +29,15 @@ class Body:
 	var hit_wall := false
 	var facing := 1
 
+## A treasure chest: one solid object (not a pile of cells), so it can only ever fall, land and
+## open whole. You walk through it; F (or digging at it) opens it.
+class Chest extends Body:
+	var opened := false
+	func _init() -> void:
+		w = float(Defs.CHEST_W)
+		h = float(Defs.CHEST_H)
+		step_h = 0
+
 class Enemy extends Body:
 	var type := ""
 	var d: Dictionary
@@ -211,6 +220,7 @@ var dig_blocked: int:
 	set(v): player.dig_blocked = v
 
 var enemies: Array = []
+var chests: Array = []        # Chest objects on this planet
 var projs: Array = []
 var parts: Array = []
 var brushes: Array = []
@@ -416,13 +426,6 @@ func _apply_counts(m: Mage) -> void:
 	if cn[Defs.TREASURE] > 0 and m.local:
 		_open_treasure(cn[Defs.TREASURE])
 		m.inv[Defs.TREASURE] = 0
-	if cn[58] > 0 and m.local and _dig_open_t <= 0:
-		# digging at a chest opens it (the same as pressing F)
-		_dig_open_t = 30
-		_try_open_chest()
-	if cn.size() > 54 and cn[54] > 0 and _chest_pending:
-		_chest_pending = false
-		_open_chest_loot()
 	if cn.size() > 53 and cn[52] > 0 and not m.dead:
 		# a falling block lands on you: the longer it fell, the harder it hits
 		var dmg := clampf(2.0 + float(cn[53]) * 0.45 + float(cn[52]) * 0.12, 2.0, 35.0)
@@ -491,33 +494,58 @@ func _flush_loot() -> void:
 	ui.toast("Treasure! " + ", ".join(parts_txt), Color(1.0, 0.85, 0.3), 5.0)
 	_loot_acc.clear()
 
-## The nearest chest to the local mage within 44 cells, as reported by the GPU's grid pass
-## (each chest cell knows which part of its chest it is, so this is the chest's centre).
-## Returns [world centre, distance squared] or [].
-func _nearest_chest() -> Array:
-	var all: PackedInt32Array = gpu.counts
-	var o := player.slot * 64 + 55
-	if all.size() <= o:
-		return []
-	var u: int = all[o] & 0xFFFFFFFF
-	if u == 0:
-		return []
-	var d2 := 4095 - (u >> 20)
-	var ic := u & 1023
-	var jc := (u >> 10) & 1023
+## The chests: made when the planet is generated (from the structure plans), saved with the world.
+func _make_chests(loaded: bool) -> void:
+	chests.clear()
+	if loaded and planet_state.has("chests"):
+		for e in planet_state["chests"]:
+			var c := Chest.new()
+			c.pos = Vector2(float(e[0]), float(e[1]))
+			c.opened = bool(e[2])
+			chests.append(c)
+	else:
+		for e in builds.chest_list:
+			var c2 := Chest.new()
+			c2.pos = e["pos"]
+			chests.append(c2)
+
+## Chests near a mage obey gravity: one rigid object, so it falls and lands whole.
+func _update_chests() -> void:
+	for c in chests:
+		var near := _nearest_mage(c.pos)
+		if c.pos.distance_squared_to(near.pos) > 250.0 * 250.0:
+			continue
+		_use_grid(near)
+		if not in_grid(c.pos, 16.0):
+			continue
+		c.vx *= 0.8
+		c.vy = minf(c.vy + 0.17 * gravity_at(c.pos), 6.0)
+		move_body(c)
 	_use_grid(player)
-	return [from_grid(Vector2(ic + 0.5, jc + 0.5)), d2]
+
+## The nearest closed chest to the local mage. Returns [chest, distance squared] or [].
+func _nearest_chest() -> Array:
+	var best = null
+	var bd := 1e18
+	for c in chests:
+		if c.opened:
+			continue
+		var d2: float = (c.pos as Vector2).distance_squared_to(player.pos)
+		if d2 < bd:
+			bd = d2
+			best = c
+	return [] if best == null else [best, bd]
 
 ## A chest you can open: close by (within CHEST_REACH cells of the mage's middle) and in plain
 ## sight, with nothing solid in between (so not through a wall you can't dig yet).
 const CHEST_REACH := 20
 func _chest_in_reach() -> Array:
 	var nc := _nearest_chest()
-	if nc.is_empty() or int(nc[1]) > CHEST_REACH * CHEST_REACH:
+	if nc.is_empty() or float(nc[1]) > CHEST_REACH * CHEST_REACH:
 		return []
 	_use_grid(player)
 	var a := to_grid(player.pos)
-	var b := to_grid(nc[0])
+	var b := to_grid(nc[0].pos)
 	var n := int(ceil(a.distance_to(b) * 2.0))
 	for k in range(1, n):
 		var q := a.lerp(b, float(k) / n)
@@ -529,35 +557,43 @@ func _try_open_chest() -> void:
 	var nc := _chest_in_reach()
 	if nc.is_empty():
 		return
-	var centre: Vector2 = nc[0]
+	var c: Chest = nc[0]
+	var centre: Vector2 = c.pos
 	var place := region_name()
 	var ruin := place.begins_with("Ruin") or place.begins_with("Forgotten") or place.begins_with("Buried") \
 		or place.begins_with("Collapsed") or place.begins_with("Sunken")
 	if ruin and randf() < 0.15:
 		# not a chest at all
-		brushes.append([centre, 8.5, 7, 0, 0, 0, 0])
+		chests.erase(c)
 		var m: Enemy = spawn_enemy("mimic", centre)
 		m.vy = -2.5
 		m.t = 20
 		shake = maxf(shake, 6.0)
 		ui.toast("The chest bares its teeth: a MIMIC!", Color(1, 0.4, 0.35), 4.0)
 		return
-	_chest_rare = 0.15
+	var rare := 0.15
 	if "Castle" in place or "Vault" in place:
-		_chest_rare = 0.55
+		rare = 0.55
 	elif "Temple" in place or "Catacombs" in place:
-		_chest_rare = 0.4
+		rare = 0.4
 	elif "Watchtower" in place or "Mine" in place:
-		_chest_rare = 0.25
-	brushes.append([centre, 8.5, 7, 1, 0, 0, 0])
-	_chest_pending = true
+		rare = 0.25
+	c.opened = true
+	_roll_loot(7, 1.6)
+	_rare_find(rare)
 	for k in 14:
 		_particle(centre, Vector2(randf() - 0.5, -randf() * 1.2), 30 + randi() % 20, Color(1, 0.85, 0.35), true, 0.02)
 	lights.append([centre, 30.0, Color(1.2, 0.9, 0.4)])
 
-func _open_chest_loot() -> void:
-	_roll_loot(7, 1.6)
-	_rare_find(_chest_rare)
+## Digging at a chest opens it (the same as pressing F): is this dig point on a closed chest?
+func _dig_hits_chest(p: Vector2, rad: float) -> bool:
+	for c in chests:
+		if c.opened:
+			continue
+		var d: Vector2 = (c.pos as Vector2) - p
+		if absf(d.x) < c.w * 0.5 + rad and absf(d.y) < c.w * 0.5 + rad and d.length() < c.w * 0.5 + rad:
+			return true
+	return false
 
 ## scrolls that unlock spells at the Forge, and relics that make you stronger: only found in chests
 func _rare_find(p: float) -> void:
@@ -877,6 +913,7 @@ func _tick() -> void:
 			m.dig_tap -= 1
 	_use_grid(player)
 	_update_enemies()
+	_update_chests()
 	_use_grid(player)
 	_update_projectiles()
 	_use_grid(player)
@@ -1096,6 +1133,9 @@ func _reach(m: Mage, aim: Vector2) -> Vector2:
 
 func _excavate(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
+	if m.local and _dig_open_t <= 0 and _dig_hits_chest(p, m.dig_r):
+		_dig_open_t = 30
+		_try_open_chest()
 	brushes.append([p, m.dig_r, 1, 0, m.tier, 0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
 
@@ -1821,6 +1861,7 @@ func _enter_planet(index: int) -> void:
 		gpu.settle(builds.settle, 0.0, 150)
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
+	_make_chests(loaded)
 	enemies.clear()
 	_guards_alive.clear()
 	projs.clear()
@@ -1876,7 +1917,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 13            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 14            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -1977,6 +2018,10 @@ func save_world(blocking: bool) -> void:
 		_save_task = -1
 	var raw: PackedByteArray = gpu.read_world()
 	planet_state["player"] = [player.pos.x, player.pos.y]
+	var cs := []
+	for c in chests:
+		cs.append([c.pos.x, c.pos.y, c.opened])
+	planet_state["chests"] = cs
 	planet_state["time"] = time
 	var meta := JSON.stringify(planet_state)
 	var path := _world_path(int(planet["index"]))
