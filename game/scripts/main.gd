@@ -106,6 +106,15 @@ var test_jump := false     # the test mode presses jump
 var test_down := false     # ... and down
 var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
 var ustep := TAU / 8192.0     # unrolled view: radians per screen pixel (one column of the camera's shell)
+var view_c_next := Vector2.ZERO   # the camera for the GPU frame being prepared (view_c is the one on screen)
+var ustep_next := TAU / 8192.0
+var _sub_view_c := Vector2.ZERO
+var _sub_ustep := TAU / 8192.0
+var _tick_acc := 0.0
+var perf_cpu_ms := 0.0      # F3 readout: the game's own time per frame, time waiting for the GPU,
+var perf_wait_ms := 0.0     # and ticks run per frame (1 at 60 fps)
+var perf_steps := 1.0
+var show_perf := false
 var zoom_levels := [1.0, 2.0, 4.0, 8.0, 14.0]
 var zoom_i := 0
 var shake := 0.0
@@ -311,13 +320,32 @@ func _exit_tree() -> void:
 		gpu.cleanup()
 
 # ================================================================= frames ==
-func _process(_delta: float) -> void:
+## The game runs at a fixed 60 ticks a second whatever the frame rate: on a slow frame (a laptop
+## on battery, say) it runs two or three ticks before drawing, so the world never slows down; on
+## a very fast screen some frames run none. The GPU's work for a frame is collected at the start
+## of the next one (see gpu_world.step), so it runs while Godot draws.
+func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	if gpu == null:
+		return
+	gpu.flush()
+	if gpu.fresh:
+		_take_gpu_results()
+	var steps := 1
 	if state == "play" or state == "dead":
-		_tick()
+		_tick_acc += minf(delta, 0.1)
+		steps = mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
+		_tick_acc = minf(_tick_acc - steps / 60.0, 1.0 / 60.0)
+		for k in steps:
+			_tick()
 	if state == "play" or state == "dead" or state == "forge":
-		_gpu_frame(state == "forge")
+		_gpu_frame(state == "forge", steps)
 		ui.update_hud(self)
 	ui.update_toasts()
+	# performance readout (F3)
+	perf_cpu_ms = lerpf(perf_cpu_ms, (Time.get_ticks_usec() - t0 - gpu.wait_us) / 1000.0, 0.1)
+	perf_wait_ms = lerpf(perf_wait_ms, gpu.wait_us / 1000.0, 0.1)
+	perf_steps = lerpf(perf_steps, float(steps), 0.1)
 
 ## Where a mage's collision grid goes: near the mage, but locked to the planet's cell lattice
 ## (a whole number of radius, a column edge). A grid centred exactly on the mage resampled the
@@ -334,7 +362,7 @@ func _grid_frame(p: Vector2) -> Array:
 	var sa := roundf(a / TAU * n) / n * TAU
 	return [Vector2(cos(sa), sin(sa)) * roundf(r), sa]
 
-func _gpu_frame(paused: bool) -> void:
+func _gpu_frame(paused: bool, sim_steps := 1) -> void:
 	_write_frame_params()
 	# simulate around every mage (the local one around the camera) and build each one's grid
 	var centers := [cam_c]
@@ -346,17 +374,28 @@ func _gpu_frame(paused: bool) -> void:
 			centers.append(m.pos)
 		frames.append(_grid_frame(m.pos))
 	var t0 := Time.get_ticks_usec()
-	gpu.step(centers, frames, brushes.size() > 0 and not paused, false)
+	_sub_view_c = view_c_next
+	_sub_ustep = ustep_next
+	gpu.step(centers, frames, brushes.size() > 0 and not paused, false, sim_steps if not paused else 1, false)
 	perf_us += Time.get_ticks_usec() - t0
 	perf_n += 1
 	brushes.clear()
-	for k in frames.size():
+	overlay.queue_redraw()
+
+## The results of the last GPU frame: each mage's collision grid, what the digging collected, and
+## the picture (with the camera it was drawn from, so sprites line up with it).
+func _take_gpu_results() -> void:
+	gpu.fresh = false
+	var frames: Array = gpu.sub_frames
+	for k in mini(frames.size(), players.size()):
 		players[k].grid_g = frames[k][0]
 		players[k].grid_a = frames[k][1]
 	for m in players:
 		_apply_counts(m)
 	_use_grid(player)
 	_flush_loot()
+	view_c = _sub_view_c
+	ustep = _sub_ustep
 	if view_tex == null or view_tex.get_width() != gpu.VW or view_tex.get_height() != gpu.VH:
 		view_tex = ImageTexture.create_from_image(gpu.view_img)
 		view_rect.texture = view_tex
@@ -370,13 +409,16 @@ func _write_frame_params() -> void:
 	gpu.setp(0, Vector4(time, gpu.frame, sun_a, planet.get("seed", 1)))
 	var sh := Vector2(randf() - 0.5, randf() - 0.5) * shake
 	var c := cam_c + sh
-	ustep = unroll_step(c.length())
+	ustep_next = unroll_step(c.length())
 	if unrolled():
 		# lock the drawn camera to whole cells, so the terrain never shimmers between pixels
-		var step := ustep
+		var step := ustep_next
 		var ca := roundf(atan2(c.y, c.x) / step) * step
 		c = Vector2(cos(ca), sin(ca)) * roundf(c.length())
-	view_c = c
+	view_c_next = c
+	if view_c == Vector2.ZERO:
+		view_c = c
+		ustep = ustep_next
 	gpu.setp(1, Vector4(c.x, c.y, atan2(c.y, c.x), zoom))
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, mini(lights.size(), 32)))
 	var b := _biome_at(atan2(player.pos.y, player.pos.x))
@@ -391,7 +433,7 @@ func _write_frame_params() -> void:
 	var rr := sky_rain
 	gpu.setp(3, Vector4(rr * 0.0015 if rr > 0.05 else 0.0, wmat, rr, flash))
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
-	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep, 0))
+	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, 0))
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
 	var cr := c.length()
 	# the camera's angle, unwrapped (it keeps counting past a full turn) so parallax never jumps
@@ -1942,6 +1984,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			player.vy = 0
 			cam_c = player.pos
 			ui.toast("Dev: moved %s" % ("up" if k == KEY_F7 else "down"), Color(0.6, 1, 0.6), 1.0)
+		elif k == KEY_F3:
+			show_perf = not show_perf
 		elif k == KEY_F9:
 			for m in Defs.NM:
 				if Defs.COLLECT[m] == 1 and Defs.PLACE[m] == 1:

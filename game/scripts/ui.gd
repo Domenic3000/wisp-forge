@@ -684,6 +684,9 @@ func update_hud(g) -> void:
 			if g.items.has(rel[0]):
 				extra += " · " + rel[1]
 		info.text = "%s · %s\n%s · %s · %s\nStaff %s%s\n%d FPS" % [g.planet["name"], g.region_name(), depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, Engine.get_frames_per_second()]
+		if g.show_perf:
+			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
+			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"]]
 	# hotbar
 	var hk := ",".join(g.known) + "|" + str(g.sel)
 	if hk != _hot_key:

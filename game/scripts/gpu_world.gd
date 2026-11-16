@@ -10,7 +10,13 @@ var LS := 4              # light grid block size (pixels); Low quality uses 6
 # quality settings (see apply_quality)
 var flow_passes := 4     # extra liquid-spreading passes per frame
 var support_iters := 3   # structural support relaxation passes per frame
-const PLANT_ITERS := 6   # background plant support passes per frame (plants.comp)
+var plant_iters := 6     # background plant support passes per frame (plants.comp)
+# The frame's GPU work is submitted at the end of one _process and collected at the start of the
+# next, so the GPU works while Godot draws and waits for the screen (CPU and GPU overlap).
+var pending := false     # a submission is in flight
+var fresh := false       # results collected that main.gd hasn't taken yet
+var sub_frames := []     # the collision grid frames of the last submission
+var wait_us := 0         # how long the last collect waited for the GPU
 var topple_iters := 2    # falling-block passes per frame
 var blur_passes := 2     # light blur passes
 var sun_step := 2.0      # sunlight march step (cells)
@@ -131,6 +137,7 @@ func _make_static_sets() -> void:
 
 ## (Re)creates the screen-sized buffers.
 func resize(w: int, h: int) -> void:
+	flush()
 	VW = w
 	VH = h
 	LW = int(ceil(float(VW) / LS)) + 1
@@ -191,6 +198,7 @@ static func groups(n: int, size: int) -> int:
 # --------------------------------------------------------------- generation --
 ## Writes biome / planet data to params, builds the surface table and returns it.
 func build_surface(planet: Dictionary) -> void:
+	flush()
 	var bl: Array = planet["biomes"]
 	setp(0, Vector4(0, 0, 0, planet["seed"]))
 	var sky: Color = planet["sky"]
@@ -211,6 +219,7 @@ func build_surface(planet: Dictionary) -> void:
 
 ## Generates every cell, in row bands so no single GPU job runs too long.
 func generate(spawn_angle: float, boss: Vector4, sites: Array) -> void:
+	flush()
 	var sd := PackedFloat32Array()
 	sd.resize((MAX_SITES + 1) * 4)
 	var nsite := mini(sites.size(), MAX_SITES)
@@ -241,6 +250,7 @@ func generate(spawn_angle: float, boss: Vector4, sites: Array) -> void:
 
 ## Writes generated structures into the planet. Each: {x0, y0, w, h, data: PackedInt32Array}.
 func stamp(structs: Array, seed: int) -> void:
+	flush()
 	if structs.is_empty():
 		return
 	var all := PackedInt32Array()
@@ -264,6 +274,7 @@ func stamp(structs: Array, seed: int) -> void:
 ## Runs the simulation (no rain, no rendering) around the given points so freshly stamped
 ## structures settle: whatever the generator (or a ruin's decay) left unsupported falls now.
 func settle(centers: Array, half: float, frames: int) -> void:
+	flush()
 	if centers.is_empty():
 		return
 	setp(3, Vector4(0, 0, 0, 0))
@@ -361,19 +372,25 @@ func _windows(centers: Array) -> Array:
 ## One simulation + render step.
 ## sim_centers: where to simulate (one per player; the local one is the camera).
 ## grid_frames: [centre, angle] per player slot, for that player's collision grid.
-func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: bool) -> void:
-	frame += 1
-	params[1] = frame
+## One frame of GPU work: brushes, `sim_steps` rounds of simulation (more than one when the game
+## catches up on a slow frame, none on a very fast screen), then the collision grids, light and the
+## picture. With wait = false it returns as soon as the work is submitted; collect() picks up the
+## results. sim_only: just simulate (loading), and wait for it.
+func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: bool, sim_steps := 1, wait := true) -> void:
+	flush()
+	params[1] = frame + 1
 	_upload_params()
 	rd.buffer_clear(counts_buf, 0, 64 * MAXP * 4)
 	var win := _windows(sim_centers)
 	var cl := rd.compute_list_begin()
 	if with_brushes:
 		for w in win:
-			_dispatch(cl, "brush", "brush", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+			_dispatch(cl, "brush", "brush", [w.s, w.y0, w.y1, w.x0, w.count, frame + 1], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	var rain_row := clampi(int(Defs.R_TOP - params[121 * 4 + 2]), 0, Defs.ROWS - 1)
 	var rain_mat := int(params[3 * 4 + 1])
-	_sim_passes(cl, win, rain_row, rain_mat, CREAK_FRAMES)
+	for k in sim_steps:
+		frame += 1
+		_sim_passes(cl, win, rain_row, rain_mat, CREAK_FRAMES)
 	if not sim_only:
 		for gs in mini(grid_frames.size(), MAXP):
 			var gf: Array = grid_frames[gs]
@@ -386,19 +403,34 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		_dispatch(cl, "render", "render", [VW, VH, LW, LH], [], groups(VW, 16), groups(VH, 16))
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync()
 	if sim_only:
+		rd.sync()
 		return
+	pending = true
+	sub_frames = grid_frames
+	if wait:
+		flush()
+
+## Wait for the submitted frame (if any) and read its results back.
+func flush() -> void:
+	if not pending:
+		return
+	var t0 := Time.get_ticks_usec()
+	rd.sync()
+	wait_us = Time.get_ticks_usec() - t0
+	pending = false
 	counts = rd.buffer_get_data(counts_buf).to_int32_array()
-	grid = rd.buffer_get_data(grid_buf, 0, GS * GS * clampi(grid_frames.size(), 1, MAXP))   # only the slots in use
+	grid = rd.buffer_get_data(grid_buf, 0, GS * GS * clampi(sub_frames.size(), 1, MAXP))   # only the slots in use
 	light = rd.buffer_get_data(light_a).to_float32_array()
 	var vb := rd.buffer_get_data(view_buf)
 	view_img = Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, vb)
+	fresh = true
 
 ## High / Medium / Low: how much work each frame does. Low is for weaker graphics (and phones later).
 func apply_quality(q: String) -> void:
 	match q:
 		"low":
+			plant_iters = 3
 			flow_passes = 2
 			support_iters = 2
 			topple_iters = 1
@@ -406,6 +438,7 @@ func apply_quality(q: String) -> void:
 			sun_step = 3.0
 			LS = 6
 		"medium":
+			plant_iters = 4
 			flow_passes = 3
 			support_iters = 2
 			topple_iters = 2
@@ -413,6 +446,7 @@ func apply_quality(q: String) -> void:
 			sun_step = 2.5
 			LS = 4
 		_:
+			plant_iters = 6
 			flow_passes = 4
 			support_iters = 3
 			topple_iters = 2
@@ -429,9 +463,9 @@ func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int, creak: int) 
 	for w in win:
 		_dispatch(cl, "react", "react", [w.s, w.y0, w.y1, w.x0, w.count, frame, rain_row, rain_mat], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	# background plants: several passes, so a cut tree knows it is cut within a few frames
-	for it in PLANT_ITERS:
+	for it in plant_iters:
 		for w in win:
-			_dispatch(cl, "plants", "plants", [w.s, w.y0, w.y1, w.x0, w.count, frame * PLANT_ITERS + it], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+			_dispatch(cl, "plants", "plants", [w.s, w.y0, w.y1, w.x0, w.count, frame * plant_iters + it], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
 	for it in support_iters:
 		for w in win:
 			_dispatch(cl, "support", "support", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
@@ -474,11 +508,13 @@ func light_at(px: Vector2) -> Color:
 
 ## Both layers, foreground cells first then the background layer.
 func read_world() -> PackedByteArray:
+	flush()
 	var out := rd.buffer_get_data(world_buf)
 	out.append_array(rd.buffer_get_data(aux_buf))
 	return out
 
 func write_world(data: PackedByteArray) -> void:
+	flush()
 	var n: int = Defs.total_cells() * 4
 	rd.buffer_update(world_buf, 0, n, data.slice(0, n))
 	rd.buffer_update(aux_buf, 0, n, data.slice(n, n * 2))
@@ -486,6 +522,7 @@ func write_world(data: PackedByteArray) -> void:
 func cleanup() -> void:
 	if rd == null:
 		return
+	flush()
 	for k in sets:
 		if sets[k].is_valid() and rd.uniform_set_is_valid(sets[k]):
 			rd.free_rid(sets[k])

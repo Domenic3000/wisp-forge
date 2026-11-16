@@ -60,5 +60,5 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   "Identifier not found: Defs" is expected (the autoload isn't loaded); real parse errors show up as Parse Error.
 - The test mode saves pictures of a few ruins and buildings to `saves/shots/` (midday, no title screen);
   stage them through the device bridge to look at the art without walking around in the game.
-- Testing on the user's laptop: files are committed to `E:\Wisp Forge` through the device bridge. Wait about 12 s after
+- Testing on the user's laptop: files are committed to `C:\Wisp Forge` through the device bridge. Wait about 12 s after
   writing to `/mnt/user-data/outputs` before committing, otherwise stale copies get written.

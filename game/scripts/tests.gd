@@ -671,7 +671,8 @@ func run() -> void:
 		for dc2 in [13, 14, 15]:
 			g.brushes.append([_cell_pos(pcol + dc2, jr), 0.6, 5, Defs.STONE, 0, 9, 0])
 		await _frames(1)
-	for k in range(-5, 16):
+	# from the pillar outward, so every new piece is already held by the last
+	for k in range(15, -6, -1):
 		g.brushes.append([_cell_pos(pcol + k, prow), 0.6, 5, Defs.SCAFFOLD, 0, 9, 0])
 		g.brushes.append([_cell_pos(pcol + k, prow + 1), 0.6, 5, Defs.SCAFFOLD, 0, 9, 0])
 		await _frames(1)
@@ -793,8 +794,16 @@ func run() -> void:
 	var tf := Time.get_ticks_usec()
 	await _frames(240)
 	var wall := float(Time.get_ticks_usec() - tf) / 240.0 / 1000.0
-	var step_ms := float(g.perf_us) / maxf(1.0, float(g.perf_n)) / 1000.0
-	_ok("holds 60 fps at the surface", wall < 18.5, "%.1f ms per frame, simulation + render %.1f ms" % [wall, step_ms])
+	_ok("holds 60 fps at the surface", wall < 18.5, "%.1f ms per frame, game %.1f ms, waiting for the GPU %.1f ms" % [wall, g.perf_cpu_ms, g.perf_wait_ms])
+	# ---- the world keeps its pace when frames are slow (a laptop on battery) ----
+	var t_before: float = g.time
+	Engine.max_fps = 30
+	var tw := Time.get_ticks_usec()
+	await _frames(60)
+	var secs := float(Time.get_ticks_usec() - tw) / 1000000.0
+	Engine.max_fps = 60
+	var rate: float = (g.time - t_before) / maxf(secs, 0.001)
+	_ok("the game keeps full speed at 30 fps", absf(rate - 60.0) < 8.0, "%.1f ticks per second over %.1f s at 30 fps" % [rate, secs])
 
 	# ---- the Wisp Forge lists its recipes and crafts ----
 	g.ui.show_forge()
