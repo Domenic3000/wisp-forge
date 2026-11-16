@@ -56,7 +56,8 @@ void main() {
 		ivec3 qU = stepC(s, y, x, 0), qD = stepC(s, y, x, 1), qL = stepC(s, y, x, 2), qR = stepC(s, y, x, 3);
 		uint cU = cellC(qU), cD = cellC(qD), cL = cellC(qL), cR = cellC(qR);
 		uint ns;
-		if (isBlock(cU & 255u) || isBlock(cD & 255u) || isBlock(cL & 255u) || isBlock(cR & 255u)) ns = 0u;
+		// touching ground holds it; so does growing up out of mud or water (marsh willows, reeds, kelp)
+		if (isBlock(cU & 255u) || isBlock(cD & 255u) || isBlock(cL & 255u) || isBlock(cR & 255u) || KIND[cD & 255u] == K_LIQUID) ns = 0u;
 		else {
 			uint mn = min(supAt(qU), min(supAt(qL), supAt(qR)));
 			ivec3 qUL = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 2), qUR = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 3);

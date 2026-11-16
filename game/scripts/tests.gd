@@ -33,6 +33,30 @@ func _go(p: Vector2) -> void:
 	g.player.grid_a = atan2(p.y, p.x)
 
 ## counts inside a structure's box: solid built blocks, loose (unsupported) blocks, treasure
+## background plant cells (leaves, wood, cactus, coal from charred trees, snow on pines) in a
+## 120-column window from 100 rows above the ground at the middle down to 10 below
+func _plants(raw: PackedByteArray, toff: int, c0: int, gr: int) -> int:
+	var N: int = Defs.SH_N[0]
+	var n := 0
+	for j in range(maxi(0, gr - 100), gr + 10):
+		for i in 120:
+			var bm := raw.decode_u32(toff + (j * N + posmod(c0 + i, N)) * 4) & 255
+			if bm == Defs.LEAF or bm == Defs.WOOD or bm == Defs.CACTUS or bm == Defs.COAL or bm == Defs.SNOW:
+				n += 1
+	return n
+
+## positions of powder cells (sand, gravel, snow, ash) in a 150-column window around the ground
+func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
+	var N: int = Defs.SH_N[0]
+	var out := {}
+	for j in range(maxi(0, gr - 40), gr + 40):
+		for i in 150:
+			var col := posmod(c0 + i, N)
+			var t := raw.decode_u32((j * N + col) * 4) & 255
+			if Defs.KIND[t] == Defs.K_POWDER:
+				out[j * N + col] = true
+	return out
+
 func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	var solid := 0
 	var loose := 0
@@ -298,39 +322,57 @@ func run() -> void:
 			grounded += 1
 	_ok("a mage standing still doesn't jiggle", r_max - r_min < 0.3 and grounded == 120, "moved %.2f cells up and down, on the ground %d of 120 frames" % [r_max - r_min, grounded])
 
-	# ---- trees stand when you walk up to them (tall ones used to fall apart) ----
+	# ---- trees stand when you walk up to them, in every biome (tall ones, and ones rooted in
+	# marsh mud, used to fall apart) ----
 	var N0: int = Defs.SH_N[0]
-	var scol := int(g.spawn_angle / TAU * N0)
-	var best_col := -1
-	var best_n := 0
-	var raw_t: PackedByteArray = g.gpu.read_world()
 	var toff: int = Defs.total_cells() * 4
-	for tries in 12:
-		var c0 := posmod(scol + 120 + tries * 90, N0)
-		var gr: int = b.ground_row(c0 + 60)
-		var n_t := 0
-		for j in range(maxi(0, gr - 100), gr):
-			for i in 120:
-				var bm := raw_t.decode_u32(toff + (j * N0 + posmod(c0 + i, N0)) * 4) & 255
-				if bm == Defs.LEAF or bm == Defs.WOOD:
-					n_t += 1
-		if n_t > best_n:
-			best_n = n_t
-			best_col = c0
-	if best_col >= 0:
+	var raw_t: PackedByteArray = g.gpu.read_world()
+	var tree_lines := []
+	var tree_ok := true
+	var biomes_seen := 0
+	for bname in ["forest", "marsh", "mountain", "tundra", "desert", "ashland", "ocean"]:
+		var best_col := -1
+		var best_n := 0
+		for k in 64:
+			var c0 := k * N0 / 64
+			if b.biome(c0 + 60) != bname or b.biome(c0) != bname:
+				continue
+			var n_t := _plants(raw_t, toff, c0, b.ground_row(c0 + 60))
+			if n_t > best_n:
+				best_n = n_t
+				best_col = c0
+		if best_col < 0 or best_n < 40:
+			continue
+		biomes_seen += 1
 		var gr2: int = b.ground_row(best_col + 60)
-		_go(_cell_pos(best_col + 60, gr2 - 20))
-		await _frames(240)
-		var raw_t2: PackedByteArray = g.gpu.read_world()
-		var after_t := 0
-		for j in range(maxi(0, gr2 - 100), gr2):
-			for i in 120:
-				var bm2 := raw_t2.decode_u32(toff + (j * N0 + posmod(best_col + i, N0)) * 4) & 255
-				if bm2 == Defs.LEAF or bm2 == Defs.WOOD:
-					after_t += 1
-		_ok("trees stand when you come near", after_t >= int(best_n * 0.97), "%d tree cells, %d after 4 s nearby" % [best_n, after_t])
+		_go(_cell_pos(best_col + 60, gr2 - 30))
+		await _frames(200)
+		var after_t := _plants(g.gpu.read_world(), toff, best_col, gr2)
+		tree_lines.append("%s %d->%d" % [bname, best_n, after_t])
+		if after_t < int(best_n * 0.97):
+			tree_ok = false
+	_ok("trees stand when you come near, in every biome", tree_ok and biomes_seen > 0, ", ".join(tree_lines))
+
+	# ---- sand (and other powders) is generated resting: nothing pours when you arrive ----
+	var sand_col := -1
+	for k in 64:
+		var c1 := k * N0 / 64
+		if b.biome(c1) == "desert" and b.biome(c1 + 150) == "desert":
+			sand_col = c1
+			break
+	if sand_col >= 0:
+		var sg: int = b.ground_row(sand_col + 75)
+		var before_p := _powders(g.gpu.read_world(), sand_col, sg)
+		_go(_cell_pos(sand_col + 75, sg - 30))
+		await _frames(150)
+		var after_p := _powders(g.gpu.read_world(), sand_col, sg)
+		var moved := 0
+		for key in before_p:
+			if not after_p.has(key):
+				moved += 1
+		_ok("generated sand stays put when you arrive", moved <= maxi(4, before_p.size() / 100), "%d of %d powder cells moved" % [moved, before_p.size()])
 	else:
-		_ok("trees stand when you come near", false, "no trees found")
+		_ok("generated sand stays put when you arrive", true, "no desert on this planet")
 
 	# ---- unsupported blocks fall, and falling rock hurts ----
 	var sp := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
@@ -368,7 +410,19 @@ func run() -> void:
 	g.hp = g.max_hp
 
 	# ---- co-op groundwork: a second mage far away gets its own simulation, collisions and loot ----
+	# somewhere far away on open ground (not on a building, where it would stand on the roof)
 	var a2: float = g.spawn_angle + 0.6
+	for k in 40:
+		var at: float = g.spawn_angle + 0.6 + k * 0.03
+		var probe: Vector2 = Vector2(cos(at), sin(at)) * (g.gpu.surf_at(at).x + 10.0)
+		var clear := true
+		for dk in [-60.0, 0.0, 60.0]:
+			var q: Vector2 = Vector2(cos(at + dk / Defs.RS0), sin(at + dk / Defs.RS0)) * probe.length()
+			if b.label_at(q) != "":
+				clear = false
+		if clear:
+			a2 = at
+			break
 	var rs2: float = g.gpu.surf_at(a2).x
 	var m2 = g.add_mage()
 	m2.pos = Vector2(cos(a2), sin(a2)) * (rs2 + 25.0)

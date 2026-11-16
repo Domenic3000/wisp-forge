@@ -462,36 +462,51 @@ func _yard(bp: BP, i0: int, i1: int, base: int) -> void:
 ## Damage an intact structure inside [i0, i1] x [j0, j1]: jagged broken tops, holes, rotten
 ## wood, moss, back walls with gaps. The physics finishes the job when the planet settles.
 func _ruin(bp: BP, i0: int, i1: int, j0: int, j1: int, b: String, outdoors := true) -> void:
+	# Damage comes in chunks, never single cells: a jagged broken top, a few big holes with
+	# rough edges, whole sections of rotten wood and missing back wall, patches of moss. (Single
+	# missing cells looked like pinholes and left lots of tiny loose bits to drop off.)
 	var hgt := j1 - j0
 	var cut := rng.randi_range(int(hgt * 0.15), maxi(int(hgt * 0.15), int(hgt * 0.55)))
 	var wob := 0.0
-	for i in range(i0, i1 + 1):
-		wob = clampf(wob + rng.randf_range(-2.2, 2.2), -7.0, 7.0)
-		var c := int(cut + wob)
-		for j in range(j0, mini(j1, j0 + c)):
-			_break(bp, i, j, 1.0)
+	var col := i0
+	while col <= i1:
+		# the broken top steps in runs of 2-4 columns, so it reads as broken masonry, not noise
+		wob = clampf(wob + rng.randf_range(-3.0, 3.0), -8.0, 8.0)
+		var run := rng.randi_range(2, 4)
+		for k in run:
+			if col + k > i1:
+				break
+			var c := int(cut + wob)
+			for j in range(j0, mini(j1, j0 + c)):
+				_break(bp, col + k, j)
+		col += run
 	for n in rng.randi_range(2, 5):
 		var ci := rng.randi_range(i0, i1)
 		var cj := rng.randi_range(mini(j0 + cut, j1 - 2), maxi(j0 + cut, j1 - 2))
-		var rr := rng.randf_range(2.0, 6.0)
-		for j in range(cj - int(rr), cj + int(rr) + 1):
-			for i in range(ci - int(rr), ci + int(rr) + 1):
-				if Vector2(i - ci, j - cj).length() < rr:
-					_break(bp, i, j, 0.85)
+		var rr := rng.randf_range(3.0, 8.0)
+		var ph := rng.randf() * TAU
+		for j in range(cj - int(rr) - 2, cj + int(rr) + 3):
+			for ii in range(ci - int(rr) - 2, ci + int(rr) + 3):
+				var dv := Vector2(ii - ci, j - cj)
+				var edge := rr + sin(dv.angle() * 3.0 + ph) * 1.4
+				if dv.length() < edge:
+					_break(bp, ii, j)
+	# chunky decay: decided per block of cells
+	var seed_r := rng.randi()
 	for j in range(j0, j1 + 1):
-		for i in range(i0, i1 + 1):
-			if not bp.ok(i, j) or bp.is_fill(i, j):
+		for ii in range(i0, i1 + 1):
+			if not bp.ok(ii, j) or bp.is_fill(ii, j):
 				continue
-			var f := bp.getf(i, j)
-			if (f == Defs.PLANK or f == Defs.WOOD or f == Defs.LEAF) and rng.randf() < 0.22:
-				bp.fg(i, j, 0)
-			elif f == Defs.MASONRY and rng.randf() < 0.55:
-				bp.fg(i, j, Defs.MOSSBLOCK)
-			var g := bp.getb(i, j)
+			var f := bp.getf(ii, j)
+			if (f == Defs.PLANK or f == Defs.WOOD or f == Defs.LEAF) and _blockr(seed_r, ii / 3, j / 3, 1) < 0.2:
+				bp.fg(ii, j, 0)
+			elif f == Defs.MASONRY and _blockr(seed_r, (ii + 2) / 5, j / 4, 2) < 0.55:
+				bp.fg(ii, j, Defs.MOSSBLOCK)
+			var g := bp.getb(ii, j)
 			if g == Defs.TORCH:
-				bp.bg(i, j, 0)
-			elif g != 255 and g != 0 and rng.randf() < 0.18:
-				bp.bg(i, j, 0)
+				bp.bg(ii, j, 0)
+			elif g != 255 and g != 0 and _blockr(seed_r, ii / 6, j / 5, 3) < 0.22:
+				bp.bg(ii, j, 0)
 	# the wilds move in
 	if not outdoors:
 		return
@@ -514,15 +529,20 @@ func _ruin(bp: BP, i0: int, i1: int, j0: int, j1: int, b: String, outdoors := tr
 				vj += 1
 				vi += rng.randi_range(-1, 1)
 
-func _break(bp: BP, i: int, j: int, p: float) -> void:
-	if not bp.ok(i, j) or bp.is_fill(i, j) or rng.randf() > p:
+func _break(bp: BP, i: int, j: int) -> void:
+	if not bp.ok(i, j) or bp.is_fill(i, j):
 		return
 	var f := bp.getf(i, j)
 	if f != 255 and f != 0 and f != Defs.TREASURE:
 		bp.fg(i, j, 0)
 	var g := bp.getb(i, j)
-	if g != 255 and g != 0 and rng.randf() < 0.75:
+	if g != 255 and g != 0:
 		bp.bg(i, j, 0)
+
+## a repeatable random number for a block of cells (the same for every cell in the block)
+func _blockr(seed_r: int, bi: int, bj: int, k: int) -> float:
+	var h := hash(Vector3i(bi, bj, seed_r + k * 7919))
+	return float(posmod(h, 10007)) / 10007.0
 
 # ------------------------------------------------------------- structures ---
 const YARD := 8

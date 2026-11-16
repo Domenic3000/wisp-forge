@@ -44,6 +44,14 @@ class Enemy extends Body:
 	var leaping := false
 	var boss := false
 	var guard_id := -1     # which structure guard this is (-1 = a wandering foe)
+	# getting around: the way it is heading, how long it wanders off after a dead end,
+	# where it was a second ago (to notice it is stuck), and a detour for fliers
+	var nav_dir := 1.0
+	var wander_t := 0
+	var prog_pos := Vector2.ZERO
+	var prog_t := 0
+	var avoid := Vector2.ZERO
+	var avoid_t := 0
 
 var gpu
 var ui
@@ -1274,6 +1282,63 @@ func _kill_enemy(e: Enemy) -> void:
 		shake = 18.0
 		save_game()
 
+## How high a walker must climb to get past the wall in front of it (cells), or -1 if it is
+## taller than `reach`. Uses the collision grid currently in use.
+func _wall_height(e: Enemy, dir: float, reach: float) -> int:
+	var l := to_grid(e.pos)
+	var x := l.x - e.w * 0.5 + dir * 2.0
+	for up in range(0, int(reach) + 1):
+		if not box_solid(x, l.y - e.h * 0.5 - up, e.w, e.h):
+			return up
+	return -1
+
+## Walk toward the target (dx > 0: to the right). Jumps exactly as high as a wall needs when it
+## can clear it; turns round and wanders for a while when it can't, or when it stops making
+## progress. jump_v: its strongest jump. Returns the direction it is heading.
+func _walker_nav(e: Enemy, dx: float, dist: float, speed: float, jump_v: float, g: float) -> float:
+	if e.wander_t > 0:
+		e.wander_t -= 1
+	else:
+		e.nav_dir = signf(dx) if absf(dx) > 1.0 else e.nav_dir
+	# a second without getting any closer while chasing: try another way for a bit
+	e.prog_t += 1
+	if e.prog_t >= 60:
+		if e.wander_t <= 0 and dist > 30.0 and e.prog_pos.distance_to(e.pos) < 4.0:
+			e.nav_dir = -e.nav_dir
+			e.wander_t = 80 + randi() % 80
+		e.prog_pos = e.pos
+		e.prog_t = 0
+	if e.hit_wall and e.on_ground:
+		var reach := jump_v * jump_v / (2.0 * maxf(g, 0.01)) - 2.0
+		var need := _wall_height(e, e.nav_dir, reach)
+		if need >= 0:
+			e.vy = -minf(jump_v, sqrt(2.0 * g * (need + 4.0)))
+		else:
+			e.nav_dir = -e.nav_dir
+			e.wander_t = 90 + randi() % 90
+	return e.nav_dir
+
+## Steer a flier toward `want` (local frame, x right, y down), around anything solid ahead:
+## it looks ~12 cells along its way and, if that's blocked, takes the nearest open heading
+## (over the top first) for a short while.
+func _flier_steer(e: Enemy, want: Vector2) -> Vector2:
+	if e.avoid_t > 0:
+		e.avoid_t -= 1
+		return e.avoid
+	var w := want.normalized() if want.length() > 0.001 else Vector2(e.nav_dir, 0.0)
+	var l := to_grid(e.pos)
+	if not box_solid(l.x - e.w * 0.5 + w.x * 12.0, l.y - e.h * 0.5 + w.y * 12.0, e.w, e.h):
+		return w
+	for ang in [-0.8, 0.8, -1.6, 1.6, -2.4, 2.4]:
+		var tw := w.rotated(ang)
+		if not box_solid(l.x - e.w * 0.5 + tw.x * 12.0, l.y - e.h * 0.5 + tw.y * 12.0, e.w, e.h):
+			e.avoid = tw
+			e.avoid_t = 25
+			return tw
+	e.avoid = -w
+	e.avoid_t = 30
+	return -w
+
 func _update_enemies() -> void:
 	for k in range(enemies.size() - 1, -1, -1):
 		var e: Enemy = enemies[k]
@@ -1310,8 +1375,16 @@ func _update_enemies() -> void:
 					e.vx *= 0.75
 					e.t -= 1
 					if e.t <= 0 and dist < 200:
-						e.vx = signf(dx) * (1.3 + randf() * 0.8) * slow_f
-						e.vy = -3.0 - randf() * 1.0
+						var sd := _walker_nav(e, dx, dist, 0.0, 4.4, g)
+						e.vx = sd * (1.3 + randf() * 0.8) * slow_f
+						var hop := 3.0 + randf() * 1.0
+						var wall := _wall_height(e, sd, 40.0)
+						if wall > 0:
+							hop = minf(4.4, sqrt(2.0 * g * (wall + 5.0)))   # hop up onto the ledge
+						elif wall < 0:
+							e.nav_dir = -sd
+							e.wander_t = 90
+						e.vy = -hop
 						e.t = 45 + randf() * 50
 				e.vy += g * 0.3 if e.in_liquid else g
 				if e.in_liquid:
@@ -1319,10 +1392,9 @@ func _update_enemies() -> void:
 			"skeleton":
 				# walks toward you once it notices you, hops over steps and rubble
 				if dist < 210 and not tgt.dead:
+					var kd := _walker_nav(e, dx, dist, 0.85, 3.9, g)
 					if e.on_ground:
-						e.vx += (signf(dx) * 0.85 * slow_f - e.vx) * 0.2
-						if e.hit_wall:
-							e.vy = -3.5
+						e.vx += (kd * 0.85 * slow_f - e.vx) * 0.2
 				elif e.on_ground:
 					e.vx *= 0.8
 				e.vy += g * 0.3 if e.in_liquid else g
@@ -1331,15 +1403,18 @@ func _update_enemies() -> void:
 					e.vx *= 0.7
 					e.t -= 1
 					if e.t <= 0 and not tgt.dead:
-						e.vx = signf(dx) * (1.9 + randf() * 0.8) * slow_f
-						e.vy = -3.7 - randf() * 0.8
+						var md := _walker_nav(e, dx, dist, 0.0, 4.6, g)
+						e.vx = md * (1.9 + randf() * 0.8) * slow_f
+						var mw := _wall_height(e, md, 40.0)
+						e.vy = -(minf(4.6, sqrt(2.0 * g * (mw + 5.0))) if mw > 0 else 3.7 + randf() * 0.8)
 						e.t = 28 + randf() * 25
 				e.vy += g
 			"bat":
 				e.phase += 0.12
 				if dist < 200:
-					e.vx += signf(dx) * 0.09
-					e.vy += signf(dy + sin(e.phase) * 14.0) * 0.08
+					var bw := _flier_steer(e, Vector2(dx, dy + sin(e.phase) * 14.0))
+					e.vx += bw.x * 0.12
+					e.vy += bw.y * 0.11
 				else:
 					e.vx += (randf() - 0.5) * 0.1
 					e.vy += (randf() - 0.5) * 0.1
@@ -1351,8 +1426,9 @@ func _update_enemies() -> void:
 			"imp":
 				e.phase += 0.05
 				var ax := signf(dx) if dist > 45 else -signf(dx)
-				e.vx += ax * 0.04
-				e.vy += signf(dy - 20.0 + sin(e.phase) * 10.0) * 0.04
+				var iw := _flier_steer(e, Vector2(ax * maxf(absf(dx), 10.0), dy - 20.0 + sin(e.phase) * 10.0))
+				e.vx += iw.x * 0.05
+				e.vy += iw.y * 0.05
 				var sp2 := 1.0 * slow_f
 				e.vx = clampf(e.vx, -sp2, sp2)
 				e.vy = clampf(e.vy, -sp2, sp2)
@@ -1367,8 +1443,9 @@ func _update_enemies() -> void:
 					shake = 10.0
 				if e.awake and not tgt.dead:
 					var enraged := e.hp < e.max_hp * 0.4
+					var gd2 := _walker_nav(e, dx, dist, 0.5, 5.2, g)
 					if e.on_ground:
-						e.vx += (signf(dx) * (0.75 if enraged else 0.5) * slow_f - e.vx) * 0.1
+						e.vx += (gd2 * (0.75 if enraged else 0.5) * slow_f - e.vx) * 0.1
 					e.t -= 1
 					e.shoot_t -= 1
 					if e.shoot_t <= 0:
@@ -1796,7 +1873,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 10            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 11            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

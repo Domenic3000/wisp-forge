@@ -54,6 +54,29 @@ bool solidAt(vec2 p) {
 	return !carvedAt(p, r, sa.x, sb.x);
 }
 
+// Loose powders (sand, gravel, snow, ash) are only generated where they can rest. Where one
+// would sit over a cave, on a steep slope, or around a building site (whose yard is dug out of
+// the hillside), it is generated as the solid it packs into instead, so nothing pours down the
+// moment you arrive.
+uint packedSolid(uint m) {
+	if (m == M_SAND) return M_SANDSTONE;
+	if (m == M_SNOW) return M_ICE;
+	return M_STONE;   // gravel, ash
+}
+uint settleSafe(uint m, vec2 p, float r, float th, float rs) {
+	if (KIND[m] != K_POWDER) return m;
+	vec2 dn = -p / r;
+	if (!solidAt(p + dn)) return packedSolid(m);                       // over a cave
+	float d = rs - r;
+	if (d < 14.0) {
+		float stp = 1.0 / RS0;
+		float sl = max(abs(surfA(th - 2.0 * stp).x - rs), abs(surfA(th + 2.0 * stp).x - rs)) * 0.5;
+		if (sl > 0.85) return packedSolid(m);                          // a steep face
+		if (onSite(th, 14.0)) return packedSolid(m);                   // around a building's yard
+	}
+	return m;
+}
+
 float oreN(vec2 p, int k) { return fbm(p / 6.5 + vec2(float(k) * 17.3, float(k) * 9.1), SEED + 20 + k, 2); }
 
 uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
@@ -343,7 +366,7 @@ void main() {
 	uint bgm = 0u;   // background decoration (no collisions)
 
 	if (r < rs) {
-		m = strata(p, r, th, sa, sb, b);
+		m = settleSafe(strata(p, r, th, sa, sb, b), p, r, th, rs);
 		if (m != M_CORE && carvedAt(p, r, rs, sb.x)) {
 			m = 0u;
 			// liquid pools resting on cave floors
