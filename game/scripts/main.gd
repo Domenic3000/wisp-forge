@@ -23,6 +23,7 @@ class Body:
 	var h := 12.0
 	var step_h := 3
 	var anim := 0.0            # walk / animation phase
+	var stuck := 0             # frames spent wedged inside terrain
 	var on_ground := false
 	var in_liquid := false
 	var hit_wall := false
@@ -279,6 +280,21 @@ func _process(_delta: float) -> void:
 		ui.update_hud(self)
 	ui.update_toasts()
 
+## Where a mage's collision grid goes: near the mage, but locked to the planet's cell lattice
+## (a whole number of radius, a column edge). A grid centred exactly on the mage resampled the
+## ground at a slightly different place every time the mage moved a fraction of a cell, so a
+## body standing still kept being pushed up and dropping back: the landing jiggle.
+func _grid_frame(p: Vector2) -> Array:
+	var r := p.length()
+	var a := atan2(p.y, p.x)
+	var row := int(Defs.R_TOP - r)
+	var n: int = Defs.SH_N[0]
+	for s in 4:
+		if row >= Defs.SH_Y0[s] and row < Defs.SH_Y0[s + 1]:
+			n = Defs.SH_N[s]
+	var sa := roundf(a / TAU * n) / n * TAU
+	return [Vector2(cos(sa), sin(sa)) * roundf(r), sa]
+
 func _gpu_frame(paused: bool) -> void:
 	_write_frame_params()
 	# simulate around every mage (the local one around the camera) and build each one's grid
@@ -289,7 +305,7 @@ func _gpu_frame(paused: bool) -> void:
 		m.slot = k
 		if m != player:
 			centers.append(m.pos)
-		frames.append([m.pos, atan2(m.pos.y, m.pos.x)])
+		frames.append(_grid_frame(m.pos))
 	var t0 := Time.get_ticks_usec()
 	gpu.step(centers, frames, brushes.size() > 0 and not paused, false)
 	perf_us += Time.get_ticks_usec() - t0
@@ -567,6 +583,19 @@ func _update_guards() -> void:
 		if gp.distance_to(near.pos) > 190.0 or not in_grid(gp, 24.0):
 			_use_grid(player)
 			continue
+		# its post may be buried under rubble or a fallen floor: stand on top of whatever is
+		# there now, or don't come out at all (never inside the rock)
+		var d: Dictionary = Defs.ENEMY[gd["type"]]
+		var l := to_grid(gp)
+		var spot := Vector2(-1.0, -1.0)
+		for up in 40:
+			if not box_solid(l.x - float(d["w"]) * 0.5, l.y - up - float(d["h"]) * 0.5, d["w"], d["h"]):
+				spot = Vector2(l.x, l.y - up)
+				break
+		if spot.x < 0.0:
+			_use_grid(player)
+			continue
+		gp = from_grid(spot)
 		_use_grid(player)
 		var e: Enemy = spawn_enemy(gd["type"], gp)
 		e.guard_id = gi
@@ -726,7 +755,12 @@ func move_body(e: Body) -> void:
 					e.vy = minf(e.vy, 0.0)
 				break
 		if not freed:
-			y -= 1.0
+			if e is Mage:
+				y -= 1.0          # the mage always works its way out
+			else:
+				e.stuck += 1      # a foe stays put (it used to rise up through the rock)
+	else:
+		e.stuck = 0
 	e.pos = from_grid(Vector2(x + e.w * 0.5, y + e.h * 0.5))
 	var r := e.pos.length()
 	if r > Defs.R_TOP - 8.0:
@@ -1310,6 +1344,12 @@ func _update_enemies() -> void:
 			e.vy = 6.0
 		move_body(e)
 		e.anim += absf(e.vx) * 0.2 + 0.02
+		if e.stuck > 30 and not e.boss:
+			# wedged in the ground (buried by rubble, a cave-in): it's gone
+			if e.guard_id >= 0:
+				_guards_alive.erase(e.guard_id)
+			enemies.remove_at(k)
+			continue
 		if e.type != "golem" and e.type != "imp":
 			var l2 := to_grid(e.pos)
 			if box_count(l2.x - e.w * 0.5, l2.y - e.h * 0.5, e.w, e.h, Defs.LAVA) > 0:
@@ -1704,7 +1744,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 8            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 9            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

@@ -29,6 +29,8 @@ vec4 biomeB(int b) { return P.p[9 + 2 * b]; }   // subMat, topD, subD, ug + flor
 bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float d = rs - r;
 	if (d < 2.0 || r <= coreR + 3.0) return false;
+	// no caves opening right under a building: its foundations would hang over the hole
+	if (d < 40.0 && onSite(angleOf(p), 6.0)) return false;
 	float entr = fbm(normalize(p) * RS0 / 34.0, SEED + 11, 1);
 	if (d < 12.0 && entr < 0.72) return false;
 	float df = clamp(d / max(rs - coreR, 1.0), 0.0, 1.0);

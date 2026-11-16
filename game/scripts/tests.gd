@@ -244,6 +244,56 @@ func run() -> void:
 			e.dead = true
 		await _frames(2)
 
+	# ---- a mage standing still stays still (no jiggling up and down after landing) ----
+	var sp0 := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
+	_go(sp0 * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
+	await _frames(90)
+	var r_min := 1e9
+	var r_max := -1e9
+	var grounded := 0
+	for f in 120:
+		await _frames(1)
+		var rr: float = g.player.pos.length()
+		r_min = minf(r_min, rr)
+		r_max = maxf(r_max, rr)
+		if g.player.on_ground:
+			grounded += 1
+	_ok("a mage standing still doesn't jiggle", r_max - r_min < 0.3 and grounded == 120, "moved %.2f cells up and down, on the ground %d of 120 frames" % [r_max - r_min, grounded])
+
+	# ---- trees stand when you walk up to them (tall ones used to fall apart) ----
+	var N0: int = Defs.SH_N[0]
+	var scol := int(g.spawn_angle / TAU * N0)
+	var best_col := -1
+	var best_n := 0
+	var raw_t: PackedByteArray = g.gpu.read_world()
+	var toff: int = Defs.total_cells() * 4
+	for tries in 12:
+		var c0 := posmod(scol + 120 + tries * 90, N0)
+		var gr: int = b.ground_row(c0 + 60)
+		var n_t := 0
+		for j in range(maxi(0, gr - 100), gr):
+			for i in 120:
+				var bm := raw_t.decode_u32(toff + (j * N0 + posmod(c0 + i, N0)) * 4) & 255
+				if bm == Defs.LEAF or bm == Defs.WOOD:
+					n_t += 1
+		if n_t > best_n:
+			best_n = n_t
+			best_col = c0
+	if best_col >= 0:
+		var gr2: int = b.ground_row(best_col + 60)
+		_go(_cell_pos(best_col + 60, gr2 - 20))
+		await _frames(240)
+		var raw_t2: PackedByteArray = g.gpu.read_world()
+		var after_t := 0
+		for j in range(maxi(0, gr2 - 100), gr2):
+			for i in 120:
+				var bm2 := raw_t2.decode_u32(toff + (j * N0 + posmod(best_col + i, N0)) * 4) & 255
+				if bm2 == Defs.LEAF or bm2 == Defs.WOOD:
+					after_t += 1
+		_ok("trees stand when you come near", after_t >= int(best_n * 0.97), "%d tree cells, %d after 4 s nearby" % [best_n, after_t])
+	else:
+		_ok("trees stand when you come near", false, "no trees found")
+
 	# ---- unsupported blocks fall, and falling rock hurts ----
 	var sp := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
 	var rs: float = g.gpu.surf_at(g.spawn_angle).x
