@@ -687,7 +687,7 @@ func _check_chest_hint() -> void:
 ## They appear when you come near, and stay dead once killed.
 var _guards_alive := {}
 func _update_guards() -> void:
-	if builds == null or frame % 30 != 0 or dead:
+	if builds == null or frame % 8 != 0 or dead:
 		return
 	var slain: Array = planet_state.get("slain", [])
 	for gi in builds.guards.size():
@@ -697,7 +697,9 @@ func _update_guards() -> void:
 		var gp: Vector2 = gd["pos"]
 		var near := _nearest_mage(gp)
 		_use_grid(near)
-		if gp.distance_to(near.pos) > 190.0 or not in_grid(gp, 24.0):
+		# they come out while still out of sight (the view reaches about 192 cells to each side;
+		# the collision grid a little further), so nobody pops up on screen
+		if gp.distance_to(near.pos) > 232.0 or not in_grid(gp, 8.0):
 			_use_grid(player)
 			continue
 		# its post may be buried under rubble or a fallen floor: stand on top of whatever is
@@ -1734,12 +1736,35 @@ func _try_spawn() -> void:
 			return
 		type = "imp"
 	var d: Dictionary = Defs.ENEMY[type]
-	for tries in 12:
-		# just beyond the edge of the screen, but inside the simulated area
-		var side := -1.0 if randf() < 0.5 else 1.0
-		var near := minf(VW * 0.5 + 8.0, HALF - 30.0)
-		var lx := HALF + side * randf_range(near, HALF - 14.0)
-		var ly := HALF + (randf() - 0.5) * minf(VH * 1.2, GS - 40.0)
+	# Foes come in from out of sight, never popping up (or dropping in) on screen. How far the
+	# view reaches from the mage, in world cells (a screen pixel is ustep * r cells across):
+	var reach_x := VW * 0.5 * zoom * maxf(1.0, ustep * r) + float(d["w"]) + 10.0
+	var reach_y := VH * 0.5 * zoom + float(d["h"]) + 10.0
+	var cv := _view()
+	var ca := atan2(cv.y, cv.x)
+	if type == "slime":
+		# on the ground just past the edge of the view (it waits, still, until you come near)
+		for tries in 6:
+			var side := -1.0 if randf() < 0.5 else 1.0
+			var dist := reach_x + randf_range(4.0, 60.0)
+			var ga := ca + side * dist / maxf(sa.x, 1.0)
+			var gs: Vector4 = gpu.surf_at(ga)
+			if gpu.surf_b(ga).y > gs.x:
+				continue                      # under the sea
+			var gp := Vector2(cos(ga), sin(ga)) * (gs.x + float(d["h"]) * 0.5 + 1.0)
+			if absf((gp - player.pos).dot(basis_d(a))) > 80.0:
+				continue                      # a cliff far above or below: not where you'd meet it
+			spawn_enemy(type, gp)
+			return
+		return
+	# underground: in open cave space inside the simulated area, but outside the view
+	_use_grid(player)
+	var l0 := to_grid(cv)
+	for tries in 16:
+		var lx := HALF + (randf() * 2.0 - 1.0) * (HALF - 14.0)
+		var ly := HALF + (randf() * 2.0 - 1.0) * (HALF - 14.0)
+		if absf(lx - l0.x) < reach_x and absf(ly - l0.y) < reach_y:
+			continue                          # it would appear on screen
 		if not box_solid(lx - d["w"] * 0.5, ly - d["h"] * 0.5, d["w"], d["h"]) and Defs.KIND[gtype(int(lx), int(ly))] != Defs.K_LIQUID:
 			spawn_enemy(type, from_grid(Vector2(lx, ly)))
 			return

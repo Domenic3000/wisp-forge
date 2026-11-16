@@ -595,6 +595,35 @@ func run() -> void:
 	else:
 		_ok("generated sand stays put when you arrive", true, "no desert on this planet")
 
+	# ---- foes come in from out of sight: none appears on screen ----
+	var spv := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
+	_go(spv * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
+	await _frames(40)
+	var seen := 0
+	var made := 0
+	for depth_k in [0.0, 60.0]:
+		if depth_k > 0.0:
+			# and underground, in a cave
+			_go(spv * (g.gpu.surf_at(g.spawn_angle).x - depth_k))
+			await _frames(30)
+		for k in 300:
+			for e in g.enemies:
+				if not e.boss:
+					e.dead = true
+			await _frames(1)
+			g.spawn_timer = 0
+			var before_n: int = g.enemies.size()
+			g._try_spawn()
+			if g.enemies.size() > before_n:
+				made += 1
+				var sp: Vector2 = g.world_to_screen(g.enemies[g.enemies.size() - 1].pos)
+				if sp.x > -4 and sp.y > -4 and sp.x < g.VW + 4 and sp.y < g.VH + 4:
+					seen += 1
+	for e in g.enemies:
+		if not e.boss:
+			e.dead = true
+	_ok("foes appear out of sight", made > 0 and seen == 0, "%d spawned, %d of them on screen" % [made, seen])
+
 	# ---- a boss nobody is fighting recovers ----
 	var boss_e = null
 	for e in g.enemies:
