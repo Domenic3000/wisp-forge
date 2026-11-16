@@ -38,6 +38,7 @@ var _quiet := false               # the first structure near your arrival has no
 
 class BP:
 	var chests := []          # Vector2i(left column, floor row), local
+	var meta := {}            # extra facts for the test mode (a dungeon's rooms and what reaches them)
 	var ruined := false
 	var x0 := 0
 	var y0 := 0
@@ -254,6 +255,13 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		var x := rng.randi_range(0, N0 - 1)
 		if _try_place(x, false, build):
 			placed += 1
+	# dungeons: a gatehouse on the surface over a maze of halls below
+	var dn := 0
+	for tries in 80:
+		if dn >= DUNGEONS:
+			break
+		if _dungeon(rng.randi_range(0, N0 - 1), build):
+			dn += 1
 	# underground: sealed vaults, out of sight
 	for k in 6:
 		_vault(rng.randi_range(0, N0 - 1), build)
@@ -574,7 +582,7 @@ func _finish(bp: BP, build: bool) -> void:
 		var ang := float(posmod(bp.x0 + q.x, N0) + Defs.CHEST_W / 2) / N0 * TAU
 		var rr := Defs.R_TOP - float(bp.y0 + q.y) + Defs.CHEST_H * 0.5 + 0.05
 		chest_list.append({"pos": Vector2(cos(ang), sin(ang)) * rr, "ruined": bp.ruined})
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept})
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
 	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
@@ -1435,3 +1443,367 @@ func label_at(pos: Vector2) -> String:
 		if posmod(col - int(l["x0"]), N0) < int(l["w"]) and row >= int(l["ymin"]) and row <= int(l["ymax"]):
 			return l["name"]
 	return ""
+
+# --------------------------------------------------------------- dungeons ---
+## A dungeon: a stone gatehouse on the surface with a shaft down to a grid of halls far below.
+## The layout is grown, not drawn: rooms sit in a grid of slots, a random spanning tree (with a
+## few extra loops) joins them with corridors (side by side) and shafts with landings (one above
+## the other), and each room gets a theme. The room farthest from the entrance is a reliquary
+## walled in a material the staff can't cut yet (brick or obsidian): the treasure there waits
+## for a stronger focus.
+const DUNGEONS := 4
+const DSW := 78        # slot width: a room up to 62 wide with its walls and a gap
+const DSH := 68        # slot height: a room up to 54 tall
+const DW := 4          # wall thickness
+const DSHAFT := 16     # shaft width
+
+const DUNGEON_NAMES := {
+	"forest": ["Overgrown Halls", "Rootbound Crypts"], "marsh": ["Drowned Crypts", "Mire Halls"],
+	"desert": ["Tomb of the Sun Kings", "Sandsworn Tomb"], "tundra": ["Frozen Crypts", "Rimeheart Halls"],
+	"mountain": ["Deep Halls of Karn", "Stonewarden Halls"], "ashland": ["Cinder Halls", "Emberdeep Crypts"],
+}
+const ROOM_KINDS := ["guard", "hall", "roost", "crypt", "treasure", "pool", "hall", "guard"]
+
+func _dungeon(x: int, build: bool) -> bool:
+	if cdist(x, spawn_col) < 280 or cdist(x, boss_col) < 320:
+		return false
+	var b := biome(x)
+	if not DUNGEON_NAMES.has(b):
+		return false
+	var nc := rng.randi_range(3, 4)
+	var nr := rng.randi_range(2, 3)
+	var dw := nc * DSW + 2 * DW + 8
+	var dx0 := x - dw / 2
+	if not _deep_free(dx0, dw):
+		return false
+	# --- the rooms, one per slot (local columns and rows of the dungeon blueprint) ---
+	var rooms := []
+	for r in nr:
+		var slot_top := 6 + r * DSH
+		var fl := slot_top + DSH - DW - 1          # floor row (solid), shared by the whole row
+		for c in nc:
+			var w := rng.randi_range(46, DSW - 2 * DW - 8)
+			var left := DW + 4 + c * DSW + DW + rng.randi_range(0, DSW - 2 * DW - 6 - w)
+			var h := rng.randi_range(42, DSH - 2 * DW - 6)
+			rooms.append({"r": r, "c": c, "i0": left, "i1": left + w - 1, "top": fl - h, "fl": fl, "on": false, "kind": ""})
+	# --- grow a spanning tree from the entrance (a random room on the top row) ---
+	var ce := rng.randi_range(0, nc - 1)
+	var edges := []
+	var want := maxi(3, int(round(nc * nr * rng.randf_range(0.7, 0.9))))
+	rooms[ce]["on"] = true
+	var on_n := 1
+	for guard_k in 400:
+		if on_n >= want:
+			break
+		var a := rng.randi_range(0, rooms.size() - 1)
+		if not rooms[a]["on"]:
+			continue
+		var opts := _dungeon_neighbours(rooms, a, nc, nr)
+		if opts.is_empty():
+			continue
+		var bk: int = opts[rng.randi_range(0, opts.size() - 1)]
+		if rooms[bk]["on"]:
+			continue
+		rooms[bk]["on"] = true
+		on_n += 1
+		edges.append(Vector2i(a, bk))
+	# a few loops, so it isn't all dead ends
+	for a2 in rooms.size():
+		for bk2 in _dungeon_neighbours(rooms, a2, nc, nr):
+			if bk2 > a2 and rooms[a2]["on"] and rooms[bk2]["on"] and not edges.has(Vector2i(a2, bk2)) and not edges.has(Vector2i(bk2, a2)) and rng.randf() < 0.2:
+				edges.append(Vector2i(a2, bk2))
+	# the reliquary: the room farthest from the entrance (deepest first)
+	var dist := _dungeon_dist(rooms, edges, ce)
+	var vault := -1
+	var best := -1
+	for k in rooms.size():
+		if rooms[k]["on"] and k != ce:
+			var score: int = dist[k] * 10 + int(rooms[k]["r"])
+			if score > best:
+				best = score
+				vault = k
+	if vault < 0:
+		return false
+	# --- where it goes: the gatehouse sits over the entrance room ---
+	var entry: Dictionary = rooms[ce]
+	var s0 := (int(entry["i0"]) + int(entry["i1"])) / 2 - DSHAFT / 2     # the shaft's left column, local
+	var gc := dx0 + s0 + DSHAFT / 2
+	var gw := 34
+	if not _site_ok(gc - gw / 2 - 2, gw + 4, 14):
+		return false
+	var base := _median_ground(gc - gw / 2 - 2, gw + 4) - 1
+	var by0 := base + rng.randi_range(80, 130)
+	var bh := 6 + nr * DSH + 4
+	if by0 + bh > Defs.SH_Y0[1] - 20:
+		return false
+	for i in range(0, dw, 6):
+		if ground_row(dx0 + i) > by0 - 30:
+			return false          # a valley would cut into the halls
+	deep.append(Vector2i(dx0, dx0 + dw))
+	var st := _style(b, "fort")
+	st["roof_kind"] = "battle"
+	st["frame"] = "course"
+	var seal := Defs.BRICK if rng.randf() < 0.6 else Defs.OBSIDIAN
+	var name: String = DUNGEON_NAMES[b][rng.randi_range(0, 1)]
+	# --- the halls ---
+	var bp := BP.new(dx0, by0, dw, bh)
+	var wall: int = st["wall"]
+	# 1) shells: each room, corridor and shaft walled in stone (the reliquary in its seal)
+	for k in rooms.size():
+		var rm: Dictionary = rooms[k]
+		if rm["on"]:
+			bp.solid(rm["i0"] - DW, rm["top"] - DW, rm["i1"] + DW, rm["fl"] + DW - 1, seal if k == vault else wall)
+	var links := []
+	for e in edges:
+		var ra: Dictionary = rooms[mini(e.x, e.y)]
+		var rb: Dictionary = rooms[maxi(e.x, e.y)]
+		if ra["r"] == rb["r"]:
+			var lo: Dictionary = ra if ra["c"] < rb["c"] else rb
+			var hi: Dictionary = rb if ra["c"] < rb["c"] else ra
+			if hi["i0"] - DW - 1 >= lo["i1"] + DW + 1:
+				bp.solid(lo["i1"] + DW + 1, lo["fl"] - 36, hi["i0"] - DW - 1, lo["fl"] + DW - 1, wall)
+			links.append({"kind": "corridor", "a": lo, "b": hi, "va": lo == rooms[vault], "vb": hi == rooms[vault]})
+		else:
+			var up: Dictionary = ra if ra["r"] < rb["r"] else rb
+			var dn: Dictionary = rb if ra["r"] < rb["r"] else ra
+			var ov0 := maxi(up["i0"], dn["i0"]) + 2
+			var ov1 := mini(up["i1"], dn["i1"]) - 2
+			var sw := mini(DSHAFT, ov1 - ov0 + 1)
+			var si := ov0 + rng.randi_range(0, maxi(0, ov1 - ov0 + 1 - sw))
+			bp.solid(si - DW, up["fl"] + DW, si + sw - 1 + DW, dn["top"] - DW - 1, wall)
+			links.append({"kind": "shaft", "a": up, "b": dn, "si": si, "sw": sw, "va": up == rooms[vault], "vb": dn == rooms[vault]})
+	bp.solid(s0 - DW, 0, s0 + DSHAFT - 1 + DW, int(entry["top"]) - DW - 1, wall)
+	# 2) hollow everything out, with the back wall behind
+	var back: int = st["back"]
+	for k in rooms.size():
+		var rm2: Dictionary = rooms[k]
+		if rm2["on"]:
+			bp.rect(rm2["i0"], rm2["top"], rm2["i1"], rm2["fl"] - 1, 0)
+			bp.rect_bg(rm2["i0"], rm2["top"], rm2["i1"], rm2["fl"] - 1, seal if k == vault else back)
+	for ln in links:
+		var la: Dictionary = ln["a"]
+		var lb2: Dictionary = ln["b"]
+		if ln["kind"] == "corridor":
+			bp.rect(la["i1"] + 1, la["fl"] - 32, lb2["i0"] - 1, la["fl"] - 1, 0)
+			bp.rect_bg(la["i1"] + 1, la["fl"] - 32, lb2["i0"] - 1, la["fl"] - 1, back)
+			# the reliquary's doorway is walled up
+			if ln["vb"]:
+				bp.rect(lb2["i0"] - DW, la["fl"] - 32, lb2["i0"] - 1, la["fl"] - 1, seal)
+			if ln["va"]:
+				bp.rect(la["i1"] + 1, la["fl"] - 32, la["i1"] + DW, la["fl"] - 1, seal)
+		else:
+			var si2: int = ln["si"]
+			var sw2: int = ln["sw"]
+			bp.rect(si2, la["fl"], si2 + sw2 - 1, lb2["top"] - 1, 0)
+			bp.rect_bg(si2, la["fl"], si2 + sw2 - 1, lb2["top"] - 1, back)
+			# landings all the way down into the lower room (its back wall holds them up)
+			_landings(bp, si2, si2 + sw2 - 1, la["fl"] + DW + 8, lb2["fl"] - 18)
+			if ln["vb"]:
+				bp.rect(si2, lb2["top"] - DW, si2 + sw2 - 1, lb2["top"] - 1, seal)
+			if ln["va"]:
+				bp.rect(si2, la["fl"], si2 + sw2 - 1, la["fl"] + DW - 1, seal)
+	bp.rect(s0, 0, s0 + DSHAFT - 1, int(entry["top"]) - 1, 0)
+	bp.rect_bg(s0, 0, s0 + DSHAFT - 1, int(entry["top"]) - 1, back)
+	_landings(bp, s0, s0 + DSHAFT - 1, 10, int(entry["fl"]) - 18)
+	# 3) furnish each room by its theme
+	var kinds := ROOM_KINDS.duplicate()
+	var sure_treasure := true
+	var ki := rng.randi_range(0, kinds.size() - 1)
+	for k in rooms.size():
+		var rm3: Dictionary = rooms[k]
+		if not rm3["on"]:
+			continue
+		_back_frame(bp, rm3["i0"], rm3["top"], rm3["i1"], rm3["fl"], 1, st)
+		if k == ce:
+			rm3["kind"] = "entry"
+		elif k == vault:
+			rm3["kind"] = "reliquary"
+		else:
+			rm3["kind"] = kinds[ki % kinds.size()]
+			ki += 1
+			if rm3["kind"] == "pool" and (b == "desert"):
+				rm3["kind"] = "hall"
+		sure_treasure = _dungeon_room(bp, rm3, st, b, sure_treasure) and sure_treasure
+	# --- check it: every room but the reliquary can be reached from the gatehouse shaft ---
+	bp.meta = _dungeon_reach(bp, rooms, vault, s0 + DSHAFT / 2)
+	var shot_rm: Dictionary = rooms[ce]
+	bp.meta["shot"] = Vector2i(posmod(dx0 + (int(shot_rm["i0"]) + int(shot_rm["i1"])) / 2, N0), by0 + int(shot_rm["fl"]))
+	var vr: Dictionary = rooms[vault]
+	labels.append({"x0": posmod(dx0 + int(vr["i0"]) - DW, N0), "w": int(vr["i1"]) - int(vr["i0"]) + 1 + 2 * DW,
+		"ymin": by0 + int(vr["top"]) - DW, "ymax": by0 + int(vr["fl"]) + DW, "name": "Sealed Reliquary"})
+	labels.append({"x0": posmod(dx0, N0), "w": dw, "ymin": by0 - 4, "ymax": by0 + bh, "name": name})
+	_finish(bp, build)
+	# --- the gatehouse, and the shaft from its floor down to the halls ---
+	var gx0 := gc - gw / 2 - YARD - 2
+	var gtw := gw + 2 * YARD + 4
+	var up2 := STOREY + _roof_h(gw, st) + 12
+	var gbp := BP.new(gx0, base - up2, gtw, up2 + (by0 - base) + 3)
+	var lb := up2
+	var ox := YARD + 2
+	_yard(gbp, 0, gtw - 1, lb)
+	_foundation(gbp, ox - 1, lb, gw + 2, st["found"])
+	var top := _building(gbp, ox, lb, gw, 1, st, 3, false, "", 0.0)
+	_roof(gbp, ox, top, gw, st)
+	var gs0 := dx0 + s0 - gx0
+	gbp.solid(gs0 - DW, lb + 1, gs0 + DSHAFT - 1 + DW, gbp.h - 1, wall)
+	gbp.rect(gs0, lb, gs0 + DSHAFT - 1, gbp.h - 1, 0)
+	gbp.rect_bg(gs0, lb + 1, gs0 + DSHAFT - 1, gbp.h - 1, back)
+	_landings(gbp, gs0, gs0 + DSHAFT - 1, lb + 22, gbp.h - 6)
+	gbp.bg(ox + 6, lb - 24, Defs.TORCH)
+	gbp.bg(ox + gw - 7, lb - 24, Defs.TORCH)
+	_claim(gx0, gtw, name, gbp.y0, base + 2)
+	_finish(gbp, build)
+	return true
+
+## the rooms next to room k that a corridor or shaft could join it to
+func _dungeon_neighbours(rooms: Array, k: int, nc: int, nr: int) -> Array:
+	var r: int = rooms[k]["r"]
+	var c: int = rooms[k]["c"]
+	var out := []
+	if c > 0:
+		out.append(k - 1)
+	if c < nc - 1:
+		out.append(k + 1)
+	for dr in [-1, 1]:
+		var r2: int = r + dr
+		if r2 < 0 or r2 >= nr:
+			continue
+		var o: Dictionary = rooms[r2 * nc + c]
+		# a shaft needs the two rooms to overlap enough to drop straight down
+		if mini(rooms[k]["i1"], o["i1"]) - maxi(rooms[k]["i0"], o["i0"]) >= 14:
+			out.append(r2 * nc + c)
+	return out
+
+## steps from room `from` to every room along the links (-1: not joined)
+func _dungeon_dist(rooms: Array, edges: Array, from: int) -> Array:
+	var d := []
+	d.resize(rooms.size())
+	d.fill(-1)
+	d[from] = 0
+	var q := [from]
+	while not q.is_empty():
+		var a: int = q.pop_front()
+		for e in edges:
+			var o := -1
+			if e.x == a:
+				o = e.y
+			elif e.y == a:
+				o = e.x
+			if o >= 0 and d[o] < 0:
+				d[o] = d[a] + 1
+				q.append(o)
+	return d
+
+## Furnishes one room by its kind. Returns false once it has placed the sure chest.
+func _dungeon_room(bp: BP, rm: Dictionary, st: Dictionary, b: String, sure: bool) -> bool:
+	var i0: int = rm["i0"]
+	var i1: int = rm["i1"]
+	var top: int = rm["top"]
+	var fl: int = rm["fl"]
+	var mid := (i0 + i1) / 2
+	var placed_sure := false
+	var torches := true
+	match rm["kind"]:
+		"entry":
+			pass
+		"hall":
+			# pillars standing against the back wall, with capitals
+			var p := i0 + 8
+			while p < i1 - 8:
+				bp.rect_bg(p, top, p + 2, fl - 1, st["post"] if st["post"] != st["back"] else st.get("course", st["back"]))
+				bp.rect_bg(p - 1, top + 2, p + 3, top + 3, st.get("course", st["back"]))
+				bp.rect_bg(p - 1, fl - 2, p + 3, fl - 1, st.get("course", st["back"]))
+				p += 15
+			_guard(bp, mid, fl, "skeleton")
+		"guard":
+			_guard(bp, i0 + 10, fl, "skeleton")
+			_guard(bp, i1 - 10, fl, "skeleton")
+		"roost":
+			torches = false
+			# roots and creepers hanging from the ceiling
+			for n in rng.randi_range(5, 9):
+				var vc := rng.randi_range(i0, i1)
+				for k in rng.randi_range(5, 14):
+					bp.bg(vc, top + k, Defs.WOOD if b == "desert" or b == "ashland" else Defs.LEAF, false)
+			_guard(bp, i0 + 12, fl - 20, "bat")
+			_guard(bp, i1 - 12, fl - 20, "bat")
+		"crypt":
+			var n2 := i0 + 5
+			while n2 + 8 < i1 - 3:
+				bp.rect_bg(n2, fl - 20, n2 + 8, fl - 11, Defs.OBSIDIAN)
+				bp.rect_bg(n2 + 1, fl - 19, n2 + 7, fl - 12, 0)
+				n2 += 15
+			_guard(bp, mid, fl, "skeleton")
+		"treasure":
+			_chest(bp, mid - Defs.CHEST_W / 2, fl, sure)
+			placed_sure = sure
+			_guard(bp, i0 + 8, fl, "skeleton")
+		"pool":
+			# a sunken pool in the floor (water; mud in the marsh; lava in the ashlands)
+			var liq := Defs.WATER
+			if b == "marsh":
+				liq = Defs.MUD
+			elif b == "ashland":
+				liq = Defs.LAVA
+			var p0 := mid - (i1 - i0) / 4
+			var p1 := mid + (i1 - i0) / 4
+			bp.solid(p0 - DW, fl, p1 + DW, fl + 7 + DW, st["wall"])
+			bp.rect(p0, fl, p1, fl + 7, 0)
+			bp.rect_bg(p0, fl, p1, fl + 7, st["back"])
+			bp.rect(p0, fl + 1, p1, fl + 7, liq)
+		"reliquary":
+			_chest(bp, i0 + 6, fl, true)
+			_chest(bp, i1 - 5 - Defs.CHEST_W, fl, true)
+			_guard(bp, mid, fl, "skeleton")
+	if torches:
+		bp.bg(i0 + 3, fl - 24, Defs.TORCH)
+		bp.bg(i1 - 3, fl - 24, Defs.TORCH)
+	# age: a rubble heap now and then, moss staining the back wall in the wetter biomes
+	if rm["kind"] != "reliquary" and rm["kind"] != "pool" and rng.randf() < 0.35:
+		var mc := rng.randi_range(i0 + 4, i1 - 4)
+		var mh := rng.randi_range(3, 6)
+		for dc in range(-mh, mh + 1):
+			for k2 in int(mh - absi(dc)):
+				if bp.getf(mc + dc, fl - 1 - k2) == 0:
+					bp.fg(mc + dc, fl - 1 - k2, Defs.GRAVEL)
+	if b == "forest" or b == "marsh" or b == "mountain":
+		for j in range(top, fl):
+			for i in range(i0, i1 + 1):
+				if bp.getb(i, j) == st["back"] and sin(i * 0.31 + j * 0.17) + sin(i * 0.13 - j * 0.29) > 1.35:
+					bp.bg(i, j, Defs.MOSSBLOCK)
+	return not placed_sure
+
+## Flood-fills the open cells from the top of the entrance shaft (column si) and reports how many
+## rooms it reaches, and whether it gets into the reliquary (it shouldn't).
+func _dungeon_reach(bp: BP, rooms: Array, vault: int, si: int) -> Dictionary:
+	var seen := PackedByteArray()
+	seen.resize(bp.w * bp.h)
+	var stack := [Vector2i(si, 0)]
+	while not stack.is_empty():
+		var q: Vector2i = stack.pop_back()
+		if not bp.ok(q.x, q.y) or seen[q.y * bp.w + q.x] == 1:
+			continue
+		var f := bp.getf(q.x, q.y)
+		if not (f == 0 or f == Defs.SCAFFOLD or Defs.KIND[f] == Defs.K_LIQUID or Defs.KIND[f] == Defs.K_POWDER):
+			continue
+		seen[q.y * bp.w + q.x] = 1
+		stack.append(q + Vector2i(1, 0))
+		stack.append(q + Vector2i(-1, 0))
+		stack.append(q + Vector2i(0, 1))
+		stack.append(q + Vector2i(0, -1))
+	var n := 0
+	var reached := 0
+	var vault_open := false
+	for k in rooms.size():
+		var rm: Dictionary = rooms[k]
+		if not rm["on"]:
+			continue
+		var c := Vector2i((int(rm["i0"]) + int(rm["i1"])) / 2, int(rm["top"]) + 2)
+		var hit := seen[c.y * bp.w + c.x] == 1
+		if k == vault:
+			vault_open = hit
+		else:
+			n += 1
+			if hit:
+				reached += 1
+	return {"dungeon": true, "rooms": n, "reached": reached, "vault_open": vault_open}

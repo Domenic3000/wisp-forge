@@ -42,6 +42,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Chests: `_chest(bp, i, floor_row, sure)` keeps only CHEST_KEEP of the optional ones; `_place_chests` then
   moves each to a clear spot on the same floor (solid floor, open air around and above, nothing loose
   overhead, indoors if planned indoors) or drops it.
+- Dungeons (`_dungeon`, DUNGEONS per planet): a gatehouse blueprint with a shaft down, and a separate
+  blueprint of rooms in a grid of slots joined by a random spanning tree plus loops (corridors side by side,
+  shafts with landings one above the other). Rooms get themes (`_dungeon_room`); the farthest is a reliquary
+  walled in brick or obsidian. `_dungeon_reach` flood-fills from the shaft and stores the result in `bp.meta`
+  for the tests.
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 

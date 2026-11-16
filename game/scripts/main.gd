@@ -642,8 +642,9 @@ func _try_open_chest() -> void:
 	var c: Chest = nc[0]
 	var centre: Vector2 = c.pos
 	var place := region_name()
+	var dungeon := "Halls" in place or "Crypts" in place or "Tomb" in place
 	var ruin := place.begins_with("Ruin") or place.begins_with("Forgotten") or place.begins_with("Buried") \
-		or place.begins_with("Collapsed") or place.begins_with("Sunken")
+		or place.begins_with("Collapsed") or place.begins_with("Sunken") or dungeon
 	if ruin and randf() < 0.15:
 		# not a chest at all
 		chests.erase(c)
@@ -656,8 +657,12 @@ func _try_open_chest() -> void:
 		ui.toast("The chest bares its teeth: a MIMIC!", Color(1, 0.4, 0.35), 4.0)
 		return
 	var rare := 0.15
-	if "Castle" in place or "Vault" in place:
+	if "Reliquary" in place:
+		rare = 0.7
+	elif "Castle" in place or "Vault" in place:
 		rare = 0.55
+	elif dungeon:
+		rare = 0.4
 	elif "Temple" in place or "Catacombs" in place:
 		rare = 0.4
 	elif "Watchtower" in place or "Mine" in place:
@@ -2148,7 +2153,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 18            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 19            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

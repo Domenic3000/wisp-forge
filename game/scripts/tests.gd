@@ -595,6 +595,27 @@ func run() -> void:
 	else:
 		_ok("generated sand stays put when you arrive", true, "no desert on this planet")
 
+	# ---- dungeons: every room reachable from the gatehouse, the reliquary sealed ----
+	var dun_n := 0
+	var dun_ok := true
+	var dun_lines := []
+	var dun_shot := Vector2i(-1, -1)
+	for info in b.infos:
+		var meta: Dictionary = info.get("meta", {})
+		if not meta.get("dungeon", false):
+			continue
+		dun_n += 1
+		dun_lines.append("%d of %d rooms reached%s" % [meta["reached"], meta["rooms"], ", reliquary OPEN" if meta["vault_open"] else ""])
+		dun_ok = dun_ok and meta["reached"] == meta["rooms"] and meta["rooms"] >= 2 and not meta["vault_open"]
+		if dun_shot.x < 0:
+			dun_shot = meta["shot"]
+	_ok("dungeons are built, connected, with a sealed reliquary", dun_n >= 2 and dun_ok, "%d dungeons: %s" % [dun_n, "; ".join(dun_lines)])
+	if dun_shot.x >= 0:
+		# a picture of a dungeon's entrance hall (saves/shots/dungeon.png)
+		_go(_cell_pos(dun_shot.x, dun_shot.y - 14))
+		await _frames(70)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("dungeon.png"))
+
 	# ---- foes come in from out of sight: none appears on screen ----
 	var spv := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
 	_go(spv * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
