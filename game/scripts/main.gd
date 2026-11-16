@@ -126,6 +126,7 @@ class PlayerInput:
 	var aim := Vector2.ZERO    # world position of the cursor
 
 class Mage extends Body:
+	var rig = null             # the simulated hat tip, beard, scarf and staff (overlay.gd, mage_rig.gd)
 	var id := 0
 	var slot := 0              # which simulation counters and collision grid are this mage's
 	var local := true          # played on this computer (others come from the network)

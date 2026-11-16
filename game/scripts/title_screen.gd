@@ -11,8 +11,14 @@ var _sub: Label
 var continue_btn: Button
 var _bg: ColorRect
 var _mat: ShaderMaterial
+const MageRig := preload("res://scripts/mage_rig.gd")
+
 var _mage: TextureRect
-var _fx: Control             # the wisp, the staff's glow and the logo, drawn each frame
+var _fx: Control             # the hat tip, beard, staff, the wisp and the logo, drawn each frame
+var _fx_back: Control        # the scarf, behind the mage
+var _rig = null
+var _mask := {}
+var _pose := "mage_cast"
 var _px := 4.0               # screen pixels per scene pixel
 var _t := 0.0
 
@@ -275,8 +281,15 @@ func _ready() -> void:
 	_mat.shader = sh
 	_bg.material = _mat
 	add_child(_bg)
+	_fx_back = Control.new()
+	_fx_back.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fx_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_back.draw.connect(_draw_back)
+	add_child(_fx_back)
+	_rig = MageRig.new()
+	_mask = MageRig.body_mask(_pose)
 	_mage = TextureRect.new()
-	_mage.texture = Defs.sprite_texture("mage_cast")
+	_mage.texture = Defs.sprite_texture(_pose)
 	_mage.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_mage.stretch_mode = TextureRect.STRETCH_SCALE
 	_mage.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -371,16 +384,28 @@ func _process(delta: float) -> void:
 	var ts := _mage.texture.get_size()
 	_mage.size = ts * _px
 	_mage.position = Vector2(floorf(mx - ts.x * 0.5) * _px, floorf(top - ts.y + 1.0) * _px)
+	# his staff raised toward the planet, a breeze off the cliff tugging at his scarf and hat
+	var gust := 0.5 + 0.5 * sin(_t * 0.7) * sin(_t * 0.23 + 1.0)
+	_rig.update(_pose, Vector2.ZERO, Vector2(0.55, -1.0).normalized(), Vector2(-0.5 - gust * 1.1, -0.05))
+	_fx_back.queue_redraw()
 	_fx.queue_redraw()
+
+func _rig_origin() -> Vector2:
+	return _mage.position + Vector2(_px, _px)    # sprite pixel (0, 0) (the texture has a 1-pixel outline)
+
+func _draw_back() -> void:
+	MageRig.draw_pixels(_fx_back, _rig.back_pixels(), _rig_origin(), _px, Color(1, 1, 1), _mask)
 
 func _draw_fx() -> void:
 	var px := _px
 	var vs := get_viewport_rect().size
-	# a spell glowing in the mage's outstretched hand, pulsing
-	var hand := _mage.position + Vector2(16.5, 14.5) * px
-	var pulse := 0.6 + 0.4 * sin(_t * 4.0)
-	_fx.draw_circle(hand, px * (3.0 + pulse * 1.5), Color(1.0, 0.85, 0.4, 0.18))
-	_fx.draw_rect(Rect2((hand / px).floor() * px, Vector2(px, px)), Color(1.0, 0.95, 0.7))
+	# the staff, the hat's tip and the beard, and the crystal's glow, pulsing
+	var gem := Color("#46e6f0")
+	var cr: Vector2 = _rig_origin() + _rig.crystal() * px
+	var pulse := 0.6 + 0.4 * sin(_t * 3.0)
+	_fx.draw_circle(cr, px * (4.0 + pulse * 2.0), Color(gem, 0.12))
+	_fx.draw_circle(cr, px * (2.0 + pulse), Color(gem, 0.2))
+	MageRig.draw_pixels(_fx, _rig.front_pixels(gem), _rig_origin(), px, Color(1, 1, 1), _mask)
 	# the wisp, circling him
 	var c := _mage.position + Vector2(8, 6) * px
 	var wp := c + Vector2(cos(_t * 1.3) * 16.0, sin(_t * 2.1) * 6.0 - 4.0) * px

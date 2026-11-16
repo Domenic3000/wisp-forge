@@ -45,6 +45,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 
+## The mage
+- Frames (16 x 24) come from `/home/claude/tools/art/mage3.py` via `tools/sprites.py`, which also writes
+  `Defs.MAGE_ANCHORS` (where the hat tip, beard, scarf and staff attach in each frame).
+- `scripts/mage_rig.gd` simulates the hat tip, beard end and scarf (Verlet chains: rest shape, gravity,
+  the body's inertia, air drag) and the staff (an angular spring that points where he casts). overlay.gd
+  and title_screen.gd draw them as crisp pixels in the sprite's own transform, with the sprite outline.
+
 ## Gotchas
 - Windows reserves file names like `aux`, `con`, `nul`, `prn`. Never name a shader include that way.
 - Local variables must not shadow Object methods (`set`, `_set`, `get`) or each other inside one function.

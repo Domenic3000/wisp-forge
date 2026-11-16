@@ -2,8 +2,11 @@ extends Node2D
 ## Draws everything that isn't terrain, in screen pixels on top of the GPU
 ## picture: the mage, the wisp, foes, spells, particles and the reticle.
 
+const MageRig := preload("res://scripts/mage_rig.gd")
+
 var game
 var tex := {}
+var _masks := {}
 
 func _ready() -> void:
 	for k in Defs.SPRITES:
@@ -20,7 +23,9 @@ func _mage_frame(m) -> String:
 			return "mage_float"
 		return "mage_jump" if m.vy < 0.0 else "mage_fall"
 	if absf(m.vx) > 0.15:
-		return "mage_walk%d" % (int(m.anim) % 4 + 1)
+		return "mage_walk%d" % (int(m.anim * 1.5) % 6 + 1)
+	if game.frame % 260 < 7:
+		return "mage_blink"
 	return "mage_idle2" if int(game.frame / 40) % 3 == 2 else "mage"
 
 # two-frame foes: slimes squash as they hop, imps and bats flap, skeletons and golems step, mimics bite
@@ -84,6 +89,37 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+## A mage: the frame, plus the parts mage_rig.gd simulates (the scarf behind him; the hat's tip,
+## the beard's end and the staff in front), all in the sprite's own pixels and transform.
+## The rig keeps moving while he blinks invisible after a hit, so nothing jumps when he reappears.
+func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
+	var key := _mage_frame(m)
+	if m.rig == null:
+		m.rig = MageRig.new()
+	var a := atan2(m.pos.y, m.pos.x)
+	var fwd := float(m.facing)
+	var aim := Vector2.ZERO
+	if game.frame - m.cast_frame < 14 or m.input.cast:
+		var d: Vector2 = aim_w - m.pos
+		aim = Vector2(d.dot(game.basis_r(a)) * fwd, d.dot(game.basis_d(a))).normalized()
+	m.rig.update(key, Vector2(m.vx * fwd, m.vy), aim)
+	if not visible_now:
+		return
+	if not _masks.has(key):
+		_masks[key] = MageRig.body_mask(key)
+	var t: Texture2D = tex[key]
+	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground)[0]
+	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - a, -PI, PI)
+	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / float(game.zoom)
+	draw_set_transform(sp, rot, sc)
+	var mod := _lit(game.world_to_screen(m.pos))
+	var ts := t.get_size()
+	var origin := Vector2(-floorf(ts.x * 0.5) + 1.0, -ts.y + 2.0)
+	MageRig.draw_pixels(self, m.rig.back_pixels(), origin, 1.0, mod, _masks[key])
+	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
+	MageRig.draw_pixels(self, m.rig.front_pixels(gem), origin, 1.0, mod, _masks[key])
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 func _px(wpos: Vector2, col: Color) -> void:
 	var sp: Vector2 = game.world_to_screen(wpos)
 	draw_rect(Rect2(sp.floor(), Vector2.ONE), col)
@@ -115,26 +151,14 @@ func _draw() -> void:
 		var big := 1 if pr["type"] == "fireball" or pr["type"] == "quake" else 0
 		draw_rect(Rect2(sp.floor() - Vector2(big, big), Vector2(1 + 2 * big, 1 + 2 * big)), c)
 		draw_rect(Rect2(sp.floor(), Vector2.ONE), Color(1, 1, 0.9))
-	# the mage and staff
+	# the mages, with their simulated hats, beards, scarves and staves
 	for m in game.players:
 		if m != game.player and not m.dead:
-			_sprite(_mage_frame(m), m.pos, m.facing < 0, false, m.h, m.on_ground)
+			_draw_mage(m, m.input.aim, Color("#46e6f0"), true)
 	if not game.dead:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
-		if not blink:
-			_sprite(_mage_frame(game.player), game.player.pos, game.player.facing < 0, false, game.player.h, game.player.on_ground)
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
-		var st: Array = game._staff(game.player, aim)
-		var hand: Vector2 = st[2]
-		var dir: Vector2 = st[1]
-		# the staff moves with the sprite: same feet anchor, same snapping
-		var ft := _feet(game.player.pos, game.player.h, game.player.on_ground)
-		var shift: Vector2 = ft[0] - ft[1]
-		var wood := Color8(120, 82, 44) * _lit(game.world_to_screen(hand))
-		for s in 10:
-			draw_rect(Rect2((game.world_to_screen(hand + dir * s) + shift).floor(), Vector2.ONE), wood)
-		var sc: Color = Defs.SPELLS[game.known[game.sel]]["color"]
-		draw_rect(Rect2((game.world_to_screen(st[0]) + shift).floor(), Vector2.ONE), sc)
+		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)
 	# wisp companion
 	var ws: Vector2 = game.world_to_screen(game.wisp)
 	var wf := ws.floor()
