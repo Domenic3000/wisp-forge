@@ -35,6 +35,14 @@ func _foe_frame(e) -> String:
 			return "imp2" if int(e.phase * 3.0) % 2 == 1 else "imp"
 		"mimic":
 			return "mimic2" if (not e.on_ground or int(game.frame / 6) % 2 == 1) else "mimic"
+		"golem":
+			if not e.awake:
+				return "golem_sleep"
+			if e.leaping or not e.on_ground:
+				return "golem_leap"
+			if absf(e.vx) > 0.1:
+				return ["golem", "golem2", "golem", "golem3"][int(e.anim * 0.7) % 4]
+			return "golem"
 		_:
 			if tex.has(key + "2") and absf(e.vx) > 0.1 and int(e.anim) % 2 == 1:
 				return key + "2"

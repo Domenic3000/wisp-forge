@@ -434,7 +434,8 @@ func run() -> void:
 				n += 1
 		_ok("guards appear when you come near", n > 0, "%d guards active" % n)
 		for e in g.enemies:
-			e.dead = true
+			if not e.boss:
+				e.dead = true
 		await _frames(2)
 
 	# ---- a mage standing still stays still (no jiggling up and down after landing) ----
@@ -593,6 +594,39 @@ func run() -> void:
 		_ok("generated sand stays put when you arrive", moved <= maxi(4, before_p.size() / 100), "%d of %d powder cells moved" % [moved, before_p.size()])
 	else:
 		_ok("generated sand stays put when you arrive", true, "no desert on this planet")
+
+	# ---- a boss nobody is fighting recovers ----
+	var boss_e = null
+	for e in g.enemies:
+		if e.boss:
+			boss_e = e
+	if boss_e != null:
+		# a picture of Vulkhar in his arena (saves/shots/boss.png)
+		var bup: Vector2 = (boss_e.pos as Vector2).normalized()
+		_go(boss_e.pos + Vector2(-bup.y, bup.x) * 70.0)
+		await _frames(60)
+		g.ui.title.visible = false
+		await _frames(2)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("boss.png"))
+		# then leave him hurt and walk away
+		var sp9 := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
+		_go(sp9 * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
+		boss_e.hp = boss_e.max_hp * 0.3
+		boss_e.awake = true
+		await _frames(200)
+		_ok("a boss left alone recovers to full health", boss_e.hp >= boss_e.max_hp and not boss_e.awake,
+			"health %d of %d, %s" % [int(boss_e.hp), int(boss_e.max_hp), "asleep" if not boss_e.awake else "awake"])
+	else:
+		_ok("a boss left alone recovers to full health", false, "no boss in the world")
+	# ---- the unrolled view keeps the cells around you one pixel wide at any depth ----
+	var widths := []
+	var view_ok := true
+	for rr in [1300.0, 900.0, 500.0, 250.0, 120.0]:
+		var st: float = g.unroll_step(rr)
+		var cell_w: float = st * rr                  # world units per pixel across
+		widths.append("%d: %.2f" % [int(rr), cell_w])
+		view_ok = view_ok and cell_w > 0.45 and cell_w < 1.6
+	_ok("the view isn't stretched deep down", view_ok, "world units per pixel across at radius " + ", ".join(widths))
 
 	# ---- one-way platforms: land on one, drop through it (down + jump), jump up through it ----
 	var pcol := int(fposmod(g.spawn_angle, TAU) / TAU * Defs.SH_N[0]) + 40

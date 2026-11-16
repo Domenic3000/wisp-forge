@@ -58,6 +58,8 @@ class Enemy extends Body:
 	var leaping := false
 	var boss := false
 	var guard_id := -1     # which structure guard this is (-1 = a wandering foe)
+	var home := Vector2.ZERO   # where it was spawned (a boss goes back there to recover)
+	var leash_t := 0           # frames with nobody fighting it
 	# getting around: the way it is heading, how long it wanders off after a dead end,
 	# where it was a second ago (to notice it is stuck), and a detour for fliers
 	var nav_dir := 1.0
@@ -103,6 +105,7 @@ var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1
 var test_jump := false     # the test mode presses jump
 var test_down := false     # ... and down
 var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
+var ustep := TAU / 8192.0     # unrolled view: radians per screen pixel (one column of the camera's shell)
 var zoom_levels := [1.0, 2.0, 4.0, 8.0, 14.0]
 var zoom_i := 0
 var shake := 0.0
@@ -366,9 +369,10 @@ func _write_frame_params() -> void:
 	gpu.setp(0, Vector4(time, gpu.frame, sun_a, planet.get("seed", 1)))
 	var sh := Vector2(randf() - 0.5, randf() - 0.5) * shake
 	var c := cam_c + sh
+	ustep = unroll_step(c.length())
 	if unrolled():
 		# lock the drawn camera to whole cells, so the terrain never shimmers between pixels
-		var step := TAU / Defs.SH_N[0]
+		var step := ustep
 		var ca := roundf(atan2(c.y, c.x) / step) * step
 		c = Vector2(cos(ca), sin(ca)) * roundf(c.length())
 	view_c = c
@@ -386,7 +390,7 @@ func _write_frame_params() -> void:
 	var rr := sky_rain
 	gpu.setp(3, Vector4(rr * 0.0015 if rr > 0.05 else 0.0, wmat, rr, flash))
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
-	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, 0, 0))
+	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep, 0))
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
 	var cr := c.length()
 	# the camera's angle, unwrapped (it keeps counting past a full turn) so parallax never jumps
@@ -723,6 +727,30 @@ func basis_d(a: float) -> Vector2:
 ## The view near the surface is unrolled (see screenToWorld in shaders/inc/params.comp): x follows
 ## the angle (one pixel = one surface column), y the height, so buildings stand straight anywhere
 ## on screen. Zoomed out to the map, the planet is drawn round.
+## The unrolled view draws one column of the camera's own shell per pixel, so the cells around
+## you are always one pixel wide (deep down the shells have fewer, wider columns: drawing surface
+## columns there stretched every cell and made you seem to run faster and faster toward the core).
+## Near a shell boundary the scale eases from one shell's to the next over 48 rows.
+func unroll_step(r: float) -> float:
+	var row := Defs.R_TOP - r
+	var s := 0
+	for k in 4:
+		if row >= Defs.SH_Y0[k]:
+			s = k
+	var st := TAU / float(Defs.SH_N[s])
+	# blend toward the neighbouring shell near its boundary
+	if s < 3:
+		var dn: float = float(Defs.SH_Y0[s + 1]) - row
+		if dn < 24.0:
+			var t := smoothstep(24.0, -24.0, dn)
+			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[s + 1])), t))
+	if s > 0:
+		var up: float = row - float(Defs.SH_Y0[s])
+		if up < 24.0:
+			var t2 := smoothstep(24.0, -24.0, up)
+			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[s - 1])), t2))
+	return st
+
 func unrolled() -> bool:
 	return zoom < 2.5
 
@@ -734,7 +762,7 @@ func world_to_screen(p: Vector2) -> Vector2:
 	var a := atan2(c.y, c.x)
 	if unrolled():
 		var d := wrapf(atan2(p.y, p.x) - a, -PI, PI)
-		return Vector2(-d / (TAU / Defs.SH_N[0]), c.length() - p.length()) / zoom + Vector2(VW, VH) * 0.5
+		return Vector2(-d / ustep, c.length() - p.length()) / zoom + Vector2(VW, VH) * 0.5
 	var o := p - c
 	return Vector2(o.dot(basis_r(a)), o.dot(basis_d(a))) / zoom + Vector2(VW, VH) * 0.5
 
@@ -743,7 +771,7 @@ func screen_to_world(px: Vector2) -> Vector2:
 	var a := atan2(c.y, c.x)
 	var o := (px - Vector2(VW, VH) * 0.5) * zoom
 	if unrolled():
-		var th := a - o.x * (TAU / Defs.SH_N[0])
+		var th := a - o.x * ustep
 		return Vector2(cos(th), sin(th)) * (c.length() - o.y)
 	return c + basis_r(a) * o.x + basis_d(a) * o.y
 
@@ -1388,6 +1416,7 @@ func spawn_enemy(type: String, p: Vector2) -> Enemy:
 	e.step_h = 0 if d["fly"] else (4 if e.boss else int(d.get("step", 1)))
 	e.t = 30.0 + randf() * 60.0
 	e.phase = randf() * 6.0
+	e.home = p
 	enemies.append(e)
 	return e
 
@@ -1503,6 +1532,20 @@ func _update_enemies() -> void:
 		var tgt := _nearest_mage(e.pos)
 		_use_grid(tgt)
 		var dist := e.pos.distance_to(tgt.pos)
+		if e.boss:
+			# a boss nobody is fighting recovers: after a few seconds alone it is back at full
+			# health, asleep where it started, so it has to be beaten in one fight
+			if dist > 230.0 or tgt.dead:
+				e.leash_t += 1
+				if e.leash_t > 150 and (e.hp < e.max_hp or e.awake):
+					e.hp = e.max_hp
+					e.awake = false
+					e.leaping = false
+					e.pos = e.home
+					e.vx = 0.0
+					e.vy = 0.0
+			else:
+				e.leash_t = 0
 		if not e.boss and dist > (300.0 if e.guard_id >= 0 else 420.0):
 			if e.guard_id >= 0:
 				_guards_alive.erase(e.guard_id)
@@ -1592,7 +1635,7 @@ func _update_enemies() -> void:
 					_spawn_proj("efire", e.pos, (player.pos - e.pos).normalized() * 1.7, "enemy")
 					e.shoot_t = 140 + randf() * 60
 			"golem":
-				if not e.awake and dist < 110:
+				if not e.awake and dist < 150:
 					e.awake = true
 					ui.toast("VULKHAR, THE EMBER GOLEM awakens!", Color(1, 0.48, 0.16), 4.0)
 					audio.play("roar", e.pos, 1.2)
@@ -1619,8 +1662,8 @@ func _update_enemies() -> void:
 					if e.leaping and e.on_ground and e.vy == 0:
 						e.leaping = false
 						shake = 12.0
-						_explode(e.pos - basis_d(atan2(e.pos.y, e.pos.x)) * (-e.h * 0.5 - 1.0), 6.0, 1, 0, 0.0)
-						if absf(dx) < 26 and absf(dy) < 20:
+						_explode(e.pos - basis_d(atan2(e.pos.y, e.pos.x)) * (-e.h * 0.5 - 1.0), 8.0, 1, 0, 0.0)
+						if absf(dx) < 38 and absf(dy) < 28:
 							hurt(tgt, 18.0, Vector2(signf(dx) * 3.0, -2.0), true)
 				e.vy += g
 		if e.d["fly"]:
@@ -1960,7 +2003,7 @@ func _enter_planet(index: int) -> void:
 	spawn_angle = fposmod(best, TAU)
 	var boss_a := fposmod(spawn_angle + PI, TAU)
 	var mag: float = gpu.surf_at(boss_a).w
-	boss_info = Vector4(boss_a, mag - 6.0, 72.0, 30.0)
+	boss_info = Vector4(boss_a, mag - 6.0, 100.0, 42.0)
 	planet_state = {}
 	var loaded := _load_world(index)
 	if loaded and int(planet_state.get("gen", 1)) != GEN_VERSION:
@@ -1986,7 +2029,7 @@ func _enter_planet(index: int) -> void:
 	parts.clear()
 	var bd := Vector2(cos(boss_a), sin(boss_a))
 	if not planet_state.get("boss_dead", false):
-		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + 14.0))
+		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
 	_respawn()
 	if loaded and planet_state.has("player"):
 		var pp: Array = planet_state["player"]
@@ -2035,7 +2078,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 17            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 18            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
