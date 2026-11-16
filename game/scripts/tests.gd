@@ -58,6 +58,8 @@ func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
 	return out
 
 func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
+	# the structure's own built cells (recorded when it was generated): how many still hold a
+	# solid, and which of them hang unsupported over open space
 	var solid := 0
 	var loose := 0
 	var tre := 0
@@ -68,38 +70,47 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	var bgn := 0
 	var N: int = Defs.SH_N[0]
 	var boff: int = Defs.total_cells() * 4      # the background layer follows the cells
-	for j in int(info["h"]):
+	var w: int = int(info["w"])
+	for k in info.get("cells", PackedInt32Array()):
+		var j: int = k / w
+		var i: int = k % w
 		var row: int = int(info["y0"]) + j
 		if row < 0 or row >= Defs.SH_Y0[1]:
 			continue
-		for i in int(info["w"]):
-			var col := posmod(int(info["x0"]) + i, N)
-			var c := raw.decode_u32((row * N + col) * 4)
-			var t := c & 255
-			var bgm := raw.decode_u32(boff + (row * N + col) * 4) & 255
+		var col := posmod(int(info["x0"]) + i, N)
+		var c := raw.decode_u32((row * N + col) * 4)
+		var t := c & 255
+		if Defs.KIND[t] != Defs.K_SOLID:
+			continue
+		solid += 1
+		allm[Defs.NAMES[t]] = int(allm.get(Defs.NAMES[t], 0)) + 1
+		# unsupported AND over open space (so it should have fallen); anchored cells are part
+		# of the planet until you dig nearby
+		var lf := (c >> 16) & 255
+		if (c & 0x40000000) == 0 and ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.SH_Y0[1] and not (lf > 0 and lf < 128):
+			var cb := raw.decode_u32(((row + 1) * N + col) * 4)
+			var tb := cb & 255
+			var kb: int = Defs.KIND[tb]
+			if tb == 0 or kb == Defs.K_GAS or kb == Defs.K_FIRE or kb == Defs.K_LIQUID:
+				loose += 1
+				if at.size() < 4:
+					at.append(Vector2i(i, j))
+				mats[Defs.NAMES[t]] = int(mats.get(Defs.NAMES[t], 0)) + 1
+				var key := Defs.NAMES[tb] if tb > 0 else "air"
+				below[key] = int(below.get(key, 0)) + 1
+	for j in int(info["h"]):
+		var row2: int = int(info["y0"]) + j
+		if row2 < 0 or row2 >= Defs.SH_Y0[1]:
+			continue
+		for i in w:
+			var col2 := posmod(int(info["x0"]) + i, N)
+			var t2 := raw.decode_u32((row2 * N + col2) * 4) & 255
+			var bgm := raw.decode_u32(boff + (row2 * N + col2) * 4) & 255
 			if bgm != 0:
 				bgn += 1
 				var bk := "bg " + Defs.NAMES[bgm]
 				allm[bk] = int(allm.get(bk, 0)) + 1
-			if Defs.KIND[t] == Defs.K_SOLID and (c & 0x40000000) == 0:
-				solid += 1
-				allm[Defs.NAMES[t]] = int(allm.get(Defs.NAMES[t], 0)) + 1
-				# unsupported AND over open space (so it should have fallen); an unsupported block
-				# resting on something solid simply can't fall, which is fine
-				# (a block already falling, life 1-127, is on its way down: that's fine too)
-				var lf := (c >> 16) & 255
-				if ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.SH_Y0[1] and not (lf > 0 and lf < 128):
-					var cb := raw.decode_u32(((row + 1) * N + col) * 4)
-					var tb := cb & 255
-					var kb: int = Defs.KIND[tb]
-					if tb == 0 or kb == Defs.K_GAS or kb == Defs.K_FIRE or kb == Defs.K_LIQUID:
-						loose += 1
-						if at.size() < 4:
-							at.append(Vector2i(i, j))
-						mats[Defs.NAMES[t]] = int(mats.get(Defs.NAMES[t], 0)) + 1
-						var key := Defs.NAMES[tb] if tb > 0 else "air"
-						below[key] = int(below.get(key, 0)) + 1
-			if t == Defs.TREASURE or (raw.decode_u32(boff + (row * N + col) * 4) & 255) == Defs.TREASURE:
+			if t2 == Defs.TREASURE or bgm == Defs.TREASURE:
 				tre += 1
 	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below, "at": at, "all": allm, "bg": bgn}
 
@@ -132,6 +143,7 @@ func run() -> void:
 	# ---- buildings stand and ruins have settled ----
 	var raw: PackedByteArray = g.gpu.read_world()
 	var intact := 0
+	var worst_built := ""
 	var intact_ok := 0
 	var worst := 1.0
 	var loose_total := 0
@@ -150,14 +162,18 @@ func run() -> void:
 				loose_mats[k] = int(loose_mats.get(k, 0)) + int(sc["mats"][k])
 			for k in sc["below"]:
 				loose_below[k] = int(loose_below.get(k, 0)) + int(sc["below"][k])
-		if not info["ruined"] and int(info["solid"]) > 0:
+		if int(info["solid"]) > 0:
 			intact += 1
 			var ratio := float(sc["solid"]) / float(info["solid"])
+			if ratio < worst:
+				worst_built = "%s %s %dx%d: %d of %d built cells left, now %s" % ["ruined" if info["ruined"] else "intact", b.label_at(_cell_pos(int(info["x0"]) + int(info["w"]) / 2, int(info["y0"]) + int(info["h"]) - 3)), info["w"], info["h"], sc["solid"], info["solid"], str(sc["all"])]
 			worst = minf(worst, ratio)
 			if ratio >= 0.97:
 				intact_ok += 1
 			treasure_missing += maxi(0, info["chests"].size() * Defs.CHEST_W * Defs.CHEST_H - int(sc["treasure"]))
-	_ok("intact buildings stand after settling", intact_ok == intact, "%d of %d keep at least 97%% of their blocks, worst %.1f%%" % [intact_ok, intact, worst * 100.0])
+	_ok("every structure (ruins too) stands as built after generating", intact_ok == intact, "%d of %d keep at least 97%% of their blocks, worst %.1f%%" % [intact_ok, intact, worst * 100.0])
+	if intact_ok != intact:
+		lines.append("      worst: " + worst_built)
 	_ok("intact buildings keep their chests", treasure_missing == 0, "%d chest cells missing" % treasure_missing)
 	_ok("nothing is left hanging after settling", loose_total == 0, "%d unsupported blocks over open space" % loose_total)
 	if loose_total > 0:

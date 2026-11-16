@@ -283,19 +283,98 @@ func _claim(x0: int, w: int, name: String, ymin: int, ymax: int) -> void:
 	sites.append(Vector2(posmod(x0, N0), posmod(x0, N0) + w))
 	labels.append({"x0": posmod(x0, N0), "w": w, "ymin": ymin, "ymax": ymax, "name": name})
 
+## Is cell (i, j) part of the built structure (a solid in front, or a back wall)?
+func _built(bp: BP, i: int, j: int) -> bool:
+	if not bp.ok(i, j):
+		return false
+	var v: int = bp.c[j * bp.w + i]
+	var f := v & 255
+	var g := (v >> 8) & 255
+	return (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0)
+
+## Is cell (i, j) untouched natural ground (outside the blueprint or left as it is, below the surface)?
+func _natural(bp: BP, i: int, j: int) -> bool:
+	if bp.ok(i, j) and (bp.c[j * bp.w + i] & 255) != 255:
+		return false
+	return j >= ground_row(bp.x0 + i) - bp.y0
+
+## Generated structures don't move until you come and dig: every piece that is still joined to
+## the ground (through other pieces, front or back) is anchored as built, and any piece the
+## ruin generator left floating is removed, so nothing falls into rubble before you arrive.
+func _anchor_and_tidy(bp: BP) -> void:
+	var w := bp.w
+	var seen := PackedByteArray()
+	seen.resize(w * bp.h)
+	var stack := PackedInt32Array()
+	for j in bp.h:
+		for i in w:
+			if not _built(bp, i, j):
+				continue
+			var v: int = bp.c[j * w + i]
+			var root := (v & (F_FILL | F_ANCHOR)) != 0
+			if not root:
+				for dv in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
+					if _natural(bp, i + dv.x, j + dv.y):
+						root = true
+						break
+			if root:
+				seen[j * w + i] = 1
+				stack.append(j * w + i)
+	while not stack.is_empty():
+		var k: int = stack[stack.size() - 1]
+		stack.resize(stack.size() - 1)
+		var i := k % w
+		var j := k / w
+		for dv in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
+			var ni: int = i + dv.x
+			var nj: int = j + dv.y
+			if bp.ok(ni, nj) and seen[nj * w + ni] == 0 and _built(bp, ni, nj):
+				seen[nj * w + ni] = 1
+				stack.append(nj * w + ni)
+	for k in w * bp.h:
+		var v: int = bp.c[k]
+		var f := v & 255
+		var g := (v >> 8) & 255
+		var is_built := (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0)
+		if not is_built:
+			continue
+		if seen[k] == 0:
+			# a floating fragment: gone (front and back)
+			if f != 255 and f != 0:
+				v = (v & ~255) | 0     # (a chest left floating in a ruin goes too)
+			if g != 255 and g != 0 and (v & F_WALL) != 0:
+				v = v & ~0xff00 & ~F_WALL
+			bp.c[k] = v
+		else:
+			bp.c[k] = v | F_ANCHOR
+	# forget chests that were removed with a floating fragment
+	var keep := []
+	for q in bp.chests:
+		if bp.getf(q.x, q.y - 1) == Defs.TREASURE:
+			keep.append(q)
+	bp.chests = keep
+
 func _finish(bp: BP, build: bool) -> void:
 	if not build:
 		return
+	# what the tests check later: the built cells (not fills and foundations), before anchoring
+	var cells := PackedInt32Array()
+	for k in bp.c.size():
+		var v0: int = bp.c[k]
+		var f0: int = v0 & 255
+		if f0 != 255 and f0 != 0 and Defs.KIND[f0] == Defs.K_SOLID and (v0 & (F_FILL | F_ANCHOR)) == 0:
+			cells.append(k)
+	_anchor_and_tidy(bp)
+	var kept := PackedInt32Array()
+	for k in cells:
+		if (bp.c[k] & 255) != 0:
+			kept.append(k)
 	structs.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c})
-	var solid := 0
-	for v in bp.c:
-		var f: int = v & 255
-		if f != 255 and Defs.KIND[f] == Defs.K_SOLID and (v & (F_FILL | F_ANCHOR)) == 0:
-			solid += 1
+	var solid := kept.size()
 	var ch := []
 	for q in bp.chests:
 		ch.append(Vector2i(posmod(bp.x0 + q.x, N0), bp.y0 + q.y))
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch})
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
 	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
@@ -514,7 +593,9 @@ func _ruin(bp: BP, i0: int, i1: int, j0: int, j1: int, b: String, outdoors := tr
 		var bury := rng.randi_range(3, 12)
 		for i in range(i0 - 4, i1 + 5):
 			var g := ground_row(bp.x0 + i) - bp.y0
-			for j in range(g - bury, g):
+			# a drift that slopes off at the ends (no sand wall to pour down)
+			var hb := mini(bury, mini(i - (i0 - 4), (i1 + 4) - i) + 1)
+			for j in range(g - hb, g):
 				if bp.ok(i, j) and bp.getf(i, j) == 0:
 					bp.fg(i, j, Defs.SAND)
 				elif bp.ok(i, j) and bp.getf(i, j) == 255:

@@ -33,7 +33,10 @@ void main() {
 		uint bgm = ab & 255u;
 		// digging and blasts disturb the ground around them: natural rock nearby is no longer
 		// treated as part of the planet, so a piece you cut free will fall
-		if ((mode == 1 || mode == 2 || mode == 6) && (c & ST_ANCHOR) != 0u && dist < rad * 2.0 + 24.0) c &= ~ST_ANCHOR;
+		if ((mode == 1 || mode == 2 || mode == 6 || mode == 8) && dist < rad * 2.0 + 24.0) {
+			if ((c & ST_ANCHOR) != 0u) c &= ~ST_ANCHOR;
+			ab &= ~BG_ANCHOR;    // a generated building's walls wake up too
+		}
 		if (mode == 2 && B.x > 0.5 && B.x < 1.5 && dist < rad + 2.5 && R < 0.5) {
 			// fire spells set burnable things alight (foreground and background plants)
 			if (FUEL[t] > 0u && t != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[t] << 16); continue; }

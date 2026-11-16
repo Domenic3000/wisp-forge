@@ -251,9 +251,11 @@ uint charredTree(vec2 q, float hh, int bb) {
 // trees and other surface plants, evaluated per cell from hashed "buckets" along the surface arc
 uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 	float arc = th * RS0;
-	// spacing and density per kind: oaks, pines, cacti, (reeds), charred, palms
-	float BW = floraType == 2 ? 14.0 : (floraType == 4 ? 26.0 : (floraType == 1 ? 19.0 : 18.0));
-	float dens = floraType == 1 ? 0.8 : (floraType == 2 ? 0.7 : (floraType == 4 ? 0.55 : (floraType == 5 ? 0.4 : (floraType == 3 ? 0.27 : 0.3))));
+	// One spacing grid for every kind of tree, and each tree takes its kind from the biome at its
+	// own trunk, so a crown reaching over a biome border is still drawn whole (it used to switch
+	// kind column by column there and get cut off). Density per kind: oaks, pines, cacti, willows,
+	// charred trees, palms.
+	float BW = 14.0;
 	float nB = floor(TAU * RS0 / BW);
 	float L = nB * BW;
 	int b = int(floor(arc / BW));
@@ -262,31 +264,33 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 	for (int k = -2; k <= 2; k++) {
 		int bb = int(mod(float(b + k), nB));
 		float hb = h2(ivec2(bb, 77), SEED);
-		if (hb >= dens || floraType == 0) continue;
 		float st = (float(bb) + 0.2 + 0.6 * h2(ivec2(bb, 78), SEED)) * BW;
 		float da = arc - st; da -= floor(da / L + 0.5) * L;
 		if (abs(da) > 26.0) continue;
 		float tth = st / RS0;
+		vec4 ta = surfA(tth), tb = surfB(tth);
+		int ft = int(biomeB(int(ta.y)).w) >> 4;
+		float dens = ft == 1 ? 0.62 : (ft == 2 ? 0.7 : (ft == 4 ? 0.32 : (ft == 5 ? 0.33 : (ft == 3 ? 0.22 : (ft == 6 ? 0.24 : 0.0)))));
+		if (hb >= dens) continue;
 		float sp = abs(tth - spawnA); sp = min(sp, TAU - sp);
 		if (sp * RS0 < 30.0) continue;
 		if (onSite(tth, 26.0)) continue;
-		vec4 ta = surfA(tth), tb = surfB(tth);
 		if (tb.y > ta.x + 0.5) continue; // trunk would be underwater
 		float base = floor(ta.x);
 		vec2 q = vec2(da, r - base);
 		if (q.y > 95.0) continue;
 		float hh = h2(ivec2(bb, 79), SEED), h3 = h2(ivec2(bb, 83), SEED), h4 = h2(ivec2(bb, 84), SEED);
 		uint m = 0u;
-		if (floraType == 1) m = oakTree(q, hh, h3, h4, nz);
-		else if (floraType == 2) {
+		if (ft == 1) m = oakTree(q, hh, h3, h4, nz);
+		else if (ft == 2) {
 			vec4 A = biomeA(int(ta.y));
 			bool snowy = uint(A.z) == M_SNOW || ((int(A.w) & 1) != 0 && ta.x > RS0 + 20.0);
 			m = pineTree(q, hh, h3, snowy);
 		}
-		else if (floraType == 3) m = hb < 0.06 ? palmTree(q, hh, h3) : cactusTree(q, hh, h3);
-		else if (floraType == 4) m = willowTree(q, hh, h3, bb, nz);
-		else if (floraType == 5) m = charredTree(q, hh, bb);
-		else if (floraType == 6) m = palmTree(q, hh, h3);
+		else if (ft == 3) m = hb < 0.05 ? palmTree(q, hh, h3) : cactusTree(q, hh, h3);
+		else if (ft == 4) m = willowTree(q, hh, h3, bb, nz);
+		else if (ft == 5) m = charredTree(q, hh, bb);
+		else if (ft == 6) m = palmTree(q, hh, h3);
 		if (m != 0u) return m;
 	}
 	// undergrowth and small plants

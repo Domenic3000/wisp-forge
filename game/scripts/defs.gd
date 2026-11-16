@@ -150,10 +150,12 @@ func _init() -> void:
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
 	# structural strength: how many cells a solid can reach sideways (or hang) from something
+	# (a chest reaches further than its 8-cell width, so it never breaks in pieces: any part
+	# resting on something holds the whole chest, and with nothing under it, it drops whole)
 	# resting on the ground before it breaks loose. Stacking straight up is always fine.
 	for kv in [[STONE, 40], [DEEPSTONE, 48], [MAGMAROCK, 56], [OBSIDIAN, 60], [CORE, 63], [DIRT, 10], [GRASS, 10],
 			[ICE, 14], [FROST, 24], [WOOD, 16], [LEAF, 4], [PLANK, 12], [BRICK, 24], [GLASS, 6], [CACTUS, 8],
-			[SHROOM, 6], [MASONRY, 28], [MOSSBLOCK, 22], [SANDSTONE, 20], [TILE, 14], [TREASURE, 6], [TORCH, 4]]:
+			[SHROOM, 6], [MASONRY, 28], [MOSSBLOCK, 22], [SANDSTONE, 20], [TILE, 14], [TREASURE, 10], [TORCH, 4]]:
 		SPAN[kv[0]] = kv[1]
 	for kv in [[STONE, GRAVEL], [DEEPSTONE, GRAVEL], [MAGMAROCK, GRAVEL], [BRICK, GRAVEL], [MASONRY, GRAVEL],
 			[MOSSBLOCK, GRAVEL], [TILE, GRAVEL], [SANDSTONE, SAND], [WOOD, TIMBER], [PLANK, TIMBER], [LEAF, LITTER],

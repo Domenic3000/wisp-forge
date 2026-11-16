@@ -1,7 +1,9 @@
 // ---- binding 8: the background layer, one uint per cell ----
 // bits 0-7 background material (tree, plant, cave decoration or a building's back wall),
-// bits 8-13 support distance (63 = nothing holds it up), bit 14 = built back wall.
+// bits 8-13 support distance (63 = nothing holds it up), bit 14 = built back wall,
+// bit 15 = anchored (a generated building's wall: it stays as built until you dig near it).
 layout(std430, set = 0, binding = 8) restrict buffer Aux { uint a[]; } aux;
 #define BG_WALL 0x4000u
+#define BG_ANCHOR 0x8000u
 uint bgAtIdx(int i) { return i < 0 ? 0u : (aux.a[i] & 255u); }
 uint bgAtPos(vec2 p) { int i = idxAt(p); return i < 0 ? 0u : (aux.a[i] & 255u); }

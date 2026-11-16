@@ -70,7 +70,7 @@ void main() {
 	}
 	if (wall) {
 		uint bm = a & 255u;
-		uint n = solid ? fgS(c) + 1u : ST_MAX;
+		uint n = (a & BG_ANCHOR) != 0u ? 0u : (solid ? fgS(c) + 1u : ST_MAX);
 		n = min(n, wallS(iD));
 		n = min(n, wallS(iL) + 1u);
 		n = min(n, wallS(iR) + 1u);
