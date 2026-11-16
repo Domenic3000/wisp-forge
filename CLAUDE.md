@@ -17,7 +17,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 ## Cell format
 - Main buffer (binding 0), uint per cell:
   - bits 0-7: material
-  - bits 8-15: colour variant (chests encode their part: col | row << 3)
+  - bits 8-15: colour variant (chests are 12 x 9 and encode their part: col | row << 4)
   - bits 16-23: life (fall distance for falling blocks)
   - bits 24-29: support distance
   - bit 30: anchored (untouched natural ground)
@@ -34,5 +34,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Shaders: `/home/claude/tools/glcheck` plus `build_shaders.py` syntax-check them with Mesa, if those tools exist in the session.
 - Scripts: run `Check scripts.bat` on the PC; it writes `saves/check.txt`. Under `--check-only`,
   "Identifier not found: Defs" is expected (the autoload isn't loaded); real parse errors show up as Parse Error.
+- The test mode saves pictures of a few ruins and buildings to `saves/shots/` (midday, no title screen);
+  stage them through the device bridge to look at the art without walking around in the game.
 - Testing on the user's laptop: files are committed to `E:\Wisp Forge` through the device bridge. Wait about 12 s after
   writing to `/mnt/user-data/outputs` before committing, otherwise stale copies get written.

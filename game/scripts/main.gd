@@ -85,6 +85,7 @@ var VH := 270
 var cam_c := Vector2(0, 1400)
 var cam_a := PI / 2
 var zoom := 1.0
+var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1)
 var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
 var zoom_levels := [1.0, 2.0, 4.0, 8.0, 14.0]
 var zoom_i := 0
@@ -509,7 +510,7 @@ func _nearest_chest() -> Array:
 
 ## A chest you can open: close by (within CHEST_REACH cells of the mage's middle) and in plain
 ## sight, with nothing solid in between (so not through a wall you can't dig yet).
-const CHEST_REACH := 16
+const CHEST_REACH := 20
 func _chest_in_reach() -> Array:
 	var nc := _nearest_chest()
 	if nc.is_empty() or int(nc[1]) > CHEST_REACH * CHEST_REACH:
@@ -534,7 +535,7 @@ func _try_open_chest() -> void:
 		or place.begins_with("Collapsed") or place.begins_with("Sunken")
 	if ruin and randf() < 0.15:
 		# not a chest at all
-		brushes.append([centre, 6.5, 7, 0, 0, 0, 0])
+		brushes.append([centre, 8.5, 7, 0, 0, 0, 0])
 		var m: Enemy = spawn_enemy("mimic", centre)
 		m.vy = -2.5
 		m.t = 20
@@ -548,7 +549,7 @@ func _try_open_chest() -> void:
 		_chest_rare = 0.4
 	elif "Watchtower" in place or "Mine" in place:
 		_chest_rare = 0.25
-	brushes.append([centre, 6.5, 7, 1, 0, 0, 0])
+	brushes.append([centre, 8.5, 7, 1, 0, 0, 0])
 	_chest_pending = true
 	for k in 14:
 		_particle(centre, Vector2(randf() - 0.5, -randf() * 1.2), 30 + randi() % 20, Color(1, 0.85, 0.35), true, 0.02)
@@ -842,6 +843,8 @@ func _read_local_input(m: Mage) -> void:
 		inp.move -= 1
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
 		inp.move += 1
+	if test_move != 0:
+		inp.move = test_move    # the test mode walks the mage
 	inp.jump = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
 	var can_act: bool = not ui.mouse_over_ui() and state == "play"
 	inp.cast = can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
@@ -1028,7 +1031,7 @@ func revive() -> void:
 # =============================================================== spells ===
 func _staff(m: Mage, aim: Vector2) -> Array:
 	var a := atan2(m.pos.y, m.pos.x)
-	var hand := m.pos + basis_r(a) * (m.facing * 7.0) + basis_d(a) * (-0.5)   # the hand in the sprite
+	var hand := m.pos + basis_r(a) * (m.facing * 6.0) + basis_d(a) * (-0.5)   # the hand in the sprite
 	var dir := (aim - hand).normalized()
 	if dir == Vector2.ZERO:
 		dir = basis_r(a)
@@ -1873,7 +1876,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 12            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 13            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

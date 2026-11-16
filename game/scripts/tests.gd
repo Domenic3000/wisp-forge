@@ -211,6 +211,84 @@ func run() -> void:
 	if worst_v < 0.97:
 		lines.append("      " + worst_txt)
 
+	# ---- pictures of a few ruins and buildings, for looking at the art (saves/shots/) ----
+	var shot_dir: String = g._real_save_dir().path_join("shots")
+	DirAccess.make_dir_recursive_absolute(shot_dir)
+	var nshot := 0
+	var kinds_shot := {}
+	for info in b.infos:
+		if nshot >= 6:
+			break
+		var key: String = ("ruin " if info["ruined"] else "intact ") + str(int(info["w"]) / 20)
+		if kinds_shot.has(key):
+			continue
+		kinds_shot[key] = true
+		var cx := int(info["x0"]) + int(info["w"]) / 2
+		var spos := _cell_pos(cx, b.ground_row(cx) - 30)
+		_go(spos)
+		# midday over it, and nothing drawn on top
+		g.ui.title.visible = false
+		g.time = fposmod(atan2(spos.y, spos.x) - g.spawn_angle + 1.1, TAU) / TAU * 25200.0   # DAY_LEN
+		await _frames(45)
+		var img: Image = g.get_viewport().get_texture().get_image()
+		img.save_png(shot_dir.path_join("shot_%d_%s.png" % [nshot, ("ruin" if info["ruined"] else "intact")]))
+		nshot += 1
+
+	# ---- you can walk in through a cottage door (no lip, nothing in the way) ----
+	var walked := "no intact cottage found"
+	var walk_ok := false
+	for info in b.infos:
+		if info["ruined"]:
+			continue
+		var nm2: String = b.label_at(_cell_pos(int(info["x0"]) + int(info["w"]) / 2, int(info["y0"]) + int(info["h"]) - 45))
+		if not ("Cottage" in nm2 or "Dwelling" in nm2):
+			continue
+		var ox := 10                                  # YARD + 2
+		var base_row := int(info["y0"]) + int(info["h"]) - 40
+		var start_col := int(info["x0"]) + ox - 8
+		_go(_cell_pos(start_col, base_row - 12))
+		await _frames(30)
+		g.test_move = -1     # on screen, left is toward higher columns (where the house is)
+		await _frames(150)
+		g.test_move = 0
+		var a_now: float = fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU)
+		var col_now := int(a_now / TAU * Defs.SH_N[0])
+		# it must get through the doorway: past the wall into (or through) the house
+		var moved := posmod(col_now - start_col, Defs.SH_N[0])
+		walk_ok = moved > 16 and moved < Defs.SH_N[0] / 2
+		walked = "%s: walked from column %d to %d (the inside starts at %d)" % [nm2, start_col, col_now, int(info["x0"]) + ox + 6]
+		break
+	_ok("you can walk into a cottage through its door", walk_ok, walked)
+
+	# ---- digging next to a ruin takes only what you dig: the rest stands ----
+	var dug_ok := true
+	var dug_lines := []
+	var nr := 0
+	for info in b.infos:
+		if not info["ruined"] or nr >= 3:
+			continue
+		var cells2: PackedInt32Array = info["cells"]
+		if cells2.size() < 40:
+			continue
+		nr += 1
+		var sc0b := _scan(g.gpu.read_world(), info)
+		var kmid: int = cells2[cells2.size() / 2]
+		var wi: int = int(info["w"])
+		var dpos := _cell_pos(int(info["x0"]) + kmid % wi, int(info["y0"]) + kmid / wi)
+		_go(dpos + dpos.normalized() * 30.0)
+		await _frames(20)
+		for f in 10:
+			g.brushes.append([dpos, 3.0, 1, 0, 4, 0, 0, 3])
+			await _frames(1)
+		await _frames(240)
+		var sc1b := _scan(g.gpu.read_world(), info)
+		var lost := int(sc0b["solid"]) - int(sc1b["solid"])
+		dug_lines.append("%d -> %d" % [sc0b["solid"], sc1b["solid"]])
+		# the hole itself is ~30 cells; allow what that brings down nearby, not the building
+		if lost > 60 + int(sc0b["solid"]) / 20:
+			dug_ok = false
+	_ok("digging next to a ruin doesn't bring it down", dug_ok and nr > 0, "built cells before -> after: " + ", ".join(dug_lines))
+
 	# ---- open a chest ----
 	var chest := Vector2i(-1, -1)
 	for info in b.infos:
@@ -290,7 +368,7 @@ func run() -> void:
 		_go(_cell_pos(chest2.x - 12, chest2.y - 10))
 		await _frames(30)
 		for f in 70:
-			for dx in [0, 2, 4, 6, 8]:
+			for dx in range(-2, Defs.CHEST_W + 3, 2):
 				# owner slot 3 (nobody): digging next to a chest would otherwise open it
 				g.brushes.append([_cell_pos(chest2.x + dx, chest2.y + 2), 3.2, 1, 0, 4, 0, 0, 3])
 			await _frames(1)

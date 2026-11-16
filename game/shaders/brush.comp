@@ -33,7 +33,7 @@ void main() {
 		uint bgm = ab & 255u;
 		// digging and blasts disturb the ground around them: natural rock nearby is no longer
 		// treated as part of the planet, so a piece you cut free will fall
-		if ((mode == 1 || mode == 2 || mode == 6 || mode == 8) && dist < rad * 2.0 + 24.0) {
+		if ((mode == 1 || mode == 2 || mode == 6 || mode == 8) && dist < rad + 12.0) {
 			if ((c & ST_ANCHOR) != 0u) c &= ~ST_ANCHOR;
 			ab &= ~BG_ANCHOR;    // a generated building's walls wake up too
 		}

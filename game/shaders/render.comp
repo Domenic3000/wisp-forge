@@ -67,26 +67,38 @@ vec3 torchColor(ivec2 w) {
 	return ramp(M_TORCH, int(hashu(uint(w.x) * 31u ^ uint(w.y) * 17u ^ uint(TIME * 0.2)) & 3u));
 }
 // a chest is 6 x 4 cells; each cell's variant says which part it is (column 0-5, row 0-3)
+// A 12 x 9 treasure chest: a planked lid (rows 0-3) with iron straps, the gold seam and lock
+// (rows 3-6), a planked body, gold corners and feet. Opened: the lid is thrown back and the
+// inside glints with what's left.
 vec3 chestColor(uint v, bool open) {
-	// an 8 x 6 chest: rows 0-1 the lid, row 2 the gold band with the lock, rows 3-5 the body
-	int ci = int(v & 7u), cj = int((v >> 3) & 7u);
-	vec3 wood = vec3(0.47, 0.29, 0.15), dark = vec3(0.30, 0.18, 0.09);
-	vec3 gold = ramp(M_TREASURE, 2), bright = ramp(M_TREASURE, 3);
-	bool edge = ci == 0 || ci == 7;
-	if (open) {
-		if (cj == 0) return edge ? gold * 0.8 : dark * 0.9;           // the lid, thrown back
-		if (cj <= 2) return edge ? gold : vec3(0.06, 0.04, 0.03);       // empty inside
-		if (edge) return gold * 0.9;
-		return cj == 5 ? dark : wood;
+	int ci = int(v & 15u), cj = int((v >> 4) & 15u);
+	vec3 wood = vec3(0.50, 0.31, 0.16), woodL = vec3(0.62, 0.40, 0.21), woodD = vec3(0.33, 0.20, 0.10);
+	vec3 iron = vec3(0.32, 0.31, 0.36), ironL = vec3(0.50, 0.49, 0.55);
+	vec3 gold = ramp(M_TREASURE, 2), bright = ramp(M_TREASURE, 3), goldD = ramp(M_TREASURE, 0) * 0.8;
+	bool edge = ci == 0 || ci == 11;
+	bool strap = ci == 2 || ci == 9;
+	bool corner = (ci <= 1 || ci >= 10) && (cj == 0 || cj == 8);
+	if (open && cj <= 4) {
+		if (cj == 0) return edge ? goldD : woodD;                        // the lid's edge, thrown back
+		if (edge) return gold * 0.85;
+		if (cj == 4 && ((ci * 7 + cj * 3) % 3 == 0)) return bright;     // coins left inside
+		if (cj == 4) return gold * 0.7;
+		return vec3(0.07, 0.05, 0.03) + vec3(0.03, 0.02, 0.0) * float(cj);  // dark inside
 	}
-	if (cj == 0) return edge ? gold : wood * 1.2;
-	if (cj == 1) return edge ? gold : (ci % 2 == 0 ? wood * 1.1 : wood * 1.0);
-	if (cj == 2) {
-		if (ci == 3 || ci == 4) return ci == 3 ? bright : vec3(0.12, 0.08, 0.04);   // the lock
-		return gold;
+	if (corner) return gold;
+	if (cj == 8) return ci <= 1 || ci >= 10 ? goldD : woodD;            // the base
+	if (edge) return cj == 4 ? bright : gold * 0.9;
+	// the lock plate on the seam
+	if ((ci == 5 || ci == 6) && cj >= 3 && cj <= 6) {
+		if (cj == 5) return ci == 5 ? vec3(0.08, 0.05, 0.03) : goldD;      // keyhole
+		return cj == 3 ? bright : gold;
 	}
-	if (edge || ci == 3 || ci == 4) return gold * (cj == 3 && (ci == 3 || ci == 4) ? 1.05 : 0.9);
-	return cj == 5 ? dark : wood;
+	if (cj == 4) return gold;                                            // the seam band
+	if (strap) return cj == 0 || cj == 7 ? ironL : iron;
+	if (cj == 0) return woodL;
+	// planks: lid grain runs across, the body's boards alternate
+	if (cj <= 3) return (cj == 3) ? woodD : ((cj % 2 == 0) ? wood * 1.08 : wood);
+	return ((ci / 2) % 2 == 0) ? wood : wood * 0.9;
 }
 bool isMasonry(uint t) {
 	return t == M_BRICK || t == M_MASONRY || t == M_MOSSBLOCK || t == M_SANDSTONE || t == M_TILE || t == M_TREASURE;

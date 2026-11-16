@@ -122,6 +122,8 @@ func _style(bname: String, kind: String) -> Dictionary:
 		st["thick"] = 2
 		st["roof"] = Defs.TILE if bname != "ashland" else stone
 		st["roof_kind"] = "battle" if rng.randf() < 0.55 or bname == "ashland" or bname == "desert" else "steep"
+	# walls and floors sized for 40-cell storeys: homes 3 thick, towers and castles 4
+	st["thick"] = 4 if kind == "fort" else 3
 	return st
 
 # ------------------------------------------------------------- terrain info ---
@@ -298,61 +300,147 @@ func _natural(bp: BP, i: int, j: int) -> bool:
 		return false
 	return j >= ground_row(bp.x0 + i) - bp.y0
 
-## Generated structures don't move until you come and dig: every piece that is still joined to
-## the ground (through other pieces, front or back) is anchored as built, and any piece the
-## ruin generator left floating is removed, so nothing falls into rubble before you arrive.
+## Generated structures don't move until you come and dig: everything is anchored as built.
+## And so a structure doesn't fall apart the moment your digging wakes it either, it is first
+## made physically sound: the support rules of shaders/support.comp are run here on the
+## blueprint as if nothing were anchored, and anything that would be unsupported (a floor
+## hanging too far from a broken wall, a floating fragment, a chest left in the air) is
+## removed, repeating until everything left holds itself up.
 func _anchor_and_tidy(bp: BP) -> void:
 	var w := bp.w
-	var seen := PackedByteArray()
-	seen.resize(w * bp.h)
-	var stack := PackedInt32Array()
-	for j in bp.h:
-		for i in w:
-			if not _built(bp, i, j):
-				continue
-			var v: int = bp.c[j * w + i]
-			var root := (v & (F_FILL | F_ANCHOR)) != 0
-			if not root:
-				for dv in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
-					if _natural(bp, i + dv.x, j + dv.y):
-						root = true
-						break
-			if root:
-				seen[j * w + i] = 1
-				stack.append(j * w + i)
-	while not stack.is_empty():
-		var k: int = stack[stack.size() - 1]
-		stack.resize(stack.size() - 1)
-		var i := k % w
-		var j := k / w
-		for dv in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
-			var ni: int = i + dv.x
-			var nj: int = j + dv.y
-			if bp.ok(ni, nj) and seen[nj * w + ni] == 0 and _built(bp, ni, nj):
-				seen[nj * w + ni] = 1
-				stack.append(nj * w + ni)
-	for k in w * bp.h:
+	var h := bp.h
+	var n_all := w * h
+	for it in 6:
+		var removed := _stabilize_pass(bp)
+		if removed == 0:
+			break
+	for k in n_all:
 		var v: int = bp.c[k]
 		var f := v & 255
 		var g := (v >> 8) & 255
-		var is_built := (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0)
-		if not is_built:
-			continue
-		if seen[k] == 0:
-			# a floating fragment: gone (front and back)
-			if f != 255 and f != 0:
-				v = (v & ~255) | 0     # (a chest left floating in a ruin goes too)
-			if g != 255 and g != 0 and (v & F_WALL) != 0:
-				v = v & ~0xff00 & ~F_WALL
-			bp.c[k] = v
-		else:
+		if (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0):
 			bp.c[k] = v | F_ANCHOR
-	# forget chests that were removed with a floating fragment
+	# forget chests that were removed
 	var keep := []
 	for q in bp.chests:
 		if bp.getf(q.x, q.y - 1) == Defs.TREASURE:
 			keep.append(q)
 	bp.chests = keep
+
+## One round of support on the blueprint (Dial's algorithm over front and back cells). Returns
+## how many cells it removed.
+func _stabilize_pass(bp: BP) -> int:
+	var w := bp.w
+	var h := bp.h
+	var n_all := w * h
+	var fs := PackedByteArray()
+	var bs := PackedByteArray()
+	fs.resize(n_all)
+	bs.resize(n_all)
+	fs.fill(99)
+	bs.fill(99)
+	var fgb := PackedByteArray()   # 1 = built solid in front, 2 = placed powder
+	var bgb := PackedByteArray()   # 1 = built back wall
+	fgb.resize(n_all)
+	bgb.resize(n_all)
+	var nat := PackedByteArray()   # 1 = untouched natural ground
+	nat.resize(n_all)
+	var groundj := PackedInt32Array()
+	groundj.resize(w)
+	for i in w:
+		groundj[i] = ground_row(bp.x0 + i) - bp.y0
+	for k in n_all:
+		var v: int = bp.c[k]
+		var f := v & 255
+		var g := (v >> 8) & 255
+		if f != 255 and f != 0:
+			fgb[k] = 1 if Defs.KIND[f] == Defs.K_SOLID else (2 if Defs.KIND[f] == Defs.K_POWDER else 0)
+		if f == 255 and k / w >= groundj[k % w]:
+			nat[k] = 1
+		if g != 255 and g != 0 and (v & F_WALL) != 0:
+			bgb[k] = 1
+	var buckets := []
+	for c in 64:
+		buckets.append([])     # plain Arrays: shared, so appending while scanning a bucket works
+	# seeds: resting on (or beside) natural ground, foundations
+	for k in n_all:
+		var i := k % w
+		var j := k / w
+		var below_nat := j + 1 >= h or nat[k + w] == 1 or (j + 1 < h and fgb[k + w] == 2)
+		if j + 1 >= h:
+			below_nat = j + 1 >= groundj[i]
+		var side_nat := (i == 0 and j >= groundj[i]) or (i == w - 1 and j >= groundj[i]) or (i > 0 and nat[k - 1] == 1) or (i < w - 1 and nat[k + 1] == 1) or (j > 0 and nat[k - w] == 1)
+		var v2: int = bp.c[k]
+		var flagged := (v2 & (F_FILL | F_ANCHOR)) != 0
+		if fgb[k] == 1:
+			var sv := 0 if (below_nat or flagged) else (1 if side_nat else 99)
+			if sv < 99:
+				fs[k] = sv
+				buckets[sv].append(k * 2)
+		if bgb[k] == 1:
+			var bv := 0 if flagged else (1 if below_nat else (2 if side_nat else 99))
+			if bv < 99:
+				bs[k] = bv
+				buckets[bv].append(k * 2 + 1)
+	for c in 64:
+		var q: Array = buckets[c]
+		var qi := 0
+		while qi < q.size():
+			var node: int = q[qi]
+			qi += 1
+			var k := node >> 1
+			var layer := node & 1
+			if (fs[k] if layer == 0 else bs[k]) != c:
+				continue
+			var i := k % w
+			var j := k / w
+			# neighbours: [index, is_up] for up, down, left, right
+			var cand := []
+			if j > 0: cand.append([k - w, 0])
+			if j + 1 < h: cand.append([k + w, 1])
+			if i > 0: cand.append([k - 1, 2])
+			if i + 1 < w: cand.append([k + 1, 3])
+			if layer == 0:
+				for e in cand:
+					var nk: int = e[0]
+					var dirn: int = e[1]
+					if fgb[nk] == 1:
+						var nc := c if dirn == 0 else c + 1      # the block above rests on this one
+						if nc < fs[nk]:
+							fs[nk] = nc
+							buckets[mini(nc, 63)].append(nk * 2)
+					if bgb[nk] == 1:
+						var nb := c + 1 if dirn == 0 else c + 2  # a back wall leans on blocks around it
+						if nb < bs[nk]:
+							bs[nk] = nb
+							buckets[mini(nb, 63)].append(nk * 2 + 1)
+				if bgb[k] == 1 and c + 1 < bs[k]:
+					bs[k] = c + 1
+					buckets[mini(c + 1, 63)].append(k * 2 + 1)
+			else:
+				for e in cand:
+					var nk2: int = e[0]
+					var dirn2: int = e[1]
+					if bgb[nk2] == 1:
+						var nc2 := c if dirn2 == 0 else c + 1
+						if nc2 < bs[nk2]:
+							bs[nk2] = nc2
+							buckets[mini(nc2, 63)].append(nk2 * 2 + 1)
+				var f3: int = bp.c[k] & 255
+				if fgb[k] == 1 and f3 != Defs.TREASURE and c + 1 < fs[k]:
+					fs[k] = c + 1
+					buckets[mini(c + 1, 63)].append(k * 2)
+	var removed := 0
+	for k in n_all:
+		var v3: int = bp.c[k]
+		if fgb[k] == 1 and fs[k] > Defs.SPAN[v3 & 255]:
+			v3 = v3 & ~255
+			removed += 1
+		if bgb[k] == 1 and bs[k] > Defs.SPAN[(v3 >> 8) & 255]:
+			v3 = v3 & ~0xff00 & ~F_WALL
+			removed += 1
+		bp.c[k] = v3
+	return removed
 
 func _finish(bp: BP, build: bool) -> void:
 	if not build:
@@ -382,13 +470,13 @@ func _finish(bp: BP, build: bool) -> void:
 	settle.append([Vector2(cos(a), sin(a)) * r, maxf(bp.w, bp.h) * 0.5 + 26.0])
 
 # ------------------------------------------------------- chests and guards ---
-## an 8 x 6 treasure chest standing on the floor row fl, left column i. A chest is a real object
+## a 12 x 9 treasure chest standing on the floor row fl, left column i. A chest is a real object
 ## (it falls if you dig out its floor), but you walk through it; open it with F or by digging at it.
 func _chest(bp: BP, i: int, fl: int) -> void:
 	bp.chests.append(Vector2i(i, fl))
 	for cj in Defs.CHEST_H:
 		for ci in Defs.CHEST_W:
-			bp.fgv(i + ci, fl - Defs.CHEST_H + cj, Defs.TREASURE, ci | (cj << 3))
+			bp.fgv(i + ci, fl - Defs.CHEST_H + cj, Defs.TREASURE, ci | (cj << 4))
 
 ## a foe waiting on the floor row fl at column i (local), spawned when you come near
 func _guard(bp: BP, i: int, fl: int, type: String) -> void:
@@ -420,15 +508,17 @@ func _building(bp: BP, ox: int, base: int, w: int, floors: int, st: Dictionary, 
 		bp.rect(ox, top, ox, base, st["post"])
 		bp.rect(ox + w - 1, top, ox + w - 1, base, st["post"])
 	# floors, each with a gap at alternating ends to levitate through
+	var ft := mini(th, 3)     # floor thickness
 	for k in floors + 1:
 		var j := base - k * STOREY
 		bp.rect(ox, j, ox + w - 1, j, st["slab"])
-		if th > 1 and k > 0 and k < floors:
-			bp.rect(ox + th, j + 1, ox + w - 1 - th, j + 1, st["slab"])
+		if k > 0:
+			for r in range(1, ft):
+				bp.rect(ox + th, j + r, ox + w - 1 - th, j + r, st["slab"])
 		if k > 0 and k < floors:
 			var left := k % 2 == 1
 			var g0 := ox + th + 1 if left else ox + w - th - 1 - GAP
-			bp.rect(g0, j, g0 + GAP - 1, j + (1 if th > 1 else 0), 0)
+			bp.rect(g0, j, g0 + GAP - 1, j + ft - 1, 0)
 	# doorways: open to walk through, with a dark wooden door frame behind
 	if doors & 1:
 		bp.rect(ox, base - DOOR, ox + th - 1, base - 1, 0)
@@ -486,13 +576,12 @@ func _roof(bp: BP, ox: int, top: int, w: int, st: Dictionary) -> int:
 					bp.rect(L, j, R, j, m)
 					hi = j
 					break
-				bp.fg(L, j, m)
-				bp.fg(L + 1, j, m)
-				bp.fg(R, j, m)
-				bp.fg(R - 1, j, m)
-				if R - L > 3:
-					bp.rect(L + 2, j, R - 2, j, 0)
-					bp.rect_bg(L + 2, j, R - 2, j, st["back"])
+				# roof slopes 3 tiles thick, to match the thicker walls
+				bp.rect(L, j, mini(L + 2, R), j, m)
+				bp.rect(maxi(R - 2, L), j, R, j, m)
+				if R - L > 5:
+					bp.rect(L + 3, j, R - 3, j, 0)
+					bp.rect_bg(L + 3, j, R - 3, j, st["back"])
 				hi = j
 				t += 1
 		"flat":
@@ -541,51 +630,107 @@ func _yard(bp: BP, i0: int, i1: int, base: int) -> void:
 ## Damage an intact structure inside [i0, i1] x [j0, j1]: jagged broken tops, holes, rotten
 ## wood, moss, back walls with gaps. The physics finishes the job when the planet settles.
 func _ruin(bp: BP, i0: int, i1: int, j0: int, j1: int, b: String, outdoors := true) -> void:
-	# Damage comes in chunks, never single cells: a jagged broken top, a few big holes with
-	# rough edges, whole sections of rotten wood and missing back wall, patches of moss. (Single
-	# missing cells looked like pinholes and left lots of tiny loose bits to drop off.)
+	# A ruin is drawn as a ruin, not as a building with squares cut out of it:
+	#  - the walls crumble from the top in a stepped skyline, with one to three V-shaped breaches
+	#    where whole sections came down (stepped edges, like fallen masonry courses);
+	#  - wooden walls lose whole boards (vertical streaks from the top), not single cells;
+	#  - moss grows on every exposed top surface and creeps down the stone; the back wall is
+	#    stained with moss in patches;
+	#  - rubble mounds (gravel, or timber for wood) lie under each breach, sloped so they rest,
+	#    with a fallen beam or two on the ground floor;
+	#  - vines hang from broken tops in the wilder biomes.
+	# Floors left hanging too far from what's still standing are removed afterwards by the
+	# support pass (_stabilize_pass), so what remains is sound.
 	var hgt := j1 - j0
-	var cut := rng.randi_range(int(hgt * 0.15), maxi(int(hgt * 0.15), int(hgt * 0.55)))
-	var wob := 0.0
-	var col := i0
-	while col <= i1:
-		# the broken top steps in runs of 2-4 columns, so it reads as broken masonry, not noise
-		wob = clampf(wob + rng.randf_range(-3.0, 3.0), -8.0, 8.0)
-		var run := rng.randi_range(2, 4)
-		for k in run:
-			if col + k > i1:
-				break
-			var c := int(cut + wob)
-			for j in range(j0, mini(j1, j0 + c)):
-				_break(bp, col + k, j)
-		col += run
-	for n in rng.randi_range(2, 5):
-		var ci := rng.randi_range(i0, i1)
-		var cj := rng.randi_range(mini(j0 + cut, j1 - 2), maxi(j0 + cut, j1 - 2))
-		var rr := rng.randf_range(3.0, 8.0)
-		var ph := rng.randf() * TAU
-		for j in range(cj - int(rr) - 2, cj + int(rr) + 3):
-			for ii in range(ci - int(rr) - 2, ci + int(rr) + 3):
-				var dv := Vector2(ii - ci, j - cj)
-				var edge := rr + sin(dv.angle() * 3.0 + ph) * 1.4
-				if dv.length() < edge:
-					_break(bp, ii, j)
-	# chunky decay: decided per block of cells
-	var seed_r := rng.randi()
-	for j in range(j0, j1 + 1):
-		for ii in range(i0, i1 + 1):
-			if not bp.ok(ii, j) or bp.is_fill(ii, j):
-				continue
-			var f := bp.getf(ii, j)
-			if (f == Defs.PLANK or f == Defs.WOOD or f == Defs.LEAF) and _blockr(seed_r, ii / 3, j / 3, 1) < 0.2:
-				bp.fg(ii, j, 0)
-			elif f == Defs.MASONRY and _blockr(seed_r, (ii + 2) / 5, j / 4, 2) < 0.55:
+	var wid := i1 - i0 + 1
+	var depth := PackedInt32Array()
+	depth.resize(wid)
+	if outdoors:
+		var base_cut := int(hgt * rng.randf_range(0.2, 0.45))
+		var wob := 0.0
+		var col := 0
+		while col < wid:
+			wob = clampf(wob + rng.randf_range(-4.0, 4.0), -10.0, 10.0)
+			var run := rng.randi_range(2, 5)
+			for k in run:
+				if col + k < wid:
+					depth[col + k] = base_cut + int(wob)
+			col += run
+		for n in rng.randi_range(1, 3):
+			var bc := rng.randi_range(0, wid - 1)
+			var bw := rng.randf_range(wid * 0.12, wid * 0.35) + 4.0
+			var bd := hgt * rng.randf_range(0.3, 0.75)
+			for c2 in wid:
+				var t := 1.0 - absf(c2 - bc) / (bw * 0.5)
+				if t > 0.0:
+					depth[c2] = maxi(depth[c2], int(floor(bd * t / 2.0)) * 2 + base_cut / 2)
+		for c3 in wid:
+			for j in range(j0, mini(j1 + 1, j0 + depth[c3])):
+				_break(bp, i0 + c3, j)
+	# rotten boards: whole vertical strips from the top of what's left
+	for c4 in wid:
+		if rng.randf() < 0.16:
+			var top := j0 + depth[c4]
+			var run2 := rng.randi_range(4, 14)
+			for j in range(top, mini(j1 + 1, top + run2)):
+				var f := bp.getf(i0 + c4, j)
+				if f == Defs.PLANK or f == Defs.WOOD:
+					bp.fg(i0 + c4, j, 0)
+	# moss on exposed tops, creeping down the stone; stains on the back wall
+	for c5 in wid:
+		var ii := i0 + c5
+		var creep := 0
+		for j in range(j0, j1 + 1):
+			var f2 := bp.getf(ii, j)
+			var stone := f2 == Defs.MASONRY or f2 == Defs.BRICK or f2 == Defs.SANDSTONE
+			if stone and (bp.getf(ii, j - 1) == 0 or bp.getf(ii, j - 1) == 255):
+				creep = rng.randi_range(1, 4)
+			if stone and creep > 0:
 				bp.fg(ii, j, Defs.MOSSBLOCK)
-			var g := bp.getb(ii, j)
-			if g == Defs.TORCH:
+				creep -= 1
+			elif f2 != 0 and f2 != 255:
+				creep = 0
+			var g2 := bp.getb(ii, j)
+			if g2 == Defs.TORCH:
 				bp.bg(ii, j, 0)
-			elif g != 255 and g != 0 and _blockr(seed_r, ii / 6, j / 5, 3) < 0.22:
-				bp.bg(ii, j, 0)
+			elif (g2 == Defs.MASONRY or g2 == Defs.BRICK) and sin(ii * 0.31 + j * 0.17) + sin(ii * 0.13 - j * 0.29) > 1.2:
+				bp.bg(ii, j, Defs.MOSSBLOCK)
+	# rubble under each breach and a few more mounds, plus fallen beams on the ground floor
+	var rub := Defs.TIMBER
+	for c6 in range(0, wid, 3):
+		var f3 := bp.getf(i0 + c6, j1 + 1)
+		if f3 == Defs.MASONRY or f3 == Defs.BRICK or f3 == Defs.SANDSTONE or f3 == Defs.OBSIDIAN:
+			rub = Defs.GRAVEL
+			break
+	var mounds := []
+	for c7 in range(1, wid - 1):
+		if depth[c7] > depth[c7 - 1] + 3 and depth[c7] > depth[c7 + 1] - 1 and rng.randf() < 0.35:
+			mounds.append(c7)
+	for n2 in rng.randi_range(1, 3):
+		mounds.append(rng.randi_range(2, wid - 3))
+	for mc in mounds:
+		var mh := rng.randi_range(3, 7)
+		for dc in range(-mh - 1, mh + 2):
+			var colh := mh - absf(dc)        # slope 1: it rests
+			for k2 in int(colh):
+				var jj: int = j1 - k2
+				if bp.ok(i0 + mc + dc, jj) and bp.getf(i0 + mc + dc, jj) == 0:
+					bp.fg(i0 + mc + dc, jj, rub, F_FILL)
+	for n3 in rng.randi_range(0, 2):
+		var bx := rng.randi_range(2, maxi(2, wid - 12))
+		var bl := rng.randi_range(5, 10)
+		for dx in bl:
+			if bp.ok(i0 + bx + dx, j1) and bp.getf(i0 + bx + dx, j1) == 0:
+				bp.fg(i0 + bx + dx, j1, Defs.WOOD, F_FILL)
+	# hanging vines in the wilder places
+	if outdoors and (b == "forest" or b == "marsh" or b == "ocean" or b == "mountain"):
+		for n4 in rng.randi_range(3, 7):
+			var vc := rng.randi_range(0, wid - 1)
+			var vj := j0 + depth[vc]
+			var vl := rng.randi_range(5, 16)
+			for k3 in vl:
+				if bp.ok(i0 + vc, vj + k3) and bp.getf(i0 + vc, vj + k3) == 0:
+					bp.bg(i0 + vc, vj + k3, Defs.LEAF, false)
 	# the wilds move in
 	if not outdoors:
 		return
@@ -600,15 +745,6 @@ func _ruin(bp: BP, i0: int, i1: int, j0: int, j1: int, b: String, outdoors := tr
 					bp.fg(i, j, Defs.SAND)
 				elif bp.ok(i, j) and bp.getf(i, j) == 255:
 					bp.fg(i, j, Defs.SAND, F_FILL)
-	elif b == "forest" or b == "marsh" or b == "ocean":
-		for n in rng.randi_range(2, 5):
-			var vi := rng.randi_range(i0, i1)
-			var vj := rng.randi_range(j0 + cut, j1)
-			for k in rng.randi_range(4, 12):
-				if bp.ok(vi, vj) and bp.getb(vi, vj) != 255:
-					bp.bg(vi, vj, Defs.LEAF, false)
-				vj += 1
-				vi += rng.randi_range(-1, 1)
 
 func _break(bp: BP, i: int, j: int) -> void:
 	if not bp.ok(i, j) or bp.is_fill(i, j):
@@ -739,8 +875,8 @@ func _castle(x: int, b: String, ruined: bool, build: bool) -> bool:
 	hi = mini(hi, _roof(bp, kx, kt, keep_w, st))
 	# the lord's hoard on the top floor, well guarded
 	var hf := lb - 2 * STOREY
-	_chest(bp, kx + keep_w / 2 - 13, hf)
-	_chest(bp, kx + keep_w / 2 + 5, hf)
+	_chest(bp, kx + keep_w / 2 - 15, hf)
+	_chest(bp, kx + keep_w / 2 + 3, hf)
 	_guard(bp, kx + keep_w / 2 - 24, hf, "skeleton")
 	_guard(bp, kx + keep_w / 2 + 24, hf, "skeleton")
 	var c2 := kx + keep_w + court
@@ -791,10 +927,10 @@ func _temple(x: int, ruined: bool, build: bool) -> bool:
 	bp.rect_bg(ox + 3, lb - DOOR, cx - 22, lb - 1, m)
 	bp.rect(cx - 22, lb - 36, cx + 22, lb - 1, 0)
 	bp.rect_bg(cx - 22, lb - 36, cx + 22, lb - 1, m)
-	_chest(bp, cx - 17, lb)
-	_chest(bp, cx + 9, lb)
+	_chest(bp, cx - 20, lb)
+	_chest(bp, cx + 8, lb)
 	if rng.randf() < 0.6:
-		_chest(bp, cx - 4, lb)
+		_chest(bp, cx - 6, lb)
 	_guard(bp, cx - 10, lb, "skeleton")
 	_guard(bp, cx + 13, lb, "skeleton")
 	if not ruined:
@@ -993,8 +1129,8 @@ func _vault(x: int, build: bool) -> void:
 	bp.solid(0, 0, w - 1, h - 1, Defs.OBSIDIAN)
 	bp.rect(2, 2, w - 3, h - 3, 0)
 	bp.rect_bg(2, 2, w - 3, h - 3, Defs.BRICK)
-	for k in 4:
-		_chest(bp, 4 + k * 9, h - 2)
+	for k in 3:
+		_chest(bp, 4 + k * 13, h - 2)
 	bp.bg(3, h - 22, Defs.TORCH)
 	bp.bg(w - 4, h - 22, Defs.TORCH)
 	labels.append({"x0": posmod(x - w / 2, N0), "w": w, "ymin": y, "ymax": y + h, "name": "Sealed Vault"})
