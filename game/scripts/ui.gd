@@ -303,6 +303,10 @@ func _build_settings() -> void:
 			"Off draws clean colour bands like a SNES. Retro is the old checkerboard look."],
 		["Pixel size", "pixel", [["Auto", 0], ["3", 3], ["4", 4], ["5", 5], ["6", 6]],
 			"How big each world pixel is on screen. Bigger shows less of the world, closer up."],
+		["Music", "music", [["Off", 0], ["25%", 25], ["50%", 50], ["75%", 75], ["100%", 100]],
+			"Music volume (tracks go in game/audio/music)."],
+		["Sound", "sound", [["Off", 0], ["25%", 25], ["50%", 50], ["75%", 75], ["100%", 100]],
+			"Sound effects volume."],
 	]
 	for row in rows:
 		var box := VBoxContainer.new()

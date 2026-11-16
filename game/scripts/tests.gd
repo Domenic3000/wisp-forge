@@ -318,7 +318,9 @@ func run() -> void:
 		for m in Defs.NM:
 			after += g.player.inv[m]
 		_ok("F opens a chest and gives loot", cobj.opened and after > before, "opened %s, satchel %d -> %d" % [cobj.opened, before, after])
-		_ok("an opened chest stays behind", g.chests.has(cobj) and cobj.opened, "")
+		var shown: bool = g.chests.has(cobj)
+		await _frames(90)
+		_ok("an opened chest shows its inside, then vanishes", shown and not g.chests.has(cobj), "")
 		# right-click leaves a building's back wall alone; Shift + right-click (deconstruct) takes it
 		var raw2: PackedByteArray = g.gpu.read_world()
 		var boff: int = Defs.total_cells() * 4

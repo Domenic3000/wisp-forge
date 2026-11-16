@@ -9,6 +9,8 @@ const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Tests := preload("res://scripts/tests.gd")
+const Audio := preload("res://scripts/audio.gd")
+var audio
 
 const DAY_LEN := 60.0 * 7.0 * 60.0   # frames per day (7 minutes)
 const REACH := 64.0
@@ -33,6 +35,7 @@ class Body:
 ## open whole. You walk through it; F (or digging at it) opens it.
 class Chest extends Body:
 	var opened := false
+	var open_t := -1          # frames since it was opened (-1: closed); it vanishes after a moment
 	func _init() -> void:
 		w = float(Defs.CHEST_W)
 		h = float(Defs.CHEST_H)
@@ -84,7 +87,7 @@ var sky_rain := 0.0        # rain as seen in the sky, eased between biomes
 var cam_unwrap := 0.0      # camera angle without the jump at a full turn (for parallax)
 var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
-var settings := {"quality": "high", "dither": "off", "pixel": 0}
+var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80}
 var boss_info := Vector4.ZERO
 var scale_px := 4
 var VW := 480
@@ -254,9 +257,13 @@ func _ready() -> void:
 	ui = UI.new()
 	ui.game = self
 	add_child(ui)
+	audio = Audio.new()
+	audio.game = self
+	add_child(audio)
 	gpu = GpuWorld.new()
 	_load_settings()
 	gpu.apply_quality(settings["quality"])
+	_apply_volumes()
 	_layout()
 	get_viewport().size_changed.connect(_layout)
 	if not gpu.init():
@@ -415,6 +422,7 @@ func _apply_counts(m: Mage) -> void:
 			shake = maxf(shake, 1.2)
 			if _creak_t <= 0 and dp.distance_to(m.pos) < 70.0:
 				ui.toast("Something nearby creaks and shifts…", Color(0.85, 0.75, 0.6), 2.0)
+				audio.play("creak", dp)
 				_creak_t = 900
 	var total := 0
 	for t in Defs.NM:
@@ -492,6 +500,7 @@ func _flush_loot() -> void:
 	for m in _loot_acc:
 		parts_txt.append("+%d %s" % [_loot_acc[m], Defs.NAMES[m]])
 	ui.toast("Treasure! " + ", ".join(parts_txt), Color(1.0, 0.85, 0.3), 5.0)
+	audio.play("coin")
 	_loot_acc.clear()
 
 ## The chests: made when the planet is generated (from the structure plans), saved with the world.
@@ -509,14 +518,35 @@ func _make_chests(loaded: bool) -> void:
 			c2.pos = e["pos"]
 			chests.append(c2)
 
-## Chests near a mage obey gravity: one rigid object, so it falls and lands whole.
+## Chests near a mage obey gravity: one rigid object, so it falls and lands whole. A chest
+## resting on something stays exactly where it is (the collision grid is built around the mage,
+## so re-checking a resting chest every frame made it bob as you walked); it only moves again
+## once nothing is under it.
+const CHEST_VANISH := 110      # an opened chest shows its empty inside, then fades away in sparkles
 func _update_chests() -> void:
-	for c in chests:
+	for k in range(chests.size() - 1, -1, -1):
+		var c: Chest = chests[k]
+		if c.open_t >= 0:
+			c.open_t += 1
+			if c.open_t > 50 and c.open_t % 3 == 0:
+				var sp := Vector2(randf() - 0.5, randf() - 0.5) * Vector2(c.w, c.h)
+				_particle(c.pos + sp, Vector2((randf() - 0.5) * 0.4, -0.4 - randf() * 0.8), 40 + randi() % 30, Color(1.0, 0.85, 0.4), true, -0.005)
+			if c.open_t >= CHEST_VANISH:
+				for n in 24:
+					_particle(c.pos, Vector2(randf() - 0.5, randf() - 0.5).normalized() * (0.6 + randf() * 1.2), 30 + randi() % 30, Color(1.0, 0.9, 0.5), true, 0.0)
+				lights.append([c.pos, 24.0, Color(1.2, 0.95, 0.5)])
+				audio.play("chest_vanish", c.pos)
+				chests.remove_at(k)
+				continue
 		var near := _nearest_mage(c.pos)
 		if c.pos.distance_squared_to(near.pos) > 250.0 * 250.0:
 			continue
 		_use_grid(near)
 		if not in_grid(c.pos, 16.0):
+			continue
+		var l := to_grid(c.pos)
+		if c.on_ground and box_solid(l.x - c.w * 0.5, l.y - c.h * 0.5 + 1.5, c.w, c.h):
+			c.vy = 0.0           # still something under it: it stays put
 			continue
 		c.vx *= 0.8
 		c.vy = minf(c.vy + 0.17 * gravity_at(c.pos), 6.0)
@@ -565,6 +595,7 @@ func _try_open_chest() -> void:
 	if ruin and randf() < 0.15:
 		# not a chest at all
 		chests.erase(c)
+		audio.play("mimic", centre)
 		var m: Enemy = spawn_enemy("mimic", centre)
 		m.vy = -2.5
 		m.t = 20
@@ -579,6 +610,8 @@ func _try_open_chest() -> void:
 	elif "Watchtower" in place or "Mine" in place:
 		rare = 0.25
 	c.opened = true
+	c.open_t = 0
+	audio.play("chest_open", centre)
 	_roll_loot(7, 1.6)
 	_rare_find(rare)
 	for k in 14:
@@ -624,6 +657,7 @@ func _rare_find(p: float) -> void:
 		"boots":
 			ui.toast("RARE FIND: Featherstep Boots. You jump higher.", Color(0.7, 1.0, 0.7), 7.0)
 	shake = maxf(shake, 3.0)
+	audio.play("rare")
 	save_game()
 
 func _check_chest_hint() -> void:
@@ -978,11 +1012,13 @@ func _update_player(m: Mage) -> void:
 		if (m.ground_t <= 6 or p.in_liquid) and p.vy > -1.0:
 			p.vy = -2.3 if p.in_liquid else (-4.6 if m.items.has("boots") else -3.9)
 			m.jump_buf = 0
+			audio.play("jump", m.pos, 0.6)
 			m.ground_t = 99
 			m.air_time = 0
 	m.jump_held = jump
 	m.floating = jump and not p.on_ground and not p.in_liquid and m.air_time > 10 and m.mana > 0.5
 	if m.floating:
+		audio.play("levitate", p.pos, 0.35)
 		p.vy -= g + 0.28
 		p.vy = maxf(p.vy, -2.5)
 		m.mana -= 0.55
@@ -998,9 +1034,15 @@ func _update_player(m: Mage) -> void:
 	else:
 		p.vy += g
 	p.vy = minf(p.vy, 6.0)
+	var was_air := m.air_time
+	var a0 := p.anim
 	move_body(p)
 	if p.on_ground:
 		p.anim += absf(p.vx) * 0.13
+		if int(p.anim * 0.5) != int(a0 * 0.5):
+			audio.play("step", p.pos, 0.35)
+		if was_air > 18:
+			audio.play("land", p.pos, clampf(was_air / 60.0, 0.3, 1.0))
 	# hazards
 	var l := to_grid(p.pos)
 	var bx := l.x - p.w * 0.5
@@ -1039,6 +1081,8 @@ func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 	m.hp -= dmg
 	if m.local:
 		hurt_flash = minf(1.0, hurt_flash + (0.6 if hit else 0.05))
+		if hit:
+			audio.play("hurt", m.pos)
 	if m.hp <= 0:
 		m.hp = 0
 		if m.local:
@@ -1085,11 +1129,14 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		return
 	if id == "blink":
 		if _blink(m, aim):
+			audio.play("blink", m.pos)
 			m.mana -= float(s["mana"])
 			m.cast_cd = s["cd"]
 		return
 	m.mana -= float(s["mana"])
 	m.cast_cd = s["cd"]
+	var snd := {"spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
+	audio.play(snd.get(id, "spark"), m.pos, 0.8)
 	var st := _staff(m, aim)
 	var pd: Dictionary = Defs.PROJ[id]
 	_spawn_proj(id, st[0], st[1] * float(pd["speed"]), "player")
@@ -1133,6 +1180,7 @@ func _reach(m: Mage, aim: Vector2) -> Vector2:
 
 func _excavate(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
+	audio.play("dig", p, 0.7)
 	if m.local and _dig_open_t <= 0 and _dig_hits_chest(p, m.dig_r):
 		_dig_open_t = 30
 		_try_open_chest()
@@ -1153,6 +1201,7 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 	var budget := mini(m.inv[m.mat], 14)
 	m.pending_place = budget
 	brushes.append([p, 2.6, 5, m.mat, 0, budget, 9.0, m.slot])
+	audio.play("place", p, 0.6)
 
 func _update_projectiles() -> void:
 	for k in range(projs.size() - 1, -1, -1):
@@ -1252,6 +1301,7 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 
 func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 	brushes.append([p, r, 2, kind, power, 0, 0])
+	audio.play("boom", p, clampf(r / 14.0, 0.4, 1.2), 1.3 - clampf(r / 40.0, 0.0, 0.5))
 	for k in int(r * 4):
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 3.0, 15 + randi() % 20, Color(1, 0.6 + randf() * 0.3, 0.25), true, 0.03)
 	lights.append([p, r * 4.0, Color(1.5, 0.8, 0.3)])
@@ -1284,6 +1334,7 @@ func spawn_enemy(type: String, p: Vector2) -> Enemy:
 func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
 	e.hp -= dmg
 	e.flash = 6
+	audio.play("hit", e.pos, 0.7)
 	if not e.boss:
 		e.vx += kx
 		e.vy += ky
@@ -1293,6 +1344,7 @@ func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
 
 func _kill_enemy(e: Enemy) -> void:
 	e.dead = true
+	audio.play("foe_die", e.pos)
 	if e.guard_id >= 0:
 		var slain: Array = planet_state.get("slain", [])
 		if not slain.has(e.guard_id):
@@ -1483,6 +1535,7 @@ func _update_enemies() -> void:
 				if not e.awake and dist < 110:
 					e.awake = true
 					ui.toast("VULKHAR, THE EMBER GOLEM awakens!", Color(1, 0.48, 0.16), 4.0)
+					audio.play("roar", e.pos, 1.2)
 					shake = 10.0
 				if e.awake and not tgt.dead:
 					var enraged := e.hp < e.max_hp * 0.4
@@ -1689,6 +1742,7 @@ func recipe_affordable(r: Dictionary) -> bool:
 func craft(r: Dictionary) -> bool:
 	if recipe_done(r) or not recipe_unlocked(r) or not recipe_affordable(r):
 		return false
+	audio.play("forge")
 	for k in r["cost"]:
 		player.inv[int(k)] -= int(r["cost"][k])
 	if r.has("give"):
@@ -1932,6 +1986,8 @@ func _load_settings() -> void:
 				if d.has(k):
 					settings[k] = d[k]
 	settings["pixel"] = int(settings["pixel"])   # JSON numbers come back as floats
+	settings["music"] = int(settings["music"])
+	settings["sound"] = int(settings["sound"])
 
 func set_setting(key: String, value) -> void:
 	settings[key] = value
@@ -1942,6 +1998,12 @@ func set_setting(key: String, value) -> void:
 		gpu.apply_quality(value)
 	if key == "quality" or key == "pixel":
 		_layout()
+	_apply_volumes()
+
+func _apply_volumes() -> void:
+	if audio:
+		audio.music_volume = float(settings["music"]) / 100.0
+		audio.sfx_volume = float(settings["sound"]) / 100.0
 
 ## Saves live in "Wisp Forge/saves" so the whole game stays in one portable folder.
 ## The test mode uses its own folder inside it, so your real saves are never touched.

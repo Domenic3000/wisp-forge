@@ -61,15 +61,16 @@ func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
 		sp = sp.round()
 	return [sp, raw]
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false) -> void:
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
 	# upright in the unrolled view; turned with the planet's curve in the round map view
 	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
 	var z: float = game.zoom
-	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / z
+	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
 	var mod := Color(4, 4, 4) if white else _lit(game.world_to_screen(wpos))
+	mod.a = alpha
 	# feet (last opaque row, above the outline) rest on the bottom of the body box
 	var ts := t.get_size()
 	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
@@ -88,7 +89,14 @@ func _draw() -> void:
 		var csp: Vector2 = game.world_to_screen(c.pos)
 		if csp.x < -20 or csp.y < -20 or csp.x > game.VW + 20 or csp.y > game.VH + 20:
 			continue
-		_sprite("chest_open" if c.opened else "chest", c.pos, false, false, c.h, c.on_ground)
+		# an opened chest stands open for a moment, then glows, shrinks and fades into sparkles
+		var ch_a := 1.0
+		var ch_sq := 1.0
+		if c.open_t > 50:
+			var ch_f := clampf(float(c.open_t - 50) / 60.0, 0.0, 1.0)   # CHEST_VANISH (110) - 50
+			ch_a = 1.0 - ch_f * ch_f
+			ch_sq = 1.0 - ch_f * 0.7
+		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq)
 	# foes
 	for e in game.enemies:
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)
