@@ -26,20 +26,43 @@ bool onSite(float th, float margin) {
 vec4 biomeA(int b) { return P.p[8 + 2 * b]; }   // off, amp, topMat, flags
 vec4 biomeB(int b) { return P.p[9 + 2 * b]; }   // subMat, topD, subD, ug + flora*16
 
+// how many surface columns from the nearest building site (0 inside one)
+float siteDist(float th) {
+	int n = int(sites.s[0].x);
+	float col = th / TAU * float(SH_N[0]);
+	float N0 = float(SH_N[0]);
+	float best = 1e6;
+	for (int k = 0; k < n; k++) {
+		vec4 q = sites.s[1 + k];
+		float d0 = col - q.x; d0 -= N0 * floor(d0 / N0);   // columns past the site start
+		float len = q.y - q.x;
+		float dist = d0 <= len ? 0.0 : min(d0 - len, N0 - d0);
+		best = min(best, dist);
+	}
+	return best;
+}
+
+// Caves: winding tunnels (a thin band of one noise field) and caverns (high values of another).
+// How much cave there is fades smoothly, never stopping at a hard line: toward the surface
+// (except at cave mouths) and toward building sites (so foundations don't hang over a hole),
+// the tunnels narrow to rounded tips and the caverns shrink, instead of ending in flat walls.
 bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float d = rs - r;
 	if (d < 2.0 || r <= coreR + 3.0) return false;
-	// no caves opening right under a building: its foundations would hang over the hole
-	if (d < 40.0 && onSite(angleOf(p), 6.0)) return false;
+	float th = angleOf(p);
 	float entr = fbm(normalize(p) * RS0 / 34.0, SEED + 11, 1);
-	if (d < 12.0 && entr < 0.72) return false;
+	float wob = (fbm(p / 23.0, SEED + 13, 2) - 0.5) * 14.0;
+	float ks = entr >= 0.72 ? 1.0 : smoothstep(6.0, 22.0, d + wob);
+	float kt = d > 75.0 ? 1.0 : max(smoothstep(4.0, 34.0, siteDist(th) + wob), smoothstep(40.0, 75.0, d + wob));
+	float k = ks * kt;
+	if (k < 0.02) return false;
 	float df = clamp(d / max(rs - coreR, 1.0), 0.0, 1.0);
 	// tunnels and caverns sized for the 17-cell-tall mage (scaled up 1.4x)
 	float n1 = fbm(p / 62.0, SEED + 10, 2);
-	if (abs(n1 - 0.5) < 0.022 + 0.016 * df) return true;
-	if (d > 30.0) {
+	if (abs(n1 - 0.5) < (0.022 + 0.016 * df) * k) return true;
+	if (d > 24.0) {
 		float n2 = fbm(p / 110.0, SEED + 12, 2);
-		if (n2 > 0.675 - 0.07 * df) return true;
+		if (n2 > 0.675 - 0.07 * df + (1.0 - k) * 0.3 + (1.0 - smoothstep(24.0, 40.0, d)) * 0.1) return true;
 	}
 	return false;
 }

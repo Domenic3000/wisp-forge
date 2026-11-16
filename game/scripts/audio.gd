@@ -28,7 +28,7 @@ var _mood := ""
 var _fade := 1.0
 
 const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak": 50, "rumble": 25, "land": 8,
-	"place": 5, "levitate": 14, "splash": 10}
+	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3}
 
 func _ready() -> void:
 	for k in 10:
@@ -229,6 +229,8 @@ func _build_sfx() -> void:
 	sfx["blink"] = _wav(_sweep(0.22, 300.0, 1800.0, "sine", 8.0, 0.25))
 	sfx["place"] = _wav(_noise(0.07, 0.2, 45.0, 0.6))
 	sfx["hurt"] = _wav(_sweep(0.18, 420.0, 140.0, "square", 12.0, 0.25))
+	sfx["ui_hover"] = _wav(_sweep(0.05, 900.0, 1100.0, "sine", 40.0, 0.10))
+	sfx["ui_click"] = _wav(_mix(_chime([784.0, 1175.0], 0.035, 0.18, 0.12), _noise(0.03, 0.4, 80.0, 0.15)))
 	sfx["hit"] = _wav(_mix(_noise(0.08, 0.5, 40.0, 0.6), _sweep(0.08, 300.0, 150.0, "square", 30.0, 0.15)))
 	sfx["foe_die"] = _wav(_mix(_noise(0.3, 0.2, 10.0, 0.7), _sweep(0.25, 500.0, 90.0, "saw", 10.0, 0.18)))
 	sfx["chest_open"] = _wav(_mix(_sweep(0.35, 110.0, 160.0, "saw", 6.0, 0.12), _chime([523.25, 659.25, 783.99, 1046.5], 0.08, 0.6, 0.18)))

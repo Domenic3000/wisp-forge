@@ -628,11 +628,17 @@ func _foundation(bp: BP, ox: int, base: int, w: int, m: int) -> void:
 			bp.fg(i, j, m, F_FILL | F_ANCHOR)
 
 ## dig out the hillside in front of doors so you can walk in
+## The level ground in front of a building's doors. Across the outer YARD columns at each end
+## it ramps smoothly back to the natural ground (no vertical cuts or steps to trip on).
 func _yard(bp: BP, i0: int, i1: int, base: int) -> void:
-	bp.rect(i0, base - DOOR - 5, i1, base - 1, 0)
 	for i in range(i0, i1 + 1):
 		var g := ground_row(bp.x0 + i) - bp.y0
-		for j in range(base, maxi(base + 1, g + 2)):
+		var e := mini(i - i0, i1 - i)
+		var t := clampf(1.0 - float(e) / float(YARD), 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		var target := int(round(lerpf(float(base), float(g), t)))
+		bp.rect(i, mini(target, base) - DOOR - 5, i, target - 1, 0)
+		for j in range(target, maxi(target + 1, g + 2)):
 			bp.fg(i, j, Defs.DIRT, F_FILL | F_ANCHOR)
 
 # ------------------------------------------------------------------ ruins ---
@@ -771,7 +777,7 @@ func _blockr(seed_r: int, bi: int, bj: int, k: int) -> float:
 	return float(posmod(h, 10007)) / 10007.0
 
 # ------------------------------------------------------------- structures ---
-const YARD := 8
+const YARD := 12
 
 func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in := 0) -> bool:
 	var w := w_in if w_in > 0 else rng.randi_range(46, 62)

@@ -1,5 +1,10 @@
 extends CanvasLayer
 ## HUD, satchel, hotbar, toasts, forge panel, title / death / loading screens.
+##
+## Everything shares one look: dark indigo panels inside a gold pixel frame (a small 9-slice
+## texture drawn in code, so the trim stays crisp at any size), serif headings, gold text.
+
+const TitleScreen := preload("res://scripts/title_screen.gd")
 
 var game
 var root: Control
@@ -7,6 +12,7 @@ var hud: Control
 var hp_bar: ProgressBar
 var mp_bar: ProgressBar
 var br_bar: ProgressBar
+var br_row: Control
 var hp_lbl: Label
 var mp_lbl: Label
 var info: Label
@@ -20,7 +26,7 @@ var boss_lbl: Label
 var dig_warn: Label
 var forge: PanelContainer
 var forge_list: VBoxContainer
-var title: Control
+var title
 var death: Control
 var loading: Control
 var loading_lbl: Label
@@ -30,39 +36,175 @@ var _opt_btns := []       # [button, key, value]
 var _hot_key := ""
 var _inv_key := ""
 var _toast_items: Array = []
+var _frames := {}         # cached frame styles
+var _serif: SystemFont
+var _loading_base := ""
+var _t := 0.0
 
 const GOLD := Color(1, 0.82, 0.23)
-const DIM := Color(0.55, 0.58, 0.72)
+const CREAM := Color(1, 0.93, 0.7)
+const DIM := Color(0.62, 0.62, 0.78)
+const TEXT := Color(0.88, 0.89, 1)
+const PANEL_BG := Color(0.055, 0.045, 0.1, 0.93)
+const TRIM := Color(0.8, 0.6, 0.24)
+const TRIM_DIM := Color(0.36, 0.31, 0.5)
+const OUTLINE := Color(0.03, 0.02, 0.06)
+
+const ICONS := {
+	"heart": [".XX.XX.", "XoXXXXX", "XXXXXXX", ".XXXXX.", "..XXX..", "...X..."],
+	"drop": ["..X..", "..X..", ".XXX.", "XoXXX", "XoXXX", "XXXXX", ".XXX."],
+	"bubble": [".XXX.", "Xo..X", "X...X", "X...X", ".XXX."],
+	"skull": [".XXX.", "XXXXX", "X.X.X", "XXXXX", ".X.X."],
+}
 
 func _ready() -> void:
 	layer = 10
+	_serif = SystemFont.new()
+	_serif.font_names = PackedStringArray(["Constantia", "Palatino Linotype", "Book Antiqua", "Georgia", "Cambria", "DejaVu Serif", "serif"])
+	_serif.font_weight = 600
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.theme = _make_theme()
 	add_child(root)
 	_build_hud()
 	_build_forge()
 	_build_screens()
 
-# ------------------------------------------------------------- builders --
-func _panel_style(bg: Color, border: Color) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(2)
-	sb.set_content_margin_all(6)
+func _process(delta: float) -> void:
+	_t += delta
+	if loading and loading.visible:
+		loading_lbl.text = _loading_base + ".".repeat(int(_t * 3.0) % 4)
+
+# ---------------------------------------------------------------- style --
+## A pixel frame: dark outline, gold trim, a darker inner trim and little studs at the corners,
+## drawn at 2 screen pixels per art pixel and used as a 9-slice.
+func _frame(bg: Color, trim: Color, pad := 8, pad_x := -1) -> StyleBoxTexture:
+	if pad_x < 0:
+		pad_x = pad
+	var key := "%s|%s|%d|%d" % [bg.to_html(), trim.to_html(), pad, pad_x]
+	if _frames.has(key):
+		return _frames[key]
+	var n := 12
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var inner := trim.darkened(0.55)
+	var stud := trim.lightened(0.55)
+	for y in n:
+		for x in n:
+			var ring := mini(mini(x, y), mini(n - 1 - x, n - 1 - y))
+			var corner := (x == 0 or x == n - 1) and (y == 0 or y == n - 1)
+			var c := bg
+			if corner:
+				c = Color(0, 0, 0, 0)
+			elif ring == 0:
+				c = OUTLINE
+			elif ring == 1:
+				c = trim
+			elif ring == 2:
+				c = inner
+			if (x == 2 or x == n - 3) and (y == 2 or y == n - 3):
+				c = stud
+			img.set_pixel(x, y, c)
+	img.resize(n * 2, n * 2, Image.INTERPOLATE_NEAREST)
+	var sb := StyleBoxTexture.new()
+	sb.texture = ImageTexture.create_from_image(img)
+	sb.set_texture_margin_all(6)
+	sb.content_margin_left = pad_x
+	sb.content_margin_right = pad_x
+	sb.content_margin_top = pad
+	sb.content_margin_bottom = pad
+	_frames[key] = sb
 	return sb
 
-func _bar(col: Color) -> ProgressBar:
+func _panel(bg := PANEL_BG, trim := TRIM, pad := 10) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _frame(bg, trim, pad))
+	return p
+
+## Kept for callers that want a plain frame style.
+func _panel_style(bg: Color, border: Color) -> StyleBox:
+	return _frame(bg, border, 6)
+
+## Bar fill: a base colour with a bright top edge and a shaded bottom, so bars read as glass tubes.
+func _fill(col: Color) -> StyleBoxTexture:
+	var img := Image.create(2, 6, false, Image.FORMAT_RGBA8)
+	var rows := [col.lightened(0.45), col.lightened(0.15), col, col.darkened(0.15), col.darkened(0.3), col.darkened(0.45)]
+	for y in 6:
+		for x in 2:
+			img.set_pixel(x, y, rows[y])
+	var sb := StyleBoxTexture.new()
+	sb.texture = ImageTexture.create_from_image(img)
+	sb.texture_margin_top = 2
+	sb.texture_margin_bottom = 3
+	return sb
+
+func _make_theme() -> Theme:
+	var th := Theme.new()
+	var grab := StyleBoxFlat.new()
+	grab.bg_color = TRIM
+	grab.content_margin_left = 4
+	grab.content_margin_right = 4
+	var grab_h: StyleBoxFlat = grab.duplicate()
+	grab_h.bg_color = GOLD
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.03, 0.02, 0.06, 0.6)
+	track.content_margin_left = 4
+	track.content_margin_right = 4
+	th.set_stylebox("grabber", "VScrollBar", grab)
+	th.set_stylebox("grabber_highlight", "VScrollBar", grab_h)
+	th.set_stylebox("grabber_pressed", "VScrollBar", grab_h)
+	th.set_stylebox("scroll", "VScrollBar", track)
+	th.set_stylebox("panel", "TooltipPanel", _frame(Color(0.06, 0.05, 0.11, 0.97), TRIM, 6))
+	th.set_color("font_color", "TooltipLabel", TEXT)
+	return th
+
+func _icon(key: String, col: Color, zoom := 2) -> TextureRect:
+	var rows: Array = ICONS[key]
+	var w: int = rows[0].length()
+	var h: int = rows.size()
+	var img := Image.create(w + 2, h + 2, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in h:
+		var row: String = rows[y]
+		for x in w:
+			if row[x] == "X":
+				img.set_pixel(x + 1, y + 1, col)
+			elif row[x] == "o":
+				img.set_pixel(x + 1, y + 1, col.lightened(0.6))
+	# outline
+	var src: Image = img.duplicate()
+	for y in h + 2:
+		for x in w + 2:
+			if src.get_pixel(x, y).a > 0.0:
+				continue
+			for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var q: Vector2i = Vector2i(x, y) + o
+				if q.x >= 0 and q.y >= 0 and q.x < w + 2 and q.y < h + 2 and src.get_pixel(q.x, q.y).a > 0.0:
+					img.set_pixel(x, y, OUTLINE)
+					break
+	var tr := TextureRect.new()
+	tr.texture = ImageTexture.create_from_image(img)
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.custom_minimum_size = Vector2(w + 2, h + 2) * zoom
+	tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tr
+
+# ------------------------------------------------------------- builders --
+func _bar(col: Color, h := 16) -> ProgressBar:
 	var b := ProgressBar.new()
-	b.custom_minimum_size = Vector2(240, 16)
+	b.custom_minimum_size = Vector2(220, h)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	b.show_percentage = false
 	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.07, 0.07, 0.12)
-	bg.border_color = Color(0.16, 0.17, 0.27)
+	bg.bg_color = Color(0.03, 0.025, 0.06)
+	bg.border_color = OUTLINE
 	bg.set_border_width_all(2)
-	var fg := StyleBoxFlat.new()
-	fg.bg_color = col
+	bg.set_content_margin_all(2)
+	var fg := _fill(col)
 	b.add_theme_stylebox_override("background", bg)
 	b.add_theme_stylebox_override("fill", fg)
 	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -79,28 +221,74 @@ func _label(txt: String, size: int, col: Color) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
-func _button(txt: String) -> Button:
+## A heading in the serif face, with a deeper shadow.
+func _head(txt: String, size: int, col := CREAM) -> Label:
+	var l := _label(txt, size, col)
+	l.add_theme_font_override("font", _serif)
+	l.add_theme_color_override("font_shadow_color", Color(0.18, 0.08, 0.3, 1))
+	var off := 2 if size >= 20 else 1
+	l.add_theme_constant_override("shadow_offset_x", off)
+	l.add_theme_constant_override("shadow_offset_y", off)
+	return l
+
+## A divider: a thin gold rule with a diamond in the middle.
+func _rule(w := 260) -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(w, 10)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.draw.connect(func():
+		var mid := c.size * 0.5
+		c.draw_rect(Rect2(0, mid.y - 1, c.size.x, 2), Color(TRIM, 0.7))
+		c.draw_rect(Rect2(mid.x - 3, mid.y - 3, 6, 6), GOLD)
+		c.draw_rect(Rect2(mid.x - 1, mid.y - 1, 2, 2), Color(1, 0.97, 0.8)))
+	return c
+
+func _button(txt: String, big := false) -> Button:
 	var b := Button.new()
 	b.text = txt
 	b.focus_mode = Control.FOCUS_NONE
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	var n := StyleBoxFlat.new()
-	n.bg_color = GOLD
-	n.set_content_margin_all(6)
-	n.content_margin_left = 14
-	n.content_margin_right = 14
-	var h: StyleBoxFlat = n.duplicate()
-	h.bg_color = Color(1, 0.9, 0.45)
-	var d: StyleBoxFlat = n.duplicate()
-	d.bg_color = Color(0.27, 0.28, 0.38)
-	b.add_theme_stylebox_override("normal", n)
-	b.add_theme_stylebox_override("hover", h)
-	b.add_theme_stylebox_override("pressed", h)
-	b.add_theme_stylebox_override("disabled", d)
-	b.add_theme_color_override("font_color", Color(0.1, 0.06, 0.12))
-	b.add_theme_color_override("font_hover_color", Color(0.1, 0.06, 0.12))
-	b.add_theme_color_override("font_disabled_color", Color(0.55, 0.55, 0.65))
+	var py := 10 if big else 7
+	var px := 22 if big else 12
+	b.add_theme_stylebox_override("normal", _frame(Color(0.11, 0.08, 0.18, 0.95), TRIM, py, px))
+	b.add_theme_stylebox_override("hover", _frame(Color(0.24, 0.17, 0.36, 0.97), GOLD, py, px))
+	b.add_theme_stylebox_override("pressed", _frame(Color(0.07, 0.05, 0.12, 0.97), GOLD, py, px))
+	b.add_theme_stylebox_override("disabled", _frame(Color(0.07, 0.07, 0.1, 0.9), Color(0.3, 0.3, 0.36), py, px))
+	b.add_theme_font_override("font", _serif)
+	b.add_theme_font_size_override("font_size", 22 if big else 14)
+	b.add_theme_color_override("font_color", CREAM)
+	b.add_theme_color_override("font_hover_color", Color(1, 0.98, 0.88))
+	b.add_theme_color_override("font_pressed_color", GOLD)
+	b.add_theme_color_override("font_disabled_color", Color(0.45, 0.45, 0.52))
+	b.add_theme_color_override("font_outline_color", OUTLINE)
+	b.add_theme_constant_override("outline_size", 4 if big else 3)
+	if big:
+		b.custom_minimum_size = Vector2(300, 0)
+	b.mouse_entered.connect(func():
+		if not b.disabled:
+			_sfx("ui_hover")
+			b.pivot_offset = b.size * 0.5
+			b.create_tween().tween_property(b, "scale", Vector2(1.04, 1.04), 0.08))
+	b.mouse_exited.connect(func():
+		b.pivot_offset = b.size * 0.5
+		b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.1))
+	b.pressed.connect(func(): _sfx("ui_click"))
 	return b
+
+## Shows a settings option as chosen (filled gold) or not.
+func _set_chosen(b: Button, on: bool) -> void:
+	if on:
+		b.add_theme_stylebox_override("normal", _frame(Color(0.5, 0.36, 0.1, 0.97), Color(1, 0.88, 0.5), 7, 12))
+		b.add_theme_stylebox_override("hover", _frame(Color(0.58, 0.42, 0.14, 0.97), Color(1, 0.94, 0.66), 7, 12))
+		b.add_theme_color_override("font_color", Color(1, 0.98, 0.9))
+	else:
+		b.add_theme_stylebox_override("normal", _frame(Color(0.11, 0.08, 0.18, 0.95), TRIM_DIM, 7, 12))
+		b.add_theme_stylebox_override("hover", _frame(Color(0.24, 0.17, 0.36, 0.97), GOLD, 7, 12))
+		b.add_theme_color_override("font_color", Color(0.72, 0.7, 0.84))
+
+func _sfx(n: String) -> void:
+	if game != null and game.get("audio") != null:
+		game.audio.play(n)
 
 func _build_hud() -> void:
 	hud = Control.new()
@@ -108,16 +296,21 @@ func _build_hud() -> void:
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.visible = false
 	root.add_child(hud)
+	# the character plate: health, mana, breath and where you are
+	var plate := _panel(Color(0.05, 0.04, 0.09, 0.82), TRIM, 9)
+	plate.position = Vector2(12, 10)
+	plate.custom_minimum_size = Vector2(290, 0)
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(plate)
 	var bars := VBoxContainer.new()
-	bars.position = Vector2(14, 12)
+	bars.add_theme_constant_override("separation", 5)
 	bars.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud.add_child(bars)
-	hp_bar = _bar(Color(0.85, 0.25, 0.3))
-	mp_bar = _bar(Color(0.3, 0.45, 0.9))
-	br_bar = _bar(Color(0.5, 0.85, 0.9))
-	br_bar.custom_minimum_size = Vector2(240, 8)
-	hp_lbl = _label("", 11, Color.WHITE)
-	mp_lbl = _label("", 11, Color.WHITE)
+	plate.add_child(bars)
+	hp_bar = _bar(Color(0.86, 0.2, 0.26), 18)
+	mp_bar = _bar(Color(0.26, 0.42, 0.95), 18)
+	br_bar = _bar(Color(0.5, 0.85, 0.92), 10)
+	hp_lbl = _label("", 12, Color.WHITE)
+	mp_lbl = _label("", 12, Color.WHITE)
 	hp_bar.add_child(hp_lbl)
 	mp_bar.add_child(mp_lbl)
 	# the numbers fill their bar and sit centred in it
@@ -125,40 +318,54 @@ func _build_hud() -> void:
 		l.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	bars.add_child(hp_bar)
-	bars.add_child(mp_bar)
-	bars.add_child(br_bar)
-	info = _label("", 13, Color(0.9, 0.92, 1))
+		l.add_theme_color_override("font_outline_color", OUTLINE)
+		l.add_theme_constant_override("outline_size", 3)
+	for pair in [["heart", Color(0.95, 0.3, 0.35), hp_bar], ["drop", Color(0.4, 0.58, 1.0), mp_bar], ["bubble", Color(0.6, 0.9, 0.95), br_bar]]:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var ic := _icon(pair[0], pair[1])
+		ic.custom_minimum_size.x = 18
+		row.add_child(ic)
+		row.add_child(pair[2])
+		bars.add_child(row)
+		if pair[0] == "bubble":
+			br_row = row
+	bars.add_child(_rule(270))
+	info = _label("", 12, Color(0.86, 0.87, 1))
 	bars.add_child(info)
 
 	hotbar = HBoxContainer.new()
-	hotbar.add_theme_constant_override("separation", 6)
+	hotbar.add_theme_constant_override("separation", 4)
 	hotbar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	hotbar.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	hotbar.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	hotbar.position.y -= 12
 	hud.add_child(hotbar)
 
-	var sw := PanelContainer.new()
-	sw.add_theme_stylebox_override("panel", _panel_style(Color(0.05, 0.06, 0.1, 0.85), Color(0.16, 0.17, 0.27)))
+	var sw := _panel(Color(0.05, 0.04, 0.09, 0.85), TRIM, 9)
 	sw.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	sw.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	sw.position = Vector2(-12, 12)
-	sw.custom_minimum_size = Vector2(200, 40)
+	sw.position = Vector2(-12, 10)
+	sw.custom_minimum_size = Vector2(210, 40)
 	hud.add_child(sw)
 	satchel_panel = sw
 	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 4)
 	sw.add_child(sv)
-	sv.add_child(_label("SATCHEL", 13, GOLD))
+	var sh := _head("Satchel", 17)
+	sh.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sv.add_child(sh)
+	sv.add_child(_rule(190))
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(190, 0)
+	scroll.custom_minimum_size = Vector2(192, 0)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sv.add_child(scroll)
 	satchel = VBoxContainer.new()
 	satchel.add_theme_constant_override("separation", 1)
 	satchel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(satchel)
-	scroll.custom_minimum_size.y = 420
+	scroll.custom_minimum_size.y = 400
 
 	toasts = VBoxContainer.new()
 	toasts.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -166,6 +373,7 @@ func _build_hud() -> void:
 	toasts.position.y = 12
 	toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toasts.alignment = BoxContainer.ALIGNMENT_BEGIN
+	toasts.add_theme_constant_override("separation", 3)
 	root.add_child(toasts)
 
 	boss_box = VBoxContainer.new()
@@ -175,58 +383,83 @@ func _build_hud() -> void:
 	boss_box.visible = false
 	boss_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(boss_box)
-	boss_lbl = _label("Vulkhar, the Ember Golem", 15, Color(1, 0.7, 0.3))
-	boss_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	boss_box.add_child(boss_lbl)
-	boss_bar = _bar(Color(1, 0.55, 0.2))
-	boss_bar.custom_minimum_size = Vector2(420, 14)
-	boss_box.add_child(boss_bar)
+	var bp := _panel(Color(0.08, 0.03, 0.04, 0.85), Color(0.85, 0.42, 0.2), 8)
+	bp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	boss_box.add_child(bp)
+	var bv := VBoxContainer.new()
+	bv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bp.add_child(bv)
+	var bh := HBoxContainer.new()
+	bh.alignment = BoxContainer.ALIGNMENT_CENTER
+	bh.add_theme_constant_override("separation", 8)
+	bv.add_child(bh)
+	bh.add_child(_icon("skull", Color(0.95, 0.85, 0.7)))
+	boss_lbl = _head("Vulkhar, the Ember Golem", 18, Color(1, 0.72, 0.36))
+	bh.add_child(boss_lbl)
+	bh.add_child(_icon("skull", Color(0.95, 0.85, 0.7)))
+	boss_bar = _bar(Color(1, 0.5, 0.18), 14)
+	boss_bar.custom_minimum_size = Vector2(440, 14)
+	bv.add_child(boss_bar)
 
-	dig_warn = _label("Too hard for your staff. Forge a stronger focus (C)", 13, Color(1, 0.7, 0.62))
+	dig_warn = _label("Too hard for your staff. Forge a stronger focus (C)", 13, Color(1, 0.72, 0.62))
 	dig_warn.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	dig_warn.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	dig_warn.position.y -= 90
+	dig_warn.position.y -= 96
 	dig_warn.visible = false
+	dig_warn.add_theme_color_override("font_outline_color", OUTLINE)
+	dig_warn.add_theme_constant_override("outline_size", 4)
 	hud.add_child(dig_warn)
 
 
 func _build_forge() -> void:
-	forge = PanelContainer.new()
-	forge.add_theme_stylebox_override("panel", _panel_style(Color(0.05, 0.055, 0.095, 0.96), Color(0.23, 0.24, 0.38)))
+	forge = _panel(Color(0.05, 0.04, 0.09, 0.97), TRIM, 14)
 	forge.set_anchors_preset(Control.PRESET_CENTER)
-	forge.custom_minimum_size = Vector2(880, 600)
+	forge.custom_minimum_size = Vector2(900, 610)
 	forge.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	forge.grow_vertical = Control.GROW_DIRECTION_BOTH
 	forge.visible = false
 	root.add_child(forge)
 	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
 	forge.add_child(v)
 	var head := HBoxContainer.new()
 	v.add_child(head)
-	var t := _label("✦ THE WISP FORGE", 18, GOLD)
+	var t := _head("✦ The Wisp Forge", 26, CREAM)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(t)
-	var close := _button("Close [C]")
+	var close := _button("Close  [C]")
 	close.pressed.connect(func(): game.toggle_forge())
 	head.add_child(close)
+	var sub := _label("Gather materials from the world, then bind them here into spells, foci and relics.", 12, DIM)
+	v.add_child(sub)
+	var r := _rule(860)
+	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(r)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	v.add_child(scroll)
 	forge_list = VBoxContainer.new()
 	forge_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	forge_list.add_theme_constant_override("separation", 6)
 	scroll.add_child(forge_list)
 
-func _screen() -> Control:
+## A full-screen overlay with a framed panel in the middle; the panel's VBox is in meta "box".
+func _screen(dim := Color(0.02, 0.015, 0.05, 0.86), trim := TRIM) -> Control:
 	var c := ColorRect.new()
-	c.color = Color(0.03, 0.03, 0.07, 0.94)
+	c.color = dim
 	c.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_child(c)
+	var cc := CenterContainer.new()
+	cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+	c.add_child(cc)
+	var p := _panel(Color(0.05, 0.04, 0.09, 0.97), trim, 22)
+	cc.add_child(p)
 	var v := VBoxContainer.new()
-	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.add_theme_constant_override("separation", 14)
-	c.add_child(v)
+	v.add_theme_constant_override("separation", 12)
+	p.add_child(v)
+	c.set_meta("box", v)
 	return c
 
 func _center(node: Control) -> Control:
@@ -235,67 +468,50 @@ func _center(node: Control) -> Control:
 	return cc
 
 func _build_screens() -> void:
-	title = _screen()
-	var tv: VBoxContainer = title.get_child(0)
-	var logo := _label("WISP FORGE", 64, Color(1, 0.92, 0.66))
-	logo.add_theme_color_override("font_shadow_color", Color(0.36, 0.25, 0.66))
-	logo.add_theme_constant_override("shadow_offset_x", 5)
-	logo.add_theme_constant_override("shadow_offset_y", 5)
-	logo.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tv.add_child(logo)
-	var sub := _label("A mage. A wisp. A round planet made of every last grain.", 16, Color(0.72, 0.65, 1))
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tv.add_child(sub)
-	var blurb := _label("Excavate the living world, forge what you find into spells, dig through glowing caverns and the\nmolten mantle, defeat its guardian and harvest the planet core to open a gate to the next world.", 13, DIM)
-	blurb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tv.add_child(blurb)
-	var btns := HBoxContainer.new()
-	btns.alignment = BoxContainer.ALIGNMENT_CENTER
-	btns.add_theme_constant_override("separation", 12)
-	tv.add_child(btns)
-	var nb := _button("New Journey")
-	nb.pressed.connect(func(): game.start_game(false))
-	btns.add_child(nb)
-	continue_btn = _button("Continue")
-	continue_btn.pressed.connect(func(): game.start_game(true))
-	btns.add_child(continue_btn)
-	var sb := _button("Settings")
-	sb.pressed.connect(toggle_settings)
-	btns.add_child(sb)
-	var hint := _label("The controls are in Settings (Esc while playing).", 12, DIM)
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tv.add_child(hint)
+	title = TitleScreen.new()
+	title.ui = self
+	title.game = game
+	root.add_child(title)
+	continue_btn = title.continue_btn
 
-	death = _screen()
+	death = _screen(Color(0.12, 0.01, 0.03, 0.72), Color(0.75, 0.3, 0.3))
 	death.visible = false
-	var dv: VBoxContainer = death.get_child(0)
-	var dl := _label("Your light fades…", 30, Color(1, 0.92, 0.66))
+	var dv: VBoxContainer = death.get_meta("box")
+	var dl := _head("Your light fades…", 34, Color(1, 0.86, 0.7))
 	dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dv.add_child(dl)
-	var ds := _label("The wisp carries you back to the surface. A quarter of your satchel is lost.", 14, Color(0.72, 0.65, 1))
+	dv.add_child(_center(_rule(320)))
+	var ds := _label("The wisp carries you back to the surface. A quarter of your satchel is lost.", 14, Color(0.82, 0.76, 1))
 	ds.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dv.add_child(ds)
-	var rb := _button("Rise again")
+	var rb := _button("Rise again", true)
 	rb.pressed.connect(func(): game.revive())
 	dv.add_child(_center(rb))
 
 	_build_settings()
 
-	loading = _screen()
+	loading = _screen(Color(0.02, 0.015, 0.05, 0.55))
 	loading.visible = false
-	var lv: VBoxContainer = loading.get_child(0)
-	loading_lbl = _label("Forging a planet…", 28, Color(1, 0.92, 0.66))
-	loading_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var lv: VBoxContainer = loading.get_meta("box")
+	loading_lbl = _head("Forging a planet", 28, CREAM)
+	loading_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	loading_lbl.custom_minimum_size = Vector2(420, 0)
 	lv.add_child(loading_lbl)
+	lv.add_child(_center(_rule(380)))
+	var lh := _label("Every grain of the world is being laid down. This takes a moment.", 12, DIM)
+	lh.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lv.add_child(lh)
 
 ## Quality, dithering and pixel size. Opened from the title screen, or with Esc while playing.
 func _build_settings() -> void:
 	settings_panel = _screen()
 	settings_panel.visible = false
-	var sv: VBoxContainer = settings_panel.get_child(0)
-	var head := _label("Settings", 30, Color(1, 0.92, 0.66))
+	var sv: VBoxContainer = settings_panel.get_meta("box")
+	sv.add_theme_constant_override("separation", 8)
+	var head := _head("Settings", 32, CREAM)
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sv.add_child(head)
+	sv.add_child(_center(_rule(420)))
 	var rows := [
 		["Quality", "quality", [["High", "high"], ["Medium", "medium"], ["Low", "low"]],
 			"Low simulates and lights the world in fewer passes, with bigger pixels, for weaker graphics."],
@@ -310,15 +526,16 @@ func _build_settings() -> void:
 	]
 	for row in rows:
 		var box := VBoxContainer.new()
-		box.add_theme_constant_override("separation", 4)
+		box.add_theme_constant_override("separation", 3)
 		var h := HBoxContainer.new()
 		h.alignment = BoxContainer.ALIGNMENT_CENTER
-		h.add_theme_constant_override("separation", 8)
-		var name_lbl := _label(row[0], 16, Color(0.85, 0.88, 1))
-		name_lbl.custom_minimum_size = Vector2(110, 0)
+		h.add_theme_constant_override("separation", 6)
+		var name_lbl := _head(row[0], 17, CREAM)
+		name_lbl.custom_minimum_size = Vector2(120, 0)
 		h.add_child(name_lbl)
 		for opt in row[2]:
 			var b := _button(opt[0])
+			b.custom_minimum_size = Vector2(64, 0)
 			b.pressed.connect(_on_option.bind(row[1], opt[1]))
 			h.add_child(b)
 			_opt_btns.append([b, row[1], opt[1]])
@@ -328,7 +545,8 @@ func _build_settings() -> void:
 		box.add_child(hint)
 		sv.add_child(box)
 	# the controls, in two columns
-	var ch := _label("Controls", 18, Color(1, 0.92, 0.66))
+	sv.add_child(_center(_rule(420)))
+	var ch := _head("Controls", 20, CREAM)
 	ch.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sv.add_child(ch)
 	var grid := GridContainer.new()
@@ -342,9 +560,10 @@ func _build_settings() -> void:
 			["C", "Wisp Forge (crafting)"], ["M", "Zoom out"],
 			["Esc", "Settings and controls"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 13, GOLD))
-		grid.add_child(_label(pair[1], 13, Color(0.85, 0.88, 1)))
+		grid.add_child(_label(pair[1], 13, TEXT))
 	sv.add_child(_center(grid))
-	var close := _button("Close")
+	var close := _button("Close", true)
+	close.custom_minimum_size = Vector2(200, 0)
 	close.pressed.connect(toggle_settings)
 	sv.add_child(_center(close))
 	_refresh_settings()
@@ -357,7 +576,7 @@ func _refresh_settings() -> void:
 	for it in _opt_btns:
 		var b: Button = it[0]
 		var on: bool = str(game.settings.get(it[1], "")) == str(it[2])
-		b.modulate = Color(1, 1, 1) if on else Color(0.55, 0.55, 0.7)
+		_set_chosen(b, on)
 
 func toggle_settings() -> void:
 	settings_panel.visible = not settings_panel.visible
@@ -367,29 +586,24 @@ func toggle_settings() -> void:
 # --------------------------------------------------------------- screens --
 func show_title(has_save: bool) -> void:
 	title.visible = true
+	title.set_menu_visible(true)
 	continue_btn.visible = has_save
 
 func show_error(msg: String) -> void:
 	title.visible = true
-	var tv: VBoxContainer = title.get_child(0)
-	for c in tv.get_children():
-		c.queue_free()
-	var l := _label("Wisp Forge couldn't start the GPU simulation", 22, Color(1, 0.6, 0.5))
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tv.add_child(l)
-	var m := _label(msg, 12, Color.WHITE)
-	m.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	m.autowrap_mode = TextServer.AUTOWRAP_WORD
-	m.custom_minimum_size = Vector2(900, 0)
-	tv.add_child(_center(m))
+	title.show_message("Wisp Forge couldn't start the GPU simulation", msg)
 
 func show_loading(txt: String) -> void:
-	title.visible = false
-	loading_lbl.text = txt
+	# the title scene keeps playing behind the loading panel
+	title.visible = true
+	title.set_menu_visible(false)
+	_loading_base = txt.trim_suffix("…").trim_suffix("...")
+	loading_lbl.text = _loading_base
 	loading.visible = true
 
 func hide_loading() -> void:
 	loading.visible = false
+	title.visible = false
 
 func show_hud() -> void:
 	hud.visible = true
@@ -409,8 +623,7 @@ func hide_forge() -> void:
 
 # ----------------------------------------------------------------- toasts --
 func toast(txt: String, col: Color = Color.WHITE, secs: float = 2.2) -> void:
-	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _panel_style(Color(0.04, 0.05, 0.09, 0.8), Color(0.16, 0.17, 0.27)))
+	var p := _panel(Color(0.05, 0.04, 0.09, 0.86), TRIM_DIM, 5)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var l := _label(txt, 13, col)
 	p.add_child(l)
@@ -447,7 +660,7 @@ func update_hud(g) -> void:
 	mp_bar.max_value = g.max_mana
 	mp_bar.value = g.mana
 	mp_lbl.text = "%d / %d" % [int(g.mana), int(g.max_mana)]
-	br_bar.visible = g.breath < g.max_breath
+	br_row.visible = g.breath < g.max_breath
 	br_bar.max_value = g.max_breath
 	br_bar.value = g.breath
 	if g.frame % 6 == 0:
@@ -479,19 +692,37 @@ func update_hud(g) -> void:
 			c.queue_free()
 		for k in g.known.size():
 			var s: Dictionary = Defs.SPELLS[g.known[k]]
-			var p := PanelContainer.new()
 			var on: bool = k == g.sel
-			var normal := _panel_style(Color(0.07, 0.08, 0.12, 0.88), GOLD if on else Color(0.16, 0.17, 0.27))
-			var hover := _panel_style(Color(0.16, 0.17, 0.26, 0.95), GOLD if on else Color(0.55, 0.6, 0.85))
+			var p := PanelContainer.new()
+			var normal := _frame(Color(0.2, 0.14, 0.06, 0.94) if on else Color(0.05, 0.04, 0.09, 0.88), GOLD if on else TRIM_DIM, 6, 9)
+			var hover := _frame(Color(0.24, 0.17, 0.34, 0.95), GOLD, 6, 9)
 			p.add_theme_stylebox_override("panel", normal)
 			p.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 			p.mouse_entered.connect(_set_panel_style.bind(p, hover))
 			p.mouse_exited.connect(_set_panel_style.bind(p, normal))
-			p.custom_minimum_size = Vector2(100, 0)
+			p.custom_minimum_size = Vector2(108, 0)
 			var v := VBoxContainer.new()
+			v.add_theme_constant_override("separation", 0)
+			v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			p.add_child(v)
-			v.add_child(_label("%d  %s" % [k + 1, s["name"]], 12, s["color"] if on else Color(0.88, 0.9, 1)))
-			v.add_child(_label(("%d mp" % int(s["mana"])) if float(s["mana"]) > 0 else "free", 10, DIM))
+			var top := HBoxContainer.new()
+			top.add_theme_constant_override("separation", 5)
+			top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			v.add_child(top)
+			var sw := ColorRect.new()
+			sw.color = s["color"]
+			sw.custom_minimum_size = Vector2(8, 8)
+			sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			top.add_child(sw)
+			top.add_child(_label(s["name"], 13, CREAM if on else TEXT))
+			var bot := HBoxContainer.new()
+			bot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			v.add_child(bot)
+			var kl := _label("[%d]" % (k + 1), 10, GOLD if on else DIM)
+			kl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			bot.add_child(kl)
+			bot.add_child(_label(("%d mp" % int(s["mana"])) if float(s["mana"]) > 0 else "free", 10, Color(0.55, 0.7, 1.0) if float(s["mana"]) > 0 else DIM))
 			p.gui_input.connect(_on_hot_input.bind(k))
 			hotbar.add_child(p)
 	# satchel
@@ -510,12 +741,14 @@ func update_hud(g) -> void:
 			any = true
 			var rp := PanelContainer.new()
 			var rn := StyleBoxFlat.new()
-			rn.bg_color = Color(1, 0.82, 0.23, 0.13) if m == g.mat else Color(0, 0, 0, 0)
+			rn.bg_color = Color(1, 0.82, 0.23, 0.14) if m == g.mat else Color(0, 0, 0, 0)
 			rn.set_content_margin_all(2)
+			rn.content_margin_left = 4
+			if m == g.mat:
+				rn.border_width_left = 2
+				rn.border_color = GOLD
 			var rh: StyleBoxFlat = rn.duplicate()
-			rh.bg_color = Color(0.55, 0.6, 0.95, 0.28)
-			rh.set_border_width_all(1)
-			rh.border_color = Color(0.7, 0.75, 1.0, 0.7)
+			rh.bg_color = Color(0.55, 0.45, 0.95, 0.24)
 			rp.add_theme_stylebox_override("panel", rn)
 			rp.mouse_filter = Control.MOUSE_FILTER_STOP
 			rp.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -525,16 +758,20 @@ func update_hud(g) -> void:
 			var row := HBoxContainer.new()
 			row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			rp.add_child(row)
-			var sw := ColorRect.new()
-			sw.color = Defs.COLOR[m]
-			sw.custom_minimum_size = Vector2(10, 10)
-			sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.add_child(sw)
-			var nm := _label(Defs.NAMES[m], 12, GOLD if m == g.mat else Color(0.85, 0.88, 1))
+			var swp := PanelContainer.new()
+			var swb := StyleBoxFlat.new()
+			swb.bg_color = Defs.COLOR[m]
+			swb.border_color = OUTLINE
+			swb.set_border_width_all(1)
+			swp.add_theme_stylebox_override("panel", swb)
+			swp.custom_minimum_size = Vector2(11, 11)
+			swp.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			swp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(swp)
+			var nm := _label(Defs.NAMES[m], 12, GOLD if m == g.mat else TEXT)
 			nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			row.add_child(nm)
-			row.add_child(_label(str(g.player.inv[m]), 12, Color(0.8, 0.84, 1)))
+			row.add_child(_label(str(g.player.inv[m]), 12, CREAM))
 			rp.gui_input.connect(_on_mat_input.bind(m))
 			satchel.add_child(rp)
 		if not any:
@@ -565,7 +802,15 @@ func _render_forge() -> void:
 			order.append(r["cat"])
 		cats[r["cat"]].append(r)
 	for cat in order:
-		forge_list.add_child(_label(cat.to_upper(), 13, Color(0.72, 0.65, 1)))
+		var ch := HBoxContainer.new()
+		ch.add_theme_constant_override("separation", 8)
+		var cl := _head(cat, 17, Color(0.78, 0.7, 1))
+		ch.add_child(cl)
+		var rr := _rule(100)
+		rr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ch.add_child(rr)
+		forge_list.add_child(ch)
 		var grid := GridContainer.new()
 		grid.columns = 3
 		grid.add_theme_constant_override("h_separation", 8)
@@ -578,32 +823,42 @@ func _recipe_card(r: Dictionary) -> Control:
 	var done: bool = game.recipe_done(r)
 	var unlocked: bool = game.recipe_unlocked(r)
 	var aff: bool = game.recipe_affordable(r)
-	var border := Color(0.15, 0.16, 0.27)
+	var trim := TRIM_DIM
 	if not done and unlocked and aff:
-		border = Color(0.29, 0.48, 0.29)
+		trim = Color(0.45, 0.8, 0.42)
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _panel_style(Color(0.08, 0.09, 0.16), border))
-	p.custom_minimum_size = Vector2(270, 0)
+	p.add_theme_stylebox_override("panel", _frame(Color(0.08, 0.065, 0.14, 0.97), trim, 8))
+	p.custom_minimum_size = Vector2(280, 0)
 	if done:
 		p.modulate.a = 0.55
 	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
 	p.add_child(v)
-	v.add_child(_label(r["name"], 14, Color(1, 0.91, 0.66)))
+	v.add_child(_head(r["name"], 15, CREAM))
 	var desc: String = r.get("desc", "")
 	if r.has("spell"):
 		desc = Defs.SPELLS[r["spell"]]["desc"]
-	var dl := _label(desc, 11, Color(0.66, 0.68, 0.82))
+	var dl := _label(desc, 11, Color(0.7, 0.71, 0.86))
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	dl.custom_minimum_size = Vector2(250, 0)
+	dl.custom_minimum_size = Vector2(256, 0)
 	v.add_child(dl)
 	var costs := HFlowContainer.new()
+	costs.add_theme_constant_override("h_separation", 10)
 	v.add_child(costs)
 	for k in r["cost"]:
 		var have: int = game.inv[int(k)]
 		var need: int = int(r["cost"][k])
-		costs.add_child(_label("%s %d/%d" % [Defs.NAMES[int(k)], have, need], 11, Color(0.65, 0.94, 0.65) if have >= need else Color(0.94, 0.65, 0.65)))
+		var cr := HBoxContainer.new()
+		cr.add_theme_constant_override("separation", 3)
+		var sw := ColorRect.new()
+		sw.color = Defs.COLOR[int(k)]
+		sw.custom_minimum_size = Vector2(8, 8)
+		sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		cr.add_child(sw)
+		cr.add_child(_label("%s %d/%d" % [Defs.NAMES[int(k)], have, need], 11, Color(0.62, 0.95, 0.62) if have >= need else Color(0.95, 0.62, 0.62)))
+		costs.add_child(cr)
 	if done:
-		v.add_child(_label("Forged", 11, DIM))
+		v.add_child(_label("✓ Forged", 11, DIM))
 	elif not unlocked:
 		v.add_child(_label(game.recipe_lock_text(r), 11, DIM))
 	else:

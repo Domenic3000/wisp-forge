@@ -131,6 +131,14 @@ func run() -> void:
 	lines.append("")
 	g.test_god = true
 
+	# ---- a picture of the animated title screen (saves/shots/title.png) ----
+	var tdir: String = g._real_save_dir().path_join("shots")
+	DirAccess.make_dir_recursive_absolute(tdir)
+	g.ui.show_title(true)
+	await _frames(150)
+	g.get_viewport().get_texture().get_image().save_png(tdir.path_join("title.png"))
+	_ok("title screen draws", g.ui.title.visible and g.ui.continue_btn.visible)
+
 	# ---- a fresh planet ----
 	g._delete_worlds()
 	g.player.inv.fill(0)
@@ -243,6 +251,16 @@ func run() -> void:
 		var img: Image = g.get_viewport().get_texture().get_image()
 		img.save_png(shot_dir.path_join("shot_%d_%s.png" % [nshot, ("ruin" if info["ruined"] else "intact")]))
 		nshot += 1
+	# the Forge panel, for looking at the UI
+	g.ui.show_forge()
+	await _frames(20)
+	g.get_viewport().get_texture().get_image().save_png(shot_dir.path_join("forge.png"))
+	g.ui.hide_forge()
+	g.ui.settings_panel.visible = true
+	g.ui._refresh_settings()
+	await _frames(10)
+	g.get_viewport().get_texture().get_image().save_png(shot_dir.path_join("settings.png"))
+	g.ui.settings_panel.visible = false
 
 	# ---- you can walk in through a cottage door (no lip, nothing in the way) ----
 	var walked := "no intact cottage found"
@@ -253,7 +271,7 @@ func run() -> void:
 		var nm2: String = b.label_at(_cell_pos(int(info["x0"]) + int(info["w"]) / 2, int(info["y0"]) + int(info["h"]) - 45))
 		if not ("Cottage" in nm2 or "Dwelling" in nm2):
 			continue
-		var ox := 10                                  # YARD + 2
+		var ox := 14                                  # YARD + 2
 		var base_row := int(info["y0"]) + int(info["h"]) - 40
 		var start_col := int(info["x0"]) + ox - 8
 		_go(_cell_pos(start_col, base_row - 12))
