@@ -24,6 +24,7 @@ var _build_key := ""
 var satchel: VBoxContainer
 var satchel_panel: PanelContainer
 var death_txt: Label
+var _to_title_btn: Button
 var toasts: VBoxContainer
 var boss_box: VBoxContainer
 var boss_bar: ProgressBar
@@ -35,7 +36,6 @@ var title
 var death: Control
 var loading: Control
 var loading_lbl: Label
-var continue_btn: Button
 var settings_panel: Control
 var _opt_btns := []       # [button, key, value]
 var _hot_key := ""
@@ -489,7 +489,6 @@ func _build_screens() -> void:
 	title.ui = self
 	title.game = game
 	root.add_child(title)
-	continue_btn = title.continue_btn
 
 	death = _screen(Color(0.12, 0.01, 0.03, 0.72), Color(0.75, 0.3, 0.3))
 	death.visible = false
@@ -535,6 +534,8 @@ func _build_settings() -> void:
 			"Low simulates and lights the world in fewer passes, with bigger pixels, for weaker graphics."],
 		["Dithering", "dither", [["Off", "off"], ["Subtle", "subtle"], ["Retro", "retro"]],
 			"Off draws clean colour bands like a SNES. Retro is the old checkerboard look."],
+		["Window", "window", [["Windowed", "windowed"], ["Fullscreen", "fullscreen"], ["Exclusive", "exclusive"]],
+			"Fullscreen covers the whole screen (F11 or Alt + Enter switches). Exclusive takes over the display, which can run smoother."],
 		["Pixel size", "pixel", [["Auto", 0], ["3", 3], ["4", 4], ["5", 5], ["6", 6]],
 			"How big each world pixel is on screen. Bigger shows less of the world, closer up."],
 		["Music", "music", [["Off", 0], ["25%", 25], ["50%", 50], ["75%", 75], ["100%", 100]],
@@ -577,14 +578,23 @@ func _build_settings() -> void:
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
 			["C", "Wisp Forge (crafting)"], ["M", "Zoom out"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: how walls and blocks are laid)"],
-			["Esc", "Settings and controls"], ["F9", "Creative stock (developer)"]]:
+			["Esc", "Settings and controls"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 13, GOLD))
 		grid.add_child(_label(pair[1], 13, TEXT))
 	sv.add_child(_center(grid))
 	var close := _button("Close", true)
 	close.custom_minimum_size = Vector2(200, 0)
 	close.pressed.connect(toggle_settings)
-	sv.add_child(_center(close))
+	# while playing: save everything and go back to the title, to pick another save slot
+	_to_title_btn = _button("Save and return to title", true)
+	_to_title_btn.custom_minimum_size = Vector2(200, 0)
+	_to_title_btn.pressed.connect(func(): game.quit_to_title())
+	var brow := HBoxContainer.new()
+	brow.alignment = BoxContainer.ALIGNMENT_CENTER
+	brow.add_theme_constant_override("separation", 12)
+	brow.add_child(_to_title_btn)
+	brow.add_child(close)
+	sv.add_child(brow)
 	_refresh_settings()
 
 func _on_option(key: String, value) -> void:
@@ -601,12 +611,13 @@ func toggle_settings() -> void:
 	settings_panel.visible = not settings_panel.visible
 	if settings_panel.visible:
 		_refresh_settings()
+		_to_title_btn.visible = game.state == "play" or game.state == "forge" or game.state == "dead"
 
 # --------------------------------------------------------------- screens --
-func show_title(has_save: bool) -> void:
+func show_title(_has_save := true) -> void:
 	title.visible = true
 	title.set_menu_visible(true)
-	continue_btn.visible = has_save
+	title.refresh_slots()
 
 func show_error(msg: String) -> void:
 	title.visible = true

@@ -95,8 +95,18 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   two at the start) and the Mending spell (its scroll is a rare find) heal over a moment (`Mage.heal_left`).
 - Falling rock hurts only after falling `ROCK_HURT_FALL` cells and only through your upper half (grid.comp), so
   digging a pit under yourself doesn't.
-- Doors swing either way (away from whoever opens them, `swing`); the open panel (overlay, face-on) burns when
-  fire reaches it (`_check_door_fire`) and breaks in a blast.
+- Doors swing either way (away from whoever opens them, `swing`). A door keeps its damage: opening it reads which
+  parts are left (`_read_door_cells` -> `d["cells"]`, the part per doorway cell or -1, saved with the doors);
+  shutting it stamps back only those parts; fire and blasts take parts off the open panel where they reach
+  (`_hurt_open_door`), and overlay.gd draws the panel with those holes, charred at the edges. Less than a third
+  left and the door falls apart.
+- Background harvest (`_pick_up_furniture`) checks the collision grid for furniture before reading the world back;
+  a read that finds none isn't repeated at the same spot (`_pick_miss`).
+- Save slots: saves/slot_1..3 (`SLOTS`, `slot`, `_save_dir`), each with its progress.json and worlds; the title
+  lists them (title_screen.gd `refresh_slots`: continue a saved one, start in an empty one, Delete twice);
+  `quit_to_title` (Esc menu) saves and returns there. Saves from before slots move into slot 1
+  (`_migrate_old_saves`). settings.json stays in saves/; the test mode uses saves/test.
+- Window: setting "window" (windowed, fullscreen, exclusive), F11 / Alt+Enter switch; the test mode stays windowed.
 - Foundations: two courses of the building's stone, then the biome's own ground layers (`_ground_mats`); yards are
   made of the biome's soil too.
 - Test mode quits by itself after 7 minutes, so a broken run never leaves the game open.

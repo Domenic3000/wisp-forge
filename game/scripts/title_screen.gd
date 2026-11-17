@@ -8,7 +8,10 @@ var game
 var box: VBoxContainer       # the menu (New Journey, Continue, Settings, Quit)
 var _col: VBoxContainer
 var _sub: Label
-var continue_btn: Button
+var slots_box: VBoxContainer   # one row per save slot
+var slot_btns := []             # the slots' buttons (click: continue that journey, or start one)
+var _del_armed := -1            # a slot whose Delete was clicked once (click again to erase it)
+const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 var _bg: ColorRect
 var _mat: ShaderMaterial
 const MageRig := preload("res://scripts/mage_rig.gd")
@@ -327,12 +330,10 @@ func _ready() -> void:
 	box.add_theme_constant_override("separation", 8)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.add_child(box)
-	var nb: Button = ui._button("New Journey", true)
-	nb.pressed.connect(func(): game.start_game(false))
-	box.add_child(nb)
-	continue_btn = ui._button("Continue", true)
-	continue_btn.pressed.connect(func(): game.start_game(true))
-	box.add_child(continue_btn)
+	slots_box = VBoxContainer.new()
+	slots_box.add_theme_constant_override("separation", 8)
+	box.add_child(slots_box)
+	refresh_slots()
 	var sb: Button = ui._button("Settings", true)
 	sb.pressed.connect(func(): ui.toggle_settings())
 	box.add_child(sb)
@@ -348,6 +349,68 @@ func _ready() -> void:
 	foot.add_theme_color_override("font_outline_color", Color(0.04, 0.02, 0.08))
 	foot.add_theme_constant_override("outline_size", 4)
 	add_child(foot)
+
+## The save slots: a saved journey shows where it is and when it was saved (click to carry on); an
+## empty slot starts a new journey. A saved one has a Delete beside it (click twice).
+func refresh_slots() -> void:
+	if slots_box == null:
+		return
+	for c in slots_box.get_children():
+		c.queue_free()
+	slot_btns.clear()
+	for n in range(1, game.SLOTS + 1):
+		var info: Dictionary = game.slot_info(n)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		var b: Button = ui._button("", true)
+		b.custom_minimum_size = Vector2(460, 0)
+		b.add_theme_font_size_override("font_size", 17)
+		if info.is_empty():
+			b.text = "Slot %d  ·  Empty\nStart a new journey" % n
+		else:
+			b.text = "Slot %d  ·  %s  ·  Staff %s, %d spells\n%s played  ·  saved %s" % [n, info["planet"], ["I", "II", "III", "IV", "V"][clampi(int(info["tier"]) - 1, 0, 4)],
+				int(info["spells"]), _hours(float(info["played"])), _when(float(info["saved"]))]
+		b.pressed.connect(game.start_slot.bind(n))
+		row.add_child(b)
+		slot_btns.append(b)
+		if not info.is_empty():
+			var d: Button = ui._button("Sure?" if _del_armed == n else "Delete")
+			d.custom_minimum_size = Vector2(84, 0)
+			if _del_armed == n:
+				d.add_theme_color_override("font_color", Color(1, 0.5, 0.45))
+			d.pressed.connect(_on_delete.bind(n))
+			row.add_child(d)
+		else:
+			var pad := Control.new()
+			pad.custom_minimum_size = Vector2(84, 0)
+			row.add_child(pad)
+		slots_box.add_child(row)
+
+func _on_delete(n: int) -> void:
+	if _del_armed == n:
+		game.delete_slot(n)
+		_del_armed = -1
+	else:
+		_del_armed = n
+		get_tree().create_timer(3.0).timeout.connect(_disarm.bind(n))
+	refresh_slots()
+
+func _disarm(n: int) -> void:
+	if _del_armed == n:
+		_del_armed = -1
+		refresh_slots()
+
+static func _hours(sec: float) -> String:
+	var m := int(sec / 60.0)
+	if m < 60:
+		return "%d min" % m
+	return "%d h %d min" % [m / 60, m % 60]
+
+static func _when(unix: float) -> String:
+	var bias: int = int(Time.get_time_zone_from_system().get("bias", 0))
+	var t := Time.get_datetime_dict_from_unix_time(int(unix) + bias * 60)
+	return "%d %s, %02d:%02d" % [t["day"], MONTHS[int(t["month"]) - 1], t["hour"], t["minute"]]
 
 ## Hides the menu (while a planet loads, the scene keeps playing behind the loading panel).
 func set_menu_visible(on: bool) -> void:

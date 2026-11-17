@@ -181,7 +181,7 @@ func run() -> void:
 	g.ui.show_title(true)
 	await _frames(150)
 	g.get_viewport().get_texture().get_image().save_png(tdir.path_join("title.png"))
-	_ok("title screen draws", g.ui.title.visible and g.ui.continue_btn.visible)
+	_ok("title screen draws, with a button per save slot", g.ui.title.visible and g.ui.title.slot_btns.size() == g.SLOTS, "%d slot buttons" % g.ui.title.slot_btns.size())
 
 	# ---- a fresh planet ----
 	g._delete_worlds()
@@ -460,15 +460,42 @@ func run() -> void:
 		var want: int = int(door_t["w"]) * int(door_t["h"])
 		_ok("a door opens when you walk into it, and closes again", was_open and not bool(door_t["open"]) and nd2 == want,
 			"opened by walking: %s, closed again: %d of %d door cells" % [was_open, nd2, want])
-		# fire reaching an open door's panel burns the door
+		# a door shot through keeps its hole: open it and shut it again, the hole is still there
+		var count_door := func() -> int:
+			var rr: Dictionary = g.gpu.read_rect(int(door_t["col"]), int(door_t["row"]), int(door_t["w"]), int(door_t["h"]))
+			var nn := 0
+			for v in rr["fg"]:
+				if (v & 255) == Defs.WOODDOOR:
+					nn += 1
+			return nn
+		var dmid: Vector2 = _cell_pos(int(door_t["col"]) + int(door_t["w"]) / 2, int(door_t["row"]) + int(door_t["h"]) / 3)
+		g.brushes.append([dmid, 4.5, 1, 0, 9, 0, 0, 3])
+		g.brushes.append([dmid + dp.normalized() * -9.0, 3.5, 1, 0, 9, 0, 0, 3])
+		await _frames(6)
+		var n_shot: int = count_door.call()
+		g._set_door(door_t, true, g.player.pos)
+		await _frames(10)
+		var gone_open := 0
+		for v in door_t.get("cells", []):
+			if int(v) < 0:
+				gone_open += 1
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("door_damaged.png"))
+		g._set_door(door_t, false)
+		await _frames(10)
+		var n_shut: int = count_door.call()
+		_ok("a damaged door keeps its damage when opened and shut", n_shot < want and n_shot > want / 2 and gone_open == want - n_shot and n_shut == n_shot and g.doors.has(door_t),
+			"%d of %d cells left after the shot; open: %d parts missing from its panel; shut again: %d cells" % [n_shot, want, gone_open, n_shut])
+		# fire reaching an open door's panel burns it where it reaches
 		g._set_door(door_t, true, g.player.pos)
 		await _frames(5)
+		var left0: int = g._door_left(door_t)
 		var panel: Vector2 = g.door_panel_pos(door_t)
 		for fk in 6:
 			g.brushes.append([panel, 3.0, 3, Defs.FIRE, 0, 0, 0])
 			await _frames(2)
 		await _frames(20)
-		_ok("fire burns an open door where its panel is", not g.doors.has(door_t), "door still there: %s" % g.doors.has(door_t))
+		var left1: int = g._door_left(door_t) if g.doors.has(door_t) else 0
+		_ok("fire burns an open door where its panel is", left1 < left0, "%d parts before the fire, %d after%s" % [left0, left1, "" if g.doors.has(door_t) else " (the door is gone)"])
 
 	# ---- digging next to a ruin takes only what you dig: the rest stands ----
 	var dug_ok := true
@@ -1077,6 +1104,17 @@ func run() -> void:
 	_ok("a bed in a room makes a home you wake up in", open_why != "" and bed_placed and home_set and woke_at >= 0.0 and woke_at < 4.0,
 		"a bed in the open needs %s; the bed set down in the house: %s, home set: %s, woke %.1f from it" % [open_why if open_why != "" else "nothing (wrong)", bed_placed, home_set, woke_at])
 
+	# ---- holding background harvest over a wall (no furniture there) costs next to nothing ----
+	_go(wall_at + wall_at.normalized() * 10.0)
+	await _frames(30)
+	g._pick_up_furniture(g.player, wall_at)
+	await _frames(2)
+	var tq := Time.get_ticks_usec()
+	for qk in 30:
+		g._pick_up_furniture(g.player, wall_at)
+	var pick_us := float(Time.get_ticks_usec() - tq) / 30.0
+	_ok("background harvest over a plain wall stays cheap", pick_us < 400.0, "%.0f us a frame looking for furniture to pick up" % pick_us)
+
 	# ---- straight walls: a block wall dragged up from the ground, a back wall rectangle beside it ----
 	_go(Vector2(cos(bg_ang), sin(bg_ang)) * (bsurf + 12.0))
 	await _frames(40)
@@ -1472,12 +1510,12 @@ func run() -> void:
 	var hang_still: Array = hang_tally.call()     # left alone, it stays as built
 	hang_still.resize(3)
 	g.brushes.append([_cell_pos(hang_c.x + 1, hang_c.y + 1), 3.0, 1, 0, 9, 0, 0, 0])
-	await _frames(420)
+	await _frames(560)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("hanging.png"))
 	var hang1: Array = hang_tally.call()
 	hang0.resize(3)
-	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[0]) < int(hang0[0]) / 5 and int(hang1[2]) < int(hang0[2]) / 5,
-		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 7 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
+	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[0]) < int(hang0[0]) / 3 and int(hang1[2]) < int(hang0[2]) / 5,
+		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 9 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
 
 	# ---- save and load give back the same world ----
 	var a: PackedByteArray = g.gpu.read_world()

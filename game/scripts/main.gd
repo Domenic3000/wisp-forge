@@ -93,7 +93,7 @@ var sky_rain := 0.0        # rain as seen in the sky, eased between biomes
 var cam_unwrap := 0.0      # camera angle without the jump at a full turn (for parallax)
 var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
-var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80}
+var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed"}
 var boss_info := Vector4.ZERO
 var scale_px := 4
 var VW := 480
@@ -318,6 +318,7 @@ func _ready() -> void:
 	_load_settings()
 	gpu.apply_quality(settings["quality"])
 	_apply_volumes()
+	_apply_window()
 	_layout()
 	get_viewport().size_changed.connect(_layout)
 	if not gpu.init():
@@ -333,7 +334,8 @@ func _ready() -> void:
 		_tests.g = self
 		_tests.run.call_deferred()
 		return
-	ui.show_title(_load_save() != null)
+	_migrate_old_saves()
+	ui.show_title(true)
 
 func _layout() -> void:
 	var s := get_viewport().get_visible_rect().size
@@ -374,6 +376,7 @@ func _process(delta: float) -> void:
 		_take_gpu_results()
 	var steps := 1
 	if state == "play" or state == "dead":
+		played += delta
 		_tick_acc += minf(delta, 0.1)
 		steps = mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
 		_tick_acc = minf(_tick_acc - steps / 60.0, 1.0 / 60.0)
@@ -628,6 +631,11 @@ func _make_doors(loaded: bool) -> void:
 		for e in planet_state["doors"]:
 			doors.append({"pos": Vector2(float(e[0]), float(e[1])), "w": int(e[2]), "h": int(e[3]), "side": int(e[4]),
 				"col": int(e[5]), "row": int(e[6]), "open": bool(e[7]), "swing": int(e[8]) if e.size() > 8 else int(e[4])})
+			if e.size() > 9 and typeof(e[9]) == TYPE_ARRAY and (e[9] as Array).size() == int(e[2]) * int(e[3]):
+				var dc: Array = []
+				for v in e[9]:
+					dc.append(int(v))
+				doors[doors.size() - 1]["cells"] = dc
 	else:
 		for e in builds.door_list:
 			var d: Dictionary = e.duplicate()
@@ -672,19 +680,86 @@ func _set_door(d: Dictionary, open: bool, opener := Vector2.ZERO) -> void:
 			d["swing"] = -1 if u > 0.0 else 1
 	if not open and _door_blocked(d):
 		return
-	if open and _door_cells(d) * 2 < int(d["w"]) * int(d["h"]):
-		# most of it was blasted or dug away: what's left falls apart, and the door is gone
-		var hw0 := float(d["w"]) * 0.5
-		var hh0 := float(d["h"]) * 0.5
-		brushes.append([d["pos"], sqrt(hw0 * hw0 + hh0 * hh0) + 1.5, 9, 0.0, hw0, hh0, 0.0, 3])
-		doors.erase(d)
-		return
-	d["open"] = open
 	var hw := float(d["w"]) * 0.5
 	var hh := float(d["h"]) * 0.5
-	# owner slot 3: nobody's satchel (a door brush collects nothing)
-	brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0 if open else 1.0, hw, hh, 0.0, 3])
+	if open:
+		# which parts of it are still there (what was shot, burnt or dug away stays gone)
+		_read_door_cells(d)
+		if _door_left(d) * 3 < int(d["w"]) * int(d["h"]):
+			# most of it was blasted or dug away: what's left falls apart, and the door is gone
+			brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0, hw, hh, 0.0, 3])
+			doors.erase(d)
+			return
+	d["open"] = open
+	if open or not d.has("cells"):
+		# owner slot 3: nobody's satchel (a door brush collects nothing); a door never opened yet
+		# closes whole
+		brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0 if open else 1.0, hw, hh, 0.0, 3])
+	else:
+		# shut it as it is: only the parts that are left go back into the doorway
+		var w := int(d["w"])
+		var data := PackedInt32Array()
+		data.resize(w * int(d["h"]))
+		data.fill(0xffff)
+		var dc: Array = d["cells"]
+		for k in dc.size():
+			if int(dc[k]) >= 0:
+				data[k] = Defs.WOODDOOR | 0xff00 | 0x10000 | 0x20000 | 0x8000000 | ((int(dc[k]) & 255) << 19)
+		stamps.append({"x0": posmod(int(d["col"]), Defs.SH_N[0]), "y0": int(d["row"]), "w": w, "h": int(d["h"]), "data": data})
 	audio.play("door_open" if open else "door_close", d["pos"])
+
+## A door's parts, cell by cell across its doorway (w x h, row by row): the part each cell is (which
+## of its pixels it draws), or -1 where it's gone. Read from the world when it opens.
+func _read_door_cells(d: Dictionary) -> void:
+	var w := int(d["w"])
+	var h := int(d["h"])
+	var rr: Dictionary = gpu.read_rect(int(d["col"]), int(d["row"]), w, h)
+	var fgs: PackedInt32Array = rr["fg"]
+	var dc: Array = []
+	for k in w * h:
+		var v: int = fgs[k]
+		dc.append(((v >> 8) & 255) if (v & 255) == Defs.WOODDOOR else -1)
+	d["cells"] = dc
+
+## how many of a door's cells are left (all of them for a door never opened)
+func _door_left(d: Dictionary) -> int:
+	if not d.has("cells"):
+		return int(d["w"]) * int(d["h"])
+	var n := 0
+	for v in d["cells"]:
+		if int(v) >= 0:
+			n += 1
+	return n
+
+## Damage to an open door's panel: the parts within `r` of `p` go (burnt or splintered). A panel with
+## less than a third left falls apart. True if any part went.
+func _hurt_open_door(d: Dictionary, p: Vector2, r: float, burnt: bool) -> bool:
+	if not d.has("cells"):
+		var full: Array = []
+		for k in int(d["w"]) * int(d["h"]):
+			full.append(((k / int(d["w"])) << 2) | mini(k % int(d["w"]), 3))
+		d["cells"] = full
+	var w := int(d["w"])
+	var h := int(d["h"])
+	var pp := door_panel_pos(d)
+	var a := atan2(pp.y, pp.x)
+	var flip := -1.0 if float(d.get("swing", d["side"])) < 0.0 else 1.0
+	var dc: Array = d["cells"]
+	var hit := false
+	for k in dc.size():
+		if int(dc[k]) < 0:
+			continue
+		var x := ((float(k % w) + 0.5) * DOOR_PANEL_W / float(w) - DOOR_PANEL_W * 0.5) * flip
+		var y := float(k / w) - float(h) * 0.5 + 0.5
+		var q := pp + basis_r(a) * x + basis_d(a) * y
+		if q.distance_to(p) < r:
+			dc[k] = -1
+			hit = true
+			if randf() < 0.3:
+				_particle(q, Vector2(randf() - 0.5, -randf()) * 0.6, 20 + randi() % 20, Color(0.3, 0.2, 0.12) if burnt else Color(0.62, 0.42, 0.22), true, 0.02)
+	if hit and _door_left(d) * 3 < w * h:
+		_door_destroyed(d, burnt)
+	return hit
 
 const DOOR_PANEL_W := 10.0    # an open door is drawn face-on, this wide, beside its doorway
 
@@ -707,18 +782,17 @@ func _check_door_fire() -> void:
 		if pp.distance_squared_to(player.pos) > 200.0 * 200.0:
 			continue
 		var a := atan2(pp.y, pp.x)
-		var hit := false
+		# fire eats into the panel where it touches it (a third left and it falls apart)
 		for sj in range(-int(d["h"]) / 2, int(d["h"]) / 2 + 1, 3):
 			for si in range(-4, 5, 2):
 				var q := pp + basis_r(a) * float(si) + basis_d(a) * float(sj)
 				var t := type_at(q)
 				if t == Defs.FIRE or t == Defs.LAVA:
-					hit = true
-					break
-			if hit:
+					_hurt_open_door(d, q, 3.0, true)
+					if not doors.has(d):
+						break
+			if not doors.has(d):
 				break
-		if hit:
-			_door_destroyed(d, true)
 
 func _door_destroyed(d: Dictionary, burnt: bool) -> void:
 	var pp := door_panel_pos(d) if bool(d["open"]) else (d["pos"] as Vector2)
@@ -1616,6 +1690,8 @@ func _deconstruct(m: Mage, aim: Vector2) -> void:
 	lights.append([p, 10.0, Color(0.9, 0.6, 0.3)])
 
 # ------------------------------------------------------------ furniture --
+var _pick_miss := Vector2i(-99999, 0)   # where a look for furniture last found none (and when)
+var _pick_miss_t := -9999
 const PICK_HALF := 48          # how far from the cursor a piece may reach (it's read as one block)
 
 ## The connected piece of furniture around cell `start` in a block read by gpu.read_rect (n x n,
@@ -1654,6 +1730,24 @@ func _furniture_piece(bgs: PackedInt32Array, n: int, start: int) -> PackedInt32A
 ## ordinary deconstruct takes background tiles).
 func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 	var cc := Build.cell_of(p)
+	# the collision grid already marks furniture: only read the world back (which waits for the GPU)
+	# when some is actually under the cursor, not every frame the button is held over a plain wall
+	var gr := int(ceil(m.dig_r * 0.8))
+	var any := false
+	for gj in range(-gr, gr + 1):
+		for gi in range(-gr, gr + 1):
+			var bgk := _bg_at(cc.x + gi, cc.y + gj)
+			if bgk == 1 or bgk < 0:          # (outside the grid: can't tell, so look)
+				any = true
+				break
+		if any:
+			break
+	if not any:
+		return false
+	# (a torch or an opened chest is marked too: having looked once and found no furniture there,
+	# don't look again until the cursor moves on)
+	if (cc - _pick_miss).length_squared() < 16 and frame - _pick_miss_t < 120:
+		return false
 	var n := PICK_HALF * 2 + 1
 	var c0 := cc.x - PICK_HALF
 	var r0 := cc.y - PICK_HALF
@@ -1669,9 +1763,13 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 				best = di * di + dj * dj
 				start = k
 	if start < 0:
+		_pick_miss = cc
+		_pick_miss_t = frame
 		return false
 	var cells := _furniture_piece(bgs, n, start)
 	if cells.is_empty():
+		_pick_miss = cc
+		_pick_miss_t = frame
 		return false
 	var kid := (bgs[start] >> 24) & 15
 	var i0 := n
@@ -1968,8 +2066,8 @@ func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 	brushes.append([p, r, 2, kind, power, 0, 0])
 	for k in range(doors.size() - 1, -1, -1):
 		var dk: Dictionary = doors[k]
-		if bool(dk["open"]) and door_panel_pos(dk).distance_to(p) < r + 4.0:
-			_door_destroyed(dk, kind == 1)
+		if bool(dk["open"]) and door_panel_pos(dk).distance_to(p) < r + float(dk["h"]) * 0.5:
+			_hurt_open_door(dk, p, r + 1.0, kind == 1)
 	audio.play("boom", p, clampf(r / 14.0, 0.4, 1.2), 1.3 - clampf(r / 40.0, 0.0, 0.5))
 	for k in int(r * 4):
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 3.0, 15 + randi() % 20, Color(1, 0.6 + randf() * 0.3, 0.25), true, 0.03)
@@ -2538,6 +2636,10 @@ func craft(r: Dictionary) -> bool:
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		var k: int = ev.keycode
+		if k == KEY_F11 or (k == KEY_ENTER and ev.alt_pressed):
+			set_setting("window", "windowed" if str(settings.get("window", "windowed")) != "windowed" else "fullscreen")
+			ui._refresh_settings()
+			return
 		if state == "play" or state == "forge":
 			if k == KEY_C or (k == KEY_ESCAPE and state == "forge"):
 				toggle_forge()
@@ -3019,6 +3121,79 @@ func toggle_forge() -> void:
 		ui.hide_forge()
 
 # ========================================================== planet setup ===
+## ---- save slots: each its own folder under saves/ (slot_1, slot_2, slot_3) ----
+const SLOTS := 3
+var slot := 1                 # the slot being played
+var played := 0.0             # seconds played in this slot
+
+func _slot_dir(n: int) -> String:
+	return _real_save_dir().path_join("slot_%d" % n)
+
+## what the title screen shows for a slot ({} if it's empty)
+func slot_info(n: int) -> Dictionary:
+	var path := _slot_dir(n).path_join("progress.json")
+	if not FileAccess.file_exists(path):
+		return {}
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(d) != TYPE_DICTIONARY:
+		return {}
+	var pl: Dictionary = Defs.make_planet(int(d.get("planet", 0)))
+	var saved := float(d.get("saved", FileAccess.get_modified_time(path)))
+	return {"planet": pl.get("name", "?"), "tier": int(d.get("tier", 1)), "spells": (d.get("known", []) as Array).size(),
+		"played": float(d.get("played", 0.0)), "saved": saved}
+
+## Play a slot: carry on with its journey, or start a new one in an empty slot.
+func start_slot(n: int) -> void:
+	slot = clampi(n, 1, SLOTS)
+	start_game(not slot_info(slot).is_empty())
+
+## Erase a slot's journey (its progress and every world in it).
+func delete_slot(n: int) -> void:
+	var dir := _slot_dir(n)
+	var d := DirAccess.open(dir)
+	if d == null:
+		return
+	for fn in d.get_files():
+		d.remove(fn)
+
+## Saves from before there were slots (in saves/ itself, or older still in Godot's user folder)
+## become slot 1.
+func _migrate_old_saves() -> void:
+	var root := _real_save_dir()
+	var s1 := _slot_dir(1)
+	if FileAccess.file_exists(s1.path_join("progress.json")):
+		return
+	DirAccess.make_dir_recursive_absolute(s1)
+	var d := DirAccess.open(root)
+	if d != null and FileAccess.file_exists(root.path_join("progress.json")):
+		for fn in d.get_files():
+			if fn == "progress.json" or (fn.begins_with("world_") and fn.ends_with(".wfw")):
+				DirAccess.rename_absolute(root.path_join(fn), s1.path_join(fn))
+	elif FileAccess.file_exists(OLD_SAVE_PATH):
+		DirAccess.copy_absolute(ProjectSettings.globalize_path(OLD_SAVE_PATH), s1.path_join("progress.json"))
+
+## Esc menu: save everything and go back to the title (to pick another slot).
+func quit_to_title() -> void:
+	if not (state == "play" or state == "forge" or state == "dead"):
+		return
+	if build_on:
+		_toggle_build()
+	save_game()
+	save_world(true)
+	state = "title"
+	stamps.clear()
+	brushes.clear()
+	dead = false
+	player.dead = false
+	player.hp = player.max_hp
+	player.heal_left = 0.0
+	ui.hide_death()
+	ui.hide_forge()
+	ui.hud.visible = false
+	if ui.settings_panel.visible:
+		ui.toggle_settings()
+	ui.show_title(true)
+
 func start_game(use_save: bool) -> void:
 	state = "loading"
 	ui.show_loading("Forging a round planet…")
@@ -3038,6 +3213,8 @@ func start_game(use_save: bool) -> void:
 		mana_regen = 0.22
 		heat_ward = false
 		items = {"potion": 2}       # two draughts to start with; health doesn't come back by itself
+		player.furn = []
+		played = 0.0
 	_enter_planet(int(s["planet"]) if s != null else 0)
 	ui.hide_loading()
 	ui.show_hud()
@@ -3172,7 +3349,23 @@ func set_setting(key: String, value) -> void:
 		gpu.apply_quality(value)
 	if key == "quality" or key == "pixel":
 		_layout()
+	if key == "window":
+		_apply_window()
 	_apply_volumes()
+
+## Windowed, fullscreen (a borderless window covering the screen) or exclusive fullscreen (the game
+## takes over the display). F11 switches between windowed and fullscreen. The test mode stays windowed.
+func _apply_window() -> void:
+	if testing:
+		return
+	var want := DisplayServer.WINDOW_MODE_WINDOWED
+	match str(settings.get("window", "windowed")):
+		"fullscreen":
+			want = DisplayServer.WINDOW_MODE_FULLSCREEN
+		"exclusive":
+			want = DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	if DisplayServer.window_get_mode() != want:
+		DisplayServer.window_set_mode(want)
 
 func _apply_volumes() -> void:
 	if audio:
@@ -3182,11 +3375,9 @@ func _apply_volumes() -> void:
 ## Saves live in "Wisp Forge/saves" so the whole game stays in one portable folder.
 ## The test mode uses its own folder inside it, so your real saves are never touched.
 func _save_dir() -> String:
-	var d := _real_save_dir()
-	if testing:
-		d = d.path_join("test")
-		if not DirAccess.dir_exists_absolute(d):
-			DirAccess.make_dir_recursive_absolute(d)
+	var d := _real_save_dir().path_join("test" if testing else "slot_%d" % slot)
+	if not DirAccess.dir_exists_absolute(d):
+		DirAccess.make_dir_recursive_absolute(d)
 	return d
 
 func _real_save_dir() -> String:
@@ -3201,15 +3392,13 @@ func _save_path() -> String:
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat,
-		"furn": player.furn}
+		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
 
 func _load_save():
 	var path := _save_path()
-	if not FileAccess.file_exists(path):
-		path = OLD_SAVE_PATH   # progress saved by earlier versions
 	if not FileAccess.file_exists(path):
 		return null
 	var txt := FileAccess.get_file_as_string(path)
@@ -3235,6 +3424,7 @@ func _apply_save(s: Dictionary) -> void:
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
 	mat = int(s.get("mat", Defs.DIRT))
+	played = float(s.get("played", 0.0))
 	player.furn = []
 	for it in s.get("furn", []):
 		if typeof(it) == TYPE_DICTIONARY and it.has("rows") and not (it["rows"] as Array).is_empty():
@@ -3265,7 +3455,7 @@ func save_world(blocking: bool) -> void:
 	planet_state["chests"] = cs
 	var ds := []
 	for d in doors:
-		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"])])
+		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"]), d.get("cells", [])])
 	planet_state["doors"] = ds
 	planet_state["time"] = time
 	var meta := JSON.stringify(planet_state)

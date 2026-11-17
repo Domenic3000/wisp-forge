@@ -6,6 +6,7 @@ const MageRig := preload("res://scripts/mage_rig.gd")
 
 var game
 var tex := {}
+var _door_keys := []          # pictures of damaged open doors made so far (oldest first)
 var _masks := {}
 
 func _ready() -> void:
@@ -43,7 +44,9 @@ func _draw_build_preview() -> void:
 ## An open door, swung open towards you and seen face-on (no perspective): a plank door with
 ## a frame, two iron straps with rivets, a little barred window and a brass handle on the far
 ## edge (the hinge edge is at the left; the overlay mirrors it for doors that swing the other way).
-static func _door_open_image(h: int) -> Image:
+## (`cells`: the door's parts across its doorway, `dw` wide, -1 where a part is gone: that slice
+## of the panel is missing, and the wood around a hole is charred dark)
+static func _door_open_image(h: int, cells := [], dw := 3) -> Image:
 	var w := 10
 	var img := Image.create(w, h + 1, false, Image.FORMAT_RGBA8)   # an empty last row, like the sprites' outline
 	var dk := Color("#3a2412")
@@ -70,6 +73,19 @@ static func _door_open_image(h: int) -> Image:
 			img.set_pixel(x, y, c)
 	img.set_pixel(w - 3, h / 2, Color("#e2b048"))
 	img.set_pixel(w - 3, h / 2 + 1, Color("#9a6c24"))
+	if cells.size() == dw * h:
+		var gone := func(x: int, y: int) -> bool:
+			if x < 0 or y < 0 or x >= w or y >= h:
+				return false
+			return int(cells[y * dw + mini(int(float(x) * dw / w), dw - 1)]) < 0
+		var out := img.duplicate()
+		for x in w:
+			for y in h:
+				if gone.call(x, y):
+					out.set_pixel(x, y, Color(0, 0, 0, 0))
+				elif gone.call(x - 1, y) or gone.call(x + 1, y) or gone.call(x, y - 1) or gone.call(x, y + 1):
+					out.set_pixel(x, y, img.get_pixel(x, y).lerp(Color("#1a1008"), 0.6))
+		return out
 	return img
 
 # which animation frame a mage shows
@@ -213,7 +229,17 @@ func _draw() -> void:
 		# a door swings away from whoever opened it; the panel stands face-on beside the doorway,
 		# hinged at its edge
 		var swing := float(d.get("swing", d["side"]))
-		_sprite("door_open", game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true)
+		var dkey := "door_open"
+		var dc: Array = d.get("cells", [])
+		if dc.has(-1):
+			# a damaged door: its own picture, with the holes (made once per state of damage)
+			dkey = "door_open_%d_%d" % [int(d["h"]), hash(dc)]
+			if not tex.has(dkey):
+				if _door_keys.size() > 64:
+					tex.erase(_door_keys.pop_front())
+				_door_keys.append(dkey)
+				tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"]), dc, int(d["w"])))
+		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true)
 	# foes
 	for e in game.enemies:
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)
