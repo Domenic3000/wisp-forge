@@ -161,22 +161,106 @@ static func shelf(rng: RandomNumberGenerator, goods := false) -> Dictionary:
 		y -= 5
 	return _done(g, "shelf")
 
+## an upright barrel: staves bulging out in the middle, iron hoops, a lid seen a little from above
 static func barrel(rng: RandomNumberGenerator) -> Dictionary:
-	var w := rng.randi_range(7, 9)
-	var h := rng.randi_range(9, 11)
+	var w := rng.randi_range(10, 12)
+	var h := rng.randi_range(12, 14)
 	var g := Grid.new(w, h)
+	var cx := (w - 1) * 0.5
 	for y in h:
-		var inset := 1 if (y == 0 or y == h - 1) else 0
-		g.hline(inset, w - 1 - inset, y, "w")
-		for x in range(inset, w - inset):
-			if x % 2 == 0:
-				g.put(x, y, "W")
-		g.put(inset, y, "d")
-		g.put(w - 1 - inset, y, "d")
-	for hy in [1, h - 2, h / 2]:
-		g.hline(0, w - 1, hy, "I")
-	g.hline(1, w - 2, 0, "h")
+		var bul := sin(PI * (y + 0.5) / h)
+		var half := cx - (1.0 - bul) * 2.4
+		for x in w:
+			var u := (x - cx) / maxf(half, 0.5)
+			if absf(u) > 1.0:
+				continue
+			var ch := "w"
+			if u < -0.85 or u > 0.8:
+				ch = "d"
+			elif u < -0.45:
+				ch = "W"
+			elif u < 0.35:
+				ch = "w" if x % 3 != 0 else "W"
+			else:
+				ch = "w" if x % 3 != 0 else "d"
+			g.put(x, y, ch)
+	for hy in [2, h - 3]:
+		for x in w:
+			if g.px[hy][x] != ".":
+				g.put(x, hy, "I" if (x - cx) / cx > -0.4 else "j")
+	for x in w:
+		if g.px[0][x] != ".":
+			g.put(x, 0, "h" if x > 0 and x < w - 1 and g.px[0][x - 1] != "." and g.px[0][x + 1] != "." else "d")
+		if g.px[1][x] != ".":
+			g.put(x, 1, "d")
 	return _done(g, "barrel")
+
+## a keg lying on a cradle: its round end shows (planks, iron rim, a tap)
+static func keg(rng: RandomNumberGenerator) -> Dictionary:
+	var sz := rng.randi_range(11, 13)
+	var g := Grid.new(sz + 2, sz + 3)
+	var c := (sz - 1) * 0.5
+	for y in sz:
+		for x in sz:
+			var d := Vector2(x - c, y - c).length()
+			if d > c + 0.5:
+				continue
+			var ch := "W" if x % 3 != 0 else "w"
+			if d > c - 0.7:
+				ch = "j" if x + y < sz - 3 else "I"
+			elif d > c - 1.5:
+				ch = "d"
+			elif d < 1.0:
+				ch = "d"
+			g.put(x + 1, y, ch)
+	g.put(int(c) + 1, int(c) + 2, "j")
+	g.put(int(c) + 1, int(c) + 3, "i")
+	for y in range(sz - 2, sz + 3):
+		g.put(1, y, "d")
+		g.put(sz, y, "d")
+	g.hline(0, sz + 1, sz + 1, "w")
+	g.hline(0, sz + 1, sz + 2, "d")
+	return _done(g, "keg")
+
+## two or three barrels together, sometimes one on top
+static func barrels(rng: RandomNumberGenerator) -> Dictionary:
+	var parts := [barrel(rng), barrel(rng)]
+	if rng.randf() < 0.4:
+		parts.append(keg(rng))
+	var w := 0
+	var h := 0
+	for p in parts:
+		var pr: Array = p["rows"]
+		w += pr[0].length()
+		h = maxi(h, pr.size())
+	var top := barrel(rng) if rng.randf() < 0.45 else {}
+	var th := 0 if top.is_empty() else (top["rows"] as Array).size()
+	var g := Grid.new(w, h + th)
+	var ox := 0
+	for p in parts:
+		var pr: Array = p["rows"]
+		for y in pr.size():
+			for x in pr[y].length():
+				if pr[y][x] != ".":
+					g.put(ox + x, g.h - pr.size() + y, pr[y][x])
+		ox += pr[0].length()
+	if th > 0:
+		var tr: Array = top["rows"]
+		var tx: int = ((parts[0]["rows"] as Array)[0].length()) / 2
+		for y in tr.size():
+			for x in tr[y].length():
+				if tr[y][x] != ".":
+					g.put(tx + x, g.h - h - th + y + 1, tr[y][x])
+	return _done(g, "barrels")
+
+## any of the barrel kinds
+static func barrel_any(rng: RandomNumberGenerator) -> Dictionary:
+	var r := rng.randf()
+	if r < 0.45:
+		return barrel(rng)
+	if r < 0.7:
+		return keg(rng)
+	return barrels(rng)
 
 static func crate(rng: RandomNumberGenerator) -> Dictionary:
 	var s := rng.randi_range(8, 10)
@@ -511,7 +595,9 @@ static func make(kind: String, rng: RandomNumberGenerator, arg = null) -> Dictio
 		"bed": return bed(rng)
 		"bookshelf": return shelf(rng, false)
 		"goods": return shelf(rng, true)
-		"barrel": return barrel(rng)
+		"barrel": return barrel_any(rng)
+		"keg": return keg(rng)
+		"barrels": return barrels(rng)
 		"crate": return crate(rng)
 		"crates": return crates(rng)
 		"dresser": return dresser(rng)

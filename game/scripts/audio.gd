@@ -254,4 +254,7 @@ func _build_sfx() -> void:
 	sfx["mimic"] = _wav(_mix(_sweep(0.4, 160.0, 60.0, "saw", 5.0, 0.4), _noise(0.3, 0.3, 8.0, 0.5)))
 	sfx["roar"] = _wav(_mix(_sweep(1.2, 90.0, 45.0, "saw", 2.0, 0.6), _noise(1.2, 0.04, 2.0, 0.8)))
 	sfx["splash"] = _wav(_noise(0.3, 0.4, 9.0, 0.5))
+	# a wooden door: a creak and a soft knock as it opens, a firmer thud as it shuts
+	sfx["door_open"] = _wav(_mix(_sweep(0.32, 180.0, 260.0, "saw", 5.0, 0.07), _noise(0.08, 0.3, 40.0, 0.35)))
+	sfx["door_close"] = _wav(_mix(_sweep(0.12, 110.0, 70.0, "sine", 20.0, 0.5), _noise(0.1, 0.2, 35.0, 0.55)))
 	randomize()

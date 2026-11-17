@@ -243,6 +243,7 @@ var dig_blocked: int:
 
 var enemies: Array = []
 var chests: Array = []        # Chest objects on this planet
+var doors: Array = []         # {pos, w, h, side, col, row, open}: the doors of this planet's buildings
 var projs: Array = []
 var parts: Array = []
 var brushes: Array = []
@@ -571,6 +572,73 @@ func _make_chests(loaded: bool) -> void:
 			var c2 := Chest.new()
 			c2.pos = e["pos"]
 			chests.append(c2)
+
+# ------------------------------------------------------------------ doors --
+## The doors: planned with the buildings, saved with the world. A closed door is cells (it blocks
+## like a wall); an open one is drawn by the overlay, swung into the house.
+func _make_doors(loaded: bool) -> void:
+	doors.clear()
+	if loaded and planet_state.has("doors"):
+		for e in planet_state["doors"]:
+			doors.append({"pos": Vector2(float(e[0]), float(e[1])), "w": int(e[2]), "h": int(e[3]), "side": int(e[4]),
+				"col": int(e[5]), "row": int(e[6]), "open": bool(e[7])})
+	else:
+		for e in builds.door_list:
+			var d: Dictionary = e.duplicate()
+			d["open"] = false
+			doors.append(d)
+
+## the nearest door to a point, within reach cells of its middle ([] if none)
+func _door_near(p: Vector2, reach: float) -> Dictionary:
+	var best := {}
+	var bd := reach * reach
+	for d in doors:
+		var dd: float = (d["pos"] as Vector2).distance_squared_to(p)
+		if dd < bd:
+			bd = dd
+			best = d
+	return best
+
+## is anyone standing in a door's doorway (closing it would wall them in)?
+func _door_blocked(d: Dictionary) -> bool:
+	var dp: Vector2 = d["pos"]
+	var a := atan2(dp.y, dp.x)
+	var bodies: Array = players.duplicate()
+	bodies.append_array(enemies)
+	for e in bodies:
+		if e is Mage and e.dead:
+			continue
+		var o: Vector2 = e.pos - dp
+		if absf(o.dot(basis_r(a))) < float(d["w"]) * 0.5 + e.w * 0.5 + 0.5 and absf(o.dot(basis_d(a))) < float(d["h"]) * 0.5 + e.h * 0.5:
+			return true
+	return false
+
+func _set_door(d: Dictionary, open: bool) -> void:
+	if bool(d["open"]) == open:
+		return
+	if not open and _door_blocked(d):
+		return
+	d["open"] = open
+	var hw := float(d["w"]) * 0.5
+	var hh := float(d["h"]) * 0.5
+	# owner slot 3: nobody's satchel (a door brush collects nothing)
+	brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0 if open else 1.0, hw, hh, 0.0, 3])
+	audio.play("door_open" if open else "door_close", d["pos"])
+
+## walking into a closed door opens it
+func _door_bump(m: Mage) -> void:
+	var d := _door_near(m.pos, 24.0)
+	if not d.is_empty() and not d["open"]:
+		_set_door(d, true)
+
+## F: open a chest in reach, otherwise open or close the nearest door
+func _interact() -> void:
+	if not _chest_in_reach().is_empty():
+		_try_open_chest()
+		return
+	var d := _door_near(player.pos, 22.0)
+	if not d.is_empty():
+		_set_door(d, not d["open"])
 
 ## Chests near a mage obey gravity: one rigid object, so it falls and lands whole. A chest
 ## resting on something stays exactly where it is (the collision grid is built around the mage,
@@ -954,6 +1022,8 @@ func move_body(e: Body) -> void:
 			if not climbed:
 				e.vx = 0.0
 				e.hit_wall = true
+				if e is Mage and box_count(x + st, y, e.w, e.h, Defs.WOODDOOR) > 0:
+					_door_bump(e as Mage)
 				break
 		dx -= st
 	e.on_ground = false
@@ -1992,7 +2062,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif k == KEY_Q or k == KEY_E:
 			_cycle_material(1 if k == KEY_E else -1)
 		elif k == KEY_F:
-			_try_open_chest()
+			_interact()
 		elif k == KEY_M or k == KEY_Z:
 			zoom_i = (zoom_i + 1) % zoom_levels.size()
 			zoom = zoom_levels[zoom_i]
@@ -2114,6 +2184,7 @@ func _enter_planet(index: int) -> void:
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
 	_make_chests(loaded)
+	_make_doors(loaded)
 	enemies.clear()
 	_guards_alive.clear()
 	projs.clear()
@@ -2169,7 +2240,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 21            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 22            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -2282,6 +2353,10 @@ func save_world(blocking: bool) -> void:
 	for c in chests:
 		cs.append([c.pos.x, c.pos.y, c.opened])
 	planet_state["chests"] = cs
+	var ds := []
+	for d in doors:
+		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"]])
+	planet_state["doors"] = ds
 	planet_state["time"] = time
 	var meta := JSON.stringify(planet_state)
 	var path := _world_path(int(planet["index"]))

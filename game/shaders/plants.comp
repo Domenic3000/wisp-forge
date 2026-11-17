@@ -69,7 +69,7 @@ void main() {
 				uint t2 = cD2 & 255u;
 				restsOn = KIND[t2] == K_SOLID || (KIND[t2] == K_POWDER && t2 != M_LITTER && t2 != M_TIMBER) || (KIND[t2] == K_LIQUID && ((cD2 >> 16) & 255u) != 1u);
 			}
-			grounded = bgm != M_LEAF && bgm != M_SNOW && (solidN || restsOn);
+			grounded = bgm != M_LEAF && bgm != M_SNOW && bgm != M_CAP && (solidN || restsOn);
 		} else {
 			grounded = isBlock(cU & 255u) || isBlock(cD & 255u) || isBlock(cL & 255u) || isBlock(cR & 255u) || KIND[cD & 255u] == K_LIQUID;
 		}

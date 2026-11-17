@@ -11,6 +11,35 @@ var _masks := {}
 func _ready() -> void:
 	for k in Defs.SPRITES:
 		tex[k] = Defs.sprite_texture(k)
+	tex["door_open"] = ImageTexture.create_from_image(_door_open_image(30))
+
+## An open door, swung into the room and seen a little from the side: the hinge edge at the left,
+## the far edge one pixel shorter top and bottom, planks, two iron straps and the handle.
+static func _door_open_image(h: int) -> Image:
+	var w := 8
+	var img := Image.create(w, h + 1, false, Image.FORMAT_RGBA8)   # an empty last row, like the sprites' outline
+	var dk := Color("#3a2412")
+	var md := Color("#7a4e28")
+	var lt := Color("#9a6634")
+	var hl := Color("#b98048")
+	var ir := Color("#50505a")
+	var irl := Color("#8a8a96")
+	for x in w:
+		var inset := int(round(float(x) / float(w - 1) * 1.5))
+		for y in range(inset, h - inset):
+			var c := lt if x % 3 != 2 else md
+			if x == 0:
+				c = hl
+			var from_top := y - inset
+			var from_bot := h - inset - 1 - y
+			if from_top == 5 or from_top == 6 or from_bot == 5 or from_bot == 6:
+				c = irl if x == 0 else ir
+			if from_top == 0 or from_bot == 0 or x == w - 1:
+				c = dk
+			img.set_pixel(x, y, c)
+	img.set_pixel(w - 2, h / 2, Color("#e2b048"))
+	img.set_pixel(w - 2, h / 2 + 1, Color("#9a6c24"))
+	return img
 
 # which animation frame a mage shows
 func _mage_frame(m) -> String:
@@ -142,6 +171,19 @@ func _draw() -> void:
 			ch_a = 1.0 - ch_f * ch_f
 			ch_sq = 1.0 - ch_f * 0.7
 		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq)
+	# open doors, swung into their houses
+	for d in game.doors:
+		if not d["open"]:
+			continue
+		var dp: Vector2 = d["pos"]
+		var dsp: Vector2 = game.world_to_screen(dp)
+		if dsp.x < -40 or dsp.y < -40 or dsp.x > game.VW + 40 or dsp.y > game.VH + 40:
+			continue
+		var da := atan2(dp.y, dp.x)
+		# the local "inside" direction (columns increasing) is against basis_r, which is screen right
+		var side := float(d["side"])
+		var wp: Vector2 = dp - game.basis_r(da) * side * (float(d["w"]) * 0.5 + 4.0)
+		_sprite("door_open", wp, side > 0.0, false, float(d["h"]), true)
 	# foes
 	for e in game.enemies:
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)

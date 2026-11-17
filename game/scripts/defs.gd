@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 48
+const NM := 50
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -56,6 +56,11 @@ const OPENCHEST := 40
 const SCAFFOLD := 41      # a one-way platform: you jump up through it and drop down through it
 const RUNESTONE := 42     # warded stone: dungeon walls, only the Core Siphon cuts it
 const DECOR := 43         # props (furniture, signs, lamps...): background pixels, colour from Props.PALETTE
+const WOODDOOR := 44      # a closed door in a doorway (its cells know which part they are: row << 2 | column)
+const CAP := 45           # a giant mushroom's cap (each mushroom has its own colour, from its plant id)
+const STALK := 46         # a giant mushroom's pale stem
+const MYCELIUM := 47      # fungal ground (the Mirecap Grove)
+const DRYGRASS := 48      # golden savanna grass: the ground's top and the tall tufts on it
 
 const MAT_NAMES := {
 	0: "AIR", 1: "STONE", 2: "DIRT", 3: "GRASS", 4: "SAND", 5: "WATER", 6: "LAVA", 7: "WOOD", 8: "LEAF",
@@ -63,7 +68,7 @@ const MAT_NAMES := {
 	16: "EMBER", 17: "FROST", 18: "WISP", 19: "MUD", 20: "ICE", 21: "MAGMAROCK", 22: "CORE",
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
-	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR",
+	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS",
 }
 
 # ---- planet geometry (polar shells; column count halves as radius halves) ----
@@ -159,6 +164,16 @@ func _init() -> void:
 	_def(DECOR, "Furnishings", K_SOLID, ["#6b4423", "#3a2412", "#8f5f33", "#b07a44"], {"fuel": 80, "ign": 0.05})
 	PLACE[DECOR] = 0
 	BGDEBRIS[DECOR] = TIMBER
+	# doors: walk into one (or press F) to open it, F again to close it; the open door is drawn by the
+	# overlay, the closed one is cells that block like a wall
+	_def(WOODDOOR, "Door", K_SOLID, ["#5a3a1e", "#7a4e28", "#9a6634", "#b98048"], {"hard": 1, "fuel": 120, "ign": 0.03})
+	PLACE[WOODDOOR] = 0
+	SPAN[WOODDOOR] = 40
+	# the new biomes' plants and ground: giant mushrooms (caps glow faintly), fungal ground, dry grass
+	_def(CAP, "Mushroom Cap", K_SOLID, ["#8a2a3a", "#b83a4a", "#d8586a", "#5a1a2a"], {"fuel": 30, "ign": 0.03, "glow": Vector3(0.012, 0.006, 0.016)})
+	_def(STALK, "Mushroom Stalk", K_SOLID, ["#cfc4a8", "#b8ab8c", "#e4dcc4", "#9a8e72"], {"fuel": 40, "ign": 0.03})
+	_def(MYCELIUM, "Mycelium", K_SOLID, ["#4a3a58", "#5e4a70", "#7a6290", "#3a2c46"], {"glow": Vector3(0.004, 0.002, 0.008)})
+	_def(DRYGRASS, "Dry Grass", K_SOLID, ["#9a7a2a", "#c8a040", "#e0c060", "#7a5a1e"], {"fuel": 30, "ign": 0.06})
 	# warded stone: the walls of dungeons, carved with faintly glowing runes. Too hard for any staff
 	# but the Core Siphon, so a dungeon is explored through its halls, not dug around.
 	_def(RUNESTONE, "Warded Stone", K_SOLID, ["#2c3044", "#353a52", "#3f4560", "#24283a"], {"hard": 4, "glow": Vector3(0.025, 0.045, 0.06)})
@@ -171,13 +186,13 @@ func _init() -> void:
 	# resting on the ground before it breaks loose. Stacking straight up is always fine.
 	for kv in [[STONE, 40], [DEEPSTONE, 48], [MAGMAROCK, 56], [OBSIDIAN, 60], [CORE, 63], [DIRT, 10], [GRASS, 10],
 			[ICE, 14], [FROST, 24], [WOOD, 16], [LEAF, 4], [PLANK, 12], [BRICK, 24], [GLASS, 6], [CACTUS, 8],
-			[SHROOM, 6], [MASONRY, 28], [MOSSBLOCK, 22], [SANDSTONE, 20], [TILE, 14], [TREASURE, 14], [TORCH, 4]]:
+			[SHROOM, 6], [CAP, 6], [STALK, 14], [MYCELIUM, 10], [DRYGRASS, 10], [MASONRY, 28], [MOSSBLOCK, 22], [SANDSTONE, 20], [TILE, 14], [TREASURE, 14], [TORCH, 4]]:
 		SPAN[kv[0]] = kv[1]
 	for kv in [[STONE, GRAVEL], [DEEPSTONE, GRAVEL], [MAGMAROCK, GRAVEL], [BRICK, GRAVEL], [MASONRY, GRAVEL],
 			[MOSSBLOCK, GRAVEL], [TILE, GRAVEL], [SANDSTONE, SAND], [WOOD, TIMBER], [PLANK, TIMBER], [LEAF, LITTER],
-			[CACTUS, LITTER], [ICE, SNOW], [GLASS, AIR], [TORCH, AIR]]:
+			[CACTUS, LITTER], [ICE, SNOW], [GLASS, AIR], [TORCH, AIR], [MYCELIUM, DIRT], [DRYGRASS, DIRT]]:
 		DEBRIS[kv[0]] = kv[1]
-	for kv in [[WOOD, TIMBER], [PLANK, TIMBER], [LEAF, LITTER], [CACTUS, LITTER], [SHROOM, LITTER], [CRYSTAL, GRAVEL],
+	for kv in [[WOOD, TIMBER], [PLANK, TIMBER], [LEAF, LITTER], [CACTUS, LITTER], [SHROOM, LITTER], [CAP, LITTER], [STALK, TIMBER], [DRYGRASS, LITTER], [CRYSTAL, GRAVEL],
 			[ICE, SNOW], [EMBER, GRAVEL], [MASONRY, GRAVEL], [MOSSBLOCK, GRAVEL], [BRICK, GRAVEL], [STONE, GRAVEL],
 			[SANDSTONE, SAND], [TILE, GRAVEL], [OBSIDIAN, GRAVEL]]:
 		BGDEBRIS[kv[0]] = kv[1]
@@ -265,7 +280,8 @@ func _join_f(a) -> String:
 	return ", ".join(p)
 
 # ---------------------------------------------------------------- biomes ----
-# flora: 0 none, 1 trees, 2 pines, 3 cactus, 4 reeds, 5 dead trees, 6 kelp
+# flora: 0 none, 1 trees, 2 pines, 3 cactus, 4 reeds, 5 dead trees, 6 kelp, 7 jungle, 8 acacia, 9 giant mushrooms
+# (a planet has at most 8 biomes: their parameters fill P.p[8..23])
 # ug (underground): 0 fungal, 1 crystal, 2 ice, 3 ember
 # flags: 1 snowcap, 2 pond, 4 lava lake, 8 spawn ok
 const BIOMES := {
@@ -275,15 +291,18 @@ const BIOMES := {
 	"mountain": {"name": "Greyspire Peaks", "under": "Frostvein Grottos", "off": -75.0, "amp": 48.0, "top": STONE, "topD": 0, "sub": STONE, "subD": 0, "weather": "snow", "flora": 2, "ug": 2, "flags": 1},
 	"tundra": {"name": "Rimefrost Steppe", "under": "Frostvein Grottos", "off": -6.0, "amp": 8.0, "top": SNOW, "topD": 3, "sub": DIRT, "subD": 8, "weather": "snow", "flora": 2, "ug": 2, "flags": 8},
 	"ashland": {"name": "Cinderwaste", "under": "Smoldering Vaults", "off": 6.0, "amp": 20.0, "top": ASH, "topD": 4, "sub": STONE, "subD": 0, "weather": "ash", "flora": 5, "ug": 3, "flags": 4},
+	"jungle": {"name": "Thornvine Jungle", "under": "Glowroot Caverns", "off": 4.0, "amp": 16.0, "top": GRASS, "topD": 1, "sub": MUD, "subD": 10, "weather": "rain", "flora": 7, "ug": 0, "flags": 2 | 8},
+	"savanna": {"name": "Goldgrass Savanna", "under": "Prism Hollows", "off": 8.0, "amp": 6.0, "top": DRYGRASS, "topD": 1, "sub": DIRT, "subD": 10, "weather": "clear", "flora": 8, "ug": 1, "flags": 8},
+	"grove": {"name": "Mirecap Grove", "under": "Glowroot Caverns", "off": 2.0, "amp": 11.0, "top": MYCELIUM, "topD": 2, "sub": DIRT, "subD": 10, "weather": "rain", "flora": 9, "ug": 0, "flags": 8},
 	"ocean": {"name": "Drowned Shelf", "under": "Abyssal Grottos", "off": 62.0, "amp": 18.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 6, "ug": 0, "flags": 0},
 }
 
 const PLANETS := [
-	{"name": "Verdance", "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "marsh", "tundra", "mountain", "desert", "forest", "mountain"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},
+	{"name": "Verdance", "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},
 	{"name": "Cindrel", "desc": "A volcanic world. The mantle is close to the surface.", "biomes": ["ashland", "mountain", "desert", "ashland", "ashland"], "magmaR": 780.0, "sea": -1.0, "rich": 1.4, "lava": 2.6, "sky": Color(1.25, 0.78, 0.7)},
 	{"name": "Thalassa", "desc": "A water world: scattered islands over drowned shelves.", "biomes": ["ocean", "forest", "ocean", "marsh", "ocean", "tundra", "ocean"], "magmaR": 580.0, "sea": 26.0, "rich": 1.2, "lava": 0.8, "sky": Color(0.85, 1.05, 1.15)},
 	{"name": "Sere", "desc": "An endless desert world baked under twin suns.", "biomes": ["desert", "mountain", "desert", "desert", "ashland"], "magmaR": 640.0, "sea": -1.0, "rich": 1.5, "lava": 1.5, "sky": Color(1.15, 1.0, 0.8)},
-	{"name": "Fenhollow", "desc": "A drowned marsh world with deep black lakes.", "biomes": ["marsh", "forest", "marsh", "tundra", "marsh"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
+	{"name": "Fenhollow", "desc": "A drowned marsh world with deep black lakes.", "biomes": ["marsh", "grove", "marsh", "tundra", "marsh", "jungle"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
 ]
 
 func make_planet(i: int) -> Dictionary:

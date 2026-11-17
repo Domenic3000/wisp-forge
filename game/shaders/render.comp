@@ -157,8 +157,25 @@ vec3 blockTex(uint t, ivec2 w, uint v) {
 	return ramp(t, pattern(t, w, v));
 }
 
+// a closed door, from which part of it a cell is (v = row << 2 | column): vertical planks, a dark
+// frame top and bottom, two iron straps with rivets, a small barred window and a brass handle
+vec3 doorColor(uint v) {
+	int row = int(v >> 2u), col = int(v & 3u);
+	vec3 c = ramp(M_WOODDOOR, col == 0 ? 3 : (col == 2 ? 1 : 2));
+	if ((row * 7 + col * 3) % 11 == 0) c *= 0.88;                              // grain
+	if (row == 0 || row >= 29) return ramp(M_WOODDOOR, 0);
+	if (row == 5 || row == 6 || row == 23 || row == 24) {
+		c = col == 0 ? vec3(0.55, 0.55, 0.6) : vec3(0.3, 0.3, 0.34);
+		if ((row == 5 || row == 23) && col == 1) c = vec3(0.75, 0.75, 0.8);   // rivet
+	}
+	if (row >= 9 && row <= 12 && col == 1) c = (row == 10) ? vec3(0.35, 0.33, 0.3) : vec3(0.08, 0.06, 0.05);
+	if ((row == 15 || row == 16) && col == 2) c = row == 15 ? vec3(0.95, 0.78, 0.35) : vec3(0.7, 0.52, 0.2);
+	return c;
+}
+
 vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 	uint v = (c >> 8) & 255u;
+	if (t == M_WOODDOOR) return doorColor(v);
 	uint ut = cu & 255u;
 	bool openUp = ut == 0u || KIND[ut] == K_GAS;
 	if (t == M_WATER) {
@@ -196,10 +213,44 @@ vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 // Trees, bushes and cacti, shaded from their shape: light from the upper left, so top and left
 // edges catch it and the right side and undersides fall into shadow. Leaves clump, bark has
 // grooves and knots, cacti have ribs, spines and the odd flower on top, charred wood glints.
-vec3 plantColor(uint b, ivec2 w, uint bu, uint bd, uint bl, uint br) {
+vec3 plantColor(uint b, uint ab, ivec2 w, uint bu, uint bd, uint bl, uint br) {
 	uint hs = hashu(uint(w.x) * 2654435761u ^ uint(w.y) * 40503u ^ 0x77u);
 	float hr = float(hs & 1023u) / 1024.0;
 	int l = 1;
+	if (b == M_CAP) {
+		// each mushroom its own colour (from its plant id): spotted red, violet, teal (glowing spots)
+		// or amber; lit on top, dark gills underneath
+		uint pid = hashu((ab >> 16) * 2246822519u + 7u);
+		uint kind = pid % 4u;
+		vec3 base = kind == 0u ? vec3(0.74, 0.18, 0.22) : (kind == 1u ? vec3(0.5, 0.26, 0.66) : (kind == 2u ? vec3(0.16, 0.55, 0.58) : vec3(0.82, 0.5, 0.18)));
+		float sh = bu != M_CAP ? 1.25 : (bd != M_CAP ? 0.5 : 0.9 + vnoise(vec2(w) / 3.0, 17) * 0.2);
+		if (br != M_CAP && bu == M_CAP) sh *= 0.8;
+		vec3 c = base * sh;
+		if (bd != M_CAP && bu == M_CAP) return vec3(0.32, 0.24, 0.2) * (0.8 + hr * 0.4);   // gills
+		// spots: round dots on a coarse grid, jittered per cell block
+		ivec2 sp = w / 4;
+		uint sj = hashu(uint(sp.x) * 73856093u ^ uint(sp.y) * 19349663u ^ pid);
+		vec2 so = vec2(float(sj & 3u), float((sj >> 2) & 3u));
+		if ((sj >> 4) % 3u == 0u && length(vec2(w - sp * 4) - so) < 1.1)
+			c = kind == 2u ? vec3(0.6, 1.0, 0.95) : vec3(0.95, 0.92, 0.85);
+		return c;
+	}
+	if (b == M_STALK) {
+		bool le = bl != M_STALK, re = br != M_STALK;
+		l = (w.x % 3 == 0) ? 1 : 2;
+		if (le) l = 3;
+		if (re) l = 0;
+		if (bu == M_CAP) l = 0;                       // in the cap's shadow
+		return ramp(b, l) * 0.9;
+	}
+	if (b == M_DRYGRASS) {
+		// blades: each column its own shade, the tips lighter
+		uint cb = hashu(uint(w.x) * 2654435761u ^ 0x3du);
+		l = int(cb % 3u);
+		if (bu != M_DRYGRASS) l = 3;
+		if ((cb >> 8) % 29u == 0u && bu != M_DRYGRASS) return vec3(0.95, 0.9, 0.6);   // a seed head
+		return ramp(b, l) * 0.88;
+	}
 	if (b == M_LEAF) {
 		float n = vnoise(vec2(w) / 2.4, 13) + (vnoise(vec2(w) / 6.0, 14) - 0.5) * 0.5;
 		l = n < 0.32 ? 0 : (n < 0.58 ? 1 : 2);
@@ -424,11 +475,11 @@ void main() {
 		if (!opaque) {
 			if (b != 0u) {
 				uint bu = 0u, bd = 0u, bl = 0u, br = 0u;
-				bool plant = (b == M_LEAF || b == M_WOOD || b == M_CACTUS || b == M_COAL) && (ab & BG_WALL) == 0u;
+				bool plant = (b == M_LEAF || b == M_WOOD || b == M_CACTUS || b == M_COAL || b == M_CAP || b == M_STALK || b == M_DRYGRASS) && (ab & BG_WALL) == 0u;
 				if (plant) {
 					bu = bgAtPos(screenToWorld(px + vec2(0.0, -1.0))); bd = bgAtPos(screenToWorld(px + vec2(0.0, 1.0)));
 					bl = bgAtPos(screenToWorld(px + vec2(-1.0, 0.0))); br = bgAtPos(screenToWorld(px + vec2(1.0, 0.0)));
-					bg = plantColor(b, w, bu, bd, bl, br);
+					bg = plantColor(b, ab, w, bu, bd, bl, br);
 				} else {
 					bg = bgObjColor(b, ab, w, (c >> 8) & 255u, bu, bd, bl, br, cu, cd);
 				}
@@ -437,6 +488,15 @@ void main() {
 			else if (r > sa.x) { bg = skyColor(pos, r, sa.x, px, th); bgf = 2; }
 			else { bg = wallColor(r, sa, sb, w, cu, cl, cr); bgf = 0; }
 			// grass tufts and the odd flower on top of grass
+			if (t == 0u && b == 0u && (cd & 255u) == M_MYCELIUM) {
+				uint mh = hashu(uint(w.x) * 2654435761u ^ 0x6c1u);
+				if ((mh & 7u) < 3u) { bg = ramp(M_MYCELIUM, 2 + int((mh >> 3) & 1u)); bgf = 0; }
+				if ((mh >> 8) % 17u == 0u) { bg = vec3(0.55, 0.95, 0.85); bgf = 1; }     // a glowing speck
+			}
+			if (t == 0u && b == 0u && (cd & 255u) == M_DRYGRASS) {
+				uint dh = hashu(uint(w.x) * 2654435761u ^ 0x2a7u);
+				if ((dh & 7u) < 5u) { bg = ramp(M_DRYGRASS, 2 + int((dh >> 3) & 1u)); bgf = 0; }
+			}
 			if (t == 0u && b == 0u && (cd & 255u) == M_GRASS) {
 				uint gh = hashu(uint(w.x) * 2654435761u ^ 0x5bd1u);
 				if ((gh & 7u) < 5u) { bg = ramp(M_GRASS, (gh & 8u) != 0u ? 3 : 2); bgf = 0; }

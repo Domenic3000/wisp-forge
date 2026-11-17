@@ -12,6 +12,8 @@ extends RefCounted
 
 const N0 := 8192
 const Props := preload("res://scripts/props.gd")
+## the test mode keeps each blueprint (to draw it), the game doesn't need them after stamping
+var KEEP_DATA := "--test" in OS.get_cmdline_user_args()
 const KEEP := 0xffff              # keep foreground and background as generated
 const F_FILL := 0x10000           # only fill where there is no solid ground
 const F_ANCHOR := 0x20000         # part of the planet (foundations)
@@ -28,6 +30,7 @@ var sites := []                   # Vector2(x0, x1): surface columns kept free o
 var settle := []                  # [world position, half size] windows to settle after stamping
 var labels := []                  # {x0, x1, ymin, ymax, name}: for the region name on the HUD
 var chest_list := []             # {pos (world centre), ruined}: treasure chests (objects, not cells)
+var door_list := []              # {pos (world centre), w, h, side}: doors (closed cells; the game opens and closes them)
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
 var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
 var used := []                    # occupied surface column ranges
@@ -39,6 +42,7 @@ var _quiet := false               # the first structure near your arrival has no
 
 class BP:
 	var chests := []          # Vector2i(left column, floor row), local
+	var doors := []           # [left column, top row, width, height, side (+1: the inside is to the right)], local
 	var meta := {}            # extra facts for the test mode (a dungeon's rooms and what reaches them)
 	var ruined := false
 	var x0 := 0
@@ -111,6 +115,18 @@ func _style(bname: String, kind: String) -> Dictionary:
 		"ashland":
 			st = {"wall": Defs.BRICK, "post": Defs.OBSIDIAN, "slab": Defs.BRICK, "back": Defs.BRICK, "roof": Defs.BRICK,
 				"roof_kind": "battle", "found": Defs.OBSIDIAN, "thick": 2}
+		"jungle":
+			# timber halls with leaf thatch, raised on stone
+			st = {"wall": Defs.WOOD, "post": Defs.WOOD, "slab": Defs.PLANK, "back": Defs.PLANK, "roof": Defs.LEAF,
+				"roof_kind": "steep", "found": Defs.MOSSBLOCK, "thick": 1}
+		"savanna":
+			# mud-brick walls under golden grass thatch
+			st = {"wall": Defs.SANDSTONE, "post": Defs.WOOD, "slab": Defs.PLANK, "back": Defs.SANDSTONE, "roof": Defs.DRYGRASS,
+				"roof_kind": "pitch", "found": Defs.SANDSTONE, "thick": 2}
+		"grove":
+			# mushroom houses: walls of pale stalk, a cap for a roof
+			st = {"wall": Defs.STALK, "post": Defs.STALK, "slab": Defs.PLANK, "back": Defs.PLANK, "roof": Defs.CAP,
+				"roof_kind": "dome", "found": Defs.MASONRY, "thick": 1}
 	if kind == "fort":
 		# towers, keeps and castle walls are always stone
 		var stone := Defs.MASONRY
@@ -238,6 +254,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	used.clear()
 	deep.clear()
 	chest_list.clear()
+	door_list.clear()
 	used.append(Vector2i(spawn_col - 70, spawn_col + 70))
 	# something to discover a short walk from where you arrive
 	for tries in 40:
@@ -289,6 +306,9 @@ func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
 		"tundra": w = {"cottage": 3.5, "town": 2.5, "tower": 1.5, "mine": 2.5}
 		"ashland": w = {"tower": 3.5, "castle": 2.5, "catacomb": 2, "cottage": 2}
 		"ocean": w = {"cottage": 6, "tower": 4}
+		"jungle": w = {"temple": 2.5, "stilt": 2, "tower": 1, "catacomb": 1.5, "cottage": 1.5}
+		"savanna": w = {"town": 2.5, "cottage": 3, "tower": 1, "mine": 1.5, "catacomb": 1}
+		"grove": w = {"cottage": 3, "town": 1.5, "tower": 1.5, "catacomb": 2}
 		_: w = {"cottage": 1}
 	if near_spawn:
 		w = {"cottage": 2, "tower": 2} if b != "desert" else {"temple": 1}
@@ -565,6 +585,7 @@ func _stabilize_pass(bp: BP) -> int:
 func _finish(bp: BP, build: bool) -> void:
 	if not build:
 		return
+	_roughen_underground(bp)
 	# what the tests check later: the built cells (not fills and foundations), before anchoring
 	var cells := PackedInt32Array()
 	for k in bp.c.size():
@@ -595,7 +616,11 @@ func _finish(bp: BP, build: bool) -> void:
 		var ang := float(posmod(bp.x0 + q.x, N0) + Defs.CHEST_W / 2) / N0 * TAU
 		var rr := Defs.R_TOP - float(bp.y0 + q.y) + Defs.CHEST_H * 0.5 + 0.05
 		chest_list.append({"pos": Vector2(cos(ang), sin(ang)) * rr, "ruined": bp.ruined})
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid})
+	for d in bp.doors:
+		var da := (float(posmod(bp.x0 + int(d[0]), N0)) + float(d[2]) * 0.5) / N0 * TAU
+		var dr := Defs.R_TOP - float(bp.y0 + int(d[1])) - float(d[3]) * 0.5
+		door_list.append({"pos": Vector2(cos(da), sin(da)) * dr, "w": int(d[2]), "h": int(d[3]), "side": int(d[4]), "col": posmod(bp.x0 + int(d[0]), N0), "row": bp.y0 + int(d[1])})
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "data": bp.c if KEEP_DATA else PackedInt32Array()})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
 	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
@@ -696,9 +721,11 @@ func _building(bp: BP, ox: int, base: int, w: int, floors: int, st: Dictionary, 
 	if doors & 1:
 		bp.rect(ox, base - DOOR, ox + th - 1, base - 1, 0)
 		bp.rect_bg(ox, base - DOOR, ox + th - 1, base - 1, Defs.WOOD)
+		_door(bp, ox, base - DOOR, th, DOOR, 1, ruined)
 	if doors & 2:
 		bp.rect(ox + w - th, base - DOOR, ox + w - 1, base - 1, 0)
 		bp.rect_bg(ox + w - th, base - DOOR, ox + w - 1, base - 1, Defs.WOOD)
+		_door(bp, ox + w - th, base - DOOR, th, DOOR, -1, ruined)
 	# framing on the back wall, then windows, torches, treasure and whoever guards it
 	_back_frame(bp, ox + th, top, ox + w - 1 - th, base, floors, st)
 	for k in floors:
@@ -1008,7 +1035,7 @@ func _ruin(bp: BP, i0: int, i1: int, j0: int, j1: int, b: String, outdoors := tr
 			if bp.ok(i0 + bx + dx, j1) and bp.getf(i0 + bx + dx, j1) == 0:
 				bp.fg(i0 + bx + dx, j1, Defs.WOOD, F_FILL)
 	# hanging vines in the wilder places
-	if outdoors and (b == "forest" or b == "marsh" or b == "ocean" or b == "mountain"):
+	if outdoors and (b == "forest" or b == "marsh" or b == "ocean" or b == "mountain" or b == "jungle" or b == "grove"):
 		for n4 in rng.randi_range(3, 7):
 			var vc := rng.randi_range(0, wid - 1)
 			var vj := j0 + depth[vc]
@@ -1040,6 +1067,58 @@ func _break(bp: BP, i: int, j: int) -> void:
 	var g := bp.getb(i, j)
 	if g != 255 and g != 0:
 		bp.bg(i, j, 0)
+
+## Masonry set into the ground (shaft linings, buried corridors, foundations) gets a ragged outer
+## edge instead of a ruler-straight one: along every side that meets natural ground, the stones
+## reach out 0-3 cells further, course by course (runs of 2-4 rows), and flare out near the surface
+## like a footing. Only natural ground is replaced (fill), so nothing built is touched.
+func _roughen_underground(bp: BP) -> void:
+	var w := bp.w
+	var h := bp.h
+	var gj := PackedInt32Array()
+	gj.resize(w)
+	for i in w:
+		gj[i] = ground_row(bp.x0 + i) - bp.y0
+	var rs := rng.randi()
+	var adds := []
+	for j in h:
+		for i in w:
+			var f := bp.getf(i, j)
+			if not _rough_mat(f) or bp.is_fill(i, j):
+				continue
+			for dir in [-1, 1, 0]:
+				var di: int = dir
+				var dj := 1 if dir == 0 else 0
+				var ni := i + di
+				var nj := j + dj
+				if not bp.ok(ni, nj) or bp.getf(ni, nj) != 255 or nj <= gj[ni]:
+					continue
+				# the course this edge cell belongs to (rows in runs of 2-4) and how far it reaches
+				var course := (j + int(_blockr(rs, i, 0, 3) * 3.0)) / (2 + int(_blockr(rs, i, j / 4, 4) * 2.99))
+				var reach := int(_blockr(rs, i * 3 + dir, course, 5) * 3.99)
+				if dir != 0 and nj - gj[ni] < 7:
+					reach += 2                     # a footing near the surface
+				if dir == 0:
+					reach = mini(reach, 2)
+				for k in range(1, reach + 1):
+					adds.append(Vector3i(i + di * k, j + dj * k, f))
+	for a in adds:
+		if bp.ok(a.x, a.y) and bp.getf(a.x, a.y) == 255 and a.y > gj[a.x]:
+			bp.fg(a.x, a.y, a.z, F_FILL | F_ANCHOR)
+
+func _rough_mat(f: int) -> bool:
+	return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.OBSIDIAN or f == Defs.MOSSBLOCK
+
+## A wooden door filling a doorway (i0, j0, w x h, local). Its cells know which part of the door they
+## are, for drawing; the game opens it when you walk into it or press F. A ruin has lost most of its
+## doors. side: which way the inside is (the open door swings that way).
+func _door(bp: BP, i0: int, j0: int, w: int, h: int, side: int, ruined: bool) -> void:
+	if ruined and rng.randf() < 0.7:
+		return
+	for j in h:
+		for i in w:
+			bp.fgv(i0 + i, j0 + j, Defs.WOODDOOR, (mini(j, 31) << 2) | mini(i, 3))
+	bp.doors.append([i0, j0, w, h, side])
 
 ## a repeatable random number for a block of cells (the same for every cell in the block)
 func _blockr(seed_r: int, bi: int, bj: int, k: int) -> float:
@@ -1252,7 +1331,8 @@ func _temple(x: int, ruined: bool, build: bool) -> bool:
 	var x0 := x - tw / 2
 	if not _site_ok(x0 + YARD, W, 26):
 		return false
-	var m := Defs.SANDSTONE
+	# a step pyramid of sandstone in the desert, of mossy stone in the jungle
+	var m := Defs.MOSSBLOCK if biome(x) == "jungle" else Defs.SANDSTONE
 	var base := _median_ground(x0 + YARD, W) - 1
 	var steps := half / 3
 	var up := steps * 4 + 8
@@ -1506,6 +1586,8 @@ const DUNGEON_NAMES := {
 	"forest": ["Overgrown Halls", "Rootbound Crypts"], "marsh": ["Drowned Crypts", "Mire Halls"],
 	"desert": ["Tomb of the Sun Kings", "Sandsworn Tomb"], "tundra": ["Frozen Crypts", "Rimeheart Halls"],
 	"mountain": ["Deep Halls of Karn", "Stonewarden Halls"], "ashland": ["Cinder Halls", "Emberdeep Crypts"],
+	"jungle": ["Vinechoked Halls", "Sunken Ziggurat"], "savanna": ["Goldmane Halls", "Dustwind Crypts"],
+	"grove": ["Sporehollow Crypts", "Mycel Halls"],
 }
 const ROOM_KINDS := ["guard", "hall", "roost", "crypt", "treasure", "pool", "hall", "guard"]
 
@@ -1822,7 +1904,7 @@ func _dungeon_room(bp: BP, rm: Dictionary, st: Dictionary, b: String, sure: bool
 			for k2 in int(mh - absi(dc)):
 				if bp.getf(mc + dc, fl - 1 - k2) == 0:
 					bp.fg(mc + dc, fl - 1 - k2, Defs.GRAVEL)
-	if b == "forest" or b == "marsh" or b == "mountain":
+	if b == "forest" or b == "marsh" or b == "mountain" or b == "jungle" or b == "grove":
 		for j in range(top, fl):
 			for i in range(i0, i1 + 1):
 				if bp.getb(i, j) == st["back"] and sin(i * 0.31 + j * 0.17) + sin(i * 0.13 - j * 0.29) > 1.35:

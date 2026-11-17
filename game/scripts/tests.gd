@@ -1,4 +1,5 @@
 extends RefCounted
+const Props := preload("res://scripts/props.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important
 ## things still work, writes saves/test_report.txt and quits.
@@ -38,10 +39,11 @@ func _go(p: Vector2) -> void:
 func _plants(raw: PackedByteArray, toff: int, c0: int, gr: int) -> int:
 	var N: int = Defs.SH_N[0]
 	var n := 0
-	for j in range(maxi(0, gr - 100), gr + 10):
+	for j in range(maxi(0, gr - 112), gr + 10):
 		for i in 120:
 			var bm := raw.decode_u32(toff + (j * N + posmod(c0 + i, N)) * 4) & 255
-			if bm == Defs.LEAF or bm == Defs.WOOD or bm == Defs.CACTUS or bm == Defs.COAL or bm == Defs.SNOW:
+			if bm == Defs.LEAF or bm == Defs.WOOD or bm == Defs.CACTUS or bm == Defs.COAL or bm == Defs.SNOW \
+					or bm == Defs.CAP or bm == Defs.STALK or bm == Defs.DRYGRASS:
 				n += 1
 	return n
 
@@ -124,6 +126,47 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 				tre += 1
 	return {"solid": solid, "loose": loose, "treasure": tre, "mats": mats, "below": below, "at": at, "all": allm, "bg": bgn}
 
+## a picture of a blueprint as generated: built blocks in their colour, back walls darker, props in
+## their palette colour, untouched cells grey, air sky blue (3 pixels per cell)
+func _bp_image(info: Dictionary) -> Image:
+	var w: int = info["w"]
+	var h: int = info["h"]
+	var dat: PackedInt32Array = info["data"]
+	var img := Image.create(w, h, false, Image.FORMAT_RGB8)
+	for j in h:
+		for i in w:
+			var v: int = dat[j * w + i]
+			var f: int = v & 255
+			var gb: int = (v >> 8) & 255
+			var col := Color(0.55, 0.55, 0.55)
+			if f != 255 and f != 0:
+				col = Defs.COLOR[f]
+			elif gb == Defs.DECOR:
+				col = Color.html(Props.PALETTE[((v >> 19) & 255) % Props.PALETTE.size()])
+			elif gb != 255 and gb != 0:
+				col = Defs.COLOR[gb].darkened(0.45)
+			elif f == 0 or gb == 0:
+				col = Color(0.45, 0.65, 0.95)
+			img.set_pixel(i, j, col)
+	img.resize(w * 3, h * 3, Image.INTERPOLATE_NEAREST)
+	return img
+
+## a cell's colour for the diagnostic pictures: the front material, else the back one darker, else
+## air (sky blue) or untouched (grey); src tints by which blueprint wrote it
+func _cell_col(f: int, gb: int, src: int) -> Color:
+	var col := Color(0.55, 0.55, 0.55)
+	if f != 255 and f != 0:
+		col = Defs.COLOR[f]
+	elif gb == Defs.DECOR:
+		col = Color(0.9, 0.3, 0.9)
+	elif gb != 255 and gb != 0:
+		col = Defs.COLOR[gb].darkened(0.45)
+	elif f == 0 or gb == 0:
+		col = Color(0.45, 0.65, 0.95)
+	if src >= 0:
+		col = col.lerp(Color.from_hsv(fmod(float(src) * 0.37, 1.0), 0.9, 0.9), 0.25)
+	return col
+
 func run() -> void:
 	var t_all := Time.get_ticks_msec()
 	lines.append("Wisp Forge test report  %s" % Time.get_datetime_string_from_system())
@@ -157,6 +200,82 @@ func run() -> void:
 		nchest += info["chests"].size()
 	_ok("chests are placed", nchest >= 10, "%d chests" % nchest)
 	await _frames(10)
+
+	# ---- diagnostics: the blueprints of the most furnished buildings, and how they look straight
+	# after generating (saves/shots/bp_N.png, early_N.png) ----
+	var by_decor := []
+	for info in b.infos:
+		if not info["ruined"] and int(info.get("decor", 0)) > 0 and info.get("data", PackedInt32Array()).size() > 0:
+			by_decor.append(info)
+	by_decor.sort_custom(func(p, q): return int(p["decor"]) > int(q["decor"]))
+	var sdir: String = g._real_save_dir().path_join("shots")
+	DirAccess.make_dir_recursive_absolute(sdir)
+	for bn in mini(3, by_decor.size()):
+		var bi: Dictionary = by_decor[bn]
+		_bp_image(bi).save_png(sdir.path_join("bp_%d.png" % bn))
+		var ecx := int(bi["x0"]) + int(bi["w"]) / 2
+		var epos := _cell_pos(ecx, b.ground_row(ecx) - 30)
+		_go(epos)
+		g.ui.title.visible = false
+		g.time = fposmod(atan2(epos.y, epos.x) - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+		await _frames(40)
+		g.get_viewport().get_texture().get_image().save_png(sdir.path_join("early_%d.png" % bn))
+
+	# the first village: every blueprint over it combined in stamping order (vill_bp.png), and the
+	# world's cells there right after generating (vill_world.png)
+	for lab0 in b.labels:
+		if "Village" in str(lab0["name"]):
+			var vx0 := int(lab0["x0"])
+			var vw := int(lab0["w"])
+			var vg: int = b.ground_row(vx0 + vw / 2)
+			var vy0: int = vg - 140
+			var vh := 160
+			var comp := PackedInt32Array()
+			comp.resize(vw * vh)
+			comp.fill(0xffff)
+			var src := PackedInt32Array()
+			src.resize(vw * vh)
+			src.fill(-1)
+			for si in b.infos.size():
+				var inf: Dictionary = b.infos[si]
+				var dat2: PackedInt32Array = inf.get("data", PackedInt32Array())
+				if dat2.is_empty():
+					continue
+				var iw: int = inf["w"]
+				for jj in int(inf["h"]):
+					var yy: int = int(inf["y0"]) + jj - vy0
+					if yy < 0 or yy >= vh:
+						continue
+					for ii in iw:
+						var xx := posmod(int(inf["x0"]) + ii - vx0, Defs.SH_N[0])
+						if xx >= vw:
+							continue
+						var v2: int = dat2[jj * iw + ii]
+						var k3 := yy * vw + xx
+						if (v2 & 255) != 255:
+							comp[k3] = (comp[k3] & ~255) | (v2 & 255)
+							src[k3] = si
+						if ((v2 >> 8) & 255) != 255:
+							comp[k3] = (comp[k3] & ~0xff00) | (v2 & 0xff00)
+			var cimg := Image.create(vw, vh, false, Image.FORMAT_RGB8)
+			var wimg := Image.create(vw, vh, false, Image.FORMAT_RGB8)
+			var rawv: PackedByteArray = g.gpu.read_world()
+			var boffv2: int = Defs.total_cells() * 4
+			for yy2 in vh:
+				for xx2 in vw:
+					var cv: int = comp[yy2 * vw + xx2]
+					cimg.set_pixel(xx2, yy2, _cell_col(cv & 255, (cv >> 8) & 255, src[yy2 * vw + xx2]))
+					var row3: int = vy0 + yy2
+					var col3 := posmod(vx0 + xx2, Defs.SH_N[0])
+					if row3 < 0 or row3 >= Defs.SH_Y0[1]:
+						continue
+					var kw: int = (row3 * int(Defs.SH_N[0]) + col3) * 4
+					wimg.set_pixel(xx2, yy2, _cell_col(rawv.decode_u32(kw) & 255, rawv.decode_u32(boffv2 + kw) & 255, -1))
+			cimg.resize(vw * 2, vh * 2, Image.INTERPOLATE_NEAREST)
+			wimg.resize(vw * 2, vh * 2, Image.INTERPOLATE_NEAREST)
+			cimg.save_png(sdir.path_join("vill_bp.png"))
+			wimg.save_png(sdir.path_join("vill_world.png"))
+			break
 
 	# ---- buildings stand and ruins have settled ----
 	var raw: PackedByteArray = g.gpu.read_world()
@@ -290,6 +409,7 @@ func run() -> void:
 	# ---- you can walk in through a cottage door (no lip, nothing in the way) ----
 	var walked := "no intact cottage found"
 	var walk_ok := false
+	var door_t := {}
 	for info in b.infos:
 		if info["ruined"]:
 			continue
@@ -301,6 +421,7 @@ func run() -> void:
 		var start_col := int(info["x0"]) + ox - 8
 		_go(_cell_pos(start_col, base_row - 12))
 		await _frames(30)
+		door_t = g._door_near(_cell_pos(int(info["x0"]) + ox + 1, base_row - 15), 30.0)
 		g.test_move = -1     # on screen, left is toward higher columns (where the house is)
 		await _frames(150)
 		g.test_move = 0
@@ -312,6 +433,32 @@ func run() -> void:
 		walked = "%s: walked from column %d to %d (the inside starts at %d)" % [nm2, start_col, col_now, int(info["x0"]) + ox + 6]
 		break
 	_ok("you can walk into a cottage through its door", walk_ok, walked)
+
+	# ---- doors: walking into one opens it; F (here: _set_door) closes it again ----
+	if door_t.is_empty():
+		_ok("a door opens when you walk into it, and closes again", false, "no door at that cottage")
+	else:
+		var was_open: bool = door_t["open"]
+		var dp: Vector2 = door_t["pos"]
+		var dang := atan2(dp.y, dp.x)
+		# stand inside, clear of the doorway, and look at the open door (saves/shots/door.png)
+		var inside: Vector2 = -g.basis_r(dang) * float(door_t["side"])
+		_go(dp + inside * 14.0 - dp.normalized() * 5.0)
+		g.time = fposmod(dang - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+		await _frames(40)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("door.png"))
+		g._set_door(door_t, false)
+		await _frames(20)
+		var rawd: PackedByteArray = g.gpu.read_world()
+		var nd2 := 0
+		for jd in int(door_t["h"]):
+			for id2 in int(door_t["w"]):
+				var kd: int = ((int(door_t["row"]) + jd) * int(Defs.SH_N[0]) + posmod(int(door_t["col"]) + id2, Defs.SH_N[0])) * 4
+				if (rawd.decode_u32(kd) & 255) == Defs.WOODDOOR:
+					nd2 += 1
+		var want: int = int(door_t["w"]) * int(door_t["h"])
+		_ok("a door opens when you walk into it, and closes again", was_open and not bool(door_t["open"]) and nd2 == want,
+			"opened by walking: %s, closed again: %d of %d door cells" % [was_open, nd2, want])
 
 	# ---- digging next to a ruin takes only what you dig: the rest stands ----
 	var dug_ok := true
@@ -463,7 +610,7 @@ func run() -> void:
 	var tree_ok := true
 	var biomes_seen := 0
 	var forest_col := -1
-	for bname in ["forest", "marsh", "mountain", "tundra", "desert", "ashland", "ocean"]:
+	for bname in ["forest", "jungle", "marsh", "mountain", "tundra", "savanna", "desert", "grove", "ashland", "ocean"]:
 		var best_col := -1
 		var best_n := 0
 		for k in 64:
@@ -480,8 +627,13 @@ func run() -> void:
 		if bname == "forest":
 			forest_col = best_col
 		var gr2: int = b.ground_row(best_col + 60)
-		_go(_cell_pos(best_col + 60, gr2 - 30))
+		var bpos := _cell_pos(best_col + 60, gr2 - 30)
+		_go(bpos)
+		g.ui.title.visible = false
+		g.time = fposmod(atan2(bpos.y, bpos.x) - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
 		await _frames(200)
+		# a picture of each biome's plants at midday (saves/shots/biome_<name>.png)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("biome_%s.png" % bname))
 		var after_t := _plants(g.gpu.read_world(), toff, best_col, gr2)
 		tree_lines.append("%s %d->%d" % [bname, best_n, after_t])
 		if after_t < int(best_n * 0.97):

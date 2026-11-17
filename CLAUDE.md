@@ -56,6 +56,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   hut, dwelling), `_dress_yard` adds signs (icon by role), hedges, lamps; `_town_square` fills gaps in villages
   (well, market stall, lamps, flowers). A prop only goes where every pixel lands on open space (`_prop_fits`).
   Digging leaves furniture alone; Shift + right-click (deconstruct) takes it as planks.
+- Doors (`WOODDOOR`): `_door` in buildings.gd fills a doorway with door cells whose colour variant is their
+  part (row << 2 | column) and records it in `door_list`; main.gd keeps `doors` (saved in
+  `planet_state["doors"]`). Walking into one opens it (`_door_bump` from `move_body`), F toggles the nearest
+  (`_interact`), and a door won't close on someone standing in it. Opening and closing is brush mode 9
+  (brush.comp clears or refills the doorway rectangle); the open door is drawn by overlay.gd.
+- Below-ground masonry gets ragged, stepped outer edges (`_roughen_underground`, run by `_finish`), so shafts and
+  buried halls don't meet the earth with ruler-straight lines. Dungeon runestone is left out.
+- Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each
+  has a tree function in gen.comp (oak, pine, cactus, willow, charred, palm, jungle, acacia, mushroom) plus
+  undergrowth in `flora()`; plant materials get their look in render.comp's `plantColor`.
 - Clouds live in world space (`shaders/inc/clouds.comp`: `cloudLow` near the ground, `cloudHigh` the weather
   layer above the mountains; `cloudDensity` is both): render.comp draws them over everything
   at their height (fog when you fly in), react.comp spawns rain/snow/ash only under the high layer's undersides, and
