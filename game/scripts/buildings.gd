@@ -67,10 +67,13 @@ class BP:
 		if ok(i, j):
 			var k := j * w + i
 			c[k] = (c[k] & 0xff300ff) | ((m & 255) << 8) | (0x40000 if wall and m != 0 else 0)
-	## a background object with a fixed part number, in front of open air (chests)
-	func bgv(i: int, j: int, m: int, v: int) -> void:
+	## a background object with a fixed part number, in front of open air (furniture: its palette
+	## colour). wall: it stands in for the back wall it covers, so it carries the structure the way
+	## that wall did (furniture used to leave holes in the wall's support, and the generator's
+	## soundness pass then cut the wall and roof above a wide bed or counter away)
+	func bgv(i: int, j: int, m: int, v: int, wall := false) -> void:
 		if ok(i, j):
-			c[j * w + i] = ((m & 255) << 8) | ((v & 255) << 19) | 0x8000000
+			c[j * w + i] = ((m & 255) << 8) | ((v & 255) << 19) | 0x8000000 | (0x40000 if wall else 0)
 	## foreground with a fixed colour variant
 	func fgv(i: int, j: int, m: int, v: int) -> void:
 		if ok(i, j):
@@ -110,14 +113,14 @@ func _style(bname: String, kind: String) -> Dictionary:
 			st = {"wall": Defs.MASONRY, "post": Defs.MASONRY, "slab": Defs.PLANK, "back": Defs.MASONRY, "roof": Defs.TILE,
 				"roof_kind": "steep", "found": Defs.MASONRY, "thick": 1}
 		"marsh":
-			st = {"wall": Defs.PLANK, "post": Defs.WOOD, "slab": Defs.PLANK, "back": Defs.PLANK, "roof": Defs.LEAF,
+			st = {"wall": Defs.PLANK, "post": Defs.WOOD, "slab": Defs.PLANK, "back": Defs.PLANK, "roof": Defs.DRYGRASS,
 				"roof_kind": "pitch", "found": Defs.WOOD, "thick": 1}
 		"ashland":
 			st = {"wall": Defs.BRICK, "post": Defs.OBSIDIAN, "slab": Defs.BRICK, "back": Defs.BRICK, "roof": Defs.BRICK,
 				"roof_kind": "battle", "found": Defs.OBSIDIAN, "thick": 2}
 		"jungle":
-			# timber halls with leaf thatch, raised on stone
-			st = {"wall": Defs.WOOD, "post": Defs.WOOD, "slab": Defs.PLANK, "back": Defs.PLANK, "roof": Defs.LEAF,
+			# timber halls with grass thatch, raised on stone
+			st = {"wall": Defs.WOOD, "post": Defs.WOOD, "slab": Defs.PLANK, "back": Defs.PLANK, "roof": Defs.DRYGRASS,
 				"roof_kind": "steep", "found": Defs.MOSSBLOCK, "thick": 1}
 		"savanna":
 			# mud-brick walls under golden grass thatch
@@ -378,12 +381,14 @@ func _natural(bp: BP, i: int, j: int) -> bool:
 ## blueprint as if nothing were anchored, and anything that would be unsupported (a floor
 ## hanging too far from a broken wall, a floating fragment, a chest left in the air) is
 ## removed, repeating until everything left holds itself up.
-func _anchor_and_tidy(bp: BP) -> void:
+func _anchor_and_tidy(bp: BP) -> int:
 	var w := bp.w
 	var h := bp.h
 	var n_all := w * h
+	var removed_all := 0
 	for it in 6:
 		var removed := _stabilize_pass(bp)
+		removed_all += removed
 		if removed == 0:
 			break
 	for k in n_all:
@@ -393,6 +398,7 @@ func _anchor_and_tidy(bp: BP) -> void:
 		if (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0):
 			bp.c[k] = v | F_ANCHOR
 	_place_chests(bp)
+	return removed_all
 
 ## Chests go only where they will stay found: standing on solid built floor (or natural ground)
 ## across their whole width, with open air around and above them, and nothing loose (rubble,
@@ -574,13 +580,21 @@ func _stabilize_pass(bp: BP) -> int:
 	for k in n_all:
 		var v3: int = bp.c[k]
 		if fgb[k] == 1 and fs[k] > Defs.SPAN[v3 & 255]:
+			_note_cut(bp, Defs.NAMES[v3 & 255])
 			v3 = v3 & ~255
 			removed += 1
 		if bgb[k] == 1 and bs[k] > Defs.SPAN[(v3 >> 8) & 255]:
+			_note_cut(bp, "bg " + Defs.NAMES[(v3 >> 8) & 255])
 			v3 = v3 & ~0xff00 & ~F_WALL
 			removed += 1
 		bp.c[k] = v3
 	return removed
+
+## what the soundness pass cut away, by material (for the test report)
+func _note_cut(bp: BP, nm: String) -> void:
+	var cuts: Dictionary = bp.meta.get("cuts", {})
+	cuts[nm] = int(cuts.get(nm, 0)) + 1
+	bp.meta["cuts"] = cuts
 
 func _finish(bp: BP, build: bool) -> void:
 	if not build:
@@ -593,7 +607,7 @@ func _finish(bp: BP, build: bool) -> void:
 		var f0: int = v0 & 255
 		if f0 != 255 and f0 != 0 and Defs.KIND[f0] == Defs.K_SOLID and (v0 & (F_FILL | F_ANCHOR)) == 0:
 			cells.append(k)
-	_anchor_and_tidy(bp)
+	var unsound := _anchor_and_tidy(bp)
 	var kept := PackedInt32Array()
 	for k in cells:
 		if (bp.c[k] & 255) != 0:
@@ -620,7 +634,7 @@ func _finish(bp: BP, build: bool) -> void:
 		var da := (float(posmod(bp.x0 + int(d[0]), N0)) + float(d[2]) * 0.5) / N0 * TAU
 		var dr := Defs.R_TOP - float(bp.y0 + int(d[1])) - float(d[3]) * 0.5
 		door_list.append({"pos": Vector2(cos(da), sin(da)) * dr, "w": int(d[2]), "h": int(d[3]), "side": int(d[4]), "col": posmod(bp.x0 + int(d[0]), N0), "row": bp.y0 + int(d[1])})
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "data": bp.c if KEEP_DATA else PackedInt32Array()})
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "unsound": unsound, "data": bp.c if KEEP_DATA else PackedInt32Array()})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
 	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
@@ -836,7 +850,7 @@ func _chimney(bp: BP, ox: int, top: int, w: int, st: Dictionary) -> void:
 	bp.fg(ci + 2, ct - 1, 0)
 
 ## A porch over a door: a little sloped roof on brackets jutting `depth` cells out from the wall
-## at column wall_i (side -1 = out to the left, 1 = to the right), with a post at its outer
+## whose outer column is wall_i (side -1 = out to the left, 1 = to the right), with a post at its outer
 ## corner standing against the background so you walk past it.
 func _porch(bp: BP, wall_i: int, base: int, side: int, st: Dictionary, depth := 9) -> void:
 	var j := base - DOOR - 3
@@ -847,7 +861,16 @@ func _porch(bp: BP, wall_i: int, base: int, side: int, st: Dictionary, depth := 
 		var rise := (depth - d) / 3
 		for r in range(1, rise + 2):
 			bp.fg(i, j - r, m)
-	bp.rect_bg(wall_i + side * (depth - 1), j + 1, wall_i + side * (depth - 1), base - 1, Defs.WOOD)
+	# the post reaches down to the yard's ground (which may dip below the floor out here), so the
+	# porch stands on something instead of hanging
+	var pi := wall_i + side * (depth - 1)
+	var pb := base - 1
+	while pb + 1 < bp.h:
+		var fb := bp.getf(pi, pb + 1)
+		if (fb != 0 and fb != 255) or (fb == 255 and pb + 1 >= ground_row(bp.x0 + pi) - bp.y0):
+			break
+		pb += 1
+	bp.rect_bg(pi, j, pi, pb, Defs.WOOD)        # from the roof's edge board down: it holds the roof up
 	for d in 4:
 		bp.bg(wall_i + side * (1 + d), j + 1 + d, Defs.WOOD)
 
@@ -1120,6 +1143,14 @@ func _door(bp: BP, i0: int, j0: int, w: int, h: int, side: int, ruined: bool) ->
 			bp.fgv(i0 + i, j0 + j, Defs.WOODDOOR, (mini(j, 31) << 2) | mini(i, 3))
 	bp.doors.append([i0, j0, w, h, side])
 
+## back-wall cells set into solid rock (a mine shaft's planking, timber props, torches on a drift's
+## wall): anchored as built, so the soundness pass doesn't cut them away for want of a wall below
+func _set_in_rock(bp: BP, i0: int, j0: int, i1: int, j1: int) -> void:
+	for j in range(j0, j1 + 1):
+		for i in range(i0, i1 + 1):
+			if bp.ok(i, j) and bp.getb(i, j) != 255 and bp.getb(i, j) != 0:
+				bp.c[j * bp.w + i] |= F_ANCHOR
+
 ## a repeatable random number for a block of cells (the same for every cell in the block)
 func _blockr(seed_r: int, bi: int, bj: int, k: int) -> float:
 	var h := hash(Vector3i(bi, bj, seed_r + k * 7919))
@@ -1171,9 +1202,9 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 		hi -= 10
 	if porch:
 		if aside >= 0:
-			_porch(bp, ox - 1, lb, -1, st)
+			_porch(bp, ox, lb, -1, st)
 		if aside <= 0 and (aside < 0 or rng.randf() < 0.5):
-			_porch(bp, ox + w, lb, 1, st)
+			_porch(bp, ox + w - 1, lb, 1, st)
 	if ruined:
 		_ruin(bp, left - 3, left + full + 2, hi, lb - 1, b)
 	# inside and out: furniture by what the house was, then the yard
@@ -1425,6 +1456,7 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 	# where a cave has eaten away the rock beside the shaft
 	bp.rect(sx, gl - 1, sx + sw - 1, gl + depth, 0)
 	bp.rect_bg(sx, gl + 1, sx + sw - 1, gl + depth - 33, Defs.PLANK)
+	_set_in_rock(bp, sx, gl + 1, sx + sw - 1, gl + depth - 33)
 	_landings(bp, sx, sx + sw - 1, gl + 22, gl + depth - 6)
 	# drifts at the bottom
 	var fj := gl + depth
@@ -1436,8 +1468,10 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 			# beam up under the roof
 			bp.rect_bg(p, fj - 39, p + 1, fj - 1, Defs.WOOD)
 			bp.rect(p - 3, fj - 40, p + 4, fj - 40, Defs.PLANK)
+			_set_in_rock(bp, p, fj - 39, p + 1, fj - 1)
 			if not ruined and rng.randf() < 0.5:
 				bp.bg(p + 3, fj - 24, Defs.TORCH)
+				_set_in_rock(bp, p + 3, fj - 24, p + 3, fj - 24)
 		p += 16
 	# what the miners left behind, and what moved in after
 	_chest(bp, sx - dl + 3, fj)
@@ -2006,11 +2040,11 @@ func _stamp_prop(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, lit := t
 			if ch == "t":
 				if lit:
 					bp.fg(i0 + x, top + y, 0)
-					bp.bg(i0 + x, top + y, Defs.TORCH, false)
+					bp.bg(i0 + x, top + y, Defs.TORCH)
 				else:
-					bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS["x"])
+					bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS["x"], true)
 			else:
-				bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS[ch])
+				bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS[ch], true)
 
 ## Tries to put a prop somewhere in columns [i0, i1] with its feet on row `bottom` (or, for a wall
 ## prop, its bottom `lift` rows above it). Returns the column it went to, or -1.

@@ -780,6 +780,16 @@ func run() -> void:
 		if nd > best_dec:
 			best_dec = nd
 			best_info = info
+	# an intact building comes out of the generator whole: nothing of it hangs unsupported (the
+	# generator's soundness pass used to cut the wall and roof away above wide furniture)
+	var unsound_n := 0
+	var unsound_txt := []
+	for info in b.infos:
+		if not info["ruined"] and int(info.get("unsound", 0)) > 12:
+			unsound_n += 1
+			if unsound_txt.size() < 4:
+				unsound_txt.append("%s: %d cells %s" % [b.label_at(_cell_pos(int(info["x0"]) + int(info["w"]) / 2, int(info["y0"]) + int(info["h"]) - 45)), info["unsound"], str(info["meta"].get("cuts", {}))])
+	_ok("intact buildings are generated whole (nothing big cut away as unsupported)", unsound_n == 0, "%d buildings lost cells%s" % [unsound_n, (": " + ", ".join(unsound_txt)) if unsound_n > 0 else ""])
 	_ok("buildings are furnished, and props never block", decor_n > 400 and decor_solid == 0, "%d prop pixels, %d in front of something solid" % [decor_n, decor_solid])
 	if best_dec > 0:
 		# the most furnished place, at midday (saves/shots/town.png)
