@@ -1155,9 +1155,11 @@ func _roughen_underground(bp: BP) -> void:
 					reach = mini(reach, 2)
 				for k in range(1, reach + 1):
 					adds.append(Vector3i(i + di * k, j + dj * k, f))
+	# written outright, not as a fill: a fill only goes where the world is open, so the ragged edge
+	# would show in caves but never where the masonry meets solid earth, which is where it matters
 	for a in adds:
 		if bp.ok(a.x, a.y) and bp.getf(a.x, a.y) == 255 and a.y > gj[a.x]:
-			bp.fg(a.x, a.y, a.z, F_FILL | F_ANCHOR)
+			bp.fg(a.x, a.y, a.z, F_ANCHOR)
 	# the same for back walls underground: where a buried hall's back wall meets the natural rock
 	# behind a cave, its edge is ragged too, not a straight cut
 	var badds := []
@@ -1181,8 +1183,10 @@ func _roughen_underground(bp: BP) -> void:
 		if bp.ok(a2.x, a2.y) and bp.getb(a2.x, a2.y) == 255 and a2.y > gj[a2.x] + 2:
 			bp.bg(a2.x, a2.y, a2.z)
 
+## (a dungeon's runestone too: the roughening only ever adds cells outward into the earth, so its
+## shafts and halls stay exactly as built)
 func _rough_mat(f: int) -> bool:
-	return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.OBSIDIAN or f == Defs.MOSSBLOCK
+	return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.OBSIDIAN or f == Defs.MOSSBLOCK or f == Defs.RUNESTONE
 
 ## A wooden door filling a doorway (i0, j0, w x h, local). Its cells know which part of the door they
 ## are, for drawing; the game opens it when you walk into it or press F. A ruin has lost most of its

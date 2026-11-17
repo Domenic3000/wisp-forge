@@ -117,6 +117,7 @@ var build_pieces: Array = []
 var stamps: Array = []        # small blueprints to write into the world before the next GPU frame
 var _build_warn_t := 0
 var build_last := ""          # what the last click did (for the test report)
+var build_last_stamp := {}    # and where its blueprint went
 var build_w := 40             # structures: width ([ and ]), storeys (- and =), style (T)
 var build_floors := 1
 var build_style := 0
@@ -2353,6 +2354,11 @@ func _open_at(col: int, row: int) -> bool:
 	var kd: int = Defs.KIND[t]
 	return kd == Defs.K_EMPTY or kd == Defs.K_GAS or kd == Defs.K_LIQUID or t == Defs.SNOW or t == Defs.ASH
 
+## what's built in the background at a cell (1 furniture, 2 a back wall, 0 nothing, -1 out of view)
+func _bg_at(col: int, row: int) -> int:
+	var l := to_grid(Build.cell_pos(col, row))
+	return gpu.grid_bg(_gslot, int(floor(l.x)), int(floor(l.y)))
+
 ## the first row at or below `row` in column `col` that is open with something solid under it
 func _floor_below(col: int, row: int, reach: int) -> int:
 	for k in reach:
@@ -2415,7 +2421,8 @@ func _update_build(m: Mage) -> void:
 		var held := 0
 		for c in pc:
 			var cc: Vector2i = Vector2i(int(c[0]), int(c[1]))
-			if not _open_at(cc.x, cc.y):
+			# room in front, and no other furniture where it goes (a back wall behind it is fine)
+			if not _open_at(cc.x, cc.y) or _bg_at(cc.x, cc.y) == 1 or _bg_at(cc.x, cc.y) < 0:
 				ok = false
 			if not wall and cc.y == bottom:
 				feet += 1
@@ -2489,6 +2496,7 @@ func _update_build(m: Mage) -> void:
 		m.inv[int(mt2)] -= int(cost[mt2])
 	if place.has("stamp"):
 		stamps.append(place["stamp"])
+		build_last_stamp = place["stamp"]
 	if place.has("door"):
 		var rec2: Dictionary = place["door"]
 		doors.append(rec2)
@@ -2539,9 +2547,15 @@ func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
 			if k2 > Build.FOUND_MAX:
 				ok = false                      # too far above the ground there
 	if ok:
+		# everything it builds lands on open space, and it doesn't build over walls or furniture
+		# already there (yours or the planet's)
 		for j in bp.h:
 			for i2 in bp.w:
-				if (bp.c[j * bp.w + i2] & 255) != 255 and not _open_at(bp.x0 + i2, bp.y0 + j):
+				var v: int = bp.c[j * bp.w + i2]
+				if (v & 255) != 255 and not _open_at(bp.x0 + i2, bp.y0 + j):
+					ok = false
+					break
+				if ((v >> 8) & 255) != 255 and _bg_at(bp.x0 + i2, bp.y0 + j) != 0:
 					ok = false
 					break
 			if not ok:
@@ -2706,7 +2720,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 23            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 24            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

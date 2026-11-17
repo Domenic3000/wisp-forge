@@ -529,7 +529,10 @@ void main() {
 		float bt = clamp((sb.w - k) / 0.9, 0.0, 1.0);
 		int b0 = int(k) / 16, b1 = int(k) % 16;
 		if (b0 != b1) {
-			float rag = (fbm(p / 11.0, SEED + 61, 2) - 0.5) * 0.9 + (fbm(p / 47.0, SEED + 62, 2) - 0.5) * 0.6;
+			// three scales: broad lobes, fingers a few cells wide, and single-cell grains at the very
+			// edge, so each side reaches into the other in pockets instead of one wavy line
+			float rag = (fbm(p / 47.0, SEED + 62, 2) - 0.5) * 0.9 + (fbm(p / 10.0, SEED + 61, 2) - 0.5) * 2.2
+				+ (fbm(p / 3.5, SEED + 63, 2) - 0.5) * 1.1 + (h2(ivec2(x, y), SEED + 64) - 0.5) * 0.18;
 			b = (bt + rag) < 0.5 ? b0 : b1;
 		}
 	}

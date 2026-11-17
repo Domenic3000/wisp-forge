@@ -1,5 +1,6 @@
 // Samples a GSxGS grid of cell types around the player, aligned with the player's
-// local "up". The CPU uses it for collisions, liquids and hazards.
+// local "up". The CPU uses it for collisions, liquids and hazards (bits 0-5: the material; bit 6:
+// furniture in the background, bit 7: a built back wall, for build mode).
 // pc.a = (GS, slot, 0, 0); pc.c = (centreX, centreY, angle, 0). Each player slot has its own grid.
 #include "common"
 #include "world"
@@ -72,7 +73,15 @@ void main() {
 			if (!isBlock(cellTypeAt(pos + R) & 255u)) open++;
 			if (open >= 3) t = 0u;
 		}
-		pk |= t << (8 * q);
+		// what's built in the background here (build mode reads it): 0x40 furniture, a torch or an opened
+		// chest; 0x80 a built back wall (material ids stay below 64, so the top two bits are free)
+		int bi = idxAt(pos);
+		uint ab = bi < 0 ? 0u : aux.a[bi];
+		uint bm = ab & 255u;
+		uint bgf = 0u;
+		if (bm == M_DECOR || bm == M_TORCH || bm == M_OPENCHEST) bgf = 0x40u;
+		else if (bm != 0u && (ab & BG_WALL) != 0u) bgf = 0x80u;
+		pk |= (t | bgf) << (8 * q);
 	}
 	grid.g[goff + j * (GS / 4) + gx4] = pk;
 }

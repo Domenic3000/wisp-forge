@@ -72,6 +72,8 @@ void main() {
 		uint bm = a & 255u;
 		uint n = (a & BG_ANCHOR) != 0u ? 0u : (solid ? fgS(c) + 1u : ST_MAX);
 		n = min(n, wallS(iD));
+		// resting on settled sand, soil or snow holds it the way it holds a block (a table on the ground)
+		if (iD >= 0 && KIND[world.cells[iD] & 255u] == K_POWDER) n = 0u;
 		n = min(n, wallS(iL) + 1u);
 		n = min(n, wallS(iR) + 1u);
 		n = min(n, wallS(iU) + 1u);

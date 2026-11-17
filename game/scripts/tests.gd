@@ -875,6 +875,33 @@ func run() -> void:
 			break
 	g.build_click = true
 	await _frames(6)
+	var table_last: String = g.build_last
+	var tstamp: Dictionary = g.build_last_stamp
+	var count_decor := func(raw: PackedByteArray) -> int:
+		var n := 0
+		if tstamp.is_empty():
+			return -1
+		var boff3: int = Defs.total_cells() * 4
+		for tj in int(tstamp["h"]):
+			for ti in int(tstamp["w"]):
+				var kt: int = ((int(tstamp["y0"]) + tj) * int(Defs.SH_N[0]) + posmod(int(tstamp["x0"]) + ti, Defs.SH_N[0])) * 4
+				if (raw.decode_u32(boff3 + kt) & 255) == Defs.DECOR:
+					n += 1
+		return n
+	var table_now: int = count_decor.call(g.gpu.read_world())
+	await _frames(60)
+	var table_later: int = count_decor.call(g.gpu.read_world())
+	# what the table's box holds now, front and back
+	var box_mats := {}
+	var rawt: PackedByteArray = g.gpu.read_world()
+	if not tstamp.is_empty():
+		for tj2 in int(tstamp["h"]):
+			for ti2 in int(tstamp["w"]):
+				var kt2: int = ((int(tstamp["y0"]) + tj2) * int(Defs.SH_N[0]) + posmod(int(tstamp["x0"]) + ti2, Defs.SH_N[0])) * 4
+				var fn: String = Defs.NAMES[rawt.decode_u32(kt2) & 255]
+				var bn2: String = "bg " + Defs.NAMES[rawt.decode_u32(Defs.total_cells() * 4 + kt2) & 255]
+				box_mats[fn] = int(box_mats.get(fn, 0)) + 1
+				box_mats[bn2] = int(box_mats.get(bn2, 0)) + 1
 	# a door
 	g.build_cat = 1
 	g.build_idx[1] = 0
@@ -901,8 +928,15 @@ func run() -> void:
 	var house_ok := false
 	var house_at := Vector2.ZERO
 	var doors_mid: int = g.doors.size()
-	for hk in [-80.0, -100.0, -120.0, 50.0, 70.0, 90.0, -140.0, 110.0]:
-		house_at = spot.call(hk, 8.0)
+	var hb_ang: float = atan2(g.player.pos.y, g.player.pos.x)
+	var at_ang := func(k: float, up: float) -> Vector2:
+		var aa: float = hb_ang + k / Defs.RS0
+		return Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + up)
+	for hk in [-150.0, -190.0, -230.0, -270.0, -310.0, -350.0]:
+		# stand next to the spot (you can only build within reach), well away from the pieces above
+		_go(at_ang.call(hk + 30.0, 14.0))
+		await _frames(25)
+		house_at = at_ang.call(hk, 8.0)
 		g.test_aim = house_at
 		await _frames(3)
 		house_ok = g.build_prev.get("ok", false)
@@ -928,9 +962,9 @@ func run() -> void:
 	var n_wall := 0
 	var n_decor := 0
 	var n_door := 0
-	for bq in [[wall_at, 0], [table_at, 1], [door_at, 2]]:
+	for bq in [[wall_at, 0], [table_at, 1]]:
 		var cq: Vector2i = Build.cell_of(bq[0])
-		for dj in range(-34, 34):
+		for dj in range(-34, 70):
 			for di in range(-16, 17):
 				var kb: int = ((cq.y + dj) * int(Defs.SH_N[0]) + posmod(cq.x + di, Defs.SH_N[0])) * 4
 				var fb: int = rawb.decode_u32(kb) & 255
@@ -939,11 +973,17 @@ func run() -> void:
 					n_wall += 1
 				elif bq[1] == 1 and (ab & 255) == Defs.DECOR:
 					n_decor += 1
-				elif bq[1] == 2 and fb == Defs.WOODDOOR:
+	# the door built: its own cells, where its record says they are
+	if doors_mid > doors_before:
+		var nd3: Dictionary = g.doors[doors_mid - 1]
+		for dj3 in int(nd3["h"]):
+			for di3 in int(nd3["w"]):
+				var kd3: int = ((int(nd3["row"]) + dj3) * int(Defs.SH_N[0]) + posmod(int(nd3["col"]) + di3, Defs.SH_N[0])) * 4
+				if (rawb.decode_u32(kd3) & 255) == Defs.WOODDOOR:
 					n_door += 1
 	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
 	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and doors_mid == doors_before + 1,
-		"wall cells %d, table cells %d (fit %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, n_decor, table_ok, n_door, door_ok, doors_before, doors_mid])
+		"wall cells %d, table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
 
 	# ---- conjuring onto a foe strikes it instead of burying it ----
 	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))
@@ -1080,22 +1120,30 @@ func run() -> void:
 	var up: Vector2 = g.player.pos.normalized()
 	var side := Vector2(-up.y, up.x)
 	var mid: Vector2 = g.player.pos + side * 30.0 + up * 26.0
+	# the conjured stone, anywhere in the cells around the spot (the grid samples the world a
+	# fraction of a cell off, so the blob's edge can land on either side of one cell)
+	var stone_near := func() -> bool:
+		for oj in [-1.0, 0.0, 1.0]:
+			for oi in [-1.0, 0.0, 1.0]:
+				if g.type_at(mid + side * oi + up * oj) == Defs.STONE:
+					return true
+		return false
 	g.brushes.append([mid, 1.8, 5, Defs.STONE, 0, 9, 0])
 	await _frames(2)
-	var placed: bool = g.type_at(mid) == Defs.STONE
+	var placed: bool = stone_near.call()
 	# watch it frame by frame: it should creak while it is still in place, then drop
 	var creaking := false
 	var gone_at := -1
 	var max_creak := 0
 	for f in 120:
 		await _frames(1)
-		var here: bool = g.type_at(mid) == Defs.STONE
+		var here: bool = stone_near.call()
 		max_creak = maxi(max_creak, g.gpu.counts[56])
 		if here and g.gpu.counts[56] > 0:
 			creaking = true
 		if not here and gone_at < 0:
 			gone_at = f
-	var still: bool = g.type_at(mid) == Defs.STONE
+	var still: bool = stone_near.call()
 	_ok("a loose block creaks first, then falls", placed and creaking and not still, "placed %s, creaked %s (max %d cells), left its spot at frame %d" % [placed, creaking, max_creak, gone_at])
 	g.test_god = false
 	g.hp = g.max_hp

@@ -73,8 +73,14 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Foundations: two courses of the building's stone, then the biome's own ground layers (`_ground_mats`); yards are
   made of the biome's soil too.
 - Test mode quits by itself after 7 minutes, so a broken run never leaves the game open.
-- Below-ground masonry gets ragged, stepped outer edges (`_roughen_underground`, run by `_finish`), so shafts and
-  buried halls don't meet the earth with ruler-straight lines. Dungeon runestone is left out.
+- Below-ground masonry (dungeon runestone too) gets ragged, stepped outer edges (`_roughen_underground`, run by
+  `_finish`), so shafts and buried halls don't meet the earth with ruler-straight lines. The added cells are written
+  outright (anchored, not F_FILL: a fill only lands in open space, so it never showed against solid earth), and only
+  ever outward into the blueprint's untouched (255) cells, so halls and shafts stay as built.
+- Biome borders: gen.comp picks one of the two neighbouring biomes per cell with noise at three scales (lobes,
+  fingers, single grains), so their layers interfinger instead of meeting at a seam.
+- Back walls (and furniture, which is stamped as back wall) rest on settled powder below them (`support.comp`),
+  the way front blocks do: a table set on sand or soil stays.
 - Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each
   has a tree function in gen.comp (oak, pine, cactus, willow, charred, palm, jungle, acacia, mushroom) plus
   undergrowth in `flora()`; plant materials get their look in render.comp's `plantColor`.

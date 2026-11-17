@@ -496,7 +496,15 @@ func grid_type(slot: int, i: int, j: int) -> int:
 	var k := slot * GS * GS + j * GS + i
 	if i < 0 or j < 0 or i >= GS or j >= GS or k >= grid.size():
 		return 0
-	return grid[k]
+	return grid[k] & 0x3F
+
+## what's built in the background of a grid cell: 1 furniture (or a torch), 2 a back wall, 0 nothing;
+## -1 outside the grid
+func grid_bg(slot: int, i: int, j: int) -> int:
+	var k := slot * GS * GS + j * GS + i
+	if i < 0 or j < 0 or i >= GS or j >= GS or k >= grid.size():
+		return -1
+	return grid[k] >> 6
 
 func light_at(px: Vector2) -> Color:
 	var i := clampi(int(px.x / LS), 0, LW - 1)
