@@ -11,8 +11,16 @@ extends RefCounted
 ## so they are saved with the world and taken down with the dig and deconstruct actions.
 
 const Props := preload("res://scripts/props.gd")
+const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Walls", "Doors & Platforms", "Furniture", "Outdoors"]
+const CATS := ["Walls", "Doors & Platforms", "Furniture", "Outdoors", "Structures"]
+## building styles for structures: [name, the biome whose house style it is]
+const STYLES := [["Timber", "forest"], ["Log Cabin", "tundra"], ["Stone", "mountain"], ["Sandstone", "desert"],
+	["Brick", "ashland"], ["Swamp", "marsh"], ["Jungle", "jungle"], ["Mud-brick", "savanna"], ["Mushroom", "grove"]]
+const STRUCT_W_MIN := 24
+const STRUCT_W_MAX := 96
+const STRUCT_FLOORS_MAX := 4
+const FOUND_MAX := 10         # how far a structure's floor may stand above the ground (filled with a plinth)
 const DOOR_W := 3
 const DOOR_H := 30
 const PLATFORM_W := 9
@@ -55,6 +63,11 @@ static func pieces() -> Array:
 		{"cat": 3, "name": "Hay Bale", "kind": "prop", "prop": "hay", "cost": {Defs.LEAF: 4}},
 		{"cat": 3, "name": "Well", "kind": "prop", "prop": "well", "cost": {Defs.MASONRY: 16, Defs.PLANK: 6}},
 		{"cat": 3, "name": "Market Stall", "kind": "prop", "prop": "stall", "cost": {Defs.PLANK: 12, Defs.LEAF: 4}},
+		# whole structures, put together by the planet's own building generator; the cost is worked
+		# out from what's in them (see structure_cost)
+		{"cat": 4, "name": "House", "kind": "structure", "struct": "house", "cost": {}},
+		{"cat": 4, "name": "Room", "kind": "structure", "struct": "room", "cost": {}},
+		{"cat": 4, "name": "Roof", "kind": "structure", "struct": "roof", "cost": {}},
 	]
 
 static func in_cat(all: Array, cat: int) -> Array:
@@ -71,6 +84,8 @@ static func payable(piece: Dictionary, inv: PackedInt32Array) -> Dictionary:
 		if not piece.has(key):
 			continue
 		var c: Dictionary = piece[key]
+		if c.is_empty() and key == "cost" and piece["kind"] == "structure":
+			return {}                   # not worked out yet
 		var ok := true
 		for m in c:
 			if inv[int(m)] < int(c[m]):
@@ -150,3 +165,89 @@ static func platform_stamp(col: int, row: int) -> Dictionary:
 	data.resize(PLATFORM_W)
 	data.fill(0xff00 | Defs.SCAFFOLD)
 	return {"x0": posmod(col - PLATFORM_W / 2, Defs.SH_N[0]), "y0": row, "w": PLATFORM_W, "h": 1, "data": data}
+
+# ------------------------------------------------------------- structures --
+## A structure's blueprint, put together from the planet generator's own parts (builds: the planet's
+## Buildings instance, whose part functions do the work): "house" is rooms and a roof, "room" the rooms
+## alone (to add to or put a roof on later), "roof" a roof alone, resting on whatever is at `floor_row`.
+## Seeded, so the preview and what's built are the same. Returns {bp, st, lb (local floor row), ox}.
+static func structure(builds, kind: String, style: int, seed: int, w: int, floors: int, col: int, floor_row: int) -> Dictionary:
+	var saved: int = builds.rng.state
+	builds.rng.seed = seed
+	var st: Dictionary = builds._style(STYLES[style][1], "home")
+	if kind != "house":
+		st["chimney"] = false
+	var roof_h: int = builds._roof_h(w, st) if kind != "room" else 0
+	var rooms_h: int = floors * Buildings.STOREY if kind != "roof" else 0
+	var up := rooms_h + roof_h + 4
+	var bw := w + 6
+	var bp = Buildings.BP.new(col - bw / 2, floor_row - up, bw, up + 1 + FOUND_MAX)   # room under it for a plinth
+	var ox := 3
+	var lb := up
+	var top := lb
+	if kind != "roof":
+		top = builds._building(bp, ox, lb, w, floors, st, 3, false, "", 0.0)
+	if kind != "room":
+		builds._roof(bp, ox, top, w, st)
+		if kind == "house" and st.get("chimney", false):
+			builds._chimney(bp, ox, top, w, st)
+	builds.rng.state = saved
+	return {"bp": bp, "st": st, "lb": lb, "ox": ox}
+
+## what a material is paid for with (the things a player can gather or forge)
+static func buy_mat(m: int) -> int:
+	if m == Defs.MOSSBLOCK:
+		return Defs.MASONRY
+	if m == Defs.SCAFFOLD or m == Defs.DECOR:
+		return Defs.PLANK
+	return m
+
+## What a structure costs: a quarter of its solid cells (walls, floors and roof go up with magic, not
+## block by block), a tenth of its back wall, a torch for each torch and 8 planks a door.
+static func structure_cost(bp, n_doors: int) -> Dictionary:
+	var fgc := {}
+	var bgc := {}
+	var torches := 0
+	for v in bp.c:
+		var f: int = v & 255
+		var g: int = (v >> 8) & 255
+		if f != 255 and f != 0 and f != Defs.WOODDOOR:
+			var mf := buy_mat(f)
+			fgc[mf] = int(fgc.get(mf, 0)) + 1
+		if g == Defs.TORCH:
+			torches += 1
+		elif g != 255 and g != 0:
+			var mg := buy_mat(g)
+			bgc[mg] = int(bgc.get(mg, 0)) + 1
+	var cost := {}
+	for m in fgc:
+		cost[m] = int(cost.get(m, 0)) + int(ceil(float(fgc[m]) / 4.0))
+	for m2 in bgc:
+		cost[m2] = int(cost.get(m2, 0)) + int(ceil(float(bgc[m2]) / 10.0))
+	if torches > 0:
+		cost[Defs.TORCH] = torches
+	if n_doors > 0:
+		cost[Defs.PLANK] = int(cost.get(Defs.PLANK, 0)) + 8 * n_doors
+	return cost
+
+## a picture of a blueprint for the preview (columns increase to the left on screen, so it's mirrored)
+static func preview_image(bp, ok: bool) -> Image:
+	var img := Image.create(bp.w, bp.h, false, Image.FORMAT_RGBA8)
+	for j in bp.h:
+		for i in bp.w:
+			var v: int = bp.c[j * bp.w + i]
+			var f: int = v & 255
+			var g: int = (v >> 8) & 255
+			var col := Color(0, 0, 0, 0)
+			if f != 255 and f != 0:
+				col = Defs.COLOR[f]
+				col.a = 0.8
+			elif g == Defs.TORCH:
+				col = Color(1, 0.85, 0.35, 0.9)
+			elif g != 255 and g != 0:
+				col = Defs.COLOR[g].darkened(0.45)
+				col.a = 0.55
+			if col.a > 0.0 and not ok:
+				col = Color(col.lerp(Color(1, 0.2, 0.15), 0.6), col.a)
+			img.set_pixel(bp.w - 1 - i, j, col)
+	return img

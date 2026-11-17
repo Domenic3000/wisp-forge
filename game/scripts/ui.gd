@@ -642,7 +642,7 @@ func hide_forge() -> void:
 ## when the satchel can't pay), and the chosen piece's cost.
 func _update_build_bar(g) -> void:
 	var piece: Dictionary = g.build_piece()
-	var key := "%d|%d|%s" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key]
+	var key := "%d|%d|%s|%d|%d|%d|%s" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {}))]
 	if key == _build_key:
 		return
 	_build_key = key
@@ -674,7 +674,13 @@ func _update_build_bar(g) -> void:
 		if piece.has("alt"):
 			cost_txt += "  or  " + Build.cost_text(piece["alt"])
 		var hint := "%s: %s" % [piece["name"], cost_txt]
-		hint += "  ·  click to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else (" (hold to paint)" if piece["kind"] == "wall" else ""))
+		if piece["kind"] == "structure":
+			if cost_txt == "":
+				hint = "%s: point at open ground" % piece["name"]
+			hint = "%s %s, %d wide%s" % [Build.STYLES[g.build_style][0], hint, g.build_w, (", %d storeys" % g.build_floors) if piece["struct"] != "roof" and g.build_floors > 1 else ""]
+			hint += "  ·  [ ] width  ·  %sT style  ·  R variation  ·  B leaves" % ("- = storeys  ·  " if piece["struct"] != "roof" else "")
+		else:
+			hint += "  ·  click to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else (" (hold to paint)" if piece["kind"] == "wall" else ""))
 		var hl := _label(hint, 12, CREAM)
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		build_box.add_child(hl)

@@ -66,6 +66,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `_update_build` previews (overlay draws `build_prev`) and places: furniture and platforms become small
   blueprints in `stamps`, written by `gpu.stamp` just before the next GPU frame. Placed pieces are not anchored,
   so they obey the physics. Digging a door (open or shut) takes it whole into the satchel as a Door item.
+  Structures (House, Room, Roof) are put together by buildings.gd's own parts (`Build.structure`, seeded, with
+  `builds.rng` saved and restored); [ ] width, - = storeys, T style, R variation; cost from `structure_cost`.
+- Doors swing either way (away from whoever opens them, `swing`); the open panel (overlay, face-on) burns when
+  fire reaches it (`_check_door_fire`) and breaks in a blast.
+- Foundations: two courses of the building's stone, then the biome's own ground layers (`_ground_mats`); yards are
+  made of the biome's soil too.
+- Test mode quits by itself after 7 minutes, so a broken run never leaves the game open.
 - Below-ground masonry gets ragged, stepped outer edges (`_roughen_underground`, run by `_finish`), so shafts and
   buried halls don't meet the earth with ruler-straight lines. Dungeon runestone is left out.
 - Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each

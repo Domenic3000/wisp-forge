@@ -460,6 +460,15 @@ func run() -> void:
 		var want: int = int(door_t["w"]) * int(door_t["h"])
 		_ok("a door opens when you walk into it, and closes again", was_open and not bool(door_t["open"]) and nd2 == want,
 			"opened by walking: %s, closed again: %d of %d door cells" % [was_open, nd2, want])
+		# fire reaching an open door's panel burns the door
+		g._set_door(door_t, true, g.player.pos)
+		await _frames(5)
+		var panel: Vector2 = g.door_panel_pos(door_t)
+		for fk in 6:
+			g.brushes.append([panel, 3.0, 3, Defs.FIRE, 0, 0, 0])
+			await _frames(2)
+		await _frames(20)
+		_ok("fire burns an open door where its panel is", not g.doors.has(door_t), "door still there: %s" % g.doors.has(door_t))
 
 	# ---- digging next to a ruin takes only what you dig: the rest stands ----
 	var dug_ok := true
@@ -881,6 +890,37 @@ func run() -> void:
 			break
 	g.build_click = true
 	await _frames(20)
+	# a whole house (Timber style, 36 wide), wherever along the ground it fits
+	for mt in [Defs.PLANK, Defs.WOOD, Defs.MASONRY, Defs.TILE, Defs.BRICK, Defs.SANDSTONE, Defs.DRYGRASS, Defs.TORCH, Defs.GLASS]:
+		g.player.inv[mt] += 3000
+	g.build_cat = 4
+	g.build_idx[4] = 0
+	g.build_style = 0
+	g.build_w = 36
+	g.build_floors = 1
+	var house_ok := false
+	var house_at := Vector2.ZERO
+	var doors_mid: int = g.doors.size()
+	for hk in [-80.0, -100.0, -120.0, 50.0, 70.0, 90.0, -140.0, 110.0]:
+		house_at = spot.call(hk, 8.0)
+		g.test_aim = house_at
+		await _frames(3)
+		house_ok = g.build_prev.get("ok", false)
+		if house_ok:
+			break
+	if house_ok:
+		g.build_click = true
+		await _frames(30)
+		g.test_aim = Vector2.ZERO
+		# a picture of it (saves/shots/built_house.png)
+		var hsave: Vector2 = g.player.pos
+		_go(house_at)
+		g.time = fposmod(atan2(house_at.y, house_at.x) - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+		await _frames(40)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("built_house.png"))
+		_go(hsave)
+		await _frames(5)
+	var house_doors: int = g.doors.size() - doors_mid
 	g.test_aim = Vector2.ZERO
 	g._toggle_build()
 	var rawb: PackedByteArray = g.gpu.read_world()
@@ -901,8 +941,9 @@ func run() -> void:
 					n_decor += 1
 				elif bq[1] == 2 and fb == Defs.WOODDOOR:
 					n_door += 1
-	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and g.doors.size() == doors_before + 1,
-		"wall cells %d, table cells %d (fit %s), door cells %d (fit %s), doors %d -> %d; last click: %s" % [n_wall, n_decor, table_ok, n_door, door_ok, doors_before, g.doors.size(), g.build_last])
+	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
+	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and doors_mid == doors_before + 1,
+		"wall cells %d, table cells %d (fit %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, n_decor, table_ok, n_door, door_ok, doors_before, doors_mid])
 
 	# ---- conjuring onto a foe strikes it instead of burying it ----
 	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))

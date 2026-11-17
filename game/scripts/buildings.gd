@@ -941,11 +941,39 @@ func _roof(bp: BP, ox: int, top: int, w: int, st: Dictionary) -> int:
 	return hi
 
 ## foundation from the floor down into the ground, so the building never hangs over a dip
+## A plinth of the building's stone (two courses under the floor), and below it, where the ground dips,
+## the ground itself built back up in its own layers (topsoil, then what lies under it), so a house on a
+## slope doesn't stand on a block of bricks with ruler-straight sides.
 func _foundation(bp: BP, ox: int, base: int, w: int, m: int) -> void:
 	for i in range(ox, ox + w):
 		var g := ground_row(bp.x0 + i) - bp.y0
+		var gm := _ground_mats(bp.x0 + i)
 		for j in range(base + 1, maxi(base + 2, g + 3)):
-			bp.fg(i, j, m, F_FILL | F_ANCHOR)
+			var depth := j - base - 1
+			var mat := m
+			if depth >= 2:
+				mat = gm[0] if depth - 2 < int(gm[1]) else gm[2]
+			bp.fg(i, j, mat, F_FILL | F_ANCHOR)
+
+## the ground's own materials at a column: [top, top depth, what lies under it] (anything that would
+## run or flow, like mud, becomes dirt; a snow cap is the snow's business, not ours)
+func _ground_mats(col: int) -> Array:
+	var bd: Dictionary = Defs.BIOMES.get(biome(col), {})
+	var top: int = bd.get("top", Defs.DIRT)
+	var sub: int = bd.get("sub", Defs.DIRT)
+	for k in 2:
+		var mm: int = top if k == 0 else sub
+		var kd: int = Defs.KIND[mm]
+		if kd != Defs.K_SOLID and kd != Defs.K_POWDER:
+			if k == 0:
+				top = Defs.DIRT
+			else:
+				sub = Defs.DIRT
+	var td: int = bd.get("topD", 1)
+	if td <= 0:
+		top = sub
+		td = 1
+	return [top, td, sub]
 
 ## dig out the hillside in front of doors so you can walk in
 ## The level ground in front of a building's doors. Across the outer YARD columns at each end
@@ -958,8 +986,10 @@ func _yard(bp: BP, i0: int, i1: int, base: int) -> void:
 		t = t * t * (3.0 - 2.0 * t)
 		var target := int(round(lerpf(float(base), float(g), t)))
 		bp.rect(i, mini(target, base) - DOOR - 5, i, target - 1, 0)
+		# the yard is made of the ground around it: its topsoil, then what lies under that
+		var gm := _ground_mats(bp.x0 + i)
 		for j in range(target, maxi(target + 1, g + 2)):
-			bp.fg(i, j, Defs.DIRT, F_FILL | F_ANCHOR)
+			bp.fg(i, j, gm[0] if j - target < int(gm[1]) else gm[2], F_FILL | F_ANCHOR)
 
 # ------------------------------------------------------------------ ruins ---
 ## Damage an intact structure inside [i0, i1] x [j0, j1]: jagged broken tops, holes, rotten
@@ -1128,6 +1158,28 @@ func _roughen_underground(bp: BP) -> void:
 	for a in adds:
 		if bp.ok(a.x, a.y) and bp.getf(a.x, a.y) == 255 and a.y > gj[a.x]:
 			bp.fg(a.x, a.y, a.z, F_FILL | F_ANCHOR)
+	# the same for back walls underground: where a buried hall's back wall meets the natural rock
+	# behind a cave, its edge is ragged too, not a straight cut
+	var badds := []
+	for j in h:
+		for i in w:
+			var g := bp.getb(i, j)
+			if g == 255 or g == 0 or (bp.c[j * w + i] & F_WALL) == 0 or j <= gj[i]:
+				continue
+			for dir in [-1, 1, 0, 2]:
+				var di2: int = -1 if dir == -1 else (1 if dir == 1 else 0)
+				var dj2: int = 1 if dir == 0 else (-1 if dir == 2 else 0)
+				var ni := i + di2
+				var nj := j + dj2
+				if not bp.ok(ni, nj) or bp.getb(ni, nj) != 255 or nj <= gj[ni] + 2:
+					continue
+				var course := (j + int(_blockr(rs, i, 1, 6) * 3.0)) / (2 + int(_blockr(rs, i, j / 4, 7) * 2.99))
+				var reach := int(_blockr(rs, i * 3 + dir, course, 8) * 3.99)
+				for k in range(1, reach + 1):
+					badds.append(Vector3i(i + di2 * k, j + dj2 * k, g))
+	for a2 in badds:
+		if bp.ok(a2.x, a2.y) and bp.getb(a2.x, a2.y) == 255 and a2.y > gj[a2.x] + 2:
+			bp.bg(a2.x, a2.y, a2.z)
 
 func _rough_mat(f: int) -> bool:
 	return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.OBSIDIAN or f == Defs.MOSSBLOCK

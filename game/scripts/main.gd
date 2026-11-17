@@ -108,7 +108,7 @@ var test_cast := false       # test mode: hold the left button
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
-var build_idx := [0, 0, 0, 0]  # the chosen piece in each category
+var build_idx := [0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
 var build_seed := 1           # the furniture design shown (R rolls a new one)
 var build_flip := false       # T mirrors it
 var build_click := false      # a fresh left click (furniture, doors and platforms go down one per click)
@@ -117,6 +117,11 @@ var build_pieces: Array = []
 var stamps: Array = []        # small blueprints to write into the world before the next GPU frame
 var _build_warn_t := 0
 var build_last := ""          # what the last click did (for the test report)
+var build_w := 40             # structures: width ([ and ]), storeys (- and =), style (T)
+var build_floors := 1
+var build_style := 0
+var _struct_key := ""
+var _struct := {}             # the planned structure under the cursor (worked out when something changes)
 var test_jump := false     # the test mode presses jump
 var test_down := false     # ... and down
 var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
@@ -344,6 +349,11 @@ func _exit_tree() -> void:
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
+	if testing and Time.get_ticks_msec() > 420000:
+		# a test run that hasn't finished in 7 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 7 minutes; quitting")
+		get_tree().quit(1)
+		return
 	if gpu == null:
 		return
 	gpu.flush()
@@ -603,11 +613,12 @@ func _make_doors(loaded: bool) -> void:
 	if loaded and planet_state.has("doors"):
 		for e in planet_state["doors"]:
 			doors.append({"pos": Vector2(float(e[0]), float(e[1])), "w": int(e[2]), "h": int(e[3]), "side": int(e[4]),
-				"col": int(e[5]), "row": int(e[6]), "open": bool(e[7])})
+				"col": int(e[5]), "row": int(e[6]), "open": bool(e[7]), "swing": int(e[8]) if e.size() > 8 else int(e[4])})
 	else:
 		for e in builds.door_list:
 			var d: Dictionary = e.duplicate()
 			d["open"] = false
+			d["swing"] = int(d["side"])
 			doors.append(d)
 
 ## the nearest door to a point, within reach cells of its middle ([] if none)
@@ -635,9 +646,16 @@ func _door_blocked(d: Dictionary) -> bool:
 			return true
 	return false
 
-func _set_door(d: Dictionary, open: bool) -> void:
+## Opens or shuts a door. A door swings either way: away from whoever opens it (`opener`, their
+## position; zero keeps the way it last swung).
+func _set_door(d: Dictionary, open: bool, opener := Vector2.ZERO) -> void:
 	if bool(d["open"]) == open:
 		return
+	if open and opener != Vector2.ZERO:
+		var dp0: Vector2 = d["pos"]
+		var u := (opener - dp0).dot(basis_r(atan2(dp0.y, dp0.x)))
+		if absf(u) > 0.01:
+			d["swing"] = -1 if u > 0.0 else 1
 	if not open and _door_blocked(d):
 		return
 	if open and _door_cells(d) * 2 < int(d["w"]) * int(d["h"]):
@@ -654,6 +672,54 @@ func _set_door(d: Dictionary, open: bool) -> void:
 	brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0 if open else 1.0, hw, hh, 0.0, 3])
 	audio.play("door_open" if open else "door_close", d["pos"])
 
+const DOOR_PANEL_W := 10.0    # an open door is drawn face-on, this wide, beside its doorway
+
+## where an open door's panel is (its middle, world)
+func door_panel_pos(d: Dictionary) -> Vector2:
+	var dp: Vector2 = d["pos"]
+	var a := atan2(dp.y, dp.x)
+	return dp + basis_r(a) * float(d.get("swing", d["side"])) * (float(d["w"]) * 0.5 + DOOR_PANEL_W * 0.5)
+
+## An open door's panel is wood like any other: fire reaching it burns it (checked a few times a
+## second around the mage), a blast breaks it. Either way the door is gone.
+func _check_door_fire() -> void:
+	if frame % 6 != 0:
+		return
+	for k in range(doors.size() - 1, -1, -1):
+		var d: Dictionary = doors[k]
+		if not bool(d["open"]):
+			continue
+		var pp := door_panel_pos(d)
+		if pp.distance_squared_to(player.pos) > 200.0 * 200.0:
+			continue
+		var a := atan2(pp.y, pp.x)
+		var hit := false
+		for sj in range(-int(d["h"]) / 2, int(d["h"]) / 2 + 1, 3):
+			for si in range(-4, 5, 2):
+				var q := pp + basis_r(a) * float(si) + basis_d(a) * float(sj)
+				var t := type_at(q)
+				if t == Defs.FIRE or t == Defs.LAVA:
+					hit = true
+					break
+			if hit:
+				break
+		if hit:
+			_door_destroyed(d, true)
+
+func _door_destroyed(d: Dictionary, burnt: bool) -> void:
+	var pp := door_panel_pos(d) if bool(d["open"]) else (d["pos"] as Vector2)
+	if not bool(d["open"]):
+		var hw := float(d["w"]) * 0.5
+		var hh := float(d["h"]) * 0.5
+		brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0, hw, hh, 0.0, 3])
+	doors.erase(d)
+	if burnt:
+		brushes.append([pp, 4.0, 3, Defs.FIRE, 0, 0, 0])      # the panel goes up in flames
+		audio.play("fire", pp, 0.8)
+	for k in 14:
+		var col := Color(1.0, 0.55, 0.2) if burnt and k % 2 == 0 else Color(0.55, 0.36, 0.2)
+		_particle(pp + Vector2(randf() - 0.5, randf() - 0.5) * Vector2(8.0, 24.0), Vector2(randf() - 0.5, -randf()) * 0.8, 20 + randi() % 20, col, burnt, 0.04)
+
 ## the door whose doorway (grown by `pad` cells) contains p, or {}
 func _door_at(p: Vector2, pad: float) -> Dictionary:
 	for d in doors:
@@ -667,8 +733,8 @@ func _door_at(p: Vector2, pad: float) -> Dictionary:
 		# an open door also reaches out to where its panel is drawn
 		var u := o.dot(basis_r(a))
 		if bool(d["open"]):
-			var reach_out := float(d["w"]) * 0.5 + 8.0 + pad
-			var outward := float(d["side"])
+			var reach_out := float(d["w"]) * 0.5 + DOOR_PANEL_W + pad
+			var outward := float(d.get("swing", d["side"]))
 			if (u * outward > 0.0 and u * outward < reach_out) and absf(o.dot(basis_d(a))) < hh:
 				return d
 		if absf(u) < hw and absf(o.dot(basis_d(a))) < hh:
@@ -707,7 +773,7 @@ func _door_cells(d: Dictionary) -> int:
 func _door_bump(m: Mage) -> void:
 	var d := _door_near(m.pos, 24.0)
 	if not d.is_empty() and not d["open"]:
-		_set_door(d, true)
+		_set_door(d, true, m.pos)
 
 ## F: open a chest in reach, otherwise open or close the nearest door
 func _interact() -> void:
@@ -716,7 +782,7 @@ func _interact() -> void:
 		return
 	var d := _door_near(player.pos, 22.0)
 	if not d.is_empty():
-		_set_door(d, not d["open"])
+		_set_door(d, not d["open"], player.pos)
 
 ## Chests near a mage obey gravity: one rigid object, so it falls and lands whole. A chest
 ## resting on something stays exactly where it is (the collision grid is built around the mage,
@@ -1237,6 +1303,7 @@ func _tick() -> void:
 	_use_grid(player)
 	_update_projectiles()
 	_use_grid(player)
+	_check_door_fire()
 	_update_particles()
 	_update_weather()
 	_try_spawn()
@@ -1617,6 +1684,10 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 
 func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 	brushes.append([p, r, 2, kind, power, 0, 0])
+	for k in range(doors.size() - 1, -1, -1):
+		var dk: Dictionary = doors[k]
+		if bool(dk["open"]) and door_panel_pos(dk).distance_to(p) < r + 4.0:
+			_door_destroyed(dk, kind == 1)
 	audio.play("boom", p, clampf(r / 14.0, 0.4, 1.2), 1.3 - clampf(r / 40.0, 0.0, 0.5))
 	for k in int(r * 4):
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 3.0, 15 + randi() % 20, Color(1, 0.6 + randf() * 0.3, 0.25), true, 0.03)
@@ -2215,7 +2286,14 @@ func _toggle_build() -> void:
 	if build_pieces.is_empty():
 		build_pieces = Build.pieces()
 		build_seed = randi()
+	while build_idx.size() < Build.CATS.size():
+		build_idx.append(0)
 	if build_on:
+		var bn: String = builds.biome(Build.cell_of(player.pos).x) if builds != null else "forest"
+		for si in Build.STYLES.size():
+			if Build.STYLES[si][1] == bn:
+				build_style = si
+		_struct_key = ""
 		ui.toast("Build mode: click to place · Q/E category · wheel piece · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
 	else:
 		ui.toast("Build mode off", Color(0.8, 0.8, 0.9), 1.0)
@@ -2239,11 +2317,22 @@ func _build_key(k: int) -> bool:
 	if k == KEY_Q or k == KEY_E:
 		build_cat = posmod(build_cat + (1 if k == KEY_E else -1), Build.CATS.size())
 		return true
+	var structure: bool = build_piece().get("kind", "") == "structure"
 	if k == KEY_R:
 		build_seed = randi()
 		return true
 	if k == KEY_T:
-		build_flip = not build_flip
+		if structure:
+			build_style = (build_style + 1) % Build.STYLES.size()
+			ui.toast("Style: " + Build.STYLES[build_style][0], Color(0.95, 0.85, 0.55), 1.0)
+		else:
+			build_flip = not build_flip
+		return true
+	if structure and (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT):
+		build_w = clampi(build_w + (4 if k == KEY_BRACKETRIGHT else -4), Build.STRUCT_W_MIN, Build.STRUCT_W_MAX)
+		return true
+	if structure and (k == KEY_MINUS or k == KEY_EQUAL):
+		build_floors = clampi(build_floors + (1 if k == KEY_EQUAL else -1), 1, Build.STRUCT_FLOORS_MAX)
 		return true
 	if k >= KEY_1 and k <= KEY_9:
 		var n := k - KEY_1
@@ -2364,6 +2453,17 @@ func _update_build(m: Mage) -> void:
 		if _door_blocked(rec):
 			ok = false
 		place = {"door": rec}
+	elif kind == "structure":
+		var sk: String = piece["struct"]
+		var key := "%s|%d|%d|%d|%d|%d|%d" % [sk, build_style, build_seed, build_w, build_floors, cell.x, cell.y]
+		if key != _struct_key:
+			_struct_key = key
+			_struct = _plan_structure(sk, cell)
+		piece["cost"] = _struct.get("cost", {})
+		cost = Build.payable(piece, m.inv)
+		ok = _struct.get("ok", false)
+		build_prev = {"tex": _struct.get("tex"), "corner": _struct.get("corner", Vector2.ZERO), "ok": ok and not cost.is_empty(), "cells": []}
+		place = {"structure": _struct}
 	elif kind == "platform":
 		for i in Build.PLATFORM_W:
 			var cx := cell.x - Build.PLATFORM_W / 2 + i
@@ -2371,7 +2471,8 @@ func _update_build(m: Mage) -> void:
 				ok = false
 			cells.append([Build.cell_pos(cx, cell.y), Defs.COLOR[Defs.SCAFFOLD]])
 		place = {"stamp": Build.platform_stamp(cell.x, cell.y)}
-	build_prev = {"cells": cells, "ok": ok and not cost.is_empty()}
+	if kind != "structure":
+		build_prev = {"cells": cells, "ok": ok and not cost.is_empty()}
 	if not build_click:
 		return
 	build_click = false
@@ -2392,9 +2493,62 @@ func _update_build(m: Mage) -> void:
 		var rec2: Dictionary = place["door"]
 		doors.append(rec2)
 		_set_door(rec2, false)
+	if place.has("structure"):
+		var sbp = place["structure"]["bp"]
+		stamps.append({"x0": posmod(sbp.x0, Defs.SH_N[0]), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c})
+		for dd in sbp.doors:
+			var dcol := posmod(sbp.x0 + int(dd[0]), Defs.SH_N[0])
+			var dang := (float(dcol) + float(dd[2]) * 0.5) / Defs.SH_N[0] * TAU
+			var drr := Defs.R_TOP - float(sbp.y0 + int(dd[1])) - float(dd[3]) * 0.5
+			doors.append({"pos": Vector2(cos(dang), sin(dang)) * drr, "w": int(dd[2]), "h": int(dd[3]), "side": int(dd[4]),
+				"col": dcol, "row": sbp.y0 + int(dd[1]), "open": false, "swing": int(dd[4])})
+		_struct_key = ""          # it's there now: work out the next one afresh
 	audio.play("place", p, 0.9)
 	for k in 8:
 		_particle(p + Vector2(randf() - 0.5, randf() - 0.5) * 6.0, Vector2(randf() - 0.5, -randf()) * 0.6, 18 + randi() % 12, Color(0.95, 0.85, 0.55), true, 0.02)
+
+## Plans a structure under the cursor: a house or room stands on the highest ground under its
+## footprint, with a plinth of its own stone down to the ground under the rest (at most
+## Build.FOUND_MAX deep); a roof rests on the first solid row under the cursor (put it on a room's top).
+## Everything it would build must land on open space. Returns {ok, cost, tex, corner, bp}.
+func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
+	var w := build_w
+	var floor_row := -1
+	if sk == "roof":
+		for k in 80:
+			if _solid_at(cell.x, cell.y + k):
+				floor_row = cell.y + k
+				break
+	else:
+		floor_row = _floor_span(cell.x - w / 2, w, cell.y - 30, 90)
+	if floor_row < 0:
+		return {"ok": false, "cost": {}}
+	var r := Build.structure(builds, sk, build_style, build_seed, w, build_floors, cell.x, floor_row)
+	var bp = r["bp"]
+	var ox: int = r["ox"]
+	var lb: int = r["lb"]
+	var st: Dictionary = r["st"]
+	var ok := true
+	if sk != "roof":
+		for i in range(ox, ox + w):
+			var col: int = bp.x0 + i
+			var k2 := 1
+			while k2 <= Build.FOUND_MAX and _open_at(col, floor_row + k2):
+				bp.fg(i, lb + k2, st["found"])
+				k2 += 1
+			if k2 > Build.FOUND_MAX:
+				ok = false                      # too far above the ground there
+	if ok:
+		for j in bp.h:
+			for i2 in bp.w:
+				if (bp.c[j * bp.w + i2] & 255) != 255 and not _open_at(bp.x0 + i2, bp.y0 + j):
+					ok = false
+					break
+			if not ok:
+				break
+	var tex := ImageTexture.create_from_image(Build.preview_image(bp, ok))
+	return {"ok": ok, "cost": Build.structure_cost(bp, bp.doors.size()), "tex": tex,
+		"corner": Build.cell_pos(bp.x0 + bp.w - 1, bp.y0), "bp": bp}
 
 func _build_need(piece: Dictionary) -> void:
 	if _build_warn_t > frame:
@@ -2552,7 +2706,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 22            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 23            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -2667,7 +2821,7 @@ func save_world(blocking: bool) -> void:
 	planet_state["chests"] = cs
 	var ds := []
 	for d in doors:
-		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"]])
+		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"])])
 	planet_state["doors"] = ds
 	planet_state["time"] = time
 	var meta := JSON.stringify(planet_state)

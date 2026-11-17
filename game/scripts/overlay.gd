@@ -27,37 +27,49 @@ func _draw_build_preview() -> void:
 			col = col.lerp(Color(1, 0.2, 0.15), 0.6)
 		col.a = pulse
 		draw_rect(Rect2(sp - Vector2(0.5, 0.5) / z, Vector2.ONE / z), col)
+	if pv.get("tex") != null:
+		# a whole structure, as one picture, its top-left corner (on screen) on its corner cell
+		var tx: Texture2D = pv["tex"]
+		var csp: Vector2 = game.world_to_screen(pv["corner"]) - Vector2(0.5, 0.5) / z
+		var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(pv["corner"].y, pv["corner"].x), -PI, PI)
+		draw_set_transform(csp, rot, Vector2.ONE / z)
+		draw_texture(tx, Vector2.ZERO, Color(1, 1, 1, pulse + 0.2))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if pv.has("circle"):
 		var cp: Vector2 = game.world_to_screen(pv["circle"][0])
 		var rr: float = float(pv["circle"][1]) / z
 		draw_arc(cp, rr + 0.5, 0.0, TAU, 20, Color(0.6, 1.0, 0.6, 0.8) if ok else Color(1, 0.35, 0.3, 0.8), 1.0 / maxf(z, 1.0))
 
-## An open door, swung out of the doorway and seen a little from the side: the hinge edge at the left,
-## the far edge one pixel shorter top and bottom, planks, two iron straps and the handle.
+## An open door, swung open towards you and seen face-on (no perspective): a plank door with
+## a frame, two iron straps with rivets, a little barred window and a brass handle on the far
+## edge (the hinge edge is at the left; the overlay mirrors it for doors that swing the other way).
 static func _door_open_image(h: int) -> Image:
-	var w := 8
+	var w := 10
 	var img := Image.create(w, h + 1, false, Image.FORMAT_RGBA8)   # an empty last row, like the sprites' outline
 	var dk := Color("#3a2412")
-	var md := Color("#7a4e28")
-	var lt := Color("#9a6634")
-	var hl := Color("#b98048")
+	var md := Color("#6b4423")
+	var lt := Color("#8f5f33")
+	var hl := Color("#a8743e")
 	var ir := Color("#50505a")
 	var irl := Color("#8a8a96")
 	for x in w:
-		var inset := int(round(float(x) / float(w - 1) * 1.5))
-		for y in range(inset, h - inset):
-			var c := lt if x % 3 != 2 else md
-			if x == 0:
+		for y in h:
+			var c := lt if (x % 3) != 0 else md
+			if x == 1:
 				c = hl
-			var from_top := y - inset
-			var from_bot := h - inset - 1 - y
-			if from_top == 5 or from_top == 6 or from_bot == 5 or from_bot == 6:
-				c = irl if x == 0 else ir
-			if from_top == 0 or from_bot == 0 or x == w - 1:
+			if (y * 7 + x * 3) % 13 == 0:
+				c = md                                   # grain
+			if y == 5 or y == 6 or y == h - 7 or y == h - 6:
+				c = ir
+				if (y == 5 or y == h - 7) and x % 3 == 1:
+					c = irl                              # rivets
+			if y >= 9 and y <= 13 and x >= 3 and x <= 6:
+				c = Color("#141018") if not (y == 11 or x == 4) else ir    # the barred window
+			if x == 0 or x == w - 1 or y == 0 or y == h - 1:
 				c = dk
 			img.set_pixel(x, y, c)
-	img.set_pixel(w - 2, h / 2, Color("#e2b048"))
-	img.set_pixel(w - 2, h / 2 + 1, Color("#9a6c24"))
+	img.set_pixel(w - 3, h / 2, Color("#e2b048"))
+	img.set_pixel(w - 3, h / 2 + 1, Color("#9a6c24"))
 	return img
 
 # which animation frame a mage shows
@@ -198,12 +210,10 @@ func _draw() -> void:
 		var dsp: Vector2 = game.world_to_screen(dp)
 		if dsp.x < -40 or dsp.y < -40 or dsp.x > game.VW + 40 or dsp.y > game.VH + 40:
 			continue
-		var da := atan2(dp.y, dp.x)
-		# doors swing outward: "side" is the way into the house (columns increasing, which is against
-		# basis_r, screen right), so the open panel goes the other way, hinged at the doorway's edge
-		var side := float(d["side"])
-		var wp: Vector2 = dp + game.basis_r(da) * side * (float(d["w"]) * 0.5 + 4.0)
-		_sprite("door_open", wp, side < 0.0, false, float(d["h"]), true)
+		# a door swings away from whoever opened it; the panel stands face-on beside the doorway,
+		# hinged at its edge
+		var swing := float(d.get("swing", d["side"]))
+		_sprite("door_open", game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true)
 	# foes
 	for e in game.enemies:
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)
