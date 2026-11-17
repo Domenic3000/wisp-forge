@@ -8,3 +8,6 @@ game/.godot/
 *.tmp
 # folders other tools drop in here
 Claude's outputs/
+# shader syntax-check output (tools/build_shaders.py)
+out/
+game/out/
