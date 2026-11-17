@@ -81,7 +81,7 @@ var _anch := {}
 ## One frame of motion. vel: the body's velocity in sprite space (x forward, y down, cells per
 ## frame). pose: the frame's name (for its anchors). aim: the casting direction in sprite space
 ## (zero when not casting). wind: a breeze in sprite space (the title screen's).
-func update(pose: String, vel: Vector2, aim: Vector2, wind := Vector2.ZERO) -> void:
+func update(pose: String, vel: Vector2, aim: Vector2, wind := Vector2.ZERO, casting := false) -> void:
 	_t += 1.0
 	_anch = Defs.MAGE_ANCHORS.get(pose, Defs.MAGE_ANCHORS["mage"])
 	var acc := (vel - _prev_v).limit_length(3.0)
@@ -94,15 +94,14 @@ func update(pose: String, vel: Vector2, aim: Vector2, wind := Vector2.ZERO) -> v
 	# the staff: an angular spring toward a lean that suits what he's doing
 	var target := -0.08
 	if aim != Vector2.ZERO:
-		target = clampf(atan2(aim.x, -aim.y), -0.4, 2.6)
+		target = clampf(atan2(aim.x, -aim.y), -0.35, 2.9)     # the staff follows the cursor
 	elif run > 0.2:
 		target = -0.12 - run * 0.12
 	if vel.y < -0.5 and aim == Vector2.ZERO:
 		target -= 0.15
 	# close to critically damped: it settles without whipping back and forth
-	var casting := aim != Vector2.ZERO
-	var k := 0.3 if casting else 0.12
-	var c := 0.85 if casting else 0.6
+	var k := 0.32 if casting else 0.22
+	var c := 0.85 if casting else 0.75
 	staff_w += (target - staff_a) * k - staff_w * c - acc.x * 0.03 + acc.y * 0.01
 	staff_w = clampf(staff_w, -0.35, 0.35)
 	staff_a += staff_w

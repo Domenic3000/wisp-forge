@@ -1,0 +1,20 @@
+// ---- clouds: one world-space layer, shared by render.comp (drawn, and flown through as fog),
+// react.comp (rain, snow and ash fall from their undersides) and grid.comp (how deep in cloud
+// each mage is). They sit at a fixed height above the planet's mean surface, so mountains rise
+// into them, and drift around the planet with the wind (P.p[121].y). Flat-ish bottoms, billowing
+// tops; more of the sky clouds over while it rains (P.p[3].z).
+float cloudDensity(vec2 pos) {
+	float r = length(pos);
+	float hgt = r - RS0;
+	if (hgt < 60.0 || hgt > 290.0) return 0.0;
+	float wnd = P.p[121].y;
+	float cw = cos(wnd), sw = sin(wnd);
+	vec2 q = vec2(pos.x * cw - pos.y * sw, pos.x * sw + pos.y * cw);
+	float base = 120.0 + (fbm(q / 320.0, 4244, 1) - 0.5) * 44.0;
+	float top = base + 26.0 + fbm(q / 95.0, 4245, 2) * 80.0;
+	if (hgt < base - 4.0 || hgt > top + 8.0) return 0.0;
+	float edge = smoothstep(base - 4.0, base + 7.0, hgt) * (1.0 - smoothstep(top - 22.0, top + 8.0, hgt));
+	float n = fbm(q / 52.0, 4242, 3);
+	float cover = 0.565 - P.p[3].z * 0.2;
+	return clamp((n - cover) * 6.0, 0.0, 1.0) * edge;
+}

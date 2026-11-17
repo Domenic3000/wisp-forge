@@ -5,6 +5,7 @@
 #include "world"
 #include "params"
 #include "bglayer"
+#include "clouds"
 layout(std430, set = 0, binding = 7) restrict writeonly buffer Grid { uint g[]; } grid;
 // counts[52] = falling blocks overlapping the mage, counts[53] = the longest fall among them,
 // counts[55] = nearest chest within 44 cells: (4095 - dist^2) << 20 | centreJ << 10 | centreI,
@@ -22,6 +23,8 @@ void main() {
 	uint cb = uint(slot) * 64u;
 	int goff = slot * GS * (GS / 4);
 	vec2 R = vec2(sin(A), -cos(A)), D = vec2(-cos(A), -sin(A));
+	// counts[58]: how deep in cloud this mage stands (0-1000)
+	if (gx4 == 0 && j == 0) counts.n[cb + 58u] = uint(cloudDensity(G) * 1000.0);
 	uint pk = 0u;
 	for (int q = 0; q < 4; q++) {
 		int i = gx4 * 4 + q;

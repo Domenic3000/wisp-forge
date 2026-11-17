@@ -5,6 +5,7 @@
 #include "params"
 #include "surf_ro"
 #include "bglayer"
+#include "clouds"
 layout(local_size_x = 16, local_size_y = 16) in;
 
 void setc(int i, uint c, uint t, uint life) { world.cells[i] = withFG(c, t, life); }
@@ -44,9 +45,13 @@ void main() {
 	uint ab = aux.a[i];
 	uint bgm = ab & 255u;
 	if (t == 0u) {
-		if (y == pc.b.z && R < P.p[3].x) {
+		// rain, snow and ash fall from the undersides of real clouds (inc/clouds.comp)
+		if (R < P.p[3].x * 2.5) {
 			vec2 p = cellCenter(s, y, x);
-			if (length(p) > surfA(angleOf(p)).x + 3.0) { setc(i, c, uint(pc.b.w), 1u); return; }  // life 1 = fresh precipitation
+			float rr0 = length(p);
+			if (rr0 > RS0 + 60.0 && rr0 > surfA(angleOf(p)).x + 3.0 && cloudDensity(p) > 0.35 && cloudDensity(p - p / rr0 * 5.0) < 0.35) {
+				setc(i, c, uint(pc.b.w), 1u); return;     // life 1 = fresh precipitation
+			}
 		}
 		// background plants and wooden walls catch fire from burning neighbours, then are gone
 		if (bgm != 0u && FUEL[bgm] > 0u) {

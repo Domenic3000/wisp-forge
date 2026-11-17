@@ -616,6 +616,25 @@ func run() -> void:
 		await _frames(70)
 		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("dungeon.png"))
 
+	# ---- clouds you can fly into ----
+	var fog_best := 0.0
+	var fog_at := -1.0
+	for k in 48:
+		var ang: float = g.spawn_angle + float(k) * 0.05
+		g.test_god = true
+		_go(Vector2(cos(ang), sin(ang)) * (Defs.RS0 + 150.0))
+		await _frames(6)
+		if g.player.fog > fog_best:
+			fog_best = g.player.fog
+			fog_at = ang
+		if fog_best > 0.6:
+			break
+	if fog_at >= 0.0:
+		_go(Vector2(cos(fog_at), sin(fog_at)) * (Defs.RS0 + 150.0))
+		await _frames(40)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("cloud.png"))
+	_ok("you can fly into a cloud", fog_best > 0.3, "deepest cloud found: %.2f" % fog_best)
+
 	# ---- foes come in from out of sight: none appears on screen ----
 	var spv := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
 	_go(spv * (g.gpu.surf_at(g.spawn_angle).x + 25.0))

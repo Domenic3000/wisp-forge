@@ -1452,10 +1452,11 @@ func label_at(pos: Vector2) -> String:
 ## walled in a material the staff can't cut yet (brick or obsidian): the treasure there waits
 ## for a stronger focus.
 const DUNGEONS := 4
-const DSW := 78        # slot width: a room up to 62 wide with its walls and a gap
-const DSH := 68        # slot height: a room up to 54 tall
-const DW := 4          # wall thickness
-const DSHAFT := 16     # shaft width
+const DSW := 112       # slot width: a room up to 96 wide with its walls and a gap
+const DSH := 86        # slot height: a room up to 72 tall
+const DW := 5          # wall thickness
+const DSHAFT := 22     # shaft width
+const DCOR := 40       # corridor height
 
 const DUNGEON_NAMES := {
 	"forest": ["Overgrown Halls", "Rootbound Crypts"], "marsh": ["Drowned Crypts", "Mire Halls"],
@@ -1482,9 +1483,9 @@ func _dungeon(x: int, build: bool) -> bool:
 		var slot_top := 6 + r * DSH
 		var fl := slot_top + DSH - DW - 1          # floor row (solid), shared by the whole row
 		for c in nc:
-			var w := rng.randi_range(46, DSW - 2 * DW - 8)
+			var w := rng.randi_range(66, DSW - 2 * DW - 8)
 			var left := DW + 4 + c * DSW + DW + rng.randi_range(0, DSW - 2 * DW - 6 - w)
-			var h := rng.randi_range(42, DSH - 2 * DW - 6)
+			var h := rng.randi_range(54, DSH - 2 * DW - 6)
 			rooms.append({"r": r, "c": c, "i0": left, "i1": left + w - 1, "top": fl - h, "fl": fl, "on": false, "kind": ""})
 	# --- grow a spanning tree from the entrance (a random room on the top row) ---
 	var ce := rng.randi_range(0, nc - 1)
@@ -1528,7 +1529,7 @@ func _dungeon(x: int, build: bool) -> bool:
 	var entry: Dictionary = rooms[ce]
 	var s0 := (int(entry["i0"]) + int(entry["i1"])) / 2 - DSHAFT / 2     # the shaft's left column, local
 	var gc := dx0 + s0 + DSHAFT / 2
-	var gw := 34
+	var gw := 40
 	if not _site_ok(gc - gw / 2 - 2, gw + 4, 14):
 		return false
 	var base := _median_ground(gc - gw / 2 - 2, gw + 4) - 1
@@ -1543,6 +1544,8 @@ func _dungeon(x: int, build: bool) -> bool:
 	var st := _style(b, "fort")
 	st["roof_kind"] = "battle"
 	st["frame"] = "course"
+	var house_wall: int = st["wall"]
+	st["wall"] = Defs.RUNESTONE     # warded: explored through its halls, not dug around
 	var seal := Defs.BRICK if rng.randf() < 0.6 else Defs.OBSIDIAN
 	var name: String = DUNGEON_NAMES[b][rng.randi_range(0, 1)]
 	# --- the halls ---
@@ -1561,7 +1564,7 @@ func _dungeon(x: int, build: bool) -> bool:
 			var lo: Dictionary = ra if ra["c"] < rb["c"] else rb
 			var hi: Dictionary = rb if ra["c"] < rb["c"] else ra
 			if hi["i0"] - DW - 1 >= lo["i1"] + DW + 1:
-				bp.solid(lo["i1"] + DW + 1, lo["fl"] - 36, hi["i0"] - DW - 1, lo["fl"] + DW - 1, wall)
+				bp.solid(lo["i1"] + DW + 1, lo["fl"] - DCOR - DW, hi["i0"] - DW - 1, lo["fl"] + DW - 1, wall)
 			links.append({"kind": "corridor", "a": lo, "b": hi, "va": lo == rooms[vault], "vb": hi == rooms[vault]})
 		else:
 			var up: Dictionary = ra if ra["r"] < rb["r"] else rb
@@ -1584,13 +1587,13 @@ func _dungeon(x: int, build: bool) -> bool:
 		var la: Dictionary = ln["a"]
 		var lb2: Dictionary = ln["b"]
 		if ln["kind"] == "corridor":
-			bp.rect(la["i1"] + 1, la["fl"] - 32, lb2["i0"] - 1, la["fl"] - 1, 0)
-			bp.rect_bg(la["i1"] + 1, la["fl"] - 32, lb2["i0"] - 1, la["fl"] - 1, back)
+			bp.rect(la["i1"] + 1, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, 0)
+			bp.rect_bg(la["i1"] + 1, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, back)
 			# the reliquary's doorway is walled up
 			if ln["vb"]:
-				bp.rect(lb2["i0"] - DW, la["fl"] - 32, lb2["i0"] - 1, la["fl"] - 1, seal)
+				bp.rect(lb2["i0"] - DW, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, seal)
 			if ln["va"]:
-				bp.rect(la["i1"] + 1, la["fl"] - 32, la["i1"] + DW, la["fl"] - 1, seal)
+				bp.rect(la["i1"] + 1, la["fl"] - DCOR, la["i1"] + DW, la["fl"] - 1, seal)
 		else:
 			var si2: int = ln["si"]
 			var sw2: int = ln["sw"]
@@ -1605,7 +1608,12 @@ func _dungeon(x: int, build: bool) -> bool:
 	bp.rect(s0, 0, s0 + DSHAFT - 1, int(entry["top"]) - 1, 0)
 	bp.rect_bg(s0, 0, s0 + DSHAFT - 1, int(entry["top"]) - 1, back)
 	_landings(bp, s0, s0 + DSHAFT - 1, 10, int(entry["fl"]) - 18)
-	# 3) furnish each room by its theme
+	# 3) furnish each room by its theme (a room with a shaft down through its floor gets no pool
+	# or rubble, which would pour down it)
+	var has_down := {}
+	for ln2 in links:
+		if ln2["kind"] == "shaft":
+			has_down[ln2["a"]["r"] * nc + ln2["a"]["c"]] = true
 	var kinds := ROOM_KINDS.duplicate()
 	var sure_treasure := true
 	var ki := rng.randi_range(0, kinds.size() - 1)
@@ -1621,8 +1629,9 @@ func _dungeon(x: int, build: bool) -> bool:
 		else:
 			rm3["kind"] = kinds[ki % kinds.size()]
 			ki += 1
-			if rm3["kind"] == "pool" and (b == "desert"):
+			if rm3["kind"] == "pool" and (b == "desert" or has_down.has(k)):
 				rm3["kind"] = "hall"
+		rm3["down"] = has_down.has(k)
 		sure_treasure = _dungeon_room(bp, rm3, st, b, sure_treasure) and sure_treasure
 	# --- check it: every room but the reliquary can be reached from the gatehouse shaft ---
 	bp.meta = _dungeon_reach(bp, rooms, vault, s0 + DSHAFT / 2)
@@ -1642,8 +1651,11 @@ func _dungeon(x: int, build: bool) -> bool:
 	var ox := YARD + 2
 	_yard(gbp, 0, gtw - 1, lb)
 	_foundation(gbp, ox - 1, lb, gw + 2, st["found"])
-	var top := _building(gbp, ox, lb, gw, 1, st, 3, false, "", 0.0)
-	_roof(gbp, ox, top, gw, st)
+	var gst := st.duplicate()
+	gst["wall"] = house_wall        # the gatehouse itself is ordinary stone
+	gst["post"] = house_wall
+	var top := _building(gbp, ox, lb, gw, 1, gst, 3, false, "", 0.0)
+	_roof(gbp, ox, top, gw, gst)
 	var gs0 := dx0 + s0 - gx0
 	gbp.solid(gs0 - DW, lb + 1, gs0 + DSHAFT - 1 + DW, gbp.h - 1, wall)
 	gbp.rect(gs0, lb, gs0 + DSHAFT - 1, gbp.h - 1, 0)
@@ -1670,7 +1682,7 @@ func _dungeon_neighbours(rooms: Array, k: int, nc: int, nr: int) -> Array:
 			continue
 		var o: Dictionary = rooms[r2 * nc + c]
 		# a shaft needs the two rooms to overlap enough to drop straight down
-		if mini(rooms[k]["i1"], o["i1"]) - maxi(rooms[k]["i0"], o["i0"]) >= 14:
+		if mini(rooms[k]["i1"], o["i1"]) - maxi(rooms[k]["i0"], o["i0"]) >= 20:
 			out.append(r2 * nc + c)
 	return out
 
@@ -1759,7 +1771,7 @@ func _dungeon_room(bp: BP, rm: Dictionary, st: Dictionary, b: String, sure: bool
 		bp.bg(i0 + 3, fl - 24, Defs.TORCH)
 		bp.bg(i1 - 3, fl - 24, Defs.TORCH)
 	# age: a rubble heap now and then, moss staining the back wall in the wetter biomes
-	if rm["kind"] != "reliquary" and rm["kind"] != "pool" and rng.randf() < 0.35:
+	if rm["kind"] != "reliquary" and rm["kind"] != "pool" and not rm.get("down", false) and rng.randf() < 0.35:
 		var mc := rng.randi_range(i0 + 4, i1 - 4)
 		var mh := rng.randi_range(3, 6)
 		for dc in range(-mh, mh + 1):

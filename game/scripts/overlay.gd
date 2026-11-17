@@ -98,11 +98,11 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 		m.rig = MageRig.new()
 	var a := atan2(m.pos.y, m.pos.x)
 	var fwd := float(m.facing)
-	var aim := Vector2.ZERO
-	if game.frame - m.cast_frame < 14 or m.input.cast:
-		var d: Vector2 = aim_w - m.pos
-		aim = Vector2(d.dot(game.basis_r(a)) * fwd, d.dot(game.basis_d(a))).normalized()
-	m.rig.update(key, Vector2(m.vx * fwd, m.vy), aim)
+	# the staff points at the cursor (snappier while casting)
+	var d: Vector2 = aim_w - m.pos
+	var aim := Vector2(d.dot(game.basis_r(a)) * fwd, d.dot(game.basis_d(a))).normalized()
+	var casting: bool = game.frame - m.cast_frame < 14 or m.input.cast
+	m.rig.update(key, Vector2(m.vx * fwd, m.vy), aim, Vector2.ZERO, casting)
 	if not visible_now:
 		return
 	if not _masks.has(key):
@@ -113,6 +113,7 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / float(game.zoom)
 	draw_set_transform(sp, rot, sc)
 	var mod := _lit(game.world_to_screen(m.pos))
+	mod = mod.lerp(Color(0.86, 0.88, 0.95), clampf(m.fog, 0.0, 1.0) * 0.55)   # misted over inside a cloud
 	var ts := t.get_size()
 	var origin := Vector2(-floorf(ts.x * 0.5) + 1.0, -ts.y + 2.0)
 	MageRig.draw_pixels(self, m.rig.back_pixels(), origin, 1.0, mod, _masks[key])

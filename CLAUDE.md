@@ -47,6 +47,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   shafts with landings one above the other). Rooms get themes (`_dungeon_room`); the farthest is a reliquary
   walled in brick or obsidian. `_dungeon_reach` flood-fills from the shaft and stores the result in `bp.meta`
   for the tests.
+- Dungeon walls, floors and shafts are `RUNESTONE` (warded stone, hardness 4: only the Core Siphon cuts it), so
+  dungeons are explored through their halls; the gatehouse above ground is ordinary stone.
+- Clouds live in world space (`shaders/inc/clouds.comp`, `cloudDensity`): render.comp draws them over everything
+  at their height (fog when you fly in), react.comp spawns rain/snow/ash only under cloud undersides, and
+  grid.comp writes each mage's cloud depth to counts[58] (`Mage.fog`: misted sprite, wisps in overlay).
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 

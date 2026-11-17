@@ -136,6 +136,7 @@ class PlayerInput:
 
 class Mage extends Body:
 	var rig = null             # the simulated hat tip, beard, scarf and staff (overlay.gd, mage_rig.gd)
+	var fog := 0.0             # how deep in cloud the mage is (0-1, from the GPU)
 	var id := 0
 	var slot := 0              # which simulation counters and collision grid are this mage's
 	var local := true          # played on this computer (others come from the network)
@@ -463,6 +464,7 @@ func _apply_counts(m: Mage) -> void:
 	if all.size() < o + 64:
 		return
 	var cn := all.slice(o, o + 64)
+	m.fog = lerpf(m.fog, cn[58] / 1000.0, 0.25)
 	_use_grid(m)
 	if m.local and cn[56] > 0:
 		# something loose is about to fall: dust trickles from it and the ground rumbles
@@ -1089,6 +1091,7 @@ func _tick() -> void:
 	_update_guards()
 	_check_chest_hint()
 	_update_wisp()
+	_cloud_wisps()
 	_update_camera(aim)
 	shake *= 0.88
 	hurt_flash *= 0.9
@@ -1816,6 +1819,19 @@ func _try_spawn() -> void:
 			spawn_enemy(type, from_grid(Vector2(lx, ly)))
 			return
 
+## Inside a cloud: wisps of vapour stream past you with the wind, in front of everything.
+func _cloud_wisps() -> void:
+	if player.fog < 0.08:
+		return
+	var a := atan2(player.pos.y, player.pos.x)
+	var R := basis_r(a)
+	var D := basis_d(a)
+	for k in int(1 + player.fog * 4.0):
+		var off := R * randf_range(-VW * 0.6, VW * 0.6) + D * randf_range(-VH * 0.6, VH * 0.6)
+		var shade := randf_range(0.82, 1.0)
+		_particle(player.pos + off, -R * randf_range(0.25, 0.7) + D * randf_range(-0.05, 0.05), 50 + randi() % 50,
+			Color(shade, shade, shade * 1.04, 0.35 + player.fog * 0.3), true, 0.0)
+
 func _local_daylight(p: Vector2) -> float:
 	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
 	return clampf(p.normalized().dot(Vector2(cos(sun_a), sin(sun_a))) * 1.6 + 0.15, 0.025, 1.0)
@@ -2153,7 +2169,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 19            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 20            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

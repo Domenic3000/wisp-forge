@@ -9,6 +9,7 @@
 #include "params"
 #include "surf_ro"
 #include "bglayer"
+#include "clouds"
 layout(std430, set = 0, binding = 4) restrict readonly buffer LightIn { vec4 l[]; } li;
 layout(std430, set = 0, binding = 6) restrict writeonly buffer View { uint px[]; } view;
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -103,7 +104,7 @@ vec3 chestColor(uint v, bool open) {
 	return ((ci / 2) % 2 == 0) ? wood : wood * 0.9;
 }
 bool isMasonry(uint t) {
-	return t == M_BRICK || t == M_MASONRY || t == M_MOSSBLOCK || t == M_SANDSTONE || t == M_TILE || t == M_TREASURE;
+	return t == M_BRICK || t == M_MASONRY || t == M_MOSSBLOCK || t == M_SANDSTONE || t == M_TILE || t == M_TREASURE || t == M_RUNESTONE;
 }
 // textured colour of a material, without edge shading; building blocks get mortar lines
 vec3 blockTex(uint t, ivec2 w, uint v) {
@@ -112,6 +113,22 @@ vec3 blockTex(uint t, ivec2 w, uint v) {
 		int row = w.y / 3;
 		bool mortar = (w.y % 3 == 0) || ((w.x + row * 3) % 6 == 0);
 		return mortar ? vec3(0.42, 0.39, 0.36) : ramp(t, (v & 1u) == 0u ? 2 : 3);
+	}
+	if (t == M_RUNESTONE) {
+		// big dressed blocks; one in four carries a rune that glows a faint cyan, slowly pulsing
+		int row = w.y / 6;
+		int bx = w.x + (row & 1) * 5;
+		bool mortar = (w.y % 6 == 0) || (bx % 10 == 0);
+		uint bh = hashu(uint(bx / 10) * 911u ^ uint(row) * 3571u);
+		vec3 col = mortar ? ramp(t, 0) * 0.7 : ramp(t, 1 + int(bh % 2u));
+		if (w.y % 6 == 1 && !mortar) col = ramp(t, 3);
+		if (!mortar && bh % 4u == 0u) {
+			int lx = bx % 10, ly = w.y % 6;
+			bool stroke = (lx == 5 && ly >= 1 && ly <= 5) || (ly == 2 + int(bh >> 3 & 1u) && lx >= 3 && lx <= 7)
+				|| ((bh >> 5 & 1u) == 1u && ly == 5 - (lx - 3) && lx >= 3 && lx <= 7);
+			if (stroke) col = vec3(0.32, 0.78, 0.95) * (0.65 + 0.35 * sin(TIME * 0.04 + float(bh & 63u)));
+		}
+		return col;
 	}
 	if (t == M_MASONRY || t == M_MOSSBLOCK) {
 		int row = w.y / 4;
@@ -232,19 +249,30 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 	float space = smoothstep(0.45, 1.0, alt);
 	col = mix(col, vec3(0.008, 0.008, 0.03), space);
 	vec3 horizon = col;
-	// stars first, so hills and clouds are drawn in front of them
-	float starA = max(clamp(1.0 - day * 2.2, 0.0, 1.0), space);
-	if (starA > 0.02) {
-		ivec2 sp = ivec2(px + vec2(P.p[1].z * 900.0, 0.0));
-		float h = h2(sp, 991);
-		if (h < 0.0035) {
-			float tw = 0.6 + 0.4 * sin(TIME * 0.05 + h * 9000.0);
-			vec3 sc = h < 0.001 ? vec3(1.0, 0.85, 0.7) : (h < 0.002 ? vec3(0.75, 0.85, 1.0) : vec3(1.0));
-			col = max(col, sc * starA * tw);
-		} else {
-			// bright stars get a little cross
-			float hl = h2(sp + ivec2(1, 0), 991), hr = h2(sp - ivec2(1, 0), 991), hu = h2(sp + ivec2(0, 1), 991), hd = h2(sp - ivec2(0, 1), 991);
-			if (min(min(hl, hr), min(hu, hd)) < 0.0004) col = max(col, vec3(0.55) * starA);
+	// Stars first, so hills and clouds are drawn in front of them. Two layers that barely move as
+	// you travel (they're very far away): the far one drifts a pixel for every ~80 the ground
+	// moves, the near one one for every ~25; rising lifts them a little. They fade in with the
+	// dark (blended, so they never pop in once the sky gets dark enough).
+	float starA = max(clamp(1.0 - day * 2.2, 0.0, 1.0), smoothstep(0.15, 0.85, alt)) * smoothstep(0.0, 0.25, 1.0 - day + alt);
+	if (starA > 0.01) {
+		float camU = P.p[121].w;
+		float camH = length(P.p[1].xy) - RS0;
+		for (int layer = 0; layer < 2; layer++) {
+			float kx = layer == 0 ? 100.0 : 330.0;
+			float ky = layer == 0 ? 0.012 : 0.04;
+			ivec2 sp = ivec2(floor(px + vec2(camU * kx, camH * ky)));
+			int seed = layer == 0 ? 991 : 993;
+			float h = h2(sp, seed);
+			float dens = layer == 0 ? 0.0035 : 0.0012;
+			if (h < dens) {
+				float tw = 0.6 + 0.4 * sin(TIME * 0.05 + h * 9000.0);
+				vec3 sc = h < dens * 0.3 ? vec3(1.0, 0.85, 0.7) : (h < dens * 0.6 ? vec3(0.75, 0.85, 1.0) : vec3(1.0));
+				col = mix(col, sc, starA * tw * (layer == 0 ? 0.75 : 1.0));
+			} else if (layer == 1) {
+				// bright stars get a little cross
+				float hl = h2(sp + ivec2(1, 0), seed), hr = h2(sp - ivec2(1, 0), seed), hu = h2(sp + ivec2(0, 1), seed), hd = h2(sp - ivec2(0, 1), seed);
+				if (min(min(hl, hr), min(hu, hd)) < 0.00035) col = mix(col, vec3(0.7), starA * 0.6);
+			}
 		}
 	}
 
@@ -276,20 +304,6 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 		if (r < hf) {
 			vec3 hc = mix(horizon, vec3(0.36, 0.46, 0.66) * (0.35 + 0.65 * day) * P.p[4].rgb, 0.55);
 			col = r > hf - 1.5 ? hc * 1.18 : hc;
-		}
-	}
-	// two-tone clouds
-	float hgt = r - rs;
-	if (hgt > 50.0 && hgt < 170.0) {
-		float wnd = P.p[121].y;
-		vec2 q = vec2(pos.x * cos(wnd) - pos.y * sin(wnd), pos.x * sin(wnd) + pos.y * cos(wnd));
-		float n = fbm(q / 26.0, 4242, 3);
-		float band = 1.0 - abs(hgt - 110.0) / 60.0;
-		float a = (n * (0.6 + 0.4 * band) - (0.6 - rain * 0.2)) * 5.0;
-		if (a > 0.3 + DITH * 0.3) {
-			float cl = (70.0 + 185.0 * max(0.15, day) * (1.0 - rain * 0.45)) / 255.0;
-			vec3 cc = vec3(cl, cl, cl * 1.05) * P.p[4].rgb;
-			col = a > 0.85 ? cc : cc * 0.78;
 		}
 	}
 	// near parallax hills, with a far-off tree line where the land is wooded
@@ -392,6 +406,30 @@ void main() {
 		L = sqrt(max(L, vec3(0.0)) + 0.008);
 		L = min(floor(L * LSTEPS + DITH) / LSTEPS, vec3(1.3));
 		col *= L;
+	}
+	// clouds: drawn over everything at their height (sky, hills, mountain tops, and you when you
+	// fly in). Lit tops, darker bellies (darker still in rain), and stippled pixel edges and
+	// drifting wisps inside, from a fixed 4x4 pattern so the fog reads as pixel art.
+	float cdn = cloudDensity(pos);
+	if (cdn > 0.0) {
+		vec2 up = pos / max(r, 1.0);
+		float above = cloudDensity(pos + up * 6.0);
+		float below = cloudDensity(pos - up * 5.0);
+		float day = clamp(dot(up, sunDir()) * 1.6 + 0.15, 0.025, 1.0);
+		float rain = P.p[3].z;
+		float cl = (70.0 + 185.0 * max(0.15, day) * (1.0 - rain * 0.45)) / 255.0;
+		vec3 cc = vec3(cl, cl, cl * 1.05) * P.p[4].rgb;
+		float lit = clamp(cdn - above + 0.45, 0.0, 1.0);
+		cc *= lit > 0.62 ? 1.08 : (lit > 0.4 ? 0.92 : 0.8);
+		if (below < 0.15) cc *= 0.82 - rain * 0.12;          // the underside
+		float wisp = vnoise(vec2(th * RS0 * 0.33 + TIME * 0.02, r * 0.33), 77);
+		float a = cdn * 1.5 + (wisp - 0.5) * 0.7;
+		float bay = (BAYER[(iy & 3) * 4 + (ix & 3)] + 0.5) / 16.0;
+		if (flag == 2) {
+			if (a > bay * 0.8 + 0.12) col = cc;
+		} else if (a > bay * 1.2 + 0.25) {
+			col = mix(col, cc, 0.75);                           // fog over ground caught in cloud
+		}
 	}
 	col.r += P.p[6].y * 0.2;
 	col = floor(clamp(col, 0.0, 1.0) * 31.0 + DITH) / 31.0;
