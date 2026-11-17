@@ -55,7 +55,7 @@ void main() {
 		}
 		if (dist > rad) continue;
 		if (mode == 1) { // excavate
-			bool keepBg = (ab & BG_WALL) != 0u || bgm == M_TREASURE || bgm == M_OPENCHEST;
+			bool keepBg = (ab & BG_WALL) != 0u || bgm == M_TREASURE || bgm == M_OPENCHEST || bgm == M_DECOR;
 			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u && !keepBg) {
 				// nothing in front: harvest the background plant / decoration (never a building's
 				// walls or furniture: those need the deconstruct action)

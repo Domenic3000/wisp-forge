@@ -11,6 +11,7 @@ extends RefCounted
 ## A blueprint is a w x h grid; local (i, j) is column x0 + i, row y0 + j.
 
 const N0 := 8192
+const Props := preload("res://scripts/props.gd")
 const KEEP := 0xffff              # keep foreground and background as generated
 const F_FILL := 0x10000           # only fill where there is no solid ground
 const F_ANCHOR := 0x20000         # part of the planet (foundations)
@@ -426,6 +427,9 @@ func _chest_spot_ok(bp: BP, i: int, fl: int, taken: Array) -> bool:
 	for ci in range(i, i + Defs.CHEST_W):
 		if not _floor_at(bp, ci, fl):
 			return false
+		for j0 in range(fl - Defs.CHEST_H, fl):
+			if bp.getb(ci, j0) == Defs.DECOR:
+				return false                  # not in front of furniture
 	# open air around and above: room to see it and open it
 	for j in range(fl - Defs.CHEST_H - 5, fl):
 		for ci in range(i - 2, i + Defs.CHEST_W + 2):
@@ -575,6 +579,15 @@ func _finish(bp: BP, build: bool) -> void:
 			kept.append(k)
 	structs.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c})
 	var solid := kept.size()
+	# props (background furniture): how many pixels, and how many ended up behind something solid
+	var decor := 0
+	var decor_hid := 0
+	for v1 in bp.c:
+		if ((v1 >> 8) & 255) == Defs.DECOR:
+			decor += 1
+			var f1: int = v1 & 255
+			if f1 != 0 and f1 != 255 and Defs.KIND[f1] != Defs.K_EMPTY:
+				decor_hid += 1
 	var ch := []
 	for q in bp.chests:
 		ch.append(Vector2i(posmod(bp.x0 + q.x, N0), bp.y0 + q.y))
@@ -582,7 +595,7 @@ func _finish(bp: BP, build: bool) -> void:
 		var ang := float(posmod(bp.x0 + q.x, N0) + Defs.CHEST_W / 2) / N0 * TAU
 		var rr := Defs.R_TOP - float(bp.y0 + q.y) + Defs.CHEST_H * 0.5 + 0.05
 		chest_list.append({"pos": Vector2(cos(ang), sin(ang)) * rr, "ruined": bp.ruined})
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta})
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid})
 	var ci := bp.x0 + bp.w / 2
 	var cj := bp.y0 + bp.h / 2
 	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
@@ -1036,7 +1049,7 @@ func _blockr(seed_r: int, bi: int, bj: int, k: int) -> float:
 # ------------------------------------------------------------- structures ---
 const YARD := 12
 
-func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in := 0) -> bool:
+func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in := 0, role := "home") -> bool:
 	var w := w_in if w_in > 0 else rng.randi_range(46, 62)
 	var floors := 1 if rng.randf() < 0.55 else 2
 	var st := _style(b, "home")
@@ -1084,6 +1097,12 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 			_porch(bp, ox + w, lb, 1, st)
 	if ruined:
 		_ruin(bp, left - 3, left + full + 2, hi, lb - 1, b)
+	# inside and out: furniture by what the house was, then the yard
+	var kit := "dwelling" if b == "desert" and role == "home" else role
+	_furnish(bp, ox, w, th, lb, floors, kit, ruined)
+	if aw > 0:
+		_furnish(bp, left if aside < 0 else ox + w - th, aw, th, lb, 1, "hut" if role != "home" else "home", ruined)
+	_dress_yard(bp, left, full, role, ruined)
 	if label:
 		_claim(x0, tw, ("Ruined " if ruined else "Abandoned ") + ("Cottage" if b != "desert" else "Dwelling"), bp.y0, base + 2)
 	else:
@@ -1096,11 +1115,26 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 func _town(x: int, b: String, ruined: bool, build: bool) -> bool:
 	var n := rng.randi_range(3, 5)
 	var widths := []
+	var gaps := []
 	var span := 0
 	for k in n:
 		var w := rng.randi_range(44, 58)
 		widths.append(w)
-		span += w + 2 * YARD + 4 + rng.randi_range(10, 24)
+		gaps.append(rng.randi_range(14, 40))
+		span += w + 2 * YARD + 4 + int(gaps[k])
+	# what each house is: a shop always, then maybe a smithy, a tavern or an inn; the rest are homes
+	var roles := ["shop"]
+	for r in ["smithy", "tavern", "inn"]:
+		if rng.randf() < 0.45:
+			roles.append(r)
+	while roles.size() < n:
+		roles.append("home")
+	roles.resize(n)
+	for k in range(n - 1, 0, -1):
+		var o := rng.randi_range(0, k)
+		var tmp = roles[k]
+		roles[k] = roles[o]
+		roles[o] = tmp
 	if not _site_ok(x - span / 2, span, 50):
 		return false
 	var cx := x - span / 2
@@ -1108,9 +1142,14 @@ func _town(x: int, b: String, ruined: bool, build: bool) -> bool:
 	for k in n:
 		var w: int = widths[k]
 		var tw := w + 2 * YARD + 4
-		if _cottage(cx + tw / 2, b, ruined and rng.randf() < 0.8, build, false, w):
+		if _cottage(cx + tw / 2, b, ruined and rng.randf() < 0.8, build, false, w, roles[k]):
 			made += 1
-		cx += tw + rng.randi_range(10, 24)
+		cx += tw
+		# the open ground before the next house: sometimes a well, a market stall, lamps, flowers
+		var gap: int = gaps[k]
+		if k < n - 1 and gap >= 20 and rng.randf() < 0.75:
+			_town_square(cx, gap, ruined, build)
+		cx += gap
 	if made == 0:
 		return false
 	labels.append({"x0": posmod(x - span / 2, N0), "w": span, "ymin": ground_row(x) - 170, "ymax": ground_row(x) + 4,
@@ -1136,6 +1175,7 @@ func _tower(x: int, b: String, ruined: bool, build: bool) -> bool:
 	var hi := _roof(bp, ox, top, w, st)
 	if ruined:
 		_ruin(bp, ox - 1, ox + w, hi, up - 1, b)
+	_furnish(bp, ox, w, int(st["thick"]), up, floors, "tower", ruined)
 	_claim(x0, tw, "Ruined Watchtower" if ruined else "Old Watchtower", bp.y0, base + 2)
 	_finish(bp, build)
 	return true
@@ -1186,6 +1226,9 @@ func _castle(x: int, b: String, ruined: bool, build: bool) -> bool:
 	hi = mini(hi, _roof(bp, c2 + curt, t2, tw_w, st))
 	if ruined:
 		_ruin(bp, ox, ox + inner - 1, hi, lb - 1, b)
+	_furnish(bp, kx, keep_w, int(st["thick"]), lb, 3, "keep", ruined)
+	_furnish(bp, ox, tw_w, int(st["thick"]), lb, 4, "tower", ruined)
+	_furnish(bp, c2 + curt, tw_w, int(st["thick"]), lb, 4, "tower", ruined)
 	_claim(x0, tw, "Ruined Castle" if ruined else "Silent Castle", bp.y0, base + 2)
 	_finish(bp, build)
 	return true
@@ -1270,6 +1313,7 @@ func _stilt(x: int, ruined: bool, build: bool) -> bool:
 		hi -= 10
 	if ruined:
 		_ruin(bp, ox - 2, ox + w + 1, hi, lb, "marsh")
+	_furnish(bp, ox, w, int(st["thick"]), lb, 1, "hut", ruined)
 	_claim(x0, tw, "Sunken Hut" if ruined else "Stilt Hut", bp.y0, base + lift + 4)
 	_finish(bp, build)
 	return true
@@ -1819,3 +1863,188 @@ func _dungeon_reach(bp: BP, rooms: Array, vault: int, si: int) -> Dictionary:
 			if hit:
 				reached += 1
 	return {"dungeon": true, "rooms": n, "reached": reached, "vault_open": vault_open}
+
+# ------------------------------------------------------------------ props ---
+## Furniture and town details (props.gd) are stamped into the background layer, so they never
+## block movement. A prop goes down only where every one of its pixels lands on open space: in
+## front of a building's back wall (indoors) or in open air (outdoors), not over a window, a torch
+## or another prop. Standing props need ground or floor under their feet.
+
+## the cell a prop pixel at (x, y) of a w-wide prop lands on, mirrored if flipped
+static func _prop_px(rows: Array, x: int, y: int, flip: bool) -> String:
+	var r: String = rows[y]
+	return r[r.length() - 1 - x] if flip else r[x]
+
+func _prop_fits(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, indoors: bool, standing: bool) -> bool:
+	var h := rows.size()
+	var w: int = rows[0].length()
+	var top := bottom - h + 1
+	var feet := 0
+	var held := 0
+	for x in w:
+		var lowest := -1
+		for y in h:
+			if _prop_px(rows, x, y, flip) == ".":
+				continue
+			lowest = y
+			var i := i0 + x
+			var j := top + y
+			if not bp.ok(i, j):
+				return false
+			var f := bp.getf(i, j)
+			var g := bp.getb(i, j)
+			if indoors:
+				if f != 0 or g == 0 or g == 255 or g == Defs.TORCH or g == Defs.DECOR or g == Defs.GLASS:
+					return false
+			else:
+				if f == 255:
+					if j >= ground_row(bp.x0 + i) - bp.y0:
+						return false          # natural ground
+				elif f != 0:
+					return false
+				if g != 255 and g != 0:
+					return false
+		if standing and lowest == h - 1:
+			feet += 1
+			var below := bp.getf(i0 + x, bottom + 1)
+			var solid_below := (below != 255 and below != 0 and Defs.KIND[below] == Defs.K_SOLID) or \
+				(below == 255 and bottom + 1 >= ground_row(bp.x0 + i0 + x) - bp.y0)
+			if solid_below:
+				held += 1
+	return not standing or (feet > 0 and held * 10 >= feet * 7)
+
+func _stamp_prop(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, lit := true) -> void:
+	var h := rows.size()
+	var top := bottom - h + 1
+	for y in h:
+		for x in rows[y].length():
+			var ch := _prop_px(rows, x, y, flip)
+			if ch == ".":
+				continue
+			if ch == "t":
+				if lit:
+					bp.fg(i0 + x, top + y, 0)
+					bp.bg(i0 + x, top + y, Defs.TORCH, false)
+				else:
+					bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS["x"])
+			else:
+				bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS[ch])
+
+## Tries to put a prop somewhere in columns [i0, i1] with its feet on row `bottom` (or, for a wall
+## prop, its bottom `lift` rows above it). Returns the column it went to, or -1.
+func _place_prop(bp: BP, prop: Dictionary, i0: int, i1: int, bottom: int, indoors: bool, tries := 10, lift := 0, lit := true) -> int:
+	var rows: Array = prop["rows"]
+	var w: int = rows[0].length()
+	if i1 - i0 + 1 < w:
+		return -1
+	var wall: bool = prop.get("wall", false)
+	for t in tries:
+		var x := rng.randi_range(i0, i1 - w + 1)
+		var flip := rng.randf() < 0.5
+		var b := bottom if bottom >= 0 else _yard_bottom(bp, x, x + w - 1)
+		if not wall and _near_chest(bp, x, x + w - 1, b + 1):
+			continue
+		if _prop_fits(bp, rows, x, b - lift, flip, indoors, not wall):
+			_stamp_prop(bp, rows, x, b - lift, flip, lit)
+			return x
+	return -1
+
+## a planned chest stands on floor row fl somewhere in columns [a, b] (props leave it room)
+func _near_chest(bp: BP, a: int, b: int, fl: int) -> bool:
+	for q in bp.chests:
+		if q.y == fl and q.x - 3 <= b and q.x + Defs.CHEST_W + 3 >= a:
+			return true
+	return false
+
+## What a room holds, by the building's role: [prop, chance] in the order they're tried.
+const FURNISH := {
+	"home0": [["table", 0.9], ["chair", 0.8], ["chair", 0.5], ["fireplace", 0.5], ["barrel", 0.4], ["plant", 0.5], ["painting", 0.6], ["rug", 0.4]],
+	"home1": [["bed", 0.95], ["dresser", 0.6], ["bookshelf", 0.5], ["painting", 0.5], ["plant", 0.4], ["rug", 0.3]],
+	"shop0": [["counter", 1.0], ["goods", 0.9], ["goods", 0.6], ["crates", 0.7], ["barrel", 0.6], ["plant", 0.4]],
+	"smithy0": [["forge", 0.9], ["anvil", 1.0], ["rack", 0.8], ["barrel", 0.7], ["crates", 0.6]],
+	"tavern0": [["counter", 0.9], ["table", 1.0], ["chair", 0.9], ["chair", 0.9], ["table", 0.7], ["chair", 0.7], ["barrel", 0.8], ["barrel", 0.6], ["banner", 0.5]],
+	"inn0": [["counter", 0.8], ["table", 0.8], ["chair", 0.7], ["plant", 0.5], ["painting", 0.5]],
+	"inn1": [["bed", 1.0], ["bed", 0.7], ["dresser", 0.5], ["painting", 0.4]],
+	"tower": [["rack", 0.7], ["table", 0.5], ["chair", 0.4], ["barrel", 0.6], ["crates", 0.5], ["banner", 0.6]],
+	"keep": [["banner", 0.9], ["banner", 0.7], ["table", 0.7], ["chair", 0.6], ["bookshelf", 0.6], ["rack", 0.5], ["rug", 0.6], ["painting", 0.4]],
+	"hut": [["table", 0.6], ["barrel", 0.6], ["plant", 0.5], ["crate", 0.4], ["cauldron", 0.3]],
+	"dwelling": [["rug", 0.9], ["plant", 0.6], ["barrel", 0.4], ["table", 0.4], ["cauldron", 0.2]],
+}
+const WALL_LIFT := {"painting": 22, "banner": 18, "rack": 0}
+
+## Furnishes a building's rooms (rows `base - k * STOREY`) by its role. Ruins keep fewer things.
+func _furnish(bp: BP, ox: int, w: int, th: int, base: int, floors: int, role: String, ruined: bool) -> void:
+	for k in floors:
+		var fl := base - k * STOREY
+		# the kit for this floor: role0 downstairs, role1 upstairs; a shop or smithy is lived in above
+		var key := "%s%d" % [role, mini(k, 1)]
+		if not FURNISH.has(key):
+			key = "home1" if k > 0 and FURNISH.has(role + "0") else (role + "0" if FURNISH.has(role + "0") else role)
+		if not FURNISH.has(key):
+			continue
+		for item in FURNISH[key]:
+			var kind: String = item[0]
+			if rng.randf() > float(item[1]) * (0.5 if ruined else 1.0):
+				continue
+			var prop := Props.make(kind, rng)
+			if kind == "rug":
+				# a rug lies on the floor where nothing else stands
+				_place_prop(bp, prop, ox + th + 2, ox + w - th - 3, fl - 1, true, 6)
+				continue
+			_place_prop(bp, prop, ox + th + 2, ox + w - th - 3, fl - 1, true, 10, WALL_LIFT.get(kind, 0), not ruined)
+
+## Outside a house: a sign by the door (what the place is), hedges and flowers along the walls,
+## a lamp post, a fence along the yard.
+func _dress_yard(bp: BP, ox: int, w: int, role: String, ruined: bool) -> void:
+	var left_end := ox - 2
+	var right_start := ox + w + 1
+	if role != "home" or rng.randf() < 0.3:
+		var board := Props.make("sign", rng, role)
+		if rng.randf() < 0.5:
+			_place_prop(bp, board, 1, left_end, -1, false, 10)
+		else:
+			_place_prop(bp, board, right_start, bp.w - 2, -1, false, 10)
+	for n in rng.randi_range(1, 3) - (1 if ruined else 0):
+		var kind: String = ["hedge", "flowers", "hedge", "hay", "barrel", "crates"][rng.randi_range(0, 3 if role == "home" else 5)]
+		var pr := Props.make(kind, rng)
+		var left := rng.randf() < 0.5
+		var a0 := 1 if left else right_start
+		var a1 := left_end if left else bp.w - 2
+		_place_prop(bp, pr, a0, a1, -1, false, 8)
+	if rng.randf() < 0.45:
+		var a2 := 1 if rng.randf() < 0.5 else right_start
+		var a3 := left_end if a2 == 1 else bp.w - 2
+		_place_prop(bp, Props.make("lamp", rng, not ruined), a2, a3, -1, false, 8)
+
+## the row a prop's feet would stand on in the yard between columns a0 and a1 (the highest ground)
+func _yard_bottom(bp: BP, a0: int, a1: int) -> int:
+	var best := bp.h - 1
+	for i in range(maxi(a0, 0), mini(a1, bp.w - 1) + 1):
+		var gr := bp.h - 1
+		for j in bp.h:
+			var f := bp.getf(i, j)
+			if (f != 255 and f != 0 and Defs.KIND[f] != Defs.K_EMPTY) or (f == 255 and j >= ground_row(bp.x0 + i) - bp.y0):
+				gr = j
+				break
+		best = mini(best, gr)
+	return best - 1
+
+## The open ground between two houses of a village: a well, a market stall, lamp posts, a fence
+## or flower beds. Its own small blueprint (nothing solid), so the gap stays a gap.
+func _town_square(x0: int, w: int, ruined: bool, build: bool) -> void:
+	var g0 := ground_row(x0 + w / 2)
+	var bp := BP.new(x0, g0 - 40, w, 44)
+	var kinds := ["well", "stall", "lamp", "flowers", "fence", "hedge"]
+	var main: String = kinds[rng.randi_range(0, 1)] if w >= 30 else kinds[rng.randi_range(2, 5)]
+	if ruined and main == "stall":
+		main = "well"
+	var placed := _place_prop(bp, Props.make(main, rng, null if main != "fence" else w - 6), 2, w - 3, -1, false, 12)
+	var lamps := 0
+	if placed >= 0 or rng.randf() < 0.5:
+		for side in [[1, 8], [w - 9, w - 2]]:
+			if rng.randf() < 0.6 and _place_prop(bp, Props.make("lamp", rng, not ruined), side[0], side[1], -1, false, 6) >= 0:
+				lamps += 1
+	used.append(Vector2i(x0, x0 + w))
+	sites.append(Vector2(posmod(x0, N0), posmod(x0, N0) + w))
+	if placed >= 0 or lamps > 0:
+		_finish(bp, build)

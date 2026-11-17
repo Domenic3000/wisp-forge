@@ -1,5 +1,6 @@
 extends Node
 ## Wisp Forge — shared game data (autoload singleton "Defs").
+const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
@@ -54,6 +55,7 @@ const TORCH := 39
 const OPENCHEST := 40
 const SCAFFOLD := 41      # a one-way platform: you jump up through it and drop down through it
 const RUNESTONE := 42     # warded stone: dungeon walls, only the Core Siphon cuts it
+const DECOR := 43         # props (furniture, signs, lamps...): background pixels, colour from Props.PALETTE
 
 const MAT_NAMES := {
 	0: "AIR", 1: "STONE", 2: "DIRT", 3: "GRASS", 4: "SAND", 5: "WATER", 6: "LAVA", 7: "WOOD", 8: "LEAF",
@@ -61,7 +63,7 @@ const MAT_NAMES := {
 	16: "EMBER", 17: "FROST", 18: "WISP", 19: "MUD", 20: "ICE", 21: "MAGMAROCK", 22: "CORE",
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
-	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE",
+	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR",
 }
 
 # ---- planet geometry (polar shells; column count halves as radius halves) ----
@@ -152,6 +154,11 @@ func _init() -> void:
 	# jump up through it and can drop down through it (down + jump)
 	_def(SCAFFOLD, "Scaffold", K_SOLID, ["#a87442", "#8a5c32", "#bc864e", "#4a2e18"], {"fuel": 90, "ign": 0.05})
 	SPAN[SCAFFOLD] = 20
+	# props: furniture and town details stamped into the background (props.gd); each cell keeps its
+	# palette colour. Harvesting one gives planks.
+	_def(DECOR, "Furnishings", K_SOLID, ["#6b4423", "#3a2412", "#8f5f33", "#b07a44"], {"fuel": 80, "ign": 0.05})
+	PLACE[DECOR] = 0
+	BGDEBRIS[DECOR] = TIMBER
 	# warded stone: the walls of dungeons, carved with faintly glowing runes. Too hard for any staff
 	# but the Core Siphon, so a dungeon is explored through its halls, not dug around.
 	_def(RUNESTONE, "Warded Stone", K_SOLID, ["#2c3044", "#353a52", "#3f4560", "#24283a"], {"hard": 4, "glow": Vector3(0.025, 0.045, 0.06)})
@@ -214,6 +221,11 @@ func glsl_prefix() -> String:
 	for id in MAT_NAMES:
 		s += "#define M_%s %du\n" % [MAT_NAMES[id], id]
 	s += "const int SH_Y0[5] = int[5](%s);\n" % _join_i(SH_Y0)
+	var dp := []
+	for k in 64:
+		var c := Color.html(Props.PALETTE[k % Props.PALETTE.size()])
+		dp.append("vec3(%.4f, %.4f, %.4f)" % [c.r, c.g, c.b])
+	s += "const vec3 DECOR_PAL[64] = vec3[64](%s);\n" % ", ".join(dp)
 	s += "const int SH_N[4] = int[4](%s);\n" % _join_i(SH_N)
 	s += "const int SH_OFF[5] = int[5](%s);\n" % _join_i(SH_OFF)
 	s += "const uint KIND[NM] = uint[NM](%s);\n" % _join_u(KIND)

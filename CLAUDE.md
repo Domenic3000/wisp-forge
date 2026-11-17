@@ -49,8 +49,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   for the tests.
 - Dungeon walls, floors and shafts are `RUNESTONE` (warded stone, hardness 4: only the Core Siphon cuts it), so
   dungeons are explored through their halls; the gatehouse above ground is ordinary stone.
-- Clouds live in world space (`shaders/inc/clouds.comp`, `cloudDensity`): render.comp draws them over everything
-  at their height (fog when you fly in), react.comp spawns rain/snow/ash only under cloud undersides, and
+- Props (`scripts/props.gd`): furniture and town details grown procedurally as small pixel grids (chars index
+  `Props.PALETTE`, emitted to GLSL as `DECOR_PAL`). buildings.gd stamps them into the BACKGROUND as material
+  `DECOR` with the palette index in aux bits 16-23 (`bp.bgv`), so they never block movement; 't' pixels become
+  real torches. `_furnish` fills rooms by role (`FURNISH` kits: home, shop, smithy, tavern, inn, tower, keep,
+  hut, dwelling), `_dress_yard` adds signs (icon by role), hedges, lamps; `_town_square` fills gaps in villages
+  (well, market stall, lamps, flowers). A prop only goes where every pixel lands on open space (`_prop_fits`).
+  Digging leaves furniture alone; Shift + right-click (deconstruct) takes it as planks.
+- Clouds live in world space (`shaders/inc/clouds.comp`: `cloudLow` near the ground, `cloudHigh` the weather
+  layer above the mountains; `cloudDensity` is both): render.comp draws them over everything
+  at their height (fog when you fly in), react.comp spawns rain/snow/ash only under the high layer's undersides, and
   grid.comp writes each mage's cloud depth to counts[58] (`Mage.fog`: misted sprite, wisps in overlay).
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).

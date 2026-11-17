@@ -217,7 +217,7 @@ func run() -> void:
 		var sc1 := _scan(g.gpu.read_world(), info)
 		var n0 := int(sc0["solid"]) + int(sc0["bg"])
 		var n1 := int(sc1["solid"]) + int(sc1["bg"])
-		var ratio := float(n1) / maxf(1.0, float(n0))
+		var ratio := float(n1) / float(n0) if n0 > 0 else 1.0
 		if ratio < worst_v:
 			worst_v = ratio
 			var lost := []
@@ -615,6 +615,38 @@ func run() -> void:
 		_go(_cell_pos(dun_shot.x, dun_shot.y - 14))
 		await _frames(70)
 		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("dungeon.png"))
+
+	# ---- furniture and town details: background pixels only, so nothing blocks the way ----
+	var decor_n := 0
+	var decor_solid := 0
+	var best_dec := -1
+	var best_info := {}
+	for info in b.infos:
+		var nd: int = info.get("decor", 0)
+		decor_n += nd
+		decor_solid += int(info.get("decor_hid", 0))
+		if nd > best_dec:
+			best_dec = nd
+			best_info = info
+	_ok("buildings are furnished, and props never block", decor_n > 400 and decor_solid == 0, "%d prop pixels, %d in front of something solid" % [decor_n, decor_solid])
+	if best_dec > 0:
+		# the most furnished place, at midday (saves/shots/town.png)
+		var tcx := int(best_info["x0"]) + int(best_info["w"]) / 2
+		var tpos := _cell_pos(tcx, b.ground_row(tcx) - 24)
+		_go(tpos)
+		g.ui.title.visible = false
+		g.time = fposmod(atan2(tpos.y, tpos.x) - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+		await _frames(60)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town.png"))
+	for lab in b.labels:
+		if "Village" in str(lab["name"]):
+			var vcx := int(lab["x0"]) + int(lab["w"]) / 3
+			var vpos := _cell_pos(vcx, b.ground_row(vcx) - 24)
+			_go(vpos)
+			g.time = fposmod(atan2(vpos.y, vpos.x) - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+			await _frames(60)
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("village.png"))
+			break
 
 	# ---- clouds you can fly into ----
 	var fog_best := 0.0

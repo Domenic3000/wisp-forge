@@ -193,8 +193,51 @@ vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 	return col;
 }
 
-vec3 bgObjColor(uint b, uint ab, ivec2 w, uint v, uint bu, uint bd, uint cu, uint cd) {
+// Trees, bushes and cacti, shaded from their shape: light from the upper left, so top and left
+// edges catch it and the right side and undersides fall into shadow. Leaves clump, bark has
+// grooves and knots, cacti have ribs, spines and the odd flower on top, charred wood glints.
+vec3 plantColor(uint b, ivec2 w, uint bu, uint bd, uint bl, uint br) {
+	uint hs = hashu(uint(w.x) * 2654435761u ^ uint(w.y) * 40503u ^ 0x77u);
+	float hr = float(hs & 1023u) / 1024.0;
+	int l = 1;
+	if (b == M_LEAF) {
+		float n = vnoise(vec2(w) / 2.4, 13) + (vnoise(vec2(w) / 6.0, 14) - 0.5) * 0.5;
+		l = n < 0.32 ? 0 : (n < 0.58 ? 1 : 2);
+		if (bl != M_LEAF && bl != M_SNOW) l = min(l + 1, 3);
+		if (br != M_LEAF && br != M_SNOW) l = max(l - 1, 0);
+		if (bu != M_LEAF && bu != M_SNOW) l = 3;
+		else if (bd != M_LEAF) l = 0;
+		if (hr < 0.035) l = 3;                        // a sunlit leaf
+		else if (hr > 0.97 && l > 0) l = 0;           // a gap in the foliage
+		return ramp(b, l) * 0.86;
+	}
+	if (b == M_WOOD || b == M_COAL) {
+		bool le = bl != b, re = br != b;
+		int groove = (w.x + int(vnoise(vec2(0.0, float(w.y)) / 5.0, 21) * 3.0)) % 3;
+		l = groove == 0 ? 0 : (groove == 1 ? 1 : 2);
+		if (le && !re) l = 2;
+		if (re && !le) l = 0;
+		if (hr < 0.025) l = 0;                        // a knot
+		vec3 c = ramp(b, l) * 0.86;
+		if (b == M_COAL && hr > 0.992) c = vec3(1.0, 0.45, 0.12);   // an ember still glowing
+		return c;
+	}
+	// cactus
+	bool le = bl != M_CACTUS, re = br != M_CACTUS;
+	l = (w.x % 2 == 0) ? 2 : 1;
+	if (le) l = 2;
+	if (re) l = 0;
+	if (bu != M_CACTUS) {
+		l = 3;
+		if ((hashu(uint(w.x) * 13u ^ 0x51u) & 7u) == 0u) return (hs & 1u) == 0u ? vec3(0.96, 0.45, 0.62) : vec3(1.0, 0.86, 0.32);
+	}
+	if (hr < 0.07 && !le && !re) return vec3(0.93, 0.9, 0.72) * 0.9;   // spines
+	return ramp(b, l) * 0.86;
+}
+
+vec3 bgObjColor(uint b, uint ab, ivec2 w, uint v, uint bu, uint bd, uint bl, uint br, uint cu, uint cd) {
 	if (b == M_TORCH) return torchColor(w);
+	if (b == M_DECOR) return DECOR_PAL[(ab >> 16) & 63u];
 	if (b == M_TREASURE) return chestColor((ab >> 16) & 255u, false);
 	if (b == M_OPENCHEST) return chestColor((ab & 0xff0000u) != 0u ? (ab >> 16) & 255u : v, true);
 	if ((ab & BG_WALL) != 0u) {
@@ -380,9 +423,15 @@ void main() {
 		bool opaque = t != 0u && ALPHA[t] >= 1.0;
 		if (!opaque) {
 			if (b != 0u) {
-				uint bu = 0u, bd = 0u;
-				if (b == M_LEAF) { bu = bgAtPos(screenToWorld(px + vec2(0.0, -1.0))); bd = bgAtPos(screenToWorld(px + vec2(0.0, 1.0))); }
-				bg = bgObjColor(b, ab, w, (c >> 8) & 255u, bu, bd, cu, cd);
+				uint bu = 0u, bd = 0u, bl = 0u, br = 0u;
+				bool plant = (b == M_LEAF || b == M_WOOD || b == M_CACTUS || b == M_COAL) && (ab & BG_WALL) == 0u;
+				if (plant) {
+					bu = bgAtPos(screenToWorld(px + vec2(0.0, -1.0))); bd = bgAtPos(screenToWorld(px + vec2(0.0, 1.0)));
+					bl = bgAtPos(screenToWorld(px + vec2(-1.0, 0.0))); br = bgAtPos(screenToWorld(px + vec2(1.0, 0.0)));
+					bg = plantColor(b, w, bu, bd, bl, br);
+				} else {
+					bg = bgObjColor(b, ab, w, (c >> 8) & 255u, bu, bd, bl, br, cu, cd);
+				}
 				bgf = SELFL[b] == 1u ? 1 : 0;
 			}
 			else if (r > sa.x) { bg = skyColor(pos, r, sa.x, px, th); bgf = 2; }

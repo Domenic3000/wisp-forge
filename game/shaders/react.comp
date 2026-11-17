@@ -45,12 +45,20 @@ void main() {
 	uint ab = aux.a[i];
 	uint bgm = ab & 255u;
 	if (t == 0u) {
-		// rain, snow and ash fall from the undersides of real clouds (inc/clouds.comp)
-		if (R < P.p[3].x * 2.5) {
+		// rain, snow and ash fall from the underside of the upper cloud layer (inc/clouds.comp)
+		if (R < P.p[3].x * 0.6) {
 			vec2 p = cellCenter(s, y, x);
 			float rr0 = length(p);
-			if (rr0 > RS0 + 60.0 && rr0 > surfA(angleOf(p)).x + 3.0 && cloudDensity(p) > 0.35 && cloudDensity(p - p / rr0 * 5.0) < 0.35) {
+			if (rr0 > surfA(angleOf(p)).x + 3.0 && cloudHigh(p) > 0.35 && cloudHigh(p - p / rr0 * 5.0) < 0.35) {
 				setc(i, c, uint(pc.b.w), 1u); return;     // life 1 = fresh precipitation
+			}
+			// when the simulated area doesn't reach up to the clouds (low ground, bigger pixels), it
+			// still rains under them: drops start at the top of the view, below a cloud overhead
+			if (y == pc.b.z && pc.a.y > int(R_TOP - RS0 - 215.0)) {
+				vec2 up = p / rr0;
+				if (max(cloudHigh(up * (RS0 + 250.0)), cloudHigh(up * (RS0 + 275.0))) > 0.3) {
+					setc(i, c, uint(pc.b.w), 1u); return;
+				}
 			}
 		}
 		// background plants and wooden walls catch fire from burning neighbours, then are gone
