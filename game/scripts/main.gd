@@ -8,6 +8,7 @@ const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Buildings := preload("res://scripts/buildings.gd")
+const Build := preload("res://scripts/build.gd")
 const Tests := preload("res://scripts/tests.gd")
 const Audio := preload("res://scripts/audio.gd")
 var audio
@@ -102,6 +103,20 @@ var cam_c := Vector2(0, 1400)
 var cam_a := PI / 2
 var zoom := 1.0
 var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1)
+var test_aim := Vector2.ZERO # test mode: where the local mage points (zero: the mouse)
+var test_cast := false       # test mode: hold the left button
+# build mode (B): see build.gd
+var build_on := false
+var build_cat := 0
+var build_idx := [0, 0, 0, 0]  # the chosen piece in each category
+var build_seed := 1           # the furniture design shown (R rolls a new one)
+var build_flip := false       # T mirrors it
+var build_click := false      # a fresh left click (furniture, doors and platforms go down one per click)
+var build_prev := {}          # what the overlay previews: {cells: [[pos, colour]], ok, circle}
+var build_pieces: Array = []
+var stamps: Array = []        # small blueprints to write into the world before the next GPU frame
+var _build_warn_t := 0
+var build_last := ""          # what the last click did (for the test report)
 var test_jump := false     # the test mode presses jump
 var test_down := false     # ... and down
 var view_c := Vector2.ZERO    # the camera as drawn this frame (cam_c with shake, snapped to whole cells)
@@ -164,6 +179,7 @@ class Mage extends Body:
 	var cast_cd := 0
 	var dig_blocked := 0
 	var pending_place := 0
+	var pending_mat := -1      # what the pending placement uses (-1: the conjure material)
 	var dig_tap := 0           # a quick right-click still digs for a few frames
 	var jump_held := false
 	var ground_t := 99         # frames since standing on something
@@ -378,6 +394,10 @@ func _gpu_frame(paused: bool, sim_steps := 1) -> void:
 	var t0 := Time.get_ticks_usec()
 	_sub_view_c = view_c_next
 	_sub_ustep = ustep_next
+	if not stamps.is_empty():
+		# what was built this frame goes into the world first
+		gpu.stamp(stamps, frame)
+		stamps.clear()
 	gpu.step(centers, frames, brushes.size() > 0 and not paused, false, sim_steps if not paused else 1, false)
 	perf_us += Time.get_ticks_usec() - t0
 	perf_n += 1
@@ -500,8 +520,10 @@ func _apply_counts(m: Mage) -> void:
 	if cn[50] > 0:
 		m.dig_blocked = 30
 	if m.pending_place > 0:
-		m.inv[m.mat] = maxi(0, m.inv[m.mat] - mini(cn[51], m.pending_place))
+		var pm := m.pending_mat if m.pending_mat >= 0 else m.mat
+		m.inv[pm] = maxi(0, m.inv[pm] - mini(cn[51], m.pending_place))
 		m.pending_place = 0
+		m.pending_mat = -1
 
 ## Treasure. Opening a chest (F) gives its full loot and may hold a rare find; digging a chest
 ## out smashes it and some of the loot is lost. In ruins, some chests are mimics.
@@ -618,12 +640,68 @@ func _set_door(d: Dictionary, open: bool) -> void:
 		return
 	if not open and _door_blocked(d):
 		return
+	if open and _door_cells(d) * 2 < int(d["w"]) * int(d["h"]):
+		# most of it was blasted or dug away: what's left falls apart, and the door is gone
+		var hw0 := float(d["w"]) * 0.5
+		var hh0 := float(d["h"]) * 0.5
+		brushes.append([d["pos"], sqrt(hw0 * hw0 + hh0 * hh0) + 1.5, 9, 0.0, hw0, hh0, 0.0, 3])
+		doors.erase(d)
+		return
 	d["open"] = open
 	var hw := float(d["w"]) * 0.5
 	var hh := float(d["h"]) * 0.5
 	# owner slot 3: nobody's satchel (a door brush collects nothing)
 	brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0 if open else 1.0, hw, hh, 0.0, 3])
 	audio.play("door_open" if open else "door_close", d["pos"])
+
+## the door whose doorway (grown by `pad` cells) contains p, or {}
+func _door_at(p: Vector2, pad: float) -> Dictionary:
+	for d in doors:
+		var dp: Vector2 = d["pos"]
+		if dp.distance_squared_to(p) > 1600.0:
+			continue
+		var a := atan2(dp.y, dp.x)
+		var o := p - dp
+		var hw := float(d["w"]) * 0.5 + pad
+		var hh := float(d["h"]) * 0.5 + pad
+		# an open door also reaches out to where its panel is drawn
+		var u := o.dot(basis_r(a))
+		if bool(d["open"]):
+			var reach_out := float(d["w"]) * 0.5 + 8.0 + pad
+			var outward := float(d["side"])
+			if (u * outward > 0.0 and u * outward < reach_out) and absf(o.dot(basis_d(a))) < hh:
+				return d
+		if absf(u) < hw and absf(o.dot(basis_d(a))) < hh:
+			return d
+	return {}
+
+## take a door down: its cells go, it goes into the satchel (to be put up again in build mode)
+func _take_door(m: Mage, d: Dictionary) -> void:
+	if not bool(d["open"]):
+		var hw := float(d["w"]) * 0.5
+		var hh := float(d["h"]) * 0.5
+		brushes.append([d["pos"], sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0, hw, hh, 0.0, 3])
+	doors.erase(d)
+	m.inv[Defs.WOODDOOR] += 1
+	audio.play("door_close", d["pos"], 0.8, 0.7)
+	for k in 10:
+		_particle(d["pos"] + Vector2(randf() - 0.5, randf() - 0.5) * 8.0, Vector2(randf() - 0.5, randf() - 0.7) * 0.8, 20 + randi() % 15, Color(0.6, 0.4, 0.22), false, 0.05)
+	if m.local:
+		ui.toast("+1 Door (put it up again in build mode, B)", Color(0.85, 0.65, 0.4), 2.5)
+
+## how many of a closed door's cells are still there (from the collision grid around the mage); a
+## door blasted to pieces is gone, it doesn't come back whole when you open and shut it
+func _door_cells(d: Dictionary) -> int:
+	var n := 0
+	var col0: int = d["col"]
+	var row0: int = d["row"]
+	for j in int(d["h"]):
+		for i in int(d["w"]):
+			var a := (float(posmod(col0 + i, Defs.SH_N[0])) + 0.5) / Defs.SH_N[0] * TAU
+			var r := Defs.R_TOP - (float(row0 + j) + 0.5)
+			if type_at(Vector2(cos(a), sin(a)) * r) == Defs.WOODDOOR:
+				n += 1
+	return n
 
 ## walking into a closed door opens it
 func _door_bump(m: Mage) -> void:
@@ -1107,6 +1185,8 @@ func _biome_at(a: float) -> Dictionary:
 func _read_local_input(m: Mage) -> void:
 	var inp := m.input
 	inp.aim = screen_to_world(get_viewport().get_mouse_position() / scale_px)
+	if test_aim != Vector2.ZERO:
+		inp.aim = test_aim      # the test mode points the mage
 	inp.move = 0
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
 		inp.move -= 1
@@ -1121,7 +1201,7 @@ func _read_local_input(m: Mage) -> void:
 	if test_down:
 		inp.down = true
 	var can_act: bool = not ui.mouse_over_ui() and state == "play"
-	inp.cast = can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	inp.cast = (can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or test_cast
 	var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0
 	var shift := Input.is_key_pressed(KEY_SHIFT)
 	inp.dig = can_act and rmb and not shift
@@ -1141,7 +1221,9 @@ func _tick() -> void:
 		_update_player(m)
 		m.sel = clampi(m.sel, 0, m.known.size() - 1)
 		if not m.dead and state == "play":
-			if m.input.cast:
+			if m.local and build_on:
+				_update_build(m)
+			elif m.input.cast:
 				_cast(m, m.known[m.sel], m.input.aim)
 			if m.input.dig:
 				_excavate(m, m.input.aim)
@@ -1392,6 +1474,10 @@ func _reach(m: Mage, aim: Vector2) -> Vector2:
 func _excavate(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
 	audio.play("dig", p, 0.7)
+	# digging at a door (open or shut) takes the whole door down: it goes into the satchel as a Door
+	var dd := _door_at(p, m.dig_r * 0.6)
+	if not dd.is_empty():
+		_take_door(m, dd)
 	if m.local and _dig_open_t <= 0 and _dig_hits_chest(p, m.dig_r):
 		_dig_open_t = 30
 		_try_open_chest()
@@ -1409,6 +1495,19 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 	if m.mat <= 0 or m.inv[m.mat] <= 0:
 		return
 	var p := _reach(m, aim)
+	# conjuring onto a foe doesn't bury it: the forming stone strikes it and shoves it aside, and
+	# nothing is placed there
+	var struck := false
+	for e in enemies:
+		if _overlaps_r(p, e, 3.2):
+			struck = true
+			if e.flash <= 0:
+				var push := signf((e.pos - m.pos).dot(basis_r(atan2(e.pos.y, e.pos.x))))
+				_hurt_enemy(e, 3.0, push * 1.6, -1.2)
+				for k in 5:
+					_particle(e.pos, Vector2(randf() - 0.5, randf() - 0.8), 16 + randi() % 10, Defs.COLOR[m.mat], false, 0.05)
+	if struck:
+		return
 	var budget := mini(m.inv[m.mat], 14)
 	m.pending_place = budget
 	brushes.append([p, 2.6, 5, m.mat, 0, budget, 9.0, m.slot])
@@ -1467,6 +1566,12 @@ func _update_projectiles() -> void:
 		lights.append([pos, float(pd["light"]), col * 0.85])
 		if randf() < 0.6:
 			_particle(pos, Vector2(randf() - 0.5, randf() - 0.5) * 0.3, 10 + randi() % 8, col, true, 0.0)
+
+## does a circle of radius r around p touch body e?
+func _overlaps_r(p: Vector2, e: Body, r: float) -> bool:
+	var a := atan2(e.pos.y, e.pos.x)
+	var o := p - e.pos
+	return absf(o.dot(basis_r(a))) < e.w * 0.5 + r and absf(o.dot(basis_d(a))) < e.h * 0.5 + r
 
 func _overlaps(p: Vector2, e: Body) -> bool:
 	var a := atan2(e.pos.y, e.pos.x)
@@ -1795,10 +1900,13 @@ func _update_enemies() -> void:
 			e.vy = 6.0
 		move_body(e)
 		e.anim += absf(e.vx) * 0.2 + 0.02
-		if e.stuck > 30 and (e.type == "mimic" or e.guard_id >= 0):
-			# mimics and guards are placed on purpose: work them free instead of losing them
-			e.pos = free_spot(e.pos, e.w, e.h, 16)
-			e.stuck = 0
+		if e.stuck > 30:
+			# wedged in (sand piled on, a block conjured into it): work it free to the nearest open
+			# space; only one buried with no room anywhere near (a cave-in) is lost
+			var freed_at := free_spot(e.pos, e.w, e.h, 20)
+			if freed_at != e.pos or e.type == "mimic" or e.guard_id >= 0:
+				e.pos = freed_at
+				e.stuck = 0
 		if e.stuck > 30 and not e.boss:
 			# wedged in the ground (buried by rubble, a cave-in): it's gone
 			if e.guard_id >= 0:
@@ -2055,6 +2163,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if k == KEY_SPACE or k == KEY_W or k == KEY_UP:
 			jump_buf = 8   # catch even the quickest tap
+		if k == KEY_B:
+			_toggle_build()
+			return
+		if build_on and _build_key(k):
+			return
 		if k >= KEY_1 and k <= KEY_9:
 			var n := k - KEY_1
 			if n < known.size():
@@ -2083,12 +2196,211 @@ func _unhandled_input(ev: InputEvent) -> void:
 					player.inv[m] += 200
 			ui.toast("Creative stock: +200 of every material", Color(0.6, 1, 0.6))
 	elif ev is InputEventMouseButton and ev.pressed and state == "play":
+		if build_on and ev.button_index == MOUSE_BUTTON_LEFT:
+			build_click = true
+		if build_on and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+			_build_step(-1 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
+			return
 		if ev.button_index == MOUSE_BUTTON_RIGHT:
 			dig_tap = 10
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_UP:
 			sel = (sel - 1 + known.size()) % known.size()
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			sel = (sel + 1) % known.size()
+
+# ------------------------------------------------------------- building --
+func _toggle_build() -> void:
+	build_on = not build_on
+	build_prev = {}
+	if build_pieces.is_empty():
+		build_pieces = Build.pieces()
+		build_seed = randi()
+	if build_on:
+		ui.toast("Build mode: click to place · Q/E category · wheel piece · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
+	else:
+		ui.toast("Build mode off", Color(0.8, 0.8, 0.9), 1.0)
+
+## the pieces of the chosen category, and the chosen one
+func build_list() -> Array:
+	return Build.in_cat(build_pieces, build_cat)
+
+func build_piece() -> Dictionary:
+	var l := build_list()
+	if l.is_empty():
+		return {}
+	return l[clampi(int(build_idx[build_cat]), 0, l.size() - 1)]
+
+func _build_step(dir: int) -> void:
+	var n := build_list().size()
+	build_idx[build_cat] = posmod(int(build_idx[build_cat]) + dir, n)
+
+## keys in build mode; true if the key was used
+func _build_key(k: int) -> bool:
+	if k == KEY_Q or k == KEY_E:
+		build_cat = posmod(build_cat + (1 if k == KEY_E else -1), Build.CATS.size())
+		return true
+	if k == KEY_R:
+		build_seed = randi()
+		return true
+	if k == KEY_T:
+		build_flip = not build_flip
+		return true
+	if k >= KEY_1 and k <= KEY_9:
+		var n := k - KEY_1
+		if n < build_list().size():
+			build_idx[build_cat] = n
+		return true
+	return false
+
+func _solid_at(col: int, row: int) -> bool:
+	var t := type_at(Build.cell_pos(col, row))
+	var kd: int = Defs.KIND[t]
+	return kd == Defs.K_SOLID or kd == Defs.K_POWDER
+
+## room to build: air, or only weather in the way (rain, snow and ash drift through all the time and
+## would make a placement flicker; what's built pushes them aside)
+func _open_at(col: int, row: int) -> bool:
+	var t := type_at(Build.cell_pos(col, row))
+	var kd: int = Defs.KIND[t]
+	return kd == Defs.K_EMPTY or kd == Defs.K_GAS or kd == Defs.K_LIQUID or t == Defs.SNOW or t == Defs.ASH
+
+## the first row at or below `row` in column `col` that is open with something solid under it
+func _floor_below(col: int, row: int, reach: int) -> int:
+	for k in reach:
+		if _open_at(col, row + k) and _solid_at(col, row + k + 1):
+			return row + k
+	return -1
+
+## the highest floor row (smallest) among columns c0 .. c0 + w - 1, searching down from `row`; -1 if
+## none of them has ground within reach
+func _floor_span(c0: int, w: int, row: int, reach: int) -> int:
+	var best := -1
+	for i in w:
+		var f := _floor_below(c0 + i, row, reach)
+		if f >= 0 and (best < 0 or f < best):
+			best = f
+	return best
+
+## Every tick in build mode: work out what would go where (the overlay draws it, green or red),
+## and place it on a click (walls: while the button is held).
+func _update_build(m: Mage) -> void:
+	var piece := build_piece()
+	build_prev = {}
+	if piece.is_empty():
+		return
+	var p := _reach(m, m.input.aim)
+	var cell := Build.cell_of(p)
+	var kind: String = piece["kind"]
+	if cell.y < 0 or cell.y >= Defs.SH_Y0[1] - 40:
+		return
+	var cost: Dictionary = Build.payable(piece, m.inv)
+	var cells := []      # [world pos, colour]
+	var ok := true
+	if kind == "wall":
+		build_prev = {"circle": [p, Build.WALL_R], "ok": not cost.is_empty(), "cells": []}
+		if m.input.cast and not cost.is_empty():
+			var mt: int = piece["mat"]
+			var budget := mini(m.inv[mt], 14)
+			m.pending_place = budget
+			m.pending_mat = mt
+			brushes.append([p, Build.WALL_R, 10, mt, 0, budget, 0.0, m.slot])
+		elif m.input.cast:
+			_build_need(piece)
+		build_click = false
+		return
+	var place := {}
+	if kind == "prop":
+		var d := Build.design(piece, build_seed)
+		var rows: Array = d["rows"]
+		var wall: bool = d.get("wall", false)
+		var bottom := cell.y + rows.size() / 2
+		if not wall:
+			# it stands on the highest ground under it (a leg may stand on a lower step)
+			var pw: int = rows[0].length()
+			bottom = _floor_span(cell.x - pw / 2, pw, cell.y - rows.size() / 2, 40)
+		if bottom < 0:
+			ok = false
+			bottom = cell.y + rows.size() / 2
+		var pc := Build.prop_cells(rows, cell.x, bottom, build_flip)
+		var feet := 0
+		var held := 0
+		for c in pc:
+			var cc: Vector2i = Vector2i(int(c[0]), int(c[1]))
+			if not _open_at(cc.x, cc.y):
+				ok = false
+			if not wall and cc.y == bottom:
+				feet += 1
+				if _solid_at(cc.x, cc.y + 1):
+					held += 1
+			var ch: String = c[2]
+			cells.append([Build.cell_pos(cc.x, cc.y), Color(1, 0.85, 0.3) if ch == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch])])])
+		if not wall and held * 2 < feet:
+			ok = false
+		place = {"stamp": Build.prop_stamp(pc)}
+	elif kind == "door":
+		var c0 := cell.x - Build.DOOR_W / 2
+		var bottom2 := _floor_span(c0, Build.DOOR_W, cell.y - Build.DOOR_H / 2, 50)
+		if bottom2 < 0:
+			ok = false
+			bottom2 = cell.y
+		var r0 := bottom2 - Build.DOOR_H + 1
+		for j in Build.DOOR_H:
+			for i in Build.DOOR_W:
+				if not _open_at(c0 + i, r0 + j):
+					ok = false
+				cells.append([Build.cell_pos(c0 + i, r0 + j), Color(0.6, 0.4, 0.22)])
+		var dheld := 0
+		for i in Build.DOOR_W:
+			if _solid_at(c0 + i, bottom2 + 1):
+				dheld += 1
+		if dheld == 0:
+			ok = false
+		var da := (float(posmod(c0, Defs.SH_N[0])) + Build.DOOR_W * 0.5) / Defs.SH_N[0] * TAU
+		var dr := Defs.R_TOP - float(r0) - Build.DOOR_H * 0.5
+		var mc := Build.cell_of(m.pos)
+		var side := 1 if posmod(mc.x - c0, Defs.SH_N[0]) < Defs.SH_N[0] / 2 else -1
+		var rec := {"pos": Vector2(cos(da), sin(da)) * dr, "w": Build.DOOR_W, "h": Build.DOOR_H, "side": side,
+			"col": posmod(c0, Defs.SH_N[0]), "row": r0, "open": true}
+		if _door_blocked(rec):
+			ok = false
+		place = {"door": rec}
+	elif kind == "platform":
+		for i in Build.PLATFORM_W:
+			var cx := cell.x - Build.PLATFORM_W / 2 + i
+			if not _open_at(cx, cell.y):
+				ok = false
+			cells.append([Build.cell_pos(cx, cell.y), Defs.COLOR[Defs.SCAFFOLD]])
+		place = {"stamp": Build.platform_stamp(cell.x, cell.y)}
+	build_prev = {"cells": cells, "ok": ok and not cost.is_empty()}
+	if not build_click:
+		return
+	build_click = false
+	build_last = "%s: cost %s, fits %s" % [piece["name"], str(cost), ok]
+	if cost.is_empty():
+		_build_need(piece)
+		return
+	if not ok:
+		if _build_warn_t <= frame:
+			ui.toast("It doesn't fit there", Color(1, 0.6, 0.5), 1.2)
+			_build_warn_t = frame + 40
+		return
+	for mt2 in cost:
+		m.inv[int(mt2)] -= int(cost[mt2])
+	if place.has("stamp"):
+		stamps.append(place["stamp"])
+	if place.has("door"):
+		var rec2: Dictionary = place["door"]
+		doors.append(rec2)
+		_set_door(rec2, false)
+	audio.play("place", p, 0.9)
+	for k in 8:
+		_particle(p + Vector2(randf() - 0.5, randf() - 0.5) * 6.0, Vector2(randf() - 0.5, -randf()) * 0.6, 18 + randi() % 12, Color(0.95, 0.85, 0.55), true, 0.02)
+
+func _build_need(piece: Dictionary) -> void:
+	if _build_warn_t > frame:
+		return
+	_build_warn_t = frame + 60
+	ui.toast("%s needs %s" % [piece["name"], Build.cost_text(piece["cost"]) + ((" (or " + Build.cost_text(piece["alt"]) + ")") if piece.has("alt") else "")], Color(1, 0.7, 0.5), 2.0)
 
 func _cycle_material(dir: int) -> void:
 	var owned := []

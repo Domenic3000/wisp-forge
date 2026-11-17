@@ -5,6 +5,7 @@ extends CanvasLayer
 ## texture drawn in code, so the trim stays crisp at any size), serif headings, gold text.
 
 const TitleScreen := preload("res://scripts/title_screen.gd")
+const Build := preload("res://scripts/build.gd")
 
 var game
 var root: Control
@@ -17,6 +18,9 @@ var hp_lbl: Label
 var mp_lbl: Label
 var info: Label
 var hotbar: HBoxContainer
+var build_bar: PanelContainer      # build mode: categories, pieces and what the chosen one costs
+var build_box: VBoxContainer
+var _build_key := ""
 var satchel: VBoxContainer
 var satchel_panel: PanelContainer
 var toasts: VBoxContainer
@@ -343,6 +347,18 @@ func _build_hud() -> void:
 	hotbar.position.y -= 12
 	hud.add_child(hotbar)
 
+	build_bar = _panel(Color(0.05, 0.04, 0.09, 0.9), TRIM, 8)
+	build_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	build_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	build_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	build_bar.position.y -= 12
+	build_bar.visible = false
+	hud.add_child(build_bar)
+	build_box = VBoxContainer.new()
+	build_box.add_theme_constant_override("separation", 4)
+	build_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	build_bar.add_child(build_box)
+
 	var sw := _panel(Color(0.05, 0.04, 0.09, 0.85), TRIM, 9)
 	sw.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	sw.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -622,6 +638,47 @@ func hide_forge() -> void:
 	forge.visible = false
 
 # ----------------------------------------------------------------- toasts --
+## The building bar: the categories (Q/E), the pieces of the chosen one (wheel or 1-9; dimmed
+## when the satchel can't pay), and the chosen piece's cost.
+func _update_build_bar(g) -> void:
+	var piece: Dictionary = g.build_piece()
+	var key := "%d|%d|%s" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key]
+	if key == _build_key:
+		return
+	_build_key = key
+	for c in build_box.get_children():
+		c.queue_free()
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 14)
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	build_box.add_child(tabs)
+	tabs.add_child(_label("Q", 11, DIM))
+	for k in Build.CATS.size():
+		tabs.add_child(_label(Build.CATS[k], 14 if k == g.build_cat else 12, GOLD if k == g.build_cat else DIM))
+	tabs.add_child(_label("E", 11, DIM))
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 10)
+	row.custom_minimum_size.x = 640
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	build_box.add_child(row)
+	var lst: Array = g.build_list()
+	for k in lst.size():
+		var pc: Dictionary = lst[k]
+		var afford: bool = not Build.payable(pc, g.player.inv).is_empty()
+		var on: bool = pc == piece
+		var col := GOLD if on else (TEXT if afford else Color(0.55, 0.42, 0.45))
+		row.add_child(_label(("%d %s" % [k + 1, pc["name"]]) if k < 9 else pc["name"], 13 if on else 12, col))
+	if not piece.is_empty():
+		var cost_txt: String = Build.cost_text(piece["cost"])
+		if piece.has("alt"):
+			cost_txt += "  or  " + Build.cost_text(piece["alt"])
+		var hint := "%s: %s" % [piece["name"], cost_txt]
+		hint += "  ·  click to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else (" (hold to paint)" if piece["kind"] == "wall" else ""))
+		var hl := _label(hint, 12, CREAM)
+		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		build_box.add_child(hl)
+
 func toast(txt: String, col: Color = Color.WHITE, secs: float = 2.2) -> void:
 	var p := _panel(Color(0.05, 0.04, 0.09, 0.86), TRIM_DIM, 5)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -687,6 +744,11 @@ func update_hud(g) -> void:
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
 			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"]]
+	# build mode replaces the spell bar with the building bar
+	hotbar.visible = not g.build_on
+	build_bar.visible = g.build_on
+	if g.build_on:
+		_update_build_bar(g)
 	# hotbar
 	var hk := ",".join(g.known) + "|" + str(g.sel)
 	if hk != _hot_key:

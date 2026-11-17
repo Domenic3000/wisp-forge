@@ -1,7 +1,7 @@
 // Terrain magic: excavate, explode, fill, freeze, place, chip.
 // Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR).
 // counts[t] = cells collected per material; counts[50] = blocked by hardness; counts[51] = placed;
-// counts[54] = chest cells opened (mode 7). Mode 9 opens or closes a door. Each player has their own 64 counters: owner = mode >> 4.
+// counts[54] = chest cells opened (mode 7). Mode 9 opens or closes a door; mode 10 paints back walls (build mode). Each player has their own 64 counters: owner = mode >> 4.
 // pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
 #include "common"
 #include "world"
@@ -116,7 +116,7 @@ void main() {
 			float u = dot(dd, tg), vv = dot(dd, rdir);
 			if (abs(u) < B.y && abs(vv) < B.z) {
 				if (B.x > 0.5) {
-					if (t == 0u || KIND[t] == K_GAS) {
+					if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID || t == M_SNOW || t == M_ASH) {
 						uint row = uint(clamp(B.z - vv, 0.0, 31.0));
 						uint col = uint(clamp(u + B.y, 0.0, 3.0));
 						c = M_WOODDOOR | (((row << 2) | col) << 8) | ST_ANCHOR;
@@ -125,9 +125,14 @@ void main() {
 					c = 0u;
 				}
 			}
+		} else if (mode == 10) { // build: a back wall of material B.x where there is no background yet (budget B.z)
+			if (bgm != 0u) continue;
+			uint usedw = atomicAdd(counts.n[ob + (51)], 1u);
+			if (usedw < uint(B.z)) ab = uint(B.x) | BG_WALL;
 		} else if (mode == 5) { // conjure from the satchel
-			if (!(t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE)) continue;
 			uint m = uint(B.x);
+			// into air, smoke or flames, or pushing water and lava aside (a stone bridge over a pond)
+			if (!(t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE || (KIND[t] == K_LIQUID && t != m))) continue;
 			if (isBlock(m) && distance(p, P.p[6].zw) < B.w) continue;
 			uint used = atomicAdd(counts.n[ob + (51)], 1u);
 			if (used < uint(B.z)) c = withFG(c, m, m == M_FIRE ? 30u : 0u);

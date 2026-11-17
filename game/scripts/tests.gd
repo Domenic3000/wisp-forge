@@ -1,5 +1,6 @@
 extends RefCounted
 const Props := preload("res://scripts/props.gd")
+const Build := preload("res://scripts/build.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important
 ## things still work, writes saves/test_report.txt and quits.
@@ -829,6 +830,97 @@ func run() -> void:
 		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("cloud.png"))
 	_ok("you can fly into a cloud", fog_best > 0.3, "deepest cloud found: %.2f" % fog_best)
 
+	# ---- build mode: a back wall, a table and a door go up where the mage points ----
+	var bg_ang: float = g.spawn_angle - 0.06      # away from where the platform test builds
+	var bsurf: float = g.gpu.surf_at(bg_ang).x
+	_go(Vector2(cos(bg_ang), sin(bg_ang)) * (bsurf + 12.0))
+	await _frames(40)
+	g.player.inv[Defs.PLANK] += 200
+	g.player.inv[Defs.WOODDOOR] += 1
+	if not g.build_on:
+		g._toggle_build()
+	var spot := func(k: float, up: float) -> Vector2:
+		var aa: float = atan2(g.player.pos.y, g.player.pos.x) + k / Defs.RS0
+		return Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + up)
+	# a patch of plank wall, painted against the ground
+	g.build_cat = 0
+	g.build_idx[0] = 0
+	var wall_at: Vector2 = spot.call(10.0, 2.0)
+	g.test_aim = wall_at
+	g.test_cast = true
+	await _frames(12)
+	g.test_cast = false
+	await _frames(6)
+	# a table
+	g.build_cat = 2
+	g.build_idx[2] = 0
+	# (try a few places along the ground until it fits)
+	var table_at: Vector2 = spot.call(-14.0, 5.0)
+	var table_ok := false
+	for tk in 6:
+		table_at = spot.call(-14.0 - tk * 4.0, 5.0)
+		g.test_aim = table_at
+		await _frames(3)
+		table_ok = g.build_prev.get("ok", false)
+		if table_ok:
+			break
+	g.build_click = true
+	await _frames(6)
+	# a door
+	g.build_cat = 1
+	g.build_idx[1] = 0
+	var doors_before: int = g.doors.size()
+	var door_at: Vector2 = spot.call(-44.0, 6.0)
+	var door_ok := false
+	for dk2 in 6:
+		door_at = spot.call(-44.0 + dk2 * 5.0, 6.0)
+		g.test_aim = door_at
+		await _frames(3)
+		door_ok = g.build_prev.get("ok", false)
+		if door_ok:
+			break
+	g.build_click = true
+	await _frames(20)
+	g.test_aim = Vector2.ZERO
+	g._toggle_build()
+	var rawb: PackedByteArray = g.gpu.read_world()
+	var boffb: int = Defs.total_cells() * 4
+	var n_wall := 0
+	var n_decor := 0
+	var n_door := 0
+	for bq in [[wall_at, 0], [table_at, 1], [door_at, 2]]:
+		var cq: Vector2i = Build.cell_of(bq[0])
+		for dj in range(-34, 34):
+			for di in range(-16, 17):
+				var kb: int = ((cq.y + dj) * int(Defs.SH_N[0]) + posmod(cq.x + di, Defs.SH_N[0])) * 4
+				var fb: int = rawb.decode_u32(kb) & 255
+				var ab: int = rawb.decode_u32(boffb + kb)
+				if bq[1] == 0 and (ab & 255) == Defs.PLANK and (ab & 0x4000) != 0:
+					n_wall += 1
+				elif bq[1] == 1 and (ab & 255) == Defs.DECOR:
+					n_decor += 1
+				elif bq[1] == 2 and fb == Defs.WOODDOOR:
+					n_door += 1
+	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and g.doors.size() == doors_before + 1,
+		"wall cells %d, table cells %d (fit %s), door cells %d (fit %s), doors %d -> %d; last click: %s" % [n_wall, n_decor, table_ok, n_door, door_ok, doors_before, g.doors.size(), g.build_last])
+
+	# ---- conjuring onto a foe strikes it instead of burying it ----
+	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))
+	var foe_hp: float = foe.hp
+	g.sel = maxi(0, g.known.find("conjure"))
+	g.mat = Defs.DIRT
+	g.player.inv[Defs.DIRT] += 100
+	g.test_cast = true
+	for f in 20:
+		g.test_aim = foe.pos
+		await _frames(1)
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	await _frames(60)
+	_ok("conjuring onto a foe hurts it and doesn't bury it", (g.enemies.has(foe) and foe.hp < foe_hp) or foe.hp <= 0.0, "still there: %s, health %.0f -> %.0f" % [g.enemies.has(foe), foe_hp, foe.hp])
+	g.enemies.erase(foe)      # out of the way of the tests that conjure next
+	g.sel = 0
+
 	# ---- foes come in from out of sight: none appears on screen ----
 	var spv := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
 	_go(spv * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
@@ -917,6 +1009,10 @@ func run() -> void:
 	for k in range(-5, 16):
 		if g.type_at(_cell_pos(pcol + k, prow)) == Defs.SCAFFOLD:
 			strip_n += 1
+	var pillar_n := 0
+	for jr2 in range(prow + 1, pil_g):
+		if g.type_at(_cell_pos(pcol + 14, jr2)) == Defs.STONE:
+			pillar_n += 1
 	var landed: bool = g.player.on_platform
 	var row_on := int(Defs.R_TOP - (g.player.pos.length() - g.player.h * 0.5))
 	g.test_down = true
@@ -933,7 +1029,7 @@ func run() -> void:
 	await _frames(90)
 	var back_up: bool = g.player.on_platform
 	_ok("platforms: land on one, drop through it, jump up through it", landed and dropped and back_up,
-		"strip at row %d (%d of 21 cells there): stood at row %d (on it %s), after down + jump row %d (through %s), after a jump on it again %s" % [prow, strip_n, row_on, landed, row_down, dropped, back_up])
+		"strip at row %d (%d of 21 cells there, pillar %d of %d): stood at row %d (on it %s), after down + jump row %d (through %s), after a jump on it again %s" % [prow, strip_n, pillar_n, pil_g - prow - 1, row_on, landed, row_down, dropped, back_up])
 
 	# ---- unsupported blocks fall, and falling rock hurts ----
 	var sp := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))

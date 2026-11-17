@@ -60,7 +60,12 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   part (row << 2 | column) and records it in `door_list`; main.gd keeps `doors` (saved in
   `planet_state["doors"]`). Walking into one opens it (`_door_bump` from `move_body`), F toggles the nearest
   (`_interact`), and a door won't close on someone standing in it. Opening and closing is brush mode 9
-  (brush.comp clears or refills the doorway rectangle); the open door is drawn by overlay.gd.
+  (brush.comp clears or refills the doorway rectangle); the open door is drawn by overlay.gd, swung outward.
+- Build mode (B, `scripts/build.gd`): a catalogue of pieces (back walls painted with brush mode 10, doors,
+  scaffold platforms, and props.gd furniture with a seeded design: R rerolls, T mirrors). main.gd's
+  `_update_build` previews (overlay draws `build_prev`) and places: furniture and platforms become small
+  blueprints in `stamps`, written by `gpu.stamp` just before the next GPU frame. Placed pieces are not anchored,
+  so they obey the physics. Digging a door (open or shut) takes it whole into the satchel as a Door item.
 - Below-ground masonry gets ragged, stepped outer edges (`_roughen_underground`, run by `_finish`), so shafts and
   buried halls don't meet the earth with ruler-straight lines. Dungeon runestone is left out.
 - Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each

@@ -13,7 +13,26 @@ func _ready() -> void:
 		tex[k] = Defs.sprite_texture(k)
 	tex["door_open"] = ImageTexture.create_from_image(_door_open_image(30))
 
-## An open door, swung into the room and seen a little from the side: the hinge edge at the left,
+func _draw_build_preview() -> void:
+	if not game.build_on or game.build_prev.is_empty():
+		return
+	var pv: Dictionary = game.build_prev
+	var ok: bool = pv.get("ok", false)
+	var z: float = game.zoom
+	var pulse := 0.55 + 0.2 * sin(float(game.frame) * 0.15)
+	for c in pv.get("cells", []):
+		var sp: Vector2 = game.world_to_screen(c[0])
+		var col: Color = c[1]
+		if not ok:
+			col = col.lerp(Color(1, 0.2, 0.15), 0.6)
+		col.a = pulse
+		draw_rect(Rect2(sp - Vector2(0.5, 0.5) / z, Vector2.ONE / z), col)
+	if pv.has("circle"):
+		var cp: Vector2 = game.world_to_screen(pv["circle"][0])
+		var rr: float = float(pv["circle"][1]) / z
+		draw_arc(cp, rr + 0.5, 0.0, TAU, 20, Color(0.6, 1.0, 0.6, 0.8) if ok else Color(1, 0.35, 0.3, 0.8), 1.0 / maxf(z, 1.0))
+
+## An open door, swung out of the doorway and seen a little from the side: the hinge edge at the left,
 ## the far edge one pixel shorter top and bottom, planks, two iron straps and the handle.
 static func _door_open_image(h: int) -> Image:
 	var w := 8
@@ -171,7 +190,7 @@ func _draw() -> void:
 			ch_a = 1.0 - ch_f * ch_f
 			ch_sq = 1.0 - ch_f * 0.7
 		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq)
-	# open doors, swung into their houses
+	# open doors, swung out of their houses
 	for d in game.doors:
 		if not d["open"]:
 			continue
@@ -180,10 +199,11 @@ func _draw() -> void:
 		if dsp.x < -40 or dsp.y < -40 or dsp.x > game.VW + 40 or dsp.y > game.VH + 40:
 			continue
 		var da := atan2(dp.y, dp.x)
-		# the local "inside" direction (columns increasing) is against basis_r, which is screen right
+		# doors swing outward: "side" is the way into the house (columns increasing, which is against
+		# basis_r, screen right), so the open panel goes the other way, hinged at the doorway's edge
 		var side := float(d["side"])
-		var wp: Vector2 = dp - game.basis_r(da) * side * (float(d["w"]) * 0.5 + 4.0)
-		_sprite("door_open", wp, side > 0.0, false, float(d["h"]), true)
+		var wp: Vector2 = dp + game.basis_r(da) * side * (float(d["w"]) * 0.5 + 4.0)
+		_sprite("door_open", wp, side < 0.0, false, float(d["h"]), true)
 	# foes
 	for e in game.enemies:
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)
@@ -194,6 +214,8 @@ func _draw() -> void:
 		var big := 1 if pr["type"] == "fireball" or pr["type"] == "quake" else 0
 		draw_rect(Rect2(sp.floor() - Vector2(big, big), Vector2(1 + 2 * big, 1 + 2 * big)), c)
 		draw_rect(Rect2(sp.floor(), Vector2.ONE), Color(1, 1, 0.9))
+	# build mode: what would go where, in its own colours (red where it doesn't fit)
+	_draw_build_preview()
 	# the mages, with their simulated hats, beards, scarves and staves
 	for m in game.players:
 		if m != game.player and not m.dead:
