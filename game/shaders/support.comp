@@ -18,15 +18,25 @@ bool buoyant(uint t) { return t == M_ICE || t == M_WOOD || t == M_PLANK || t == 
 uint fgS(uint c) { return (c & ST_ANCHOR) != 0u ? 0u : stOf(c); }
 bool solidC(uint c) { return KIND[c & 255u] == K_SOLID; }
 
-// support offered by the cell under a block (ST_MAX = none)
-uint fromBelow(int i, uint t) {
-	if (i < 0) return 0u;                    // resting on the planet's heart
-	uint cb = world.cells[i];
-	uint kb = KIND[cb & 255u];
-	if (kb == K_SOLID) return fgS(cb);
-	if (kb == K_POWDER) return 0u;            // settled sand, gravel, snow
-	if (kb == K_LIQUID && buoyant(t)) return 0u; // ice and wood float
-	return ST_MAX;
+// support offered to the block at (s, y, x) by what's under it, looking down through a pile of
+// powder: settled sand, gravel or debris on solid ground holds what rests on it, but debris lying on
+// a floor that is itself hanging must not (it would hold the floor up through the walls standing on
+// it, and a cut-free building would never fall; nor would a heap of its own rubble). Only a really
+// deep pile, a dune, counts as the ground by itself.
+uint restOn(int s, int y, int x, uint t) {
+	for (int k = 0; k < 48; k++) {
+		int yy = y + 1;
+		if (yy >= ROWS) return 0u;                 // resting on the planet's heart
+		if (yy >= SH_Y0[s + 1]) { s += 1; x /= 2; }
+		y = yy;
+		uint cb = world.cells[cellIdx(s, y, x)];
+		uint kb = KIND[cb & 255u];
+		if (kb == K_SOLID) return fgS(cb);
+		if (kb == K_POWDER) continue;
+		if (kb == K_LIQUID && buoyant(t) && k == 0) return 0u;   // ice and wood float
+		return ST_MAX;
+	}
+	return 0u;
 }
 uint fromSide(int i) {
 	if (i < 0) return ST_MAX;
@@ -57,8 +67,31 @@ void main() {
 	int iD = nbr(s, y, x, 1), iL = nbr(s, y, x, 2), iR = nbr(s, y, x, 3), iU = nbr(s, y, x, 0);
 	uint ws = wall ? (a >> 8) & 63u : ST_MAX;
 
+	// a structure wakes as a whole: an anchored built cell (front or back wall) wakes when a built
+	// neighbour, or its own other layer, is awake, so digging near any part of a building lets all of
+	// it obey the physics. Natural ground never takes part, and neither does anything harder than
+	// brick (a dungeon's runestone, a vault's obsidian stay as built until something cuts them).
+	bool fgAsleep = solid && (c & (ST_ANCHOR | ST_BUILT)) == (ST_ANCHOR | ST_BUILT) && HARD[t] <= 2u;
+	bool bgAsleep = wall && (a & BG_ANCHOR) != 0u && HARD[a & 255u] <= 2u;
+	if (fgAsleep || bgAsleep) {
+		bool awake = (solid && (c & (ST_ANCHOR | ST_BUILT)) == ST_BUILT) || (wall && (a & BG_ANCHOR) == 0u);
+		int nbs[4] = int[4](iD, iL, iR, iU);
+		for (int q = 0; q < 4 && !awake; q++) {
+			int j = nbs[q];
+			if (j < 0) continue;
+			uint cj = world.cells[j];
+			if (KIND[cj & 255u] == K_SOLID && (cj & (ST_ANCHOR | ST_BUILT)) == ST_BUILT) awake = true;
+			uint aj = aux.a[j];
+			if ((aj & BG_WALL) != 0u && (aj & 255u) != 0u && (aj & BG_ANCHOR) == 0u) awake = true;
+		}
+		if (awake) {
+			if (fgAsleep) { c &= ~ST_ANCHOR; world.cells[i] = c; }
+			if (bgAsleep) { a &= ~BG_ANCHOR; aux.a[i] = a; }
+		}
+	}
+
 	if (solid && (c & ST_ANCHOR) == 0u) {
-		uint st = fromBelow(iD, t);
+		uint st = restOn(s, y, x, t);
 		st = min(st, fromSide(iL));
 		st = min(st, fromSide(iR));
 		st = min(st, fromSide(iU));
@@ -73,7 +106,7 @@ void main() {
 		uint n = (a & BG_ANCHOR) != 0u ? 0u : (solid ? fgS(c) + 1u : ST_MAX);
 		n = min(n, wallS(iD));
 		// resting on settled sand, soil or snow holds it the way it holds a block (a table on the ground)
-		if (iD >= 0 && KIND[world.cells[iD] & 255u] == K_POWDER) n = 0u;
+		if (iD >= 0 && KIND[world.cells[iD] & 255u] == K_POWDER) n = min(n, restOn(s, y, x, 0u));
 		n = min(n, wallS(iL) + 1u);
 		n = min(n, wallS(iR) + 1u);
 		n = min(n, wallS(iU) + 1u);

@@ -15,6 +15,7 @@ var audio
 
 const DAY_LEN := 60.0 * 7.0 * 60.0   # frames per day (7 minutes)
 const REACH := 64.0
+const ROCK_HURT_FALL := 8      # a falling block hurts only after falling this many cells
 var GS := 384
 var HALF := 192.0
 
@@ -108,7 +109,11 @@ var test_cast := false       # test mode: hold the left button
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
-var build_idx := [0, 0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
+var build_idx := [0, 0, 0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
+var build_shape := 2           # how back walls and blocks are laid (Build.SHAPES: brush, line, rectangle, frame)
+var build_thick := 2           # how thick a line or frame is
+var build_drag := false        # dragging out a shape...
+var build_drag_from := Vector2i.ZERO   # ...from this cell
 var build_seed := 1           # the furniture design shown (R rolls a new one)
 var build_flip := false       # T mirrors it
 var build_click := false      # a fresh left click (furniture, doors and platforms go down one per click)
@@ -117,7 +122,8 @@ var build_pieces: Array = []
 var stamps: Array = []        # small blueprints to write into the world before the next GPU frame
 var _build_warn_t := 0
 var build_last := ""          # what the last click did (for the test report)
-var build_last_stamp := {}    # and where its blueprint went
+var build_last_stamp := {}
+var _low_hp_t := 0               # when the low-health reminder may show again    # and where its blueprint went
 var build_w := 40             # structures: width ([ and ]), storeys (- and =), style (T)
 var build_floors := 1
 var build_style := 0
@@ -187,6 +193,8 @@ class Mage extends Body:
 	var dig_blocked := 0
 	var pending_place := 0
 	var pending_mat := -1      # what the pending placement uses (-1: the conjure material)
+	var heal_left := 0.0       # health still to come from a draught or Mending
+	var potion_cd := 0         # frames before another draught
 	var decon_lock := false    # a piece was just picked up: no more deconstructing until the button is let go
 	var dig_tap := 0           # a quick right-click still digs for a few frames
 	var jump_held := false
@@ -524,9 +532,10 @@ func _apply_counts(m: Mage) -> void:
 	if cn[Defs.TREASURE] > 0 and m.local:
 		_open_treasure(cn[Defs.TREASURE])
 		m.inv[Defs.TREASURE] = 0
-	if cn.size() > 53 and cn[52] > 0 and not m.dead:
-		# a falling block lands on you: the longer it fell, the harder it hits
-		var dmg := clampf(2.0 + float(cn[53]) * 0.45 + float(cn[52]) * 0.12, 2.0, 35.0)
+	if cn.size() > 53 and cn[52] > 0 and cn[53] >= ROCK_HURT_FALL and not m.dead:
+		# a falling block lands on you: the longer it fell, the harder it hits (a clod that only
+		# dropped a few cells, like the rim of a pit you're digging, just bumps you)
+		var dmg := clampf(1.0 + float(cn[53] - ROCK_HURT_FALL) * 0.45 + float(cn[52]) * 0.1, 1.0, 35.0)
 		var was := m.iframes
 		hurt(m, dmg, Vector2(0, 1.2), true)
 		if was == 0 and m.iframes > 0 and m.local:
@@ -894,6 +903,10 @@ func _try_open_chest() -> void:
 	c.open_t = 0
 	audio.play("chest_open", centre)
 	_roll_loot(7, 1.6)
+	# now and then a Healing Draught (the deeper and grander the place, the likelier)
+	if randf() < 0.2 + rare * 0.45:
+		items["potion"] = int(items.get("potion", 0)) + 1
+		ui.toast("+1 Healing Draught (H to drink)", Color(0.6, 1.0, 0.65), 3.0)
 	_rare_find(rare)
 	for k in 14:
 		_particle(centre, Vector2(randf() - 0.5, -randf() * 1.2), 30 + randi() % 20, Color(1, 0.85, 0.35), true, 0.02)
@@ -914,7 +927,7 @@ func _rare_find(p: float) -> void:
 	if randf() > p:
 		return
 	var pool := []
-	for id in ["scroll_blink", "scroll_starfall", "ring", "circlet", "boots"]:
+	for id in ["scroll_blink", "scroll_starfall", "scroll_mend", "ring", "circlet", "boots"]:
 		if not items.has(id):
 			pool.append(id)
 	if pool.is_empty():
@@ -925,6 +938,8 @@ func _rare_find(p: float) -> void:
 	match id:
 		"scroll_blink":
 			ui.toast("RARE FIND: Scroll of Blink! Forge it at the Wisp Forge (Spells).", Color(0.55, 0.95, 1.0), 7.0)
+		"scroll_mend":
+			ui.toast("RARE FIND: Scroll of Mending! Forge it at the Wisp Forge (Spells).", Color(0.55, 1.0, 0.62), 7.0)
 		"scroll_starfall":
 			ui.toast("RARE FIND: Scroll of Starfall! Forge it at the Wisp Forge (Spells).", Color(1.0, 0.82, 0.45), 7.0)
 		"ring":
@@ -1437,8 +1452,20 @@ func _update_player(m: Mage) -> void:
 	if m.iframes > 0:
 		m.iframes -= 1
 	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
-	if m.hp < m.max_hp:
-		m.hp = minf(m.max_hp, m.hp + 0.02)
+	# no health comes back by itself: only a draught or Mending, a little each frame
+	if m.heal_left > 0.0 and not m.dead:
+		var hh := minf(m.heal_left, Defs.HEAL_RATE)
+		m.hp = minf(m.max_hp, m.hp + hh)
+		m.heal_left -= hh
+		if m.hp >= m.max_hp:
+			m.heal_left = 0.0
+		if frame % 6 == 0:
+			_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 10.0, m.pos.normalized() * 0.4, 24, Color(0.55, 1.0, 0.6), true, -0.01)
+	if m.potion_cd > 0:
+		m.potion_cd -= 1
+	if m.local and m.hp < m.max_hp * 0.3 and m.heal_left <= 0.0 and frame >= _low_hp_t and not m.dead:
+		_low_hp_t = frame + 1800
+		ui.toast("Low health%s" % (": drink a Healing Draught (H)" if int(items.get("potion", 0)) > 0 else ". Health doesn't come back by itself"), Color(1, 0.55, 0.5), 3.0)
 
 func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 	if m.dead or test_god:
@@ -1497,6 +1524,20 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	if id == "conjure":
 		_conjure(m, aim)
 		m.cast_cd = s["cd"]
+		return
+	if id == "mend":
+		if m.hp >= m.max_hp:
+			if m.local:
+				ui.toast("You're unhurt", Color(0.8, 0.95, 0.8), 1.0)
+			m.cast_cd = 20
+			return
+		m.mana -= float(s["mana"])
+		m.cast_cd = s["cd"]
+		m.heal_left += Defs.MEND_HEAL
+		audio.play("rare", m.pos, 0.6)
+		lights.append([m.pos, 26.0, Color(0.5, 1.1, 0.6)])
+		for k in 14:
+			_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 14.0, m.pos.normalized() * (0.2 + randf() * 0.4), 30, s["color"], true, -0.01)
 		return
 	if id == "blink":
 		if _blink(m, aim):
@@ -2417,12 +2458,32 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"gate": return "Needs the Core Siphon"
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
+		"mend": return "Find the Scroll of Mending in a chest"
 	return "Locked"
 
 func recipe_affordable(r: Dictionary) -> bool:
 	for k in r["cost"]:
 		if player.inv[int(k)] < int(r["cost"][k]):
 			return false
+	return true
+
+## H: drink a Healing Draught (35 health over a moment; one every ten seconds)
+func _drink(m: Mage) -> bool:
+	var n := int(items.get("potion", 0))
+	if n <= 0:
+		ui.toast("No Healing Draughts: forge one (C) or find one in a chest", Color(1, 0.7, 0.55), 2.0)
+		return false
+	if m.potion_cd > 0:
+		ui.toast("Not yet: %d s before another draught" % ceili(m.potion_cd / 60.0), Color(1, 0.8, 0.6), 1.2)
+		return false
+	if m.hp >= m.max_hp:
+		ui.toast("You're unhurt", Color(0.8, 0.95, 0.8), 1.0)
+		return false
+	items["potion"] = n - 1
+	m.potion_cd = Defs.POTION_CD
+	m.heal_left += Defs.POTION_HEAL
+	audio.play("water", m.pos, 0.5)
+	ui.toast("Healing Draught: %d left" % (n - 1), Color(0.6, 1.0, 0.65), 1.5)
 	return true
 
 func craft(r: Dictionary) -> bool:
@@ -2434,6 +2495,11 @@ func craft(r: Dictionary) -> bool:
 	if r.has("give"):
 		for k in r["give"]:
 			player.inv[int(k)] += int(r["give"][k])
+	if r.has("potion"):
+		items["potion"] = int(items.get("potion", 0)) + int(r["potion"])
+		ui.toast("Healing Draught forged: drink it with H (%d now)" % int(items["potion"]), Color(0.6, 1.0, 0.65), 3.0)
+		save_game()
+		return true
 	if r.has("furniture"):
 		var frng := RandomNumberGenerator.new()
 		frng.randomize()
@@ -2494,6 +2560,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				sel = n
 		elif k == KEY_Q or k == KEY_E:
 			_cycle_material(1 if k == KEY_E else -1)
+		elif k == KEY_H:
+			_drink(player)
 		elif k == KEY_F:
 			_interact()
 		elif k == KEY_M or k == KEY_Z:
@@ -2516,6 +2584,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 					player.inv[m] += 200
 			ui.toast("Creative stock: +200 of every material", Color(0.6, 1, 0.6))
 	elif ev is InputEventMouseButton and ev.pressed and state == "play":
+		var wheel: bool = ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN
+		if wheel and ui.mouse_over_ui(false):
+			return                  # scrolling the satchel (past its end, too) never changes the spell
 		if build_on and ev.button_index == MOUSE_BUTTON_LEFT:
 			build_click = true
 		if build_on and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
@@ -2543,7 +2614,7 @@ func _toggle_build() -> void:
 			if Build.STYLES[si][1] == bn:
 				build_style = si
 		_struct_key = ""
-		ui.toast("Build mode: click to place · Q/E category · wheel piece · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
+		ui.toast("Build mode: click to place · Q/E category · wheel piece · G how walls and blocks are laid · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
 	else:
 		ui.toast("Build mode off", Color(0.8, 0.8, 0.9), 1.0)
 
@@ -2566,7 +2637,20 @@ func _build_step(dir: int) -> void:
 ## keys in build mode; true if the key was used
 func _build_key(k: int) -> bool:
 	if k == KEY_Q or k == KEY_E:
-		build_cat = posmod(build_cat + (1 if k == KEY_E else -1), Build.CATS.size())
+		var oi: int = Build.CAT_ORDER.find(build_cat)
+		build_cat = Build.CAT_ORDER[posmod(oi + (1 if k == KEY_E else -1), Build.CAT_ORDER.size())]
+		build_drag = false
+		return true
+	var shaped: bool = build_piece().get("kind", "") in ["wall", "block"]
+	if shaped and k == KEY_G:
+		build_shape = (build_shape + 1) % Build.SHAPES.size()
+		if build_piece()["kind"] == "block" and build_shape == 0:
+			build_shape = 1                   # blocks aren't painted
+		build_drag = false
+		ui.toast("Lay: " + Build.SHAPES[build_shape], Color(0.95, 0.85, 0.55), 1.0)
+		return true
+	if shaped and (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT):
+		build_thick = clampi(build_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
 		return true
 	var structure: bool = build_piece().get("kind", "") == "structure"
 	if k == KEY_R:
@@ -2643,6 +2727,10 @@ func _update_build(m: Mage) -> void:
 	var cells := []      # [world pos, colour]
 	var ok := true
 	var tree_in_way := false
+	if kind == "block" or (kind == "wall" and build_shape != 0):
+		_update_shape(m, piece)
+		return
+	build_drag = false
 	if kind == "wall":
 		build_prev = {"circle": [p, Build.WALL_R], "ok": not cost.is_empty(), "cells": []}
 		if m.input.cast and not cost.is_empty():
@@ -2779,6 +2867,77 @@ func _update_build(m: Mage) -> void:
 ## footprint, with a plinth of its own stone down to the ground under the rest (at most
 ## Build.FOUND_MAX deep); a roof rests on the first solid row under the cursor (put it on a room's top).
 ## Everything it would build must land on open space. Returns {ok, cost, tex, corner, bp}.
+## Back walls and blocks laid as a shape: press where it starts, drag, let go where it ends (right
+## click cancels). Only the cells with room take it (a back wall where there is none yet and no tree
+## or furniture; a block where there's open space and nobody standing); one material per cell.
+func _update_shape(m: Mage, piece: Dictionary) -> void:
+	var mt: int = piece["mat"]
+	var back: bool = piece["kind"] == "wall"
+	var shape: int = maxi(build_shape, 1)
+	var d := m.input.aim - m.pos
+	if d.length() > Build.SHAPE_REACH:
+		d = d.normalized() * Build.SHAPE_REACH
+	var cell := Build.cell_of(m.pos + d)
+	if m.input.dig and build_drag:
+		build_drag = false
+		build_click = false
+		return
+	if build_click and not build_drag:
+		build_drag = true
+		build_drag_from = cell
+	build_click = false
+	var from := build_drag_from if build_drag else cell
+	var cells: Array = Build.shape_cells(from, cell, shape, build_thick)
+	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
+	var good := []
+	var prev := []
+	var col := Color.hex((Defs.PAL[mt * 4] << 8) | 0xff)
+	if not too_big:
+		for c in cells:
+			var bga := _bg_at(c.x, c.y)
+			var fits := false
+			if back:
+				fits = bga == 0
+			else:
+				fits = bga >= 0 and _open_at(c.x, c.y) and not _body_in(Build.cell_pos(c.x, c.y))
+			if fits:
+				good.append(c)
+				prev.append([Build.cell_pos(c.x, c.y), col])
+	var need := good.size()
+	var ok: bool = not too_big and need > 0 and need <= m.inv[mt]
+	build_prev = {"cells": prev, "ok": ok}
+	var what := "%s %s: %d %s" % [Build.SHAPES[shape], piece["name"], need, Defs.NAMES[mt]]
+	if too_big:
+		what = "Too big to lay in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS
+	elif need > m.inv[mt]:
+		what += " (you have %d)" % m.inv[mt]
+	build_prev["text"] = what
+	if build_drag and not m.input.cast:
+		build_drag = false
+		if ok:
+			stamps.append(Build.shape_stamp(good, mt, back))
+			build_last_stamp = stamps[stamps.size() - 1]
+			m.inv[mt] -= need
+			build_last = "%s: %d cells" % [piece["name"], need]
+			audio.play("place", m.pos + d, 0.6)
+		elif need > m.inv[mt]:
+			ui.toast("%s needs %d %s (you have %d)" % [piece["name"], need, Defs.NAMES[mt], m.inv[mt]], Color(1, 0.7, 0.5), 2.0)
+		elif need == 0 and not too_big:
+			ui.toast("No room there", Color(1, 0.6, 0.5), 1.2)
+		build_last = build_last if ok else "%s: not laid (%s)" % [piece["name"], what]
+
+## is a mage or a foe standing at this world position (a block laid there would trap them)?
+func _body_in(wp: Vector2) -> bool:
+	var bodies: Array = players.duplicate()
+	bodies.append_array(enemies)
+	for b in bodies:
+		var dd: Vector2 = wp - b.pos
+		var up: Vector2 = b.pos.normalized()
+		var rt := Vector2(-up.y, up.x)
+		if absf(dd.dot(rt)) <= b.w * 0.5 + 1.0 and absf(dd.dot(up)) <= b.h * 0.5 + 1.0:
+			return true
+	return false
+
 func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
 	var w := build_w
 	var trees := false
@@ -2878,7 +3037,7 @@ func start_game(use_save: bool) -> void:
 		max_mana = 100
 		mana_regen = 0.22
 		heat_ward = false
-		items = {}
+		items = {"potion": 2}       # two draughts to start with; health doesn't come back by itself
 	_enter_planet(int(s["planet"]) if s != null else 0)
 	ui.hide_loading()
 	ui.show_hud()
@@ -2986,7 +3145,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 25            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 26            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

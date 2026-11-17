@@ -854,6 +854,7 @@ func run() -> void:
 	# a patch of plank wall, painted against the ground
 	g.build_cat = 0
 	g.build_idx[0] = 0
+	g.build_shape = 0                # painted with the brush
 	var wall_at: Vector2 = spot.call(10.0, 2.0)
 	g.test_aim = wall_at
 	g.test_cast = true
@@ -1076,6 +1077,56 @@ func run() -> void:
 	_ok("a bed in a room makes a home you wake up in", open_why != "" and bed_placed and home_set and woke_at >= 0.0 and woke_at < 4.0,
 		"a bed in the open needs %s; the bed set down in the house: %s, home set: %s, woke %.1f from it" % [open_why if open_why != "" else "nothing (wrong)", bed_placed, home_set, woke_at])
 
+	# ---- straight walls: a block wall dragged up from the ground, a back wall rectangle beside it ----
+	_go(Vector2(cos(bg_ang), sin(bg_ang)) * (bsurf + 12.0))
+	await _frames(40)
+	if not g.build_on:
+		g._toggle_build()
+	g.player.inv[Defs.MASONRY] += 400
+	var shape_res := []
+	var shape_ok := true
+	for sh in [[Build.CAT_BLOCKS, 0, 1, Defs.MASONRY, false, 30.0, 0.0, 30.0, 26.0], [0, 0, 2, Defs.PLANK, true, -40.0, 0.0, -22.0, 14.0]]:
+		g.build_cat = int(sh[0])
+		g.build_idx[g.build_cat] = int(sh[1])
+		g.build_shape = int(sh[2])
+		g.build_thick = 2
+		var mt: int = sh[3]
+		# from the ground at one spot to a point above another (a straight wall snaps upright)
+		var a_pos: Vector2 = spot.call(float(sh[5]), 1.5 + float(sh[6]))
+		var b_pos: Vector2 = spot.call(float(sh[7]), float(sh[8]))
+		var inv0: int = g.player.inv[mt]
+		g.test_aim = a_pos
+		await _frames(3)
+		g.test_cast = true
+		g.build_click = true
+		await _frames(3)
+		g.test_aim = b_pos
+		await _frames(4)
+		var laid_prev: int = g.build_prev.get("cells", []).size()
+		var prev_ok: bool = g.build_prev.get("ok", false)
+		g.test_cast = false
+		await _frames(4)
+		var used: int = inv0 - g.player.inv[mt]
+		var st: Dictionary = g.build_last_stamp
+		var n_in := 0
+		if not st.is_empty():
+			var rr: Dictionary = g.gpu.read_rect(int(st["x0"]), int(st["y0"]), int(st["w"]), int(st["h"]))
+			for v in (rr["bg"] if sh[4] else rr["fg"]):
+				if (v & 255) == mt and (not sh[4] or (v & 0x4000) != 0):
+					n_in += 1
+		var straight := false
+		if not st.is_empty():
+			# a block wall comes out 2 cells wide; the back wall fills its whole box
+			straight = (int(st["w"]) <= 3) if not sh[4] else (n_in >= int(st["w"]) * int(st["h"]) * 0.5)
+		shape_res.append("%s %s: preview %d cells (ok %s), %d used, %d in the world, box %s" % [Build.SHAPES[int(sh[2])], Defs.NAMES[mt], laid_prev, prev_ok, used, n_in, str([st.get("w"), st.get("h")])])
+		if not (prev_ok and used > 20 and n_in >= used * 0.9 and straight):
+			shape_ok = false
+	g.test_aim = Vector2.ZERO
+	g.build_shape = 2
+	if g.build_on:
+		g._toggle_build()
+	_ok("build mode lays straight walls and back walls by dragging", shape_ok, "; ".join(shape_res))
+
 	# ---- conjuring onto a foe strikes it instead of burying it ----
 	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))
 	var foe_hp: float = foe.hp
@@ -1240,9 +1291,45 @@ func run() -> void:
 	g.hp = g.max_hp
 	g.iframes = 0
 	var hp0: float = g.hp
-	g.brushes.append([g.player.pos + up * 20.0, 1.8, 5, Defs.STONE, 0, 8, 0])
+	g.brushes.append([g.player.pos + up * 40.0, 1.8, 5, Defs.STONE, 0, 8, 0])
 	await _frames(150)
 	_ok("falling rock hurts the mage", g.hp < hp0, "health %.0f -> %.0f" % [hp0, g.hp])
+	# digging a pit right under your feet, again and again, costs nothing: you drop in with the rim
+	_go(Vector2(cos(g.spawn_angle + 0.03), sin(g.spawn_angle + 0.03)) * (g.gpu.surf_at(g.spawn_angle + 0.03).x + 14.0))
+	await _frames(60)
+	g.hp = g.max_hp
+	g.iframes = 0
+	var hp1: float = g.hp
+	for pk in 6:
+		var upk: Vector2 = g.player.pos.normalized()
+		g.brushes.append([g.player.pos - upk * 12.0, g.player.dig_r, 1, 0, g.player.tier, 0, 0, 0])
+		await _frames(25)
+	await _frames(60)
+	_ok("digging a pit under yourself doesn't hurt", g.hp >= hp1, "health %.0f -> %.0f" % [hp1, g.hp])
+	# ---- health doesn't come back by itself; a draught and Mending bring it back over a moment ----
+	g.hp = 40.0
+	g.player.heal_left = 0.0
+	await _frames(120)
+	var hp_idle: float = g.hp
+	g.items["potion"] = 1
+	g.player.potion_cd = 0
+	var drank: bool = g._drink(g.player)
+	await _frames(100)
+	var hp_drunk: float = g.hp
+	var again: bool = g._drink(g.player)             # none left (and too soon)
+	g.hp = 40.0
+	if not g.known.has("mend"):
+		g.known.append("mend")
+	g.mana = g.max_mana
+	g.player.cast_cd = 0
+	g._cast(g.player, "mend", g.player.pos)
+	var mana_after: float = g.mana
+	await _frames(90)
+	var hp_mended: float = g.hp
+	g.known.erase("mend")
+	_ok("health only comes back from a draught or Mending", hp_idle == 40.0 and drank and absf(hp_drunk - 40.0 - Defs.POTION_HEAL) < 1.0 and not again and int(g.items.get("potion", 0)) == 0 and absf(hp_mended - 40.0 - Defs.MEND_HEAL) < 1.0 and mana_after < g.max_mana - 50.0,
+		"idle 2 s: %.1f; drank %s: %.1f; another: %s; Mending: %.1f (mana %.0f of %.0f)" % [hp_idle, drank, hp_drunk, again, hp_mended, mana_after, g.max_mana])
+	g.hp = g.max_hp
 	g.test_god = true
 	g.hp = g.max_hp
 
@@ -1334,6 +1421,63 @@ func run() -> void:
 			g.player.inv[int(k)] += int(wide["cost"][k])
 		crafted = g.craft(wide) and g.dig_r >= 11.0
 	_ok("the Wisp Forge lists recipes and crafts", cards == g.recipes.size() and crafted, "%d of %d recipe cards, crafting %s" % [cards, g.recipes.size(), "works" if crafted else "failed"])
+
+	# ---- a building left hanging comes down as a whole once you dig at any part of it ----
+	# (a stone box with a plank back wall, stamped in the air the way the generator stamps buildings:
+	# anchored and built; digging at one corner must wake all of it, and with nothing under it, it falls)
+	var hang_a: float = g.spawn_angle + 0.09
+	var hang_s: float = g.gpu.surf_at(hang_a).x
+	var hang_c: Vector2i = Build.cell_of(Vector2(cos(hang_a), sin(hang_a)) * (hang_s + 70.0))
+	var HW := 30
+	var hd := PackedInt32Array()
+	hd.resize(HW * HW)
+	for hj in HW:
+		for hi in HW:
+			var edge := mini(mini(hi, HW - 1 - hi), mini(hj, HW - 1 - hj)) < 3
+			hd[hj * HW + hi] = (Defs.MASONRY if edge else 0) | (Defs.PLANK << 8) | 0x40000 | 0x20000
+	g.stamps.append({"x0": hang_c.x, "y0": hang_c.y, "w": HW, "h": HW, "data": hd})
+	_go(Vector2(cos(hang_a + 0.04), sin(hang_a + 0.04)) * (hang_s + 14.0))
+	await _frames(60)
+	var hang_tally := func() -> Array:
+		var rr: Dictionary = g.gpu.read_rect(hang_c.x, hang_c.y, HW, HW)
+		var nf := 0
+		var anch := 0
+		for v in rr["fg"]:
+			if (v & 255) == Defs.MASONRY:
+				nf += 1
+				if (v & 0x40000000) != 0:
+					anch += 1
+		var nb := 0
+		for v in rr["bg"]:
+			if (v & 255) == Defs.PLANK:
+				nb += 1
+		var st_lo := 99
+		var st_hi := -1
+		var life := 0
+		var near := {}
+		var fgs: PackedInt32Array = rr["fg"]
+		for k in fgs.size():
+			var v: int = fgs[k]
+			if (v & 255) == Defs.MASONRY:
+				st_lo = mini(st_lo, (v >> 24) & 63)
+				st_hi = maxi(st_hi, (v >> 24) & 63)
+				if ((v >> 16) & 255) > 0:
+					life += 1
+			elif (v & 255) != 0:
+				var nm: String = Defs.NAMES[v & 255]
+				near[nm] = int(near.get(nm, 0)) + 1
+		return [nf, anch, nb, "support %d-%d, %d moving, inside also %s" % [st_lo, st_hi, life, str(near)]]
+	var hang0: Array = hang_tally.call()
+	await _frames(120)
+	var hang_still: Array = hang_tally.call()     # left alone, it stays as built
+	hang_still.resize(3)
+	g.brushes.append([_cell_pos(hang_c.x + 1, hang_c.y + 1), 3.0, 1, 0, 9, 0, 0, 0])
+	await _frames(420)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("hanging.png"))
+	var hang1: Array = hang_tally.call()
+	hang0.resize(3)
+	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[0]) < int(hang0[0]) / 5 and int(hang1[2]) < int(hang0[2]) / 5,
+		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 7 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
 
 	# ---- save and load give back the same world ----
 	var a: PackedByteArray = g.gpu.read_world()

@@ -316,7 +316,7 @@ func make_planet(i: int) -> Dictionary:
 	return base
 
 # ---------------------------------------------------------------- spells ----
-const SPELL_ORDER := ["spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall"]
+const SPELL_ORDER := ["spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend"]
 const SPELLS := {
 	"spark": {"name": "Spark Bolt", "mana": 4.0, "cd": 9, "color": Color(1.0000, 0.9020, 0.5020), "desc": "A quick bolt. Chips terrain, stings foes."},
 	"conjure": {"name": "Conjure", "mana": 0.0, "cd": 2, "color": Color(0.7451, 1.0000, 0.7451), "desc": "Place the selected material. Q/E to choose."},
@@ -326,7 +326,14 @@ const SPELLS := {
 	"quake": {"name": "Quake Orb", "mana": 40.0, "cd": 60, "color": Color(0.7843, 0.5490, 1.0000), "desc": "A heavy orb that shatters a huge cavity."},
 	"blink": {"name": "Blink", "mana": 22.0, "cd": 30, "color": Color(0.55, 0.95, 1.0), "desc": "Step through space to the cursor."},
 	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "A falling star: a huge fiery blast."},
+	"mend": {"name": "Mending", "mana": 60.0, "cd": 600, "color": Color(0.55, 1.0, 0.62), "desc": "Knit your wounds: 30 health over a second. Ten seconds to recover."},
 }
+## Health doesn't come back by itself: Healing Draughts (H to drink; forged, or found in chests) and
+## the Mending spell are the only ways back up. Both heal over a moment, not at once.
+const POTION_HEAL := 35.0
+const POTION_CD := 600         # frames between draughts
+const MEND_HEAL := 30.0
+const HEAL_RATE := 0.5         # health per frame while healing
 const PROJ := {
 	"spark": {"speed": 5.5, "g": 0.0, "life": 55, "dmg": 11.0, "light": 18.2},
 	"fireball": {"speed": 3.9, "g": 0.035, "life": 140, "dmg": 0.0, "light": 33.8},
@@ -353,6 +360,8 @@ const RECIPES := [
 	{"id": "frost", "cat": "Spells", "name": "Frostbite", "cost": {FROST: 10, SNOW: 10}, "spell": "frost"},
 	{"id": "quake", "cat": "Spells", "name": "Quake Orb", "cost": {WISP: 10, STONE: 40, COAL: 10}, "spell": "quake"},
 	{"id": "blink", "cat": "Spells", "name": "Blink", "cost": {WISP: 6, CRYSTAL: 6}, "spell": "blink", "scroll": "scroll_blink"},
+	{"id": "mend", "cat": "Spells", "name": "Mending", "cost": {WISP: 8, SHROOM: 12, CRYSTAL: 4}, "spell": "mend", "scroll": "scroll_mend"},
+	{"id": "potion", "cat": "Potions", "name": "Healing Draught", "cost": {CRYSTAL: 2, SHROOM: 6, GLASS: 2}, "potion": 1, "desc": "Drink with H: 35 health over a moment."},
 	{"id": "starfall", "cat": "Spells", "name": "Starfall", "cost": {EMBER: 12, OBSIDIAN: 6, COAL: 10}, "spell": "starfall", "scroll": "scroll_starfall"},
 	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPER: 20, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava."},
 	{"id": "wide", "cat": "Staff & Body", "name": "Wide Excavation", "cost": {COPPER: 10, CRYSTAL: 10}, "desc": "Bigger excavation radius (7.5 to 11)."},

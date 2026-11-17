@@ -573,9 +573,10 @@ func _build_settings() -> void:
 	grid.add_theme_constant_override("v_separation", 3)
 	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold in the air to levitate"],
 			["Left mouse", "Cast the selected spell"], ["Right mouse", "Excavate (dig at a chest to open it)"],
-			["Shift + right mouse", "Deconstruct background tiles"], ["F", "Open a chest"],
-			["1-6 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
+			["Shift + right mouse", "Deconstruct background tiles; take furniture whole"], ["F", "Open a chest or door; at a bed, make it home"],
+			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
 			["C", "Wisp Forge (crafting)"], ["M", "Zoom out"],
+			["H", "Drink a Healing Draught"], ["B", "Build mode (G: how walls and blocks are laid)"],
 			["Esc", "Settings and controls"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 13, GOLD))
 		grid.add_child(_label(pair[1], 13, TEXT))
@@ -645,7 +646,7 @@ func hide_forge() -> void:
 ## when the satchel can't pay), and the chosen piece's cost.
 func _update_build_bar(g) -> void:
 	var piece: Dictionary = g.build_piece()
-	var key := "%d|%d|%s|%d|%d|%d|%s" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {}))]
+	var key := "%d|%d|%s|%d|%d|%d|%s|%d|%d|%s" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {})), g.build_shape, g.build_thick, str(g.build_prev.get("text", ""))]
 	if key == _build_key:
 		return
 	_build_key = key
@@ -657,7 +658,7 @@ func _update_build_bar(g) -> void:
 	tabs.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	build_box.add_child(tabs)
 	tabs.add_child(_label("Q", 11, DIM))
-	for k in Build.CATS.size():
+	for k in Build.CAT_ORDER:
 		tabs.add_child(_label(Build.CATS[k], 14 if k == g.build_cat else 12, GOLD if k == g.build_cat else DIM))
 	tabs.add_child(_label("E", 11, DIM))
 	var row := HFlowContainer.new()
@@ -686,10 +687,17 @@ func _update_build_bar(g) -> void:
 				hint = "%s: point at open ground" % piece["name"]
 			hint = "%s %s, %d wide%s" % [Build.STYLES[g.build_style][0], hint, g.build_w, (", %d storeys" % g.build_floors) if piece["struct"] != "roof" and g.build_floors > 1 else ""]
 			hint += "  ·  [ ] width  ·  %sT style  ·  R variation  ·  B leaves" % ("- = storeys  ·  " if piece["struct"] != "roof" else "")
+		elif piece["kind"] == "block" or (piece["kind"] == "wall" and g.build_shape != 0):
+			var shp: String = Build.SHAPES[maxi(g.build_shape, 1)]
+			hint = "%s, %s%s  ·  press, drag, let go to lay it (right-click cancels)  ·  G shape  ·  %s  ·  B leaves" % [piece["name"], shp,
+				(", %d thick" % g.build_thick) if shp != "Rectangle" else "", "[ ] thickness" if shp != "Rectangle" else "[ ] thickness of lines and frames"]
+			var ptxt: String = g.build_prev.get("text", "")
+			if ptxt != "":
+				hint += "\n" + ptxt
 		elif piece["kind"] == "carried":
 			hint = "%s: yours, carried in the satchel  ·  click to set it down  ·  T mirror  ·  B leaves" % piece["name"]
 		else:
-			hint += "  ·  click to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else (" (hold to paint)" if piece["kind"] == "wall" else ""))
+			hint += "  ·  click to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else ("  ·  hold to paint  ·  G shape" if piece["kind"] == "wall" else ""))
 		var hl := _label(hint, 12, CREAM)
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		build_box.add_child(hl)
@@ -812,6 +820,7 @@ func update_hud(g) -> void:
 			ik += "%d:%d," % [m, g.player.inv[m]]
 	for it in g.player.furn:
 		ik += String(it["name"]) + ";"
+	ik += "p%d" % int(g.items.get("potion", 0))
 	if ik != _inv_key:
 		_inv_key = ik
 		for c in satchel.get_children():
@@ -856,6 +865,27 @@ func update_hud(g) -> void:
 			row.add_child(_label(str(g.player.inv[m]), 12, CREAM))
 			rp.gui_input.connect(_on_mat_input.bind(m))
 			satchel.add_child(rp)
+		var np := int(g.items.get("potion", 0))
+		if np > 0:
+			any = true
+			var prow := HBoxContainer.new()
+			prow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var psw := PanelContainer.new()
+			var psb := StyleBoxFlat.new()
+			psb.bg_color = Color(0.85, 0.2, 0.3)
+			psb.border_color = OUTLINE
+			psb.set_border_width_all(1)
+			psb.set_corner_radius_all(5)
+			psw.add_theme_stylebox_override("panel", psb)
+			psw.custom_minimum_size = Vector2(11, 11)
+			psw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			psw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			prow.add_child(psw)
+			var pl := _label("Healing Draught (H)", 12, TEXT)
+			pl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			prow.add_child(pl)
+			prow.add_child(_label(str(np), 12, CREAM))
+			satchel.add_child(prow)
 		# furniture carried whole, one line per kind
 		var fc := {}
 		var forder := []
@@ -1000,8 +1030,9 @@ func _set_panel_style(p: PanelContainer, sb: StyleBox) -> void:
 	if is_instance_valid(p):
 		p.add_theme_stylebox_override("panel", sb)
 
-## True when the pointer is over a clickable HUD element (satchel, spell slots).
-func mouse_over_ui() -> bool:
+## True when the pointer is over a clickable HUD element (satchel, spell slots; with
+## `slots` false, only the panels: the wheel still picks a spell over the slots).
+func mouse_over_ui(slots := true) -> bool:
 	if settings_panel and settings_panel.visible:
 		return true
 	if hud == null or not hud.visible:
@@ -1009,6 +1040,8 @@ func mouse_over_ui() -> bool:
 	var m := get_viewport().get_mouse_position()
 	if satchel_panel and satchel_panel.get_global_rect().has_point(m):
 		return true
-	if hotbar and hotbar.get_global_rect().has_point(m):
+	if slots and hotbar and hotbar.get_global_rect().has_point(m):
+		return true
+	if build_bar and build_bar.visible and build_bar.get_global_rect().has_point(m):
 		return true
 	return false

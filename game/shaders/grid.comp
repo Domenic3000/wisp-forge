@@ -55,7 +55,9 @@ void main() {
 				atomicMax(counts.n[cb + 55u], ((4095u - d2) << 20) | (uint(clamp(jc, 0.0, 1023.0)) << 10) | uint(clamp(ic, 0.0, 1023.0)));
 			}
 		}
-		if (looseF && lifeF > 0u && lifeF < 128u && abs(di) <= 4.5 && abs(dj) <= 11.5) {
+		// (only through the upper half: a clod sliding down beside your legs as you drop into a pit
+		// you dug isn't one falling on you)
+		if (looseF && lifeF > 0u && lifeF < 128u && abs(di) <= 4.5 && dj >= -11.5 && dj <= 0.0) {
 			atomicAdd(counts.n[cb + 52u], 1u);
 			atomicMax(counts.n[cb + 53u], lifeF);
 		}

@@ -23,6 +23,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   - bits 16-23: life (fall distance for falling blocks)
   - bits 24-29: support distance
   - bit 30: anchored (untouched natural ground)
+  - bit 31: BUILT (`ST_BUILT`: stamped from a blueprint, a structure rather than the planet's own ground)
 - Background buffer (binding 8, `inc/bglayer.comp`):
   - bits 0-7: material
   - bits 8-13: support
@@ -33,6 +34,12 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
     tree is only held by its wood touching the ground, so a cut tree drops whole and fast.
 - A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`),
   but only for materials the digging staff could dig (so a vault's obsidian never comes loose early).
+- A structure wakes as a whole: in `support.comp` an anchored built cell (front with ST_BUILT, or a BG_WALL back
+  wall) wakes when a built neighbour or its own other layer is awake, so digging near any part of a building lets
+  all of it obey the physics (anything harder than brick, HARD > 2, never wakes by spreading). Natural ground
+  never takes part.
+- Resting on powder (`restOn` in support.comp) looks down through the pile (up to 48 cells) to what's under it:
+  only solid ground or a real dune holds, so rubble lying on a hanging floor never holds that floor up.
 
 ## Generation rules
 - Keep everything modular and procedural: structures are assembled from parts in buildings.gd (`_roof`
@@ -80,6 +87,14 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   most of the bed is still there (`_home_pos`).
 - Collision grid background bits: 0x40 furniture, 0x80 built back wall, 0xC0 a tree (building over one would
   fell it, so build mode refuses; bushes are just covered).
+- Straight building (build.gd `SHAPES`, main's `_update_shape`): back walls (Back Walls tab) and solid blocks
+  (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
+  degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
+  thickness. `Build.shape_cells` / `shape_stamp`; one material per cell; blocks skip cells where someone stands.
+- Health doesn't regenerate. Healing Draughts (`items["potion"]`, H to drink, `_drink`; forged or found in chests,
+  two at the start) and the Mending spell (its scroll is a rare find) heal over a moment (`Mage.heal_left`).
+- Falling rock hurts only after falling `ROCK_HURT_FALL` cells and only through your upper half (grid.comp), so
+  digging a pit under yourself doesn't.
 - Doors swing either way (away from whoever opens them, `swing`); the open panel (overlay, face-on) burns when
   fire reaches it (`_check_door_fire`) and breaks in a blast.
 - Foundations: two courses of the building's stone, then the biome's own ground layers (`_ground_mats`); yards are

@@ -13,8 +13,19 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Walls", "Doors & Platforms", "Furniture", "Outdoors", "Structures", "Satchel"]
+const CATS := ["Back Walls", "Doors & Platforms", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks"]
 const CAT_SATCHEL := 5        # furniture you carry (picked up whole, or forged): set down for free
+const CAT_BLOCKS := 6         # solid blocks, laid in straight lines and rectangles
+## the order the tabs are shown in (and Q/E steps through)
+const CAT_ORDER := [0, 6, 1, 2, 3, 4, 5]
+
+## How back walls and blocks are laid (G cycles): painted with a round brush (back walls only), or
+## dragged out (press, drag, release) as a straight line (snapped across, up or at 45 degrees), a
+## filled rectangle, or a frame (a rectangle's outline). [ ] set the thickness of lines and frames.
+const SHAPES := ["Brush", "Line", "Rectangle", "Frame"]
+const THICK_MAX := 8
+const SHAPE_MAX_CELLS := 5000  # the most one drag can lay
+const SHAPE_REACH := 110.0     # how far from you a drag may reach (further than digging)
 ## building styles for structures: [name, the biome whose house style it is]
 const STYLES := [["Timber", "forest"], ["Log Cabin", "tundra"], ["Stone", "mountain"], ["Sandstone", "desert"],
 	["Brick", "ashland"], ["Swamp", "marsh"], ["Jungle", "jungle"], ["Mud-brick", "savanna"], ["Mushroom", "grove"]]
@@ -37,6 +48,14 @@ static func pieces() -> Array:
 		{"cat": 0, "name": "Brick Wall", "kind": "wall", "mat": Defs.BRICK, "cost": {Defs.BRICK: 1}},
 		{"cat": 0, "name": "Sandstone Wall", "kind": "wall", "mat": Defs.SANDSTONE, "cost": {Defs.SANDSTONE: 1}},
 		{"cat": 0, "name": "Glass Pane", "kind": "wall", "mat": Defs.GLASS, "cost": {Defs.GLASS: 1}},
+		{"cat": 6, "name": "Stone Blocks", "kind": "block", "mat": Defs.MASONRY, "cost": {Defs.MASONRY: 1}},
+		{"cat": 6, "name": "Bricks", "kind": "block", "mat": Defs.BRICK, "cost": {Defs.BRICK: 1}},
+		{"cat": 6, "name": "Planks", "kind": "block", "mat": Defs.PLANK, "cost": {Defs.PLANK: 1}},
+		{"cat": 6, "name": "Logs", "kind": "block", "mat": Defs.WOOD, "cost": {Defs.WOOD: 1}},
+		{"cat": 6, "name": "Sandstone", "kind": "block", "mat": Defs.SANDSTONE, "cost": {Defs.SANDSTONE: 1}},
+		{"cat": 6, "name": "Mossy Blocks", "kind": "block", "mat": Defs.MOSSBLOCK, "cost": {Defs.MOSSBLOCK: 1}},
+		{"cat": 6, "name": "Roof Tiles", "kind": "block", "mat": Defs.TILE, "cost": {Defs.TILE: 1}},
+		{"cat": 6, "name": "Glass Window", "kind": "block", "mat": Defs.GLASS, "cost": {Defs.GLASS: 1}},
 		{"cat": 1, "name": "Wooden Door", "kind": "door", "cost": {Defs.WOODDOOR: 1}, "alt": {Defs.PLANK: 8}},
 		{"cat": 1, "name": "Platform", "kind": "platform", "cost": {Defs.PLANK: 4}},
 		{"cat": 2, "name": "Table", "kind": "prop", "prop": "table", "cost": {Defs.PLANK: 6}},
@@ -94,6 +113,88 @@ static func furniture_recipes() -> Array:
 ## a carried piece for a satchel: a design of this piece (forged) or the pixels picked up
 static func carried_item(name: String, d: Dictionary, prop: String) -> Dictionary:
 	return {"name": name, "rows": d["rows"], "wall": bool(d.get("wall", false)), "kind": Props.kind_id(prop)}
+
+## The cells a drag from cell a to cell b covers in `shape` (1 line, 2 rectangle, 3 frame) with
+## lines and frames `thick` cells thick; a line is snapped to across, up or 45 degrees. Columns
+## wrap around the planet, so a drag across the seam still goes the short way.
+static func shape_cells(a: Vector2i, b: Vector2i, shape: int, thick: int) -> Array:
+	var n0: int = Defs.SH_N[0]
+	var dx := b.x - a.x
+	if dx > n0 / 2:
+		dx -= n0
+	elif dx < -n0 / 2:
+		dx += n0
+	var dy := b.y - a.y
+	var out := {}
+	var t0 := -(thick - 1) / 2
+	if shape <= 1:
+		var ax := absi(dx)
+		var ay := absi(dy)
+		var sx := signi(dx)
+		var sy := signi(dy)
+		var steps := 0
+		if ax >= 2 * ay:
+			sy = 0
+			steps = ax
+		elif ay >= 2 * ax:
+			sx = 0
+			steps = ay
+		else:
+			steps = maxi(ax, ay)
+		for k in steps + 1:
+			for oy in thick:
+				for ox in thick:
+					out[Vector2i(a.x + sx * k + t0 + ox, a.y + sy * k + t0 + oy)] = true
+	else:
+		var x0 := mini(0, dx)
+		var x1 := maxi(0, dx)
+		var y0 := mini(a.y, b.y)
+		var y1 := maxi(a.y, b.y)
+		var area := (x1 - x0 + 1) * (y1 - y0 + 1)
+		var edge_cells := mini(area, 2 * thick * (x1 - x0 + y1 - y0 + 2))
+		if (shape == 2 and area > SHAPE_MAX_CELLS) or (shape == 3 and edge_cells > SHAPE_MAX_CELLS):
+			var too := []                   # too big to lay in one go (the caller says so)
+			too.resize(SHAPE_MAX_CELLS + 1)
+			too.fill(a)
+			return too
+		for y in range(y0, y1 + 1):
+			var full := shape == 2 or y - y0 < thick or y1 - y < thick
+			var xs: Array = range(x0, x1 + 1) if full else range(x0, mini(x0 + thick, x1 + 1)) + range(maxi(x1 - thick + 1, x0), x1 + 1)
+			for x in xs:
+				out[Vector2i(a.x + x, y)] = true
+	var keys := out.keys()
+	for k in keys.size():
+		var v: Vector2i = keys[k]
+		keys[k] = Vector2i(posmod(v.x, n0), v.y)
+	return keys
+
+## a stamp laying `mat` on these cells, as solid blocks or (back) as a built back wall; not anchored,
+## so it obeys the physics like everything you build
+static func shape_stamp(cells: Array, mat: int, back: bool) -> Dictionary:
+	var n0: int = Defs.SH_N[0]
+	var c0: int = cells[0].x
+	var r0: int = cells[0].y
+	var c1 := c0
+	var r1 := r0
+	# columns relative to the first cell, the short way round
+	var rel := []
+	for c in cells:
+		var dx: int = posmod(c.x - cells[0].x + n0 / 2, n0) - n0 / 2
+		rel.append(Vector2i(cells[0].x + dx, c.y))
+	for c in rel:
+		c0 = mini(c0, c.x)
+		c1 = maxi(c1, c.x)
+		r0 = mini(r0, c.y)
+		r1 = maxi(r1, c.y)
+	var w := c1 - c0 + 1
+	var h := r1 - r0 + 1
+	var data := PackedInt32Array()
+	data.resize(w * h)
+	data.fill(0xffff)
+	var v := (0xff | (mat << 8) | 0x40000) if back else (0xff00 | mat)
+	for c in rel:
+		data[(c.y - r0) * w + (c.x - c0)] = v
+	return {"x0": posmod(c0, n0), "y0": r0, "w": w, "h": h, "data": data}
 
 static func in_cat(all: Array, cat: int) -> Array:
 	var out := []

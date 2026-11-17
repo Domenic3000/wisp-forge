@@ -30,7 +30,7 @@ void main() {
 		if (!fillOnly || !(kc == K_SOLID || kc == K_POWDER)) {
 			uint v = (d & 0x8000000u) != 0u ? ((d >> 19) & 255u) : (hashu(uint(col) * 2654435761u ^ uint(row) * 40503u ^ uint(pc.b.y)) & 255u);
 			uint anchor = ((d & 0x20000u) != 0u && KIND[fc] == K_SOLID) ? ST_ANCHOR : 0u;
-			world.cells[idx] = fc | (v << 8) | anchor;
+			world.cells[idx] = fc | (v << 8) | anchor | (KIND[fc] == K_SOLID ? ST_BUILT : 0u);
 		}
 	}
 	if (bc != 255u) {

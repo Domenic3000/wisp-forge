@@ -5,6 +5,10 @@
 // breaks loose), bit 30 ANCHORED (untouched natural terrain: part of the planet).
 // The background layer (trees, back walls...) lives in a second buffer, see "aux".
 #define ST_ANCHOR 0x40000000u
+// bit 31 BUILT: put there by a blueprint (a structure, yours or the planet's), not the planet's own
+// ground. An anchored built cell wakes when a built neighbour is awake (support.comp), so once you
+// dig near any part of a building the whole of it obeys the physics and can come down.
+#define ST_BUILT 0x80000000u
 #define ST_MAX 63u
 uint stOf(uint c) { return (c >> 24) & 63u; }
 uint withST(uint c, uint st) { return (c & 0xc0ffffffu) | (min(st, ST_MAX) << 24); }

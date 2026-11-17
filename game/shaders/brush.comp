@@ -119,7 +119,7 @@ void main() {
 					if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID || t == M_SNOW || t == M_ASH) {
 						uint row = uint(clamp(B.z - vv, 0.0, 31.0));
 						uint col = uint(clamp(u + B.y, 0.0, 3.0));
-						c = M_WOODDOOR | (((row << 2) | col) << 8) | ST_ANCHOR;
+						c = M_WOODDOOR | (((row << 2) | col) << 8) | ST_ANCHOR | ST_BUILT;
 					}
 				} else if (t == M_WOODDOOR) {
 					c = 0u;
