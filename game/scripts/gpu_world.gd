@@ -514,6 +514,33 @@ func light_at(px: Vector2) -> Color:
 		return Color.WHITE
 	return Color(minf(sqrt(maxf(light[k], 0.0) + 0.008), 1.3), minf(sqrt(maxf(light[k + 1], 0.0) + 0.008), 1.3), minf(sqrt(maxf(light[k + 2], 0.0) + 0.008), 1.3))
 
+## A w x h block of shell-0 cells (column c0.., row r0..; columns wrap around the planet), both
+## layers: {"fg": PackedInt32Array, "bg": PackedInt32Array}, row by row. For a one-off look (picking
+## up a piece of furniture, checking a bed): it waits for the GPU.
+func read_rect(c0: int, r0: int, w: int, h: int) -> Dictionary:
+	flush()
+	var n0: int = Defs.SH_N[0]
+	var fg := PackedInt32Array()
+	var bg := PackedInt32Array()
+	fg.resize(w * h)
+	bg.resize(w * h)
+	for j in h:
+		var row := r0 + j
+		if row < 0 or row >= Defs.SH_Y0[1]:
+			continue
+		var i := 0
+		while i < w:
+			var col := posmod(c0 + i, n0)
+			var run := mini(w - i, n0 - col)          # up to the seam, then around
+			var off: int = (Defs.SH_OFF[0] + (row - Defs.SH_Y0[0]) * n0 + col) * 4
+			var fa := rd.buffer_get_data(world_buf, off, run * 4).to_int32_array()
+			var ba := rd.buffer_get_data(aux_buf, off, run * 4).to_int32_array()
+			for q in run:
+				fg[j * w + i + q] = fa[q]
+				bg[j * w + i + q] = ba[q]
+			i += run
+	return {"fg": fg, "bg": bg}
+
 ## Both layers, foreground cells first then the background layer.
 func read_world() -> PackedByteArray:
 	flush()

@@ -866,8 +866,8 @@ func run() -> void:
 	# (try a few places along the ground until it fits)
 	var table_at: Vector2 = spot.call(-14.0, 5.0)
 	var table_ok := false
-	for tk in 6:
-		table_at = spot.call(-14.0 - tk * 4.0, 5.0)
+	for tk in 16:
+		table_at = spot.call((-14.0 - tk * 4.0) if tk < 8 else (14.0 + (tk - 8) * 4.0), 5.0)
 		g.test_aim = table_at
 		await _frames(3)
 		table_ok = g.build_prev.get("ok", false)
@@ -932,7 +932,7 @@ func run() -> void:
 	var at_ang := func(k: float, up: float) -> Vector2:
 		var aa: float = hb_ang + k / Defs.RS0
 		return Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + up)
-	for hk in [-150.0, -190.0, -230.0, -270.0, -310.0, -350.0]:
+	for hk in [-150.0, -190.0, -230.0, -270.0, -310.0, -350.0, -390.0, -430.0, -470.0, -510.0, -550.0, -590.0, -630.0, -670.0]:
 		# stand next to the spot (you can only build within reach), well away from the pieces above
 		_go(at_ang.call(hk + 30.0, 14.0))
 		await _frames(25)
@@ -984,6 +984,97 @@ func run() -> void:
 	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
 	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and doors_mid == doors_before + 1,
 		"wall cells %d, table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
+
+	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
+	var furn0: int = g.player.furn.size()
+	var picked := false
+	var t_item: Dictionary = {}
+	var t_px := 0
+	var t_left := -1
+	var t_back := -1
+	var back_ok := false
+	if not tstamp.is_empty():
+		var t_mid: Vector2 = Build.cell_pos(int(tstamp["x0"]) + int(tstamp["w"]) / 2, int(tstamp["y0"]) + 3)
+		picked = g._pick_up_furniture(g.player, t_mid)
+		await _frames(4)
+		t_left = count_decor.call(g.gpu.read_world())
+		if g.player.furn.size() > furn0:
+			t_item = g.player.furn[g.player.furn.size() - 1]
+		for tr in t_item.get("rows", []):
+			for tch in String(tr):
+				if tch != "." and tch != "t":
+					t_px += 1
+		# set it down again from the Satchel tab, where it stood
+		_go(Vector2(cos(bg_ang), sin(bg_ang)) * (bsurf + 12.0))
+		await _frames(30)
+		if not g.build_on:
+			g._toggle_build()
+		g.build_cat = Build.CAT_SATCHEL
+		g.build_idx[Build.CAT_SATCHEL] = maxi(0, g.player.furn.size() - 1)
+		g.test_aim = table_at
+		await _frames(3)
+		back_ok = g.build_prev.get("ok", false)
+		g.build_click = true
+		await _frames(8)
+		t_back = count_decor.call(g.gpu.read_world())
+	_ok("furniture is picked up whole and set down again", picked and t_item.get("name", "") == "Table" and t_left == 0 and t_px == table_now and back_ok and t_back >= table_now - 2 and g.player.furn.size() == furn0,
+		"picked %s as %s (%d pixels, %d were placed), left behind %d; set down again: fits %s, %d cells; carried %d -> %d" % [picked, t_item.get("name", "-"), t_px, table_now, t_left, back_ok, t_back, furn0, g.player.furn.size()])
+	# a bed from the Wisp Forge
+	var bed_r: Dictionary = {}
+	for r in g.recipes:
+		if String(r.get("furniture", "")) == "bed":
+			bed_r = r
+	var forged := false
+	var bed_item: Dictionary = {}
+	if not bed_r.is_empty():
+		for k in bed_r["cost"]:
+			g.player.inv[int(k)] += int(bed_r["cost"][k])
+		var nf: int = g.player.furn.size()
+		forged = g.craft(bed_r) and g.player.furn.size() == nf + 1
+		if forged:
+			bed_item = g.player.furn[g.player.furn.size() - 1]
+	_ok("furniture is forged into the satchel", forged and bed_item.get("name", "") == "Bed" and int(bed_item.get("kind", 0)) == Build.Props.BED,
+		"recipe %s, forged %s: %s" % [bed_r.get("id", "none"), forged, str(bed_item.get("name", "-"))])
+	# a bed out in the open is no home; one inside the house built above is
+	var sky_c: Vector2i = Build.cell_of(g.player.pos)
+	var open_why: String = g._home_check({"c0": sky_c.x, "r0": sky_c.y - 150, "c1": sky_c.x + 20, "r1": sky_c.y - 140})
+	var home_set := false
+	var bed_placed := false
+	var woke_at := -1.0
+	if house_ok and forged:
+		_go(house_at)
+		await _frames(30)
+		g.build_cat = Build.CAT_SATCHEL
+		g.build_idx[Build.CAT_SATCHEL] = g.player.furn.size() - 1
+		var nb0: int = g.player.furn.size()
+		for bk in 7:
+			g.test_aim = house_at + (house_at - g.player.pos).normalized() * 0.0 + Vector2(-house_at.y, house_at.x).normalized() * float(bk % 2 * 2 - 1) * float(bk / 2) * 5.0
+			await _frames(3)
+			if g.build_prev.get("ok", false):
+				g.build_click = true
+				await _frames(8)
+				break
+		bed_placed = g.player.furn.size() == nb0 - 1
+		g.test_aim = Vector2.ZERO
+		if g.build_on:
+			g._toggle_build()
+		await _frames(10)
+		g.planet_state.erase("home")
+		g._interact()
+		home_set = g.planet_state.has("home")
+		if home_set:
+			var hp3: Array = g.planet_state["home"]["pos"]
+			var hpos := Vector2(float(hp3[0]), float(hp3[1]))
+			_go(Vector2(cos(g.spawn_angle), sin(g.spawn_angle)) * (Defs.RS0 + 40.0))
+			await _frames(5)
+			g._respawn()
+			woke_at = g.player.pos.distance_to(hpos)
+			await _frames(20)
+		g.planet_state.erase("home")
+	if g.build_on:
+		g._toggle_build()
+	_ok("a bed in a room makes a home you wake up in", open_why != "" and bed_placed and home_set and woke_at >= 0.0 and woke_at < 4.0,
+		"a bed in the open needs %s; the bed set down in the house: %s, home set: %s, woke %.1f from it" % [open_why if open_why != "" else "nothing (wrong)", bed_placed, home_set, woke_at])
 
 	# ---- conjuring onto a foe strikes it instead of burying it ----
 	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))
@@ -1233,7 +1324,7 @@ func run() -> void:
 			cards += c.get_child_count()
 	g.ui.hide_forge()
 	var wide: Dictionary = {}
-	for r in Defs.RECIPES:
+	for r in g.recipes:
 		if r["id"] == "wide":
 			wide = r
 	var crafted := false
@@ -1242,7 +1333,7 @@ func run() -> void:
 		for k in wide["cost"]:
 			g.player.inv[int(k)] += int(wide["cost"][k])
 		crafted = g.craft(wide) and g.dig_r >= 11.0
-	_ok("the Wisp Forge lists recipes and crafts", cards == Defs.RECIPES.size() and crafted, "%d of %d recipe cards, crafting %s" % [cards, Defs.RECIPES.size(), "works" if crafted else "failed"])
+	_ok("the Wisp Forge lists recipes and crafts", cards == g.recipes.size() and crafted, "%d of %d recipe cards, crafting %s" % [cards, g.recipes.size(), "works" if crafted else "failed"])
 
 	# ---- save and load give back the same world ----
 	var a: PackedByteArray = g.gpu.read_world()

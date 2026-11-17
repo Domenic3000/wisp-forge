@@ -23,6 +23,7 @@ var build_box: VBoxContainer
 var _build_key := ""
 var satchel: VBoxContainer
 var satchel_panel: PanelContainer
+var death_txt: Label
 var toasts: VBoxContainer
 var boss_box: VBoxContainer
 var boss_bar: ProgressBar
@@ -498,6 +499,7 @@ func _build_screens() -> void:
 	dv.add_child(dl)
 	dv.add_child(_center(_rule(320)))
 	var ds := _label("The wisp carries you back to the surface. A quarter of your satchel is lost.", 14, Color(0.82, 0.76, 1))
+	death_txt = ds
 	ds.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	dv.add_child(ds)
 	var rb := _button("Rise again", true)
@@ -625,6 +627,7 @@ func show_hud() -> void:
 	hud.visible = true
 
 func show_death() -> void:
+	death_txt.text = "The wisp carries you back %s. A quarter of your satchel is lost." % ("home" if game.planet_state.has("home") else "to the surface")
 	death.visible = true
 
 func hide_death() -> void:
@@ -669,6 +672,10 @@ func _update_build_bar(g) -> void:
 		var on: bool = pc == piece
 		var col := GOLD if on else (TEXT if afford else Color(0.55, 0.42, 0.45))
 		row.add_child(_label(("%d %s" % [k + 1, pc["name"]]) if k < 9 else pc["name"], 13 if on else 12, col))
+	if lst.is_empty() and g.build_cat == Build.CAT_SATCHEL:
+		var el := _label("Nothing carried. Shift + right-click a piece of furniture to take it whole, or forge some (C).", 12, CREAM)
+		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		build_box.add_child(el)
 	if not piece.is_empty():
 		var cost_txt: String = Build.cost_text(piece["cost"])
 		if piece.has("alt"):
@@ -679,6 +686,8 @@ func _update_build_bar(g) -> void:
 				hint = "%s: point at open ground" % piece["name"]
 			hint = "%s %s, %d wide%s" % [Build.STYLES[g.build_style][0], hint, g.build_w, (", %d storeys" % g.build_floors) if piece["struct"] != "roof" and g.build_floors > 1 else ""]
 			hint += "  ·  [ ] width  ·  %sT style  ·  R variation  ·  B leaves" % ("- = storeys  ·  " if piece["struct"] != "roof" else "")
+		elif piece["kind"] == "carried":
+			hint = "%s: yours, carried in the satchel  ·  click to set it down  ·  T mirror  ·  B leaves" % piece["name"]
 		else:
 			hint += "  ·  click to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else (" (hold to paint)" if piece["kind"] == "wall" else ""))
 		var hl := _label(hint, 12, CREAM)
@@ -801,6 +810,8 @@ func update_hud(g) -> void:
 	for m in Defs.NM:
 		if g.player.inv[m] > 0:
 			ik += "%d:%d," % [m, g.player.inv[m]]
+	for it in g.player.furn:
+		ik += String(it["name"]) + ";"
 	if ik != _inv_key:
 		_inv_key = ik
 		for c in satchel.get_children():
@@ -845,6 +856,37 @@ func update_hud(g) -> void:
 			row.add_child(_label(str(g.player.inv[m]), 12, CREAM))
 			rp.gui_input.connect(_on_mat_input.bind(m))
 			satchel.add_child(rp)
+		# furniture carried whole, one line per kind
+		var fc := {}
+		var forder := []
+		for it in g.player.furn:
+			var fn: String = it["name"]
+			if not fc.has(fn):
+				fc[fn] = 0
+				forder.append(fn)
+			fc[fn] = int(fc[fn]) + 1
+		if not forder.is_empty():
+			any = true
+			var fh := _label("Furniture  (B, Satchel tab)", 11, DIM)
+			satchel.add_child(fh)
+			for fn2 in forder:
+				var frow := HBoxContainer.new()
+				frow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				var fsw := PanelContainer.new()
+				var fsb := StyleBoxFlat.new()
+				fsb.bg_color = Color(0.56, 0.37, 0.2)
+				fsb.border_color = OUTLINE
+				fsb.set_border_width_all(1)
+				fsw.add_theme_stylebox_override("panel", fsb)
+				fsw.custom_minimum_size = Vector2(11, 11)
+				fsw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+				fsw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				frow.add_child(fsw)
+				var fl := _label(fn2, 12, TEXT)
+				fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				frow.add_child(fl)
+				frow.add_child(_label(str(fc[fn2]), 12, CREAM))
+				satchel.add_child(frow)
 		if not any:
 			satchel.add_child(_label("Right-click to excavate", 11, DIM))
 	# boss
@@ -867,7 +909,7 @@ func _render_forge() -> void:
 		c.queue_free()
 	var cats := {}
 	var order := []
-	for r in Defs.RECIPES:
+	for r in game.recipes:
 		if not cats.has(r["cat"]):
 			cats[r["cat"]] = []
 			order.append(r["cat"])

@@ -108,7 +108,7 @@ var test_cast := false       # test mode: hold the left button
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
-var build_idx := [0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
+var build_idx := [0, 0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
 var build_seed := 1           # the furniture design shown (R rolls a new one)
 var build_flip := false       # T mirrors it
 var build_click := false      # a fresh left click (furniture, doors and platforms go down one per click)
@@ -172,6 +172,7 @@ class Mage extends Body:
 	var breath := 600.0
 	var max_breath := 600.0
 	var inv := PackedInt32Array()
+	var furn := []             # furniture carried whole: [{name, rows, wall, kind}] (Build.carried_item)
 	var items := {}
 	var known := ["spark", "conjure"]
 	var tier := 1
@@ -186,6 +187,7 @@ class Mage extends Body:
 	var dig_blocked := 0
 	var pending_place := 0
 	var pending_mat := -1      # what the pending placement uses (-1: the conjure material)
+	var decon_lock := false    # a piece was just picked up: no more deconstructing until the button is let go
 	var dig_tap := 0           # a quick right-click still digs for a few frames
 	var jump_held := false
 	var ground_t := 99         # frames since standing on something
@@ -198,6 +200,8 @@ class Mage extends Body:
 		step_h = 5
 
 var player := Mage.new()
+## every Wisp Forge recipe: the fixed ones and the furniture from build mode's catalogue
+var recipes: Array = Defs.RECIPES + Build.furniture_recipes()
 var players: Array = [player]
 
 # the local mage's state, by its old names (so the rest of the game reads naturally)
@@ -781,7 +785,11 @@ func _interact() -> void:
 	if not _chest_in_reach().is_empty():
 		_try_open_chest()
 		return
+	if _try_home(player, 12):            # a bed right beside you comes before a door
+		return
 	var d := _door_near(player.pos, 22.0)
+	if d.is_empty() and _try_home(player, 26):
+		return
 	if not d.is_empty():
 		_set_door(d, not d["open"], player.pos)
 
@@ -1296,6 +1304,8 @@ func _tick() -> void:
 				_excavate(m, m.input.aim)
 			if m.input.decon:
 				_deconstruct(m, m.input.aim)
+			else:
+				m.decon_lock = false
 		if m.dig_tap > 0:
 			m.dig_tap -= 1
 	_use_grid(player)
@@ -1556,8 +1566,238 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 ## you clear a wall on purpose; plain right-click never touches a building's walls.
 func _deconstruct(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
+	if m.decon_lock:
+		return
+	if _pick_up_furniture(m, p):
+		m.decon_lock = true      # don't go on to take the wall behind it in the same press
+		return
 	brushes.append([p, m.dig_r * 0.8, 8, 0, m.tier, 0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.9, 0.6, 0.3)])
+
+# ------------------------------------------------------------ furniture --
+const PICK_HALF := 48          # how far from the cursor a piece may reach (it's read as one block)
+
+## The connected piece of furniture around cell `start` in a block read by gpu.read_rect (n x n,
+## background layer `bgs`): its cells (indices into the block), joined across diagonals, of the same
+## kind as the start cell (so a chair pushed against a table stays a chair); a piece's candles and
+## lamps come with it. Empty if it reaches the edge of the block (too big to carry).
+func _furniture_piece(bgs: PackedInt32Array, n: int, start: int) -> PackedInt32Array:
+	var kid := (bgs[start] >> 24) & 15
+	var seen := PackedByteArray()
+	seen.resize(n * n)
+	var out := PackedInt32Array()
+	var todo := PackedInt32Array([start])
+	seen[start] = 1
+	while not todo.is_empty():
+		var k: int = todo[todo.size() - 1]
+		todo.remove_at(todo.size() - 1)
+		out.append(k)
+		var ci := k % n
+		var cj := k / n
+		if ci == 0 or cj == 0 or ci == n - 1 or cj == n - 1:
+			return PackedInt32Array()
+		for dj in [-1, 0, 1]:
+			for di in [-1, 0, 1]:
+				var q: int = k + dj * n + di
+				if seen[q] != 0:
+					continue
+				var mq := bgs[q] & 255
+				if (mq == Defs.DECOR and ((bgs[q] >> 24) & 15) == kid) or mq == Defs.TORCH:
+					seen[q] = 1
+					todo.append(q)
+	return out
+
+## Shift + right-click on a piece of furniture takes it whole: its exact pixels go into the satchel
+## (Mage.furn) and it can be set down again from build mode's Satchel tab. If it stood in front of a
+## back wall, the wall is made whole behind it. False if there's no furniture at p (then the
+## ordinary deconstruct takes background tiles).
+func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
+	var cc := Build.cell_of(p)
+	var n := PICK_HALF * 2 + 1
+	var c0 := cc.x - PICK_HALF
+	var r0 := cc.y - PICK_HALF
+	var rr: Dictionary = gpu.read_rect(c0, r0, n, n)
+	var bgs: PackedInt32Array = rr["bg"]
+	var reach := int(ceil(m.dig_r * 0.8))
+	var start := -1
+	var best := 1 << 30
+	for dj in range(-reach, reach + 1):
+		for di in range(-reach, reach + 1):
+			var k := (PICK_HALF + dj) * n + PICK_HALF + di
+			if (bgs[k] & 255) == Defs.DECOR and di * di + dj * dj < best:
+				best = di * di + dj * dj
+				start = k
+	if start < 0:
+		return false
+	var cells := _furniture_piece(bgs, n, start)
+	if cells.is_empty():
+		return false
+	var kid := (bgs[start] >> 24) & 15
+	var i0 := n
+	var j0 := n
+	var i1 := -1
+	var j1 := -1
+	var inside := {}
+	for k in cells:
+		i0 = mini(i0, k % n)
+		i1 = maxi(i1, k % n)
+		j0 = mini(j0, k / n)
+		j1 = maxi(j1, k / n)
+		inside[k] = true
+	var w := i1 - i0 + 1
+	var h := j1 - j0 + 1
+	var pix := []
+	for y in h:
+		var line := PackedStringArray()
+		line.resize(w)
+		line.fill(".")
+		pix.append(line)
+	# the wall it hid: if most of what's around its outline is a back wall, the same wall goes back
+	var hist := {}
+	var around := 0
+	var walls := 0
+	var anchored := 0
+	for k in cells:
+		var b := bgs[k]
+		var ln: PackedStringArray = pix[k / n - j0]
+		ln[k % n - i0] = "t" if (b & 255) == Defs.TORCH else Build.Props.char_of((b >> 16) & 63)
+		pix[k / n - j0] = ln
+		for q in [k - 1, k + 1, k - n, k + n]:
+			if inside.has(q):
+				continue
+			around += 1
+			var bq := bgs[q]
+			var mq := bq & 255
+			if mq != 0 and mq != Defs.DECOR and mq != Defs.TORCH and (bq & 0x4000) != 0:
+				walls += 1
+				hist[mq] = int(hist.get(mq, 0)) + 1
+				if (bq & 0x8000) != 0:
+					anchored += 1
+	var wm := 0
+	if walls > 0 and walls * 2 >= around:
+		for mk in hist:
+			if wm == 0 or int(hist[mk]) > int(hist[wm]):
+				wm = int(mk)
+	var data := PackedInt32Array()
+	data.resize(w * h)
+	data.fill(0xffff)
+	for k in cells:
+		var v := 0xff                                  # the front is left as it is
+		if wm != 0:
+			v |= (wm << 8) | 0x40000 | (0x20000 if anchored * 2 >= walls else 0)
+		data[(k / n - j0) * w + (k % n - i0)] = v
+	stamps.append({"x0": posmod(c0 + i0, Defs.SH_N[0]), "y0": r0 + j0, "w": w, "h": h, "data": data})
+	var rows := []
+	for ln2 in pix:
+		rows.append("".join(ln2))
+	var item := {"name": Build.Props.KIND_NAMES[kid], "rows": rows, "wall": Build.Props.WALL_KINDS.has(kid), "kind": kid}
+	m.furn.append(item)
+	var mid := Build.cell_pos(c0 + (i0 + i1) / 2, r0 + (j0 + j1) / 2)
+	audio.play("place", mid, 0.7, 0.8)
+	for q2 in 12:
+		_particle(mid + Vector2(randf() - 0.5, randf() - 0.5) * Vector2(w, h) * 0.8, Vector2(randf() - 0.5, -randf()) * 0.5, 18 + randi() % 14, Color(0.95, 0.8, 0.5), true, -0.01)
+	if m.local:
+		ui.toast("+ %s (set it down in build mode, B: Satchel tab)" % item["name"], Color(0.95, 0.8, 0.5), 2.5)
+	return true
+
+## The nearest bed around `pos` (a piece whose cells are of kind Props.BED): its box of cells
+## {c0, r0, c1, r1, n (cells)}, or {} if none within `reach` cells.
+func _bed_near(pos: Vector2, reach: int) -> Dictionary:
+	var cc := Build.cell_of(pos)
+	var n := (reach + PICK_HALF) * 2 + 1
+	var half := reach + PICK_HALF
+	var rr: Dictionary = gpu.read_rect(cc.x - half, cc.y - half, n, n)
+	var bgs: PackedInt32Array = rr["bg"]
+	var start := -1
+	var best := 1 << 30
+	for dj in range(-reach, reach + 1):
+		for di in range(-reach, reach + 1):
+			var k := (half + dj) * n + half + di
+			var b := bgs[k]
+			if (b & 255) == Defs.DECOR and ((b >> 24) & 15) == Build.Props.BED and di * di + dj * dj < best:
+				best = di * di + dj * dj
+				start = k
+	if start < 0:
+		return {}
+	var cells := _furniture_piece(bgs, n, start)
+	if cells.is_empty():
+		return {}
+	var box := {"c0": 1 << 30, "r0": 1 << 30, "c1": -(1 << 30), "r1": -(1 << 30), "n": cells.size()}
+	for k in cells:
+		var col := cc.x - half + k % n
+		var row := cc.y - half + k / n
+		box["c0"] = mini(box["c0"], col)
+		box["c1"] = maxi(box["c1"], col)
+		box["r0"] = mini(box["r0"], row)
+		box["r1"] = maxi(box["r1"], row)
+	return box
+
+const HOME_ROOF := 70          # how far above a bed its roof may be
+## What's missing for a bed to make a home ("" if nothing): a roof over all of it, and a back wall
+## behind the room above it (most of it: a window or two is fine).
+func _home_check(bed: Dictionary) -> String:
+	var c0: int = bed["c0"] - 1
+	var w: int = int(bed["c1"]) - c0 + 2
+	var top: int = int(bed["r0"]) - HOME_ROOF
+	var h: int = int(bed["r0"]) - top
+	var rr: Dictionary = gpu.read_rect(c0, top, w, h)
+	var fgs: PackedInt32Array = rr["fg"]
+	var bgs: PackedInt32Array = rr["bg"]
+	for i in [1, w / 2, w - 2]:
+		var roofed := false
+		for j in range(h - 1, -1, -1):
+			var t := fgs[j * w + i] & 255
+			if Defs.KIND[t] == Defs.K_SOLID and t != Defs.LEAF:
+				roofed = true
+				break
+		if not roofed:
+			return "a roof over it"
+	var walled := 0
+	var total := 0
+	for j in range(h - 14, h):
+		for i in range(1, w - 1):
+			total += 1
+			if (bgs[j * w + i] & 255) != 0:
+				walled += 1
+	if walled * 10 < total * 7:
+		return "walls around it"
+	return ""
+
+## F at a bed in a proper room makes it your home: when your light fades, the wisp brings you back
+## to it (planet_state["home"], saved with the world) instead of to the surface.
+func _try_home(m: Mage, reach: int) -> bool:
+	var bed := _bed_near(m.pos, reach)
+	if bed.is_empty():
+		return false
+	var why := _home_check(bed)
+	if why != "":
+		ui.toast("This bed needs %s to be a home" % why, Color(1, 0.7, 0.55), 2.5)
+		return true
+	var mid := Build.cell_pos((int(bed["c0"]) + int(bed["c1"])) / 2, int(bed["r1"]) - 9)
+	planet_state["home"] = {"pos": [mid.x, mid.y], "bed": [bed["c0"], bed["r0"], bed["c1"], bed["r1"]], "n": bed["n"]}
+	audio.play("forge", mid, 0.5)
+	for k in 16:
+		_particle(mid + Vector2(randf() - 0.5, randf() - 0.5) * 16.0, Vector2(randf() - 0.5, -0.3 - randf() * 0.5), 30 + randi() % 20, Color(0.75, 0.85, 1.0), true, -0.01)
+	ui.toast("Home: when your light fades, the wisp brings you back to this bed", Color(0.75, 0.88, 1.0), 3.5)
+	return true
+
+## where the wisp brings you back to: home, if its bed is still there (most of it), else nowhere
+func _home_pos() -> Variant:
+	if not planet_state.has("home"):
+		return null
+	var hm: Dictionary = planet_state["home"]
+	var bx: Array = hm["bed"]
+	var rr: Dictionary = gpu.read_rect(int(bx[0]), int(bx[1]), int(bx[2]) - int(bx[0]) + 1, int(bx[3]) - int(bx[1]) + 1)
+	var left := 0
+	for b in rr["bg"]:
+		if (b & 255) == Defs.DECOR and ((b >> 24) & 15) == Build.Props.BED:
+			left += 1
+	if left * 2 < int(hm.get("n", 1)):
+		planet_state.erase("home")
+		ui.toast("Your bed is gone: the wisp brings you to the surface", Color(1, 0.7, 0.55), 3.5)
+		return null
+	var hp2: Array = hm["pos"]
+	return Vector2(float(hp2[0]), float(hp2[1]))
 
 func _conjure(m: Mage, aim: Vector2) -> void:
 	if m.mat <= 0 or m.inv[m.mat] <= 0:
@@ -2194,6 +2434,14 @@ func craft(r: Dictionary) -> bool:
 	if r.has("give"):
 		for k in r["give"]:
 			player.inv[int(k)] += int(r["give"][k])
+	if r.has("furniture"):
+		var frng := RandomNumberGenerator.new()
+		frng.randomize()
+		var fd: Dictionary = Build.Props.make(String(r["furniture"]), frng, null)
+		player.furn.append(Build.carried_item(String(r["name"]), fd, String(r["furniture"])))
+		ui.toast("%s forged: set it down in build mode (B), Satchel tab" % r["name"], Color(1, 0.82, 0.23), 3.0)
+		save_game()
+		return true
 	if r.has("spell"):
 		known.append(r["spell"])
 		known.sort_custom(func(x, y): return Defs.SPELL_ORDER.find(x) < Defs.SPELL_ORDER.find(y))
@@ -2301,6 +2549,8 @@ func _toggle_build() -> void:
 
 ## the pieces of the chosen category, and the chosen one
 func build_list() -> Array:
+	if build_cat == Build.CAT_SATCHEL:
+		return Build.carried_pieces(player.furn)
 	return Build.in_cat(build_pieces, build_cat)
 
 func build_piece() -> Dictionary:
@@ -2354,7 +2604,8 @@ func _open_at(col: int, row: int) -> bool:
 	var kd: int = Defs.KIND[t]
 	return kd == Defs.K_EMPTY or kd == Defs.K_GAS or kd == Defs.K_LIQUID or t == Defs.SNOW or t == Defs.ASH
 
-## what's built in the background at a cell (1 furniture, 2 a back wall, 0 nothing, -1 out of view)
+## what's in the background at a cell (1 furniture, 2 a built back wall, 3 a tree, 0 nothing
+## else, -1 out of view)
 func _bg_at(col: int, row: int) -> int:
 	var l := to_grid(Build.cell_pos(col, row))
 	return gpu.grid_bg(_gslot, int(floor(l.x)), int(floor(l.y)))
@@ -2391,6 +2642,7 @@ func _update_build(m: Mage) -> void:
 	var cost: Dictionary = Build.payable(piece, m.inv)
 	var cells := []      # [world pos, colour]
 	var ok := true
+	var tree_in_way := false
 	if kind == "wall":
 		build_prev = {"circle": [p, Build.WALL_R], "ok": not cost.is_empty(), "cells": []}
 		if m.input.cast and not cost.is_empty():
@@ -2404,8 +2656,10 @@ func _update_build(m: Mage) -> void:
 		build_click = false
 		return
 	var place := {}
-	if kind == "prop":
-		var d := Build.design(piece, build_seed)
+	var kid := 0
+	if kind == "prop" or kind == "carried":
+		var d: Dictionary = Build.design(piece, build_seed) if kind == "prop" else {"rows": piece["rows"], "wall": piece["wall"]}
+		kid = Build.Props.kind_id(String(piece["prop"])) if kind == "prop" else int(piece["kid"])
 		var rows: Array = d["rows"]
 		var wall: bool = d.get("wall", false)
 		var bottom := cell.y + rows.size() / 2
@@ -2422,8 +2676,11 @@ func _update_build(m: Mage) -> void:
 		for c in pc:
 			var cc: Vector2i = Vector2i(int(c[0]), int(c[1]))
 			# room in front, and no other furniture where it goes (a back wall behind it is fine)
-			if not _open_at(cc.x, cc.y) or _bg_at(cc.x, cc.y) == 1 or _bg_at(cc.x, cc.y) < 0:
+			var bga := _bg_at(cc.x, cc.y)
+			if not _open_at(cc.x, cc.y) or bga == 1 or bga == 3 or bga < 0:     # (3: a tree it would cut)
 				ok = false
+				if bga == 3:
+					tree_in_way = true
 			if not wall and cc.y == bottom:
 				feet += 1
 				if _solid_at(cc.x, cc.y + 1):
@@ -2432,7 +2689,7 @@ func _update_build(m: Mage) -> void:
 			cells.append([Build.cell_pos(cc.x, cc.y), Color(1, 0.85, 0.3) if ch == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch])])])
 		if not wall and held * 2 < feet:
 			ok = false
-		place = {"stamp": Build.prop_stamp(pc)}
+		place = {"stamp": Build.prop_stamp(pc, kid)}
 	elif kind == "door":
 		var c0 := cell.x - Build.DOOR_W / 2
 		var bottom2 := _floor_span(c0, Build.DOOR_W, cell.y - Build.DOOR_H / 2, 50)
@@ -2469,6 +2726,7 @@ func _update_build(m: Mage) -> void:
 		piece["cost"] = _struct.get("cost", {})
 		cost = Build.payable(piece, m.inv)
 		ok = _struct.get("ok", false)
+		tree_in_way = _struct.get("tree", false)
 		build_prev = {"tex": _struct.get("tex"), "corner": _struct.get("corner", Vector2.ZERO), "ok": ok and not cost.is_empty(), "cells": []}
 		place = {"structure": _struct}
 	elif kind == "platform":
@@ -2489,7 +2747,7 @@ func _update_build(m: Mage) -> void:
 		return
 	if not ok:
 		if _build_warn_t <= frame:
-			ui.toast("It doesn't fit there", Color(1, 0.6, 0.5), 1.2)
+			ui.toast("A tree is in the way: fell it first" if tree_in_way else "It doesn't fit there", Color(1, 0.6, 0.5), 1.2)
 			_build_warn_t = frame + 40
 		return
 	for mt2 in cost:
@@ -2497,6 +2755,8 @@ func _update_build(m: Mage) -> void:
 	if place.has("stamp"):
 		stamps.append(place["stamp"])
 		build_last_stamp = place["stamp"]
+	if kind == "carried":
+		m.furn.remove_at(int(piece["item"]))      # it's set down: no longer carried
 	if place.has("door"):
 		var rec2: Dictionary = place["door"]
 		doors.append(rec2)
@@ -2521,6 +2781,7 @@ func _update_build(m: Mage) -> void:
 ## Everything it would build must land on open space. Returns {ok, cost, tex, corner, bp}.
 func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
 	var w := build_w
+	var trees := false
 	var floor_row := -1
 	if sk == "roof":
 		for k in 80:
@@ -2555,13 +2816,15 @@ func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
 				if (v & 255) != 255 and not _open_at(bp.x0 + i2, bp.y0 + j):
 					ok = false
 					break
-				if ((v >> 8) & 255) != 255 and _bg_at(bp.x0 + i2, bp.y0 + j) != 0:
+				var sbg := _bg_at(bp.x0 + i2, bp.y0 + j)
+				if ((v >> 8) & 255) != 255 and sbg != 0:
 					ok = false
+					trees = sbg == 3
 					break
 			if not ok:
 				break
 	var tex := ImageTexture.create_from_image(Build.preview_image(bp, ok))
-	return {"ok": ok, "cost": Build.structure_cost(bp, bp.doors.size()), "tex": tex,
+	return {"ok": ok, "tree": trees, "cost": Build.structure_cost(bp, bp.doors.size()), "tex": tex,
 		"corner": Build.cell_pos(bp.x0 + bp.w - 1, bp.y0), "bp": bp}
 
 func _build_need(piece: Dictionary) -> void:
@@ -2694,10 +2957,13 @@ func _enter_planet(index: int) -> void:
 func _respawn() -> void:
 	var rs: float = gpu.surf_at(spawn_angle).x
 	player.pos = Vector2(cos(spawn_angle), sin(spawn_angle)) * (rs + 30.0)
+	var home = _home_pos() if gpu != null else null
+	if home != null:
+		player.pos = home
 	player.vx = 0
 	player.vy = 0
 	player.grid_g = player.pos
-	player.grid_a = spawn_angle
+	player.grid_a = atan2(player.pos.y, player.pos.x)
 	_use_grid(player)
 	hp = max_hp
 	mana = max_mana
@@ -2720,7 +2986,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 24            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 25            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -2775,7 +3041,8 @@ func _save_path() -> String:
 
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
-		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat}
+		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat,
+		"furn": player.furn}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
@@ -2809,6 +3076,10 @@ func _apply_save(s: Dictionary) -> void:
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
 	mat = int(s.get("mat", Defs.DIRT))
+	player.furn = []
+	for it in s.get("furn", []):
+		if typeof(it) == TYPE_DICTIONARY and it.has("rows") and not (it["rows"] as Array).is_empty():
+			player.furn.append({"name": str(it.get("name", "Furniture")), "rows": Array(it["rows"]), "wall": bool(it.get("wall", false)), "kind": int(it.get("kind", 0))})
 
 
 # ============================================================ world files ===

@@ -74,13 +74,14 @@ void main() {
 			if (open >= 3) t = 0u;
 		}
 		// what's built in the background here (build mode reads it): 0x40 furniture, a torch or an opened
-		// chest; 0x80 a built back wall (material ids stay below 64, so the top two bits are free)
+		// chest; 0x80 a built back wall; 0xC0 a tree (material ids stay below 64, so the top two bits are free)
 		int bi = idxAt(pos);
 		uint ab = bi < 0 ? 0u : aux.a[bi];
 		uint bm = ab & 255u;
 		uint bgf = 0u;
 		if (bm == M_DECOR || bm == M_TORCH || bm == M_OPENCHEST) bgf = 0x40u;
 		else if (bm != 0u && (ab & BG_WALL) != 0u) bgf = 0x80u;
+		else if (bm != 0u && (ab & 0xC0000000u) == 0x80000000u) bgf = 0xC0u;   // a tree (building over it would fell it; a bush is just covered)
 		pk |= (t | bgf) << (8 * q);
 	}
 	grid.g[goff + j * (GS / 4) + gx4] = pk;

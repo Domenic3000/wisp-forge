@@ -13,7 +13,8 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Walls", "Doors & Platforms", "Furniture", "Outdoors", "Structures"]
+const CATS := ["Walls", "Doors & Platforms", "Furniture", "Outdoors", "Structures", "Satchel"]
+const CAT_SATCHEL := 5        # furniture you carry (picked up whole, or forged): set down for free
 ## building styles for structures: [name, the biome whose house style it is]
 const STYLES := [["Timber", "forest"], ["Log Cabin", "tundra"], ["Stone", "mountain"], ["Sandstone", "desert"],
 	["Brick", "ashland"], ["Swamp", "marsh"], ["Jungle", "jungle"], ["Mud-brick", "savanna"], ["Mushroom", "grove"]]
@@ -70,6 +71,30 @@ static func pieces() -> Array:
 		{"cat": 4, "name": "Roof", "kind": "structure", "struct": "roof", "cost": {}},
 	]
 
+## The pieces you carry (Mage.furn: picked up whole with Shift + right-click, or forged at the Wisp
+## Forge), as build pieces: each keeps its exact pixels and costs nothing to set down.
+static func carried_pieces(furn: Array) -> Array:
+	var out := []
+	for k in furn.size():
+		var it: Dictionary = furn[k]
+		out.append({"cat": CAT_SATCHEL, "name": it["name"], "kind": "carried", "item": k, "rows": it["rows"],
+			"wall": bool(it.get("wall", false)), "kid": int(it.get("kind", 0)), "cost": {}})
+	return out
+
+## Furniture recipes for the Wisp Forge, from the same catalogue (the indoor pieces): forging one
+## makes a piece with a design of its own and puts it in the satchel.
+static func furniture_recipes() -> Array:
+	var out := []
+	for p in pieces():
+		if int(p["cat"]) == 2:
+			out.append({"id": "furn_" + String(p["prop"]), "cat": "Furniture", "name": p["name"], "cost": p["cost"],
+				"furniture": p["prop"], "desc": "Carried in your satchel; set it down from build mode's Satchel tab."})
+	return out
+
+## a carried piece for a satchel: a design of this piece (forged) or the pixels picked up
+static func carried_item(name: String, d: Dictionary, prop: String) -> Dictionary:
+	return {"name": name, "rows": d["rows"], "wall": bool(d.get("wall", false)), "kind": Props.kind_id(prop)}
+
 static func in_cat(all: Array, cat: int) -> Array:
 	var out := []
 	for p in all:
@@ -86,6 +111,8 @@ static func payable(piece: Dictionary, inv: PackedInt32Array) -> Dictionary:
 		var c: Dictionary = piece[key]
 		if c.is_empty() and key == "cost" and piece["kind"] == "structure":
 			return {}                   # not worked out yet
+		if piece["kind"] == "carried":
+			return {Defs.AIR: 0}        # already yours: nothing to pay
 		var ok := true
 		for m in c:
 			if inv[int(m)] < int(c[m]):
@@ -97,6 +124,8 @@ static func payable(piece: Dictionary, inv: PackedInt32Array) -> Dictionary:
 static func cost_text(c: Dictionary) -> String:
 	var parts := []
 	for m in c:
+		if int(c[m]) <= 0:
+			continue
 		parts.append("%d %s" % [int(c[m]), Defs.NAMES[int(m)]])
 	return ", ".join(parts)
 
@@ -135,7 +164,7 @@ static func prop_cells(rows: Array, col: int, bottom: int, flip: bool) -> Array:
 ## A small blueprint (the same data stamp.comp writes at generation) for a prop's cells: each pixel
 ## is a background furniture cell with its palette colour that stands in for a back wall; 't' is a
 ## torch. Nothing is anchored, so what you build obeys the physics.
-static func prop_stamp(cells: Array) -> Dictionary:
+static func prop_stamp(cells: Array, kid := 0) -> Dictionary:
 	var c0 := 1 << 30
 	var r0 := 1 << 30
 	var c1 := -(1 << 30)
@@ -156,7 +185,7 @@ static func prop_stamp(cells: Array) -> Dictionary:
 		if ch == "t":
 			data[k] = (Defs.TORCH << 8) | 0x40000
 		else:
-			data[k] = (Defs.DECOR << 8) | ((int(Props.CHARS[ch]) & 255) << 19) | 0x8000000 | 0x40000
+			data[k] = (Defs.DECOR << 8) | ((int(Props.CHARS[ch]) & 255) << 19) | 0x8000000 | 0x40000 | ((kid & 15) << 28)
 	return {"x0": posmod(c0, Defs.SH_N[0]), "y0": r0, "w": w, "h": h, "data": data}
 
 ## a strip of scaffold, as a blueprint

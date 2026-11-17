@@ -68,6 +68,18 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   so they obey the physics. Digging a door (open or shut) takes it whole into the satchel as a Door item.
   Structures (House, Room, Roof) are put together by buildings.gd's own parts (`Build.structure`, seeded, with
   `builds.rng` saved and restored); [ ] width, - = storeys, T style, R variation; cost from `structure_cost`.
+- Furniture kinds: a prop's kind (props.gd `KINDS`, 15 at most: table, chair, bed...) travels in blueprint bits 28-31
+  and lives in background bits 24-27 of its DECOR cells (`bp.bgv(..., kid)`, `Build.prop_stamp(cells, kid)`), so
+  a picked-up piece keeps its name and a bed is known for a bed (`Props.BED`).
+- Carried furniture (`Mage.furn`, saved in progress.json): Shift + right-click on furniture takes the whole piece
+  (`_pick_up_furniture`: `gpu.read_rect` reads the block, `_furniture_piece` flood-fills cells of the same kind plus
+  its torches, a stamp clears them and puts back the back wall it hid). The Wisp Forge forges the indoor pieces
+  (`Build.furniture_recipes`, in main's `recipes`); build mode's Satchel tab (`Build.CAT_SATCHEL`) sets them down free.
+- Home: F at a bed (`_try_home`; a bed right beside you comes before a door) with a roof over it and back wall
+  behind the room above it (`_home_check`) sets `planet_state["home"]`; `_respawn` brings you back there while
+  most of the bed is still there (`_home_pos`).
+- Collision grid background bits: 0x40 furniture, 0x80 built back wall, 0xC0 a tree (building over one would
+  fell it, so build mode refuses; bushes are just covered).
 - Doors swing either way (away from whoever opens them, `swing`); the open panel (overlay, face-on) burns when
   fire reaches it (`_check_door_fire`) and breaks in a blast.
 - Foundations: two courses of the building's stone, then the biome's own ground layers (`_ground_mats`); yards are

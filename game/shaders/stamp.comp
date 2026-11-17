@@ -4,7 +4,8 @@
 // (255 = keep), bit 16 = fill only where there is no solid ground yet, bit 17 = anchored
 // (generated structures are part of the planet until you dig near them; this anchors the
 // background wall too), bit 18 = background is a built back wall,
-// bits 19-26 = colour variant, used when bit 27 is set (chests use it to know which part they are).
+// bits 19-26 = colour variant, used when bit 27 is set (chests use it to know which part they are),
+// bits 28-31 = a furniture piece's kind (props.gd KINDS), kept in background bits 24-27.
 // pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, 0, 0)
 #include "common"
 #include "world"
@@ -34,7 +35,7 @@ void main() {
 	}
 	if (bc != 255u) {
 		uint a = bc == 0u ? 0u : (bc | ((d & 0x40000u) != 0u ? BG_WALL : 0u) | ((d & 0x20000u) != 0u ? BG_ANCHOR : 0u));
-		if (bc != 0u && (d & 0x8000000u) != 0u) a |= ((d >> 19) & 255u) << 16;   // which part of a chest
+		if (bc != 0u && (d & 0x8000000u) != 0u) a |= (((d >> 19) & 255u) << 16) | (((d >> 28) & 15u) << 24);   // which part of a chest; a prop's colour and kind
 		aux.a[idx] = a;
 	}
 }

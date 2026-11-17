@@ -71,9 +71,10 @@ class BP:
 	## colour). wall: it stands in for the back wall it covers, so it carries the structure the way
 	## that wall did (furniture used to leave holes in the wall's support, and the generator's
 	## soundness pass then cut the wall and roof above a wide bed or counter away)
-	func bgv(i: int, j: int, m: int, v: int, wall := false) -> void:
+	## (kid: a furniture piece's kind, props.gd KINDS, kept in the cell so the game knows a bed for a bed)
+	func bgv(i: int, j: int, m: int, v: int, wall := false, kid := 0) -> void:
 		if ok(i, j):
-			c[j * w + i] = ((m & 255) << 8) | ((v & 255) << 19) | 0x8000000 | (0x40000 if wall else 0)
+			c[j * w + i] = ((m & 255) << 8) | ((v & 255) << 19) | 0x8000000 | (0x40000 if wall else 0) | ((kid & 15) << 28)
 	## foreground with a fixed colour variant
 	func fgv(i: int, j: int, m: int, v: int) -> void:
 		if ok(i, j):
@@ -2085,7 +2086,7 @@ func _prop_fits(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, indoors: 
 				held += 1
 	return not standing or (feet > 0 and held * 10 >= feet * 7)
 
-func _stamp_prop(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, lit := true) -> void:
+func _stamp_prop(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, lit := true, kid := 0) -> void:
 	var h := rows.size()
 	var top := bottom - h + 1
 	for y in h:
@@ -2098,9 +2099,9 @@ func _stamp_prop(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, lit := t
 					bp.fg(i0 + x, top + y, 0)
 					bp.bg(i0 + x, top + y, Defs.TORCH)
 				else:
-					bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS["x"], true)
+					bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS["x"], true, kid)
 			else:
-				bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS[ch], true)
+				bp.bgv(i0 + x, top + y, Defs.DECOR, Props.CHARS[ch], true, kid)
 
 ## Tries to put a prop somewhere in columns [i0, i1] with its feet on row `bottom` (or, for a wall
 ## prop, its bottom `lift` rows above it). Returns the column it went to, or -1.
@@ -2117,7 +2118,7 @@ func _place_prop(bp: BP, prop: Dictionary, i0: int, i1: int, bottom: int, indoor
 		if not wall and _near_chest(bp, x, x + w - 1, b + 1):
 			continue
 		if _prop_fits(bp, rows, x, b - lift, flip, indoors, not wall):
-			_stamp_prop(bp, rows, x, b - lift, flip, lit)
+			_stamp_prop(bp, rows, x, b - lift, flip, lit, Props.kind_id(String(prop.get("kind", ""))))
 			return x
 	return -1
 

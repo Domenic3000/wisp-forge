@@ -27,6 +27,29 @@ const CHARS := {
 }
 const CLOTHS := [["r", "R"], ["b", "B"], ["g", "G"], ["v", "V"]]
 
+## What a piece is, kept in its own cells (background bits 24-27, from blueprint bits 28-31) so a
+## piece picked up keeps its name and a bed is known for a bed wherever it stands. 0 is anything
+## else (outdoor details, rugs, signs...). Fifteen kinds at most: there are four bits.
+const KINDS := ["", "table", "chair", "bed", "shelf", "barrel", "crates", "dresser", "fireplace",
+	"anvil", "cauldron", "rack", "painting", "banner", "plant", "counter"]
+const KIND_NAMES := ["Decoration", "Table", "Chair", "Bed", "Shelf", "Barrel", "Crates", "Dresser", "Fireplace",
+	"Anvil", "Cauldron", "Weapon Rack", "Painting", "Banner", "Potted Plant", "Counter"]
+const KIND_ALIAS := {"keg": "barrel", "barrels": "barrel", "crate": "crates"}
+const BED := 3
+## pieces that hang on a wall rather than stand on the floor
+const WALL_KINDS := [11, 12, 13]
+
+static func kind_id(kind: String) -> int:
+	var k: int = KINDS.find(String(KIND_ALIAS.get(kind, kind)))
+	return maxi(k, 0)
+
+## the pixel character for a palette index (the inverse of CHARS)
+static func char_of(idx: int) -> String:
+	for ch in CHARS:
+		if int(CHARS[ch]) == idx:
+			return ch
+	return "d"
+
 ## A small pixel canvas the props are drawn on.
 class Grid:
 	var w := 0
