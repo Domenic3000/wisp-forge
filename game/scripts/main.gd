@@ -158,6 +158,11 @@ var _tick_acc := 0.0
 var perf_cpu_ms := 0.0      # F3 readout: the game's own time per frame, time waiting for the GPU,
 var perf_wait_ms := 0.0     # and ticks run per frame (1 at 60 fps)
 var perf_steps := 1.0
+## The profiler (F3, and the test report): microseconds per frame spent in each part of the game,
+## section -> [average, recent peak, this frame's sum]. prof_add() from anywhere; GPU stages come
+## from gpu_world.gd's timestamps.
+var prof := {}
+var hitch_us := 0          # the longest frame of the game's own work since the tests last reset it
 var show_perf := false
 var zoom_levels := [1.0, 2.0, 4.0, 8.0, 14.0]
 var zoom_i := 0
@@ -394,9 +399,14 @@ func _process(delta: float) -> void:
 		return
 	if gpu == null:
 		return
+	var tp := Time.get_ticks_usec()
 	gpu.flush()
+	prof_add("read back", gpu.read_us)
+	gpu.read_us = 0
 	if gpu.fresh:
+		tp = Time.get_ticks_usec()
 		_take_gpu_results()
+		prof_add("GPU results", Time.get_ticks_usec() - tp)
 	var steps := 1
 	if state == "play" or state == "dead":
 		played += delta
@@ -406,10 +416,22 @@ func _process(delta: float) -> void:
 		for k in steps:
 			_tick()
 	if state == "play" or state == "dead" or state == "forge":
+		tp = Time.get_ticks_usec()
 		_gpu_frame(state == "forge", steps)
+		prof_add("GPU submit", Time.get_ticks_usec() - tp)
+		tp = Time.get_ticks_usec()
 		ui.update_hud(self)
+		prof_add("HUD", Time.get_ticks_usec() - tp)
 	ui.update_toasts()
 	# performance readout (F3)
+	prof_add("frame (CPU)", Time.get_ticks_usec() - t0 - gpu.wait_us)
+	prof_add("waiting for the GPU", gpu.wait_us)
+	gpu.wait_us = 0
+	for k in gpu.gpu_us:
+		prof_add("GPU " + String(k), int(gpu.gpu_us[k]))
+	gpu.gpu_us.clear()
+	_prof_frame()
+	hitch_us = maxi(hitch_us, Time.get_ticks_usec() - t0 - gpu.wait_us)
 	perf_cpu_ms = lerpf(perf_cpu_ms, (Time.get_ticks_usec() - t0 - gpu.wait_us) / 1000.0, 0.1)
 	perf_wait_ms = lerpf(perf_wait_ms, gpu.wait_us / 1000.0, 0.1)
 	perf_steps = lerpf(perf_steps, float(steps), 0.1)
@@ -467,12 +489,14 @@ func _take_gpu_results() -> void:
 	_flush_loot()
 	view_c = _sub_view_c
 	ustep = _sub_ustep
+	var tu := Time.get_ticks_usec()
 	if view_tex == null or view_tex.get_width() != gpu.VW or view_tex.get_height() != gpu.VH:
 		view_tex = ImageTexture.create_from_image(gpu.view_img)
 		view_rect.texture = view_tex
 		view_rect.size = Vector2(gpu.VW, gpu.VH)
 	else:
 		view_tex.update(gpu.view_img)
+	prof_add("picture upload", Time.get_ticks_usec() - tu)
 	overlay.queue_redraw()
 
 func _write_frame_params() -> void:
@@ -536,7 +560,9 @@ func _apply_counts(m: Mage) -> void:
 	var cn := all.slice(o, o + 64)
 	m.fog = lerpf(m.fog, cn[58] / 1000.0, 0.25)
 	if chunks != null and state == "play":
+		var td := Time.get_ticks_usec()
 		chunks.detect(m, cn)            # a felled tree or a creaking piece: lift it out whole
+		prof_add("lifting pieces out", Time.get_ticks_usec() - td)
 	_use_grid(m)
 	if m.local and cn[56] > 0:
 		# something loose is about to fall: dust trickles from it and the ground rumbles
@@ -1412,6 +1438,7 @@ func _tick() -> void:
 	time += 1.0
 	_read_local_input(player)
 	var aim: Vector2 = player.input.aim
+	var tm := Time.get_ticks_usec()
 	for m in players:
 		if m.cast_cd > 0:
 			m.cast_cd -= 1
@@ -1433,16 +1460,23 @@ func _tick() -> void:
 				m.decon_pause = 0
 		if m.dig_tap > 0:
 			m.dig_tap -= 1
+	prof_add("mages", Time.get_ticks_usec() - tm)
 	_use_grid(player)
+	var tq := Time.get_ticks_usec()
 	_update_enemies()
 	_update_chests()
+	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
+		tq = Time.get_ticks_usec()
 		chunks.update()
+		prof_add("falling pieces", Time.get_ticks_usec() - tq)
 	_use_grid(player)
+	tq = Time.get_ticks_usec()
 	_update_projectiles()
 	_use_grid(player)
 	_check_door_fire()
 	_update_particles()
+	prof_add("shots and particles", Time.get_ticks_usec() - tq)
 	_update_weather()
 	_try_spawn()
 	_update_guards()
@@ -3656,3 +3690,32 @@ func local_time_text() -> String:
 	var d := wrapf(atan2(player.pos.y, player.pos.x) - sun_a, -PI, PI)
 	var hours := fposmod(12.0 - d / TAU * 24.0, 24.0)
 	return "%02d:%02d" % [int(hours), int(fposmod(hours * 60.0, 60.0))]
+
+
+# ================================================================ profiler ==
+func prof_add(sec: String, us: int) -> void:
+	var p = prof.get(sec)
+	if p == null:
+		p = [0.0, 0.0, 0, 0.0]      # average, recent peak, this frame, highest since prof_reset()
+		prof[sec] = p
+	p[2] += us
+
+func _prof_frame() -> void:
+	for k in prof:
+		var p: Array = prof[k]
+		p[0] = lerpf(p[0], float(p[2]), 0.05)
+		p[1] = maxf(p[1] * 0.995, float(p[2]))
+		p[3] = maxf(p[3], float(p[2]))
+		p[2] = 0
+
+## the biggest costs: "name 1.2 (peak 4.0)" in milliseconds, largest average first
+func prof_text(n := 8, sep := " · ") -> String:
+	var keys := prof.keys()
+	keys.sort_custom(func(a, b): return prof[a][0] > prof[b][0])
+	var parts: Array = []
+	for k in keys.slice(0, n):
+		parts.append("%s %.2f (peak %.1f)" % [k, prof[k][0] / 1000.0, prof[k][1] / 1000.0])
+	return sep.join(parts)
+
+func prof_reset() -> void:
+	prof.clear()

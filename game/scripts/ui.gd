@@ -777,7 +777,7 @@ func update_hud(g) -> void:
 		info.text = "%s · %s\n%s · %s · %s\nStaff %s%s\n%d FPS" % [g.planet["name"], g.region_name(), depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, Engine.get_frames_per_second()]
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
-			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"]]
+			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]
 	# build mode replaces the spell bar with the building bar
 	hotbar.visible = not g.build_on
 	build_bar.visible = g.build_on

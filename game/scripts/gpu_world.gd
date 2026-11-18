@@ -17,6 +17,8 @@ var pending := false     # a submission is in flight
 var fresh := false       # results collected that main.gd hasn't taken yet
 var sub_frames := []     # the collision grid frames of the last submission
 var wait_us := 0         # how long the last collect waited for the GPU
+var read_us := 0         # and how long reading its results back took
+var gpu_us := {}         # GPU time per stage of the last frame (timestamps), for the profiler
 var topple_iters := 2    # falling-block passes per frame
 var blur_passes := 2     # light blur passes
 var sun_step := 2.0      # sunlight march step (cells)
@@ -69,7 +71,7 @@ func init() -> bool:
 	surf_buf = rd.storage_buffer_create(Defs.SH_N[0] * 32)
 	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
 	var prefix: String = Defs.glsl_prefix()
-	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants"]:
+	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants", "rectread"]:
 		if not _compile(nm, prefix):
 			return false
 	_make_static_sets()
@@ -383,6 +385,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 	_upload_params()
 	rd.buffer_clear(counts_buf, 0, 64 * MAXP * 4)
 	var win := _windows(sim_centers)
+	rd.capture_timestamp("start")
 	var cl := rd.compute_list_begin()
 	if with_brushes:
 		for w in win:
@@ -393,16 +396,26 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		frame += 1
 		_sim_passes(cl, win, rain_row, rain_mat, CREAK_FRAMES)
 	if not sim_only:
+		rd.compute_list_end()
+		rd.capture_timestamp("simulation")
+		cl = rd.compute_list_begin()
 		for gs in mini(grid_frames.size(), MAXP):
 			var gf: Array = grid_frames[gs]
 			var gc: Vector2 = gf[0]
 			_dispatch(cl, "grid", "grid", [GS, gs], [gc.x, gc.y, gf[1]], groups(GS / 4, 16), groups(GS, 16))
+		rd.compute_list_end()
+		rd.capture_timestamp("collision grid")
+		cl = rd.compute_list_begin()
 		_dispatch(cl, "light", "light", [LW, LH, LS], [], groups(LW, 16), groups(LH, 16))
 		for k in blur_passes:
 			_dispatch(cl, "blur", "blur_h", [LW, LH, 1], [], groups(LW, 16), groups(LH, 16))
 			_dispatch(cl, "blur", "blur_v", [LW, LH, 0], [], groups(LW, 16), groups(LH, 16))
+		rd.compute_list_end()
+		rd.capture_timestamp("light")
+		cl = rd.compute_list_begin()
 		_dispatch(cl, "render", "render", [VW, VH, LW, LH], [], groups(VW, 16), groups(VH, 16))
 	rd.compute_list_end()
+	rd.capture_timestamp("picture")
 	rd.submit()
 	if sim_only:
 		rd.sync()
@@ -419,13 +432,20 @@ func flush() -> void:
 	var t0 := Time.get_ticks_usec()
 	rd.sync()
 	wait_us = Time.get_ticks_usec() - t0
+	t0 = Time.get_ticks_usec()
 	pending = false
+	# GPU time per stage, from the timestamps between the stages
+	var nt := rd.get_captured_timestamps_count()
+	for k in range(1, nt):
+		var dt := rd.get_captured_timestamp_gpu_time(k) - rd.get_captured_timestamp_gpu_time(k - 1)
+		gpu_us[rd.get_captured_timestamp_name(k)] = int(dt / 1000)
 	counts = rd.buffer_get_data(counts_buf).to_int32_array()
 	grid = rd.buffer_get_data(grid_buf, 0, GS * GS * clampi(sub_frames.size(), 1, MAXP))   # only the slots in use
 	light = rd.buffer_get_data(light_a).to_float32_array()
 	var vb := rd.buffer_get_data(view_buf)
 	view_img = Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, vb)
 	fresh = true
+	read_us = Time.get_ticks_usec() - t0
 
 ## High / Medium / Low: how much work each frame does. Low is for weaker graphics (and phones later).
 func apply_quality(q: String) -> void:
@@ -519,45 +539,23 @@ func light_at(px: Vector2) -> Color:
 ## layers: {"fg": PackedInt32Array, "bg": PackedInt32Array}, row by row. For a one-off look (picking
 ## up a piece of furniture, checking a bed): it waits for the GPU.
 func read_rect(c0: int, r0: int, w: int, h: int) -> Dictionary:
+	# a small compute pass copies just the rectangle (both layers) into a buffer of its own; reading
+	# that back is far cheaper than whole rows of the planet
 	flush()
-	var n0: int = Defs.SH_N[0]
-	var fg := PackedInt32Array()
-	var bg := PackedInt32Array()
-	fg.resize(w * h)
-	bg.resize(w * h)
-	# all in shell 0 and clear of the seam: read the band of whole rows in one go per layer (two reads
-	# instead of two per row), then cut the rectangle out of it
-	var col0 := posmod(c0, n0)
-	if r0 >= 0 and r0 + h <= Defs.SH_Y0[1] and col0 + w <= n0 and h > 0:
-		var boff: int = (Defs.SH_OFF[0] + (r0 - Defs.SH_Y0[0]) * n0) * 4
-		var blen: int = h * n0 * 4
-		var fb := rd.buffer_get_data(world_buf, boff, blen).to_int32_array()
-		var bb := rd.buffer_get_data(aux_buf, boff, blen).to_int32_array()
-		var fo := PackedInt32Array()
-		var bo := PackedInt32Array()
-		for j in h:
-			var src := j * n0 + col0
-			fo.append_array(fb.slice(src, src + w))
-			bo.append_array(bb.slice(src, src + w))
-		return {"fg": fo, "bg": bo}
-	for j in h:
-		var row := r0 + j
-		if row < 0 or row >= Defs.SH_Y0[1]:
-			continue
-		var i := 0
-		while i < w:
-			var col := posmod(c0 + i, n0)
-			var run := mini(w - i, n0 - col)          # up to the seam, then around
-			var off: int = (Defs.SH_OFF[0] + (row - Defs.SH_Y0[0]) * n0 + col) * 4
-			var fa := rd.buffer_get_data(world_buf, off, run * 4).to_int32_array()
-			var ba := rd.buffer_get_data(aux_buf, off, run * 4).to_int32_array()
-			for q in run:
-				fg[j * w + i + q] = fa[q]
-				bg[j * w + i + q] = ba[q]
-			i += run
-	return {"fg": fg, "bg": bg}
+	var t0 := Time.get_ticks_usec()
+	var buf := rd.storage_buffer_create(w * h * 8)
+	var uset := _mkset("rectread", [[0, world_buf], [8, aux_buf], [9, buf]])
+	var cl := rd.compute_list_begin()
+	_dispatch_set(cl, "rectread", uset, [posmod(c0, Defs.SH_N[0]), r0, w, h], groups(w, 16), groups(h, 16))
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+	var both := rd.buffer_get_data(buf).to_int32_array()
+	rd.free_rid(uset)
+	rd.free_rid(buf)
+	read_us += Time.get_ticks_usec() - t0
+	return {"fg": both.slice(0, w * h), "bg": both.slice(w * h, 2 * w * h)}
 
-## Both layers, foreground cells first then the background layer.
 func read_world() -> PackedByteArray:
 	flush()
 	var out := rd.buffer_get_data(world_buf)

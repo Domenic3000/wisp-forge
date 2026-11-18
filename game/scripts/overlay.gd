@@ -205,6 +205,11 @@ func _px(wpos: Vector2, col: Color) -> void:
 func _draw() -> void:
 	if game == null or game.state == "title" or game.state == "loading" or game.state == "error":
 		return
+	var t_draw := Time.get_ticks_usec()
+	_draw_all()
+	game.prof_add("drawing sprites", Time.get_ticks_usec() - t_draw)
+
+func _draw_all() -> void:
 	var z: float = game.zoom
 	# treasure chests (whole objects)
 	for c in game.chests:

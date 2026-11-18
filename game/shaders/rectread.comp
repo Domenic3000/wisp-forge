@@ -1,0 +1,21 @@
+// Copies a rectangle of shell-0 cells (front and background) into a small buffer, so the CPU reads
+// back just that (gpu_world.gd read_rect) instead of whole rows of the planet.
+// pc.a = (x0, y0, w, h): out.d[j * w + i] = front cell, out.d[w * h + j * w + i] = background cell
+// (0 past shell 0)
+#include "common"
+#include "world"
+#include "bglayer"
+layout(std430, set = 0, binding = 9) restrict writeonly buffer Out { uint d[]; } outb;
+layout(local_size_x = 16, local_size_y = 16) in;
+
+void main() {
+	int i = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
+	int w = pc.a.z, h = pc.a.w;
+	if (i >= w || j >= h) return;
+	int row = pc.a.y + j;
+	uint o = uint(j * w + i), ob = uint(w * h) + o;
+	if (row < 0 || row >= SH_Y0[1]) { outb.d[o] = 0u; outb.d[ob] = 0u; return; }
+	int ri = cellIdx(0, row, wrapc(pc.a.x + i, SH_N[0]));
+	outb.d[o] = world.cells[ri];
+	outb.d[ob] = aux.a[ri];
+}

@@ -155,17 +155,25 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   back). Archers are a third of structure guards (picked by position in `_guard`); the dead walk at night.
 - Rigid chunks (`scripts/chunks.gd`): grid.comp reports one felled-tree cell (counts[59]/[60]: a plant cell whose
   support reached 62) and one creaking block (counts[56]/[57]) per mage; `detect` reads the world around it
-  (`gpu.read_rect`, which reads whole row bands in one call), takes the loose cells out with a stamp and makes
+  (`gpu.read_rect`: `shaders/rectread.comp` copies just the rectangle into a small buffer, read back in one go), takes the loose cells out with a stamp and makes
   rigid bodies: a tree's detached cells (CPU flood from wood on the ground), or a building piece (loose blocks +
   the loose back walls and furniture joined to them) split along staggered, jittered lines. `update` steps them
   against the collision grid and each other (one averaged contact, impulse, friction); hard landings knock pixels
-  off as chips and rubble (`_splinter`); hits on mages/foes hurt (`_strike`). A tree collides by its wood only (leaves give
-  way), so it comes to lie on the ground. At rest (it hasn't moved or turned more than ~1 cell for 20 frames)
-  `_settle` writes it back with a raw stamp (stamp.comp mode 1: two words a cell, each layer only where it is
-  empty): blocks unanchored (keeping their own built flag); a tree in FRONT, its wood as logs and ~30% of its
-  leaves as leaf litter. plants.comp lets felled trees wait (0.005 a pass) for the CPU; pieces nobody lifts out
+  off as chips and rubble (`_splinter`); hits on mages/foes hurt (`_strike`). A tree collides by its wood only; its crown
+  edge (`soft`) crushes: leaves that touch ground are knocked off as drifting leaf particles (`_crush`, once a
+  frame), so the crown flattens instead of sinking. At rest (it hasn't moved or turned more than ~1 cell for 20
+  frames) `_settle` writes it back with a raw stamp (stamp.comp mode 1: two words a cell, each layer only where
+  it is empty): blocks unanchored (keeping their own built flag); a tree's wood in FRONT as ANCHORED logs (no
+  creaking apart), its crown in the background as a fallen plant (id 0xF000.., bush rules: held by any part
+  resting on something), pruned to the leaves joined to the logs (`_prune_crown`). Felled scraps under
+  SMALL_TREE cells just flutter away. A piece only hurts after a ROCK_HURT_FALL-cell fall, through the upper
+  half (as falling rock). plants.comp lets felled trees wait (0.002 a pass) for the CPU; pieces nobody lifts out
   still crumble the old way. In test mode each lift-out prints a `[chunks]` line. Pixel colours come from the picture on screen divided by the light.
   `save_world` settles everything still moving first.
+- Profiler: `main.prof_add(section, usec)` anywhere; `prof` holds [average, recent peak, this frame, max since
+  `prof_reset`]. GPU stages are timed with RenderingDevice timestamps in `gpu.step` (simulation, collision grid,
+  light, picture). F3 shows the top sections; `main.hitch_us` is the longest frame of the game's own work (tests
+  reset and read it). The test "frame time with no cap" turns vsync off and logs the breakdown.
 - Chests at rest only fall after CHEST_LET_GO frames with nothing found up to 3.5 cells under them (the
   collision grid tilts with the planet's curve as the mage walks, so a single check flickered).
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above

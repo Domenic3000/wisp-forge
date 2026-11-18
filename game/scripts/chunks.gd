@@ -27,6 +27,9 @@ const Props := preload("res://scripts/props.gd")
 const GRAV := 0.17                # as for bodies (cells per frame per frame, times the planet's pull)
 const MAX_CHUNKS := 28
 const MAX_PTS := 90               # collision points per chunk (its outline, thinned)
+const MAX_SOFT := 140             # crown-edge points checked for crushing
+const ROCK_HURT_FALL := 8.0       # (as main.gd's: how far a piece must fall before it hurts)
+const SMALL_TREE := 25            # felled bits smaller than this just flutter away as leaves
 const REST := 0.12                # bounce
 const MU := 0.55                  # friction
 const BREAK_SPEED := 1.7          # an edge landing faster than this (cells a frame) splinters
@@ -58,6 +61,8 @@ class Chunk:
 	var ip := PackedVector2Array() # integer pixel coordinates (for the key and the pictures)
 	var com := Vector2.ZERO        # centre of mass in pixel coordinates
 	var pts := PackedVector2Array()  # collision points (outline pixels, from the centre of mass)
+	var soft := PackedVector2Array() # a tree's crown edge: leaves that crush (knocked off) where they touch ground
+	var soft_k := PackedInt32Array() # (their pixel indices)
 	var mass := 1.0
 	var inertia := 1.0
 	var radius := 1.0
@@ -208,7 +213,8 @@ func _take_tree(m, wp: Vector2) -> void:
 	var pid := (bgs[jj * w + ii] >> 16) & 0xFFFF
 	if (pid & 0x8000) == 0:
 		return
-	# the plant's cells, and those still standing: joined to wood (or a stem) touching the ground
+	# the plant's cells (all of them in the block: a crown tangled with a neighbour's isn't always joined
+	# up through its own cells), and those still standing: joined to wood (or a stem) touching the ground
 	var mine := {}
 	for k in w * h:
 		if ((bgs[k] >> 16) & 0xFFFF) == pid and (bgs[k] & 255) != 0:
@@ -247,7 +253,14 @@ func _take_tree(m, wp: Vector2) -> void:
 	for k in mine:
 		if not stand.has(k):
 			loose.append(k)
-	if loose.size() < 6:
+	if loose.is_empty():
+		return
+	if loose.size() < SMALL_TREE:
+		# a scrap of a crown or a twig: it flutters away as leaves rather than crumbling into specks
+		for k in loose:
+			var lp := cell_pos(c0 + k % w, r0 + k / w)
+			g._particle(lp, Vector2(randf() - 0.5, randf() - 0.7) * 0.4, 40 + randi() % 40, _colour_of(0, bgs[k], R, k, false), false, 0.015)
+		_clear(R, [], loose, [])
 		return
 	_fam += 1
 	var c := _make(loose, R, false, true)
@@ -476,6 +489,21 @@ func _rebuild(c: Chunk) -> void:
 	c.pts = PackedVector2Array()
 	for k in range(0, outline.size(), stride):
 		c.pts.append(outline[k])
+	# a tree's crown edge: leaves on the outside of the whole piece, checked each step for crushing
+	c.soft = PackedVector2Array()
+	c.soft_k = PackedInt32Array()
+	if c.tree:
+		var edge := PackedInt32Array()
+		for k in n:
+			var p2: Vector2i = Vector2i(c.ip[k])
+			if hard.has(p2):
+				continue
+			if not c.key.has(p2 + Vector2i(1, 0)) or not c.key.has(p2 - Vector2i(1, 0)) or not c.key.has(p2 + Vector2i(0, 1)) or not c.key.has(p2 - Vector2i(0, 1)):
+				edge.append(k)
+		var st2 := maxi(1, int(ceil(float(edge.size()) / float(MAX_SOFT))))
+		for k in range(0, edge.size(), st2):
+			c.soft.append(c.px[edge[k]])
+			c.soft_k.append(edge[k])
 	c.dirty = true
 
 ## A cell's colour as it was drawn on screen (divided by the light there), or its palette colour when
@@ -494,7 +522,12 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 		pal.a = 1.0
 	if hidden or g.gpu.view_img == null:
 		return pal
-	var sp: Vector2 = g.world_to_screen(cell_pos(col, row)).floor()
+	# (where the cell is on screen: one step from the block's corner, worked out once per block)
+	if R.size() < 7:
+		var s0: Vector2 = g.world_to_screen(cell_pos(int(R[0]), int(R[1])))
+		R.append([s0, g.world_to_screen(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_screen(cell_pos(int(R[0]), int(R[1]) + 1)) - s0])
+	var lin: Array = R[6]
+	var sp: Vector2 = ((lin[0] as Vector2) + (lin[1] as Vector2) * float(k % w) + (lin[2] as Vector2) * float(k / w)).floor()
 	var img: Image = g.gpu.view_img
 	if sp.x < 0 or sp.y < 0 or sp.x >= img.get_width() or sp.y >= img.get_height():
 		return pal
@@ -562,6 +595,9 @@ func update() -> void:
 			continue
 		var speed := c.vel.length() + absf(c.omega) * c.radius
 		var steps := clampi(int(ceil(speed / 1.2)), 1, 6)
+		# a crown crushes against the ground once a frame (it rebuilds the whole piece, so not every step)
+		if not c.soft.is_empty() and c.age > 2:
+			_crush(c, _axes(c))
 		for s in steps:
 			_step(c, 1.0 / float(steps))
 		_strike(c)
@@ -578,6 +614,12 @@ func update() -> void:
 			_settle(c)
 			list.remove_at(ci)
 	g._use_grid(g.player)
+
+func _gsolid(ix: int, iy: int) -> bool:
+	if ix < 0 or iy < 0 or ix >= _gs or iy >= _gs:
+		return false
+	var k := _gbase + iy * _gs + ix
+	return k < _grid.size() and _solid[_grid[k] & 63] == 1
 
 func _solid_at(w: Vector2, c: Chunk) -> bool:
 	var l: Vector2 = g.to_grid(w)
@@ -615,22 +657,24 @@ func _step(c: Chunk, dt: float) -> void:
 	var cs := _contacts(c, ax)
 	if cs.is_empty():
 		return
-	# where and which way it was hit: the average contact, and the way out of what it touches
+	# where and which way it was hit: the average contact, and the way out of what it touches (worked
+	# out in the collision grid around each contact, then turned into the world's directions)
 	var cp := Vector2.ZERO
-	var nrm := Vector2.ZERO
+	var ng := Vector2.ZERO
+	var lsum := Vector2.ZERO
 	for w in cs:
 		cp += w
 		var l: Vector2 = g.to_grid(w)
+		lsum += l
 		var ix := int(floor(l.x))
 		var iy := int(floor(l.y))
-		for dy in [-2, -1, 0, 1, 2]:
-			for dx in [-2, -1, 0, 1, 2]:
-				if dx == 0 and dy == 0:
-					continue
-				var q: Vector2 = g.from_grid(Vector2(ix + dx + 0.5, iy + dy + 0.5))
-				if _solid_at(q, c):
-					nrm -= (q - w)
+		for dy in range(-2, 3):
+			for dx in range(-2, 3):
+				if (dx != 0 or dy != 0) and _gsolid(ix + dx, iy + dy):
+					ng -= Vector2(dx, dy)
 	cp /= float(cs.size())
+	var lc: Vector2 = lsum / float(cs.size())
+	var nrm: Vector2 = g.from_grid(lc + ng.normalized()) - g.from_grid(lc) if ng.length() > 0.01 else Vector2.ZERO
 	if nrm.length() < 0.01:
 		nrm = (c.pos - cp) if (c.pos - cp).length() > 0.01 else up
 	nrm = nrm.normalized()
@@ -669,6 +713,18 @@ func _step(c: Chunk, dt: float) -> void:
 	elif -vn > 0.8 and c.age > 4:
 		g.audio.play("thud", cp, clampf(-vn * 0.25, 0.2, 0.8))
 
+## A tree's crown gives way where it meets the ground: the leaves there are knocked off (they flutter
+## down as leaves) instead of the crown sinking into the earth.
+func _crush(c: Chunk, ax: Array) -> void:
+	var gone := {}
+	for q in c.soft.size():
+		var w := _to_world(c, ax, c.soft[q])
+		var l: Vector2 = g.to_grid(w)
+		if _gsolid(int(floor(l.x)), int(floor(l.y))):
+			gone[c.soft_k[q]] = true
+	if not gone.is_empty():
+		_remove(c, gone, ax)
+
 ## A hard landing knocks pixels off where it hit: chips and dust (and some rubble for stone and brick);
 ## a tree sheds leaves as it crashes down.
 func _splinter(c: Chunk, cp: Vector2, sp: float) -> void:
@@ -701,6 +757,10 @@ func _remove(c: Chunk, gone: Dictionary, ax: Array) -> void:
 		var w := _to_world(c, ax, c.px[k])
 		var col: Color = c.cf[k] if c.fg[k] != 0 else c.cb[k]
 		var out := (w - c.pos).normalized()
+		if c.fg[k] == 0 and (c.bg[k] & 255) == Defs.LEAF:
+			# a leaf: drifts down slowly
+			g._particle(w, out * randf_range(0.1, 0.4) + w.normalized() * randf_range(0.1, 0.5), 40 + randi() % 50, col, false, 0.012)
+			continue
 		g._particle(w, out * randf_range(0.3, 1.0) + c.vel * 0.3 + w.normalized() * randf_range(0.2, 0.8), 25 + randi() % 30, col, false, 0.06)
 		var t: int = c.fg[k] & 255
 		if t != 0 and randf() < 0.35:
@@ -708,9 +768,6 @@ func _remove(c: Chunk, gone: Dictionary, ax: Array) -> void:
 			if deb != 0 and deb != t:
 				var cc: Vector2i = Build.cell_of(w)
 				_put(cc.x, cc.y, deb | (c.fg[k] & 0xff00), -1)
-		elif (c.bg[k] & 255) == Defs.LEAF and randf() < 0.25:
-			var cc2: Vector2i = Build.cell_of(w)
-			_put(cc2.x, cc2.y, Defs.LITTER, -1)
 	var keep_ip := PackedVector2Array()
 	var keep_fg := PackedInt32Array()
 	var keep_bg := PackedInt32Array()
@@ -748,8 +805,10 @@ func _remove(c: Chunk, gone: Dictionary, ax: Array) -> void:
 
 ## a falling chunk that hits a mage or a foe hurts it (heavier and faster hurts more), once
 func _strike(c: Chunk) -> void:
+	# like falling rock (grid.comp): only a piece that has really fallen (ROCK_HURT_FALL cells' worth of
+	# speed) and comes down on your upper half hurts, so clods dropping into a pit you dig don't
 	var sp := c.vel.length()
-	if sp < 1.0 or c.mass <= 0.0:
+	if sp < sqrt(2.0 * GRAV * ROCK_HURT_FALL) or c.mass <= 0.0:
 		return
 	var ax := _axes(c)
 	var bodies: Array = []
@@ -767,7 +826,7 @@ func _strike(c: Chunk) -> void:
 		for back in [0.0, 0.5]:
 			var shift: Vector2 = -c.vel * back       # (and where it was halfway through this frame)
 			var oy: float = -b.h * 0.5 + 1.0
-			while oy <= b.h * 0.5 - 1.0 and not touched:
+			while oy <= 0.0 and not touched:
 				var ox: float = -b.w * 0.5 + 1.0
 				while ox <= b.w * 0.5 - 1.0:
 					var wp: Vector2 = b.pos + br * ox + bd * oy - shift
@@ -814,7 +873,9 @@ func _settle(c: Chunk) -> void:
 	var h2 := cmax.y - cmin.y + 1
 	if w2 <= 0 or h2 <= 0:
 		return
-	var pid := randi() & 0xFFFF
+	# a felled tree's crown stays a plant of its own in the background, in the bushes' range of ids
+	# (0xF000..): plants.comp holds it up by any part of it resting on something
+	var pid := (0xF000 | (randi() & 0x0FFF)) << 16
 	var data := PackedInt32Array()
 	data.resize(w2 * h2 * 2)
 	data.fill(-1)
@@ -831,14 +892,14 @@ func _settle(c: Chunk) -> void:
 			var f: int = c.fg[k]
 			var b: int = c.bg[k]
 			if c.tree:
-				# a felled tree lands in front: its wood as logs (solid: you walk on them and chop
-				# them), its leaves partly as a drift of leaf litter (the rest fluttered away)
+				# a felled tree: its wood lands in front as logs (solid: you walk on them and chop
+				# them; anchored where they lie, so a log over a dip doesn't creak and break up),
+				# its crown stays in the background as a fallen plant
 				var bm: int = b & 255
 				if bm == Defs.LEAF or bm == Defs.SNOW:
-					if hash(col * 7919 + row * 31 + pid) % 100 < 30:
-						data[o] = (Defs.LITTER if bm == Defs.LEAF else Defs.SNOW) | (b & 0xff00)
+					data[o + 1] = bm | pid
 				elif bm != 0 and Defs.KIND[bm] == Defs.K_SOLID:
-					data[o] = bm | (posmod(hash(col * 13 + row), 4) << 8)
+					data[o] = bm | (posmod(hash(col * 13 + row), 4) << 8) | ST_ANCHOR
 				any = true
 				continue
 			if f != 0:
@@ -846,8 +907,49 @@ func _settle(c: Chunk) -> void:
 			if b != 0:
 				data[o + 1] = b & ~(0x3F00 | BG_ANCHOR)
 			any = true
+	if c.tree:
+		_prune_crown(data, w2, h2, ax, c, ref, cmin)
 	if any:
 		g.stamps.append({"x0": posmod(ref.x + cmin.x, Defs.SH_N[0]), "y0": cmin.y, "w": w2, "h": h2, "data": data, "raw": true})
+
+## A felled crown keeps only the leaves joined (through each other) to its logs: plants.comp holds a
+## fallen crown up by what it rests on, and a scrap cut off from the rest would only come loose again.
+## The scraps flutter away as leaves.
+func _prune_crown(data: PackedInt32Array, w2: int, h2: int, ax: Array, c: Chunk, ref: Vector2i, cmin: Vector2i) -> void:
+	var keep := {}
+	var q: Array = []
+	for j in h2:
+		for i in w2:
+			var o := 2 * (j * w2 + i)
+			if data[o + 1] == -1:
+				continue
+			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var ni: int = i + d.x
+				var nj: int = j + d.y
+				if ni >= 0 and nj >= 0 and ni < w2 and nj < h2 and data[2 * (nj * w2 + ni)] != -1:
+					keep[j * w2 + i] = true
+					q.append(j * w2 + i)
+					break
+	while not q.is_empty():
+		var k: int = q.pop_back()
+		var ki: int = k % w2
+		var kj: int = k / w2
+		for dj in [-1, 0, 1]:
+			for di in [-1, 0, 1]:
+				var ni2: int = ki + di
+				var nj2: int = kj + dj
+				if ni2 < 0 or nj2 < 0 or ni2 >= w2 or nj2 >= h2:
+					continue
+				var k2 := nj2 * w2 + ni2
+				if not keep.has(k2) and data[2 * k2 + 1] != -1:
+					keep[k2] = true
+					q.append(k2)
+	for k in w2 * h2:
+		if data[2 * k + 1] != -1 and not keep.has(k):
+			data[2 * k + 1] = -1
+			if randf() < 0.3:
+				var lp := cell_pos(ref.x + cmin.x + k % w2, cmin.y + k / w2)
+				g._particle(lp, Vector2(randf() - 0.5, randf() - 0.7) * 0.3, 40 + randi() % 40, Color(0.25, 0.45, 0.18), false, 0.012)
 
 ## everything still moving goes into the world now (before saving, or leaving the planet)
 func settle_all() -> void:

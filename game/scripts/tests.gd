@@ -10,6 +10,8 @@ var g                       # the game (main.gd)
 var lines := []
 var passed := 0
 var failed := 0
+var worst_us := 0           # the longest frame since this was last reset (a hitch shows here)
+var _last_us := 0
 
 func _ok(name: String, cond: bool, detail := "") -> void:
 	lines.append(("PASS  " if cond else "FAIL  ") + name + ("   [" + detail + "]" if detail != "" else ""))
@@ -21,6 +23,15 @@ func _ok(name: String, cond: bool, detail := "") -> void:
 func _frames(n: int) -> void:
 	for k in n:
 		await g.get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		if _last_us > 0:
+			worst_us = maxi(worst_us, now - _last_us)
+		_last_us = now
+
+## a profiler section's recent peak, in ms ("lifting pieces out: 3.2")
+func _peak(sec: String) -> String:
+	var p = g.prof.get(sec)
+	return "%s %.1f ms" % [sec, (p[3] / 1000.0) if p != null else 0.0]
 
 func _cell_pos(col: int, row: int) -> Vector2:
 	var a := (float(posmod(col, Defs.SH_N[0])) + 0.5) / Defs.SH_N[0] * TAU
@@ -867,7 +878,29 @@ func run() -> void:
 					if (a5 >> 16) == tid and (a5 & 255) == Defs.WOOD:
 						own_wood += 1
 			var wood0: int = wood_round.call(rw0)
+			# loose specks (timber grains, leaf litter) and leaves around, before and after
+			var bits_round := func(raw: PackedByteArray) -> Vector2i:
+				var specks := 0
+				var leaves := 0
+				for j in range(grt - 150, grt + 6):
+					for i in range(-170, 171):
+						var kbits := (j * N0 + posmod(tcol + i, N0)) * 4
+						var tfg := raw.decode_u32(kbits) & 255
+						if tfg == Defs.TIMBER or tfg == Defs.LITTER:
+							specks += 1
+						if (raw.decode_u32(toff + kbits) & 255) == Defs.LEAF:
+							leaves += 1
+				return Vector2i(specks, leaves)
+			var bits0: Vector2i = bits_round.call(rw0)
+			var own_leaves := 0
+			for j in range(grt - 110, grt - 9):
+				for i in range(-40, 41):
+					var a6 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
+					if (a6 >> 16) == tid and (a6 & 255) == Defs.LEAF:
+						own_leaves += 1
 			var max_chunks := 0
+			g.hitch_us = 0
+			g.prof_reset()
 			# hold the dig on the trunk for a moment (each frame harvests about a third of it)
 			for fk in 15:
 				for dc in [-2, 0, 2]:
@@ -892,10 +925,15 @@ func run() -> void:
 				await _frames(1)
 			await _frames(30)
 			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("felled_tree.png"))
-			var wood1: int = wood_round.call(g.gpu.read_world())
+			var rw1: PackedByteArray = g.gpu.read_world()
+			var wood1: int = wood_round.call(rw1)
+			var bits1: Vector2i = bits_round.call(rw1)
 			var whole := max_chunks > 0 and wood0 - wood1 < own_wood * 2 / 5
-			_ok("a felled tree topples whole and lies where it fell", whole,
-				"it came away as %d piece(s); wood around: %d before, %d after (the tree had %d)" % [max_chunks, wood0, wood1, own_wood])
+			# it leaves no scatter of loose specks (how much of its crown survives depends on what it
+			# lands on: a cottage wall crushes more of it than open ground; reported, not judged)
+			var tidy := bits1.x - bits0.x < 40
+			_ok("a felled tree topples whole and lies where it fell", whole and tidy,
+				"it came away as %d piece(s); wood around: %d before, %d after (the tree had %d); loose specks %d -> %d; leaves %d -> %d (its own %d); the game's longest frame %.1f ms (%s, %s, %s)" % [max_chunks, wood0, wood1, own_wood, bits0.x, bits1.x, bits0.y, bits1.y, own_leaves, g.hitch_us / 1000.0, _peak("lifting pieces out"), _peak("falling pieces"), _peak("read back")])
 			if not (before_n > 50 and after_n < before_n / 10):
 				cut_txt += " (before: %s; after: %s)" % [z0, z1]
 		else:
@@ -1188,11 +1226,25 @@ func run() -> void:
 			g._toggle_build()
 		g.build_cat = Build.CAT_SATCHEL
 		g.build_idx[Build.CAT_SATCHEL] = maxi(0, g.player.furn.size() - 1)
+		# (loose litter or grit that blew onto its old spot meanwhile is swept off first)
+		var sw: Dictionary = g.gpu.read_rect(int(tstamp["x0"]), int(tstamp["y0"]), int(tstamp["w"]), int(tstamp["h"]))
+		var swd := PackedInt32Array()
+		swd.resize(int(tstamp["w"]) * int(tstamp["h"]))
+		swd.fill(0xFFFF)
+		var swept := 0
+		for swk in swd.size():
+			var swm: int = sw["fg"][swk] & 255
+			if swm != 0 and Defs.KIND[swm] == Defs.K_POWDER:
+				swd[swk] = 0xFF00
+				swept += 1
+		if swept > 0:
+			g.stamps.append({"x0": int(tstamp["x0"]), "y0": int(tstamp["y0"]), "w": int(tstamp["w"]), "h": int(tstamp["h"]), "data": swd})
+			await _frames(2)
 		g.test_aim = table_at
 		await _frames(3)
 		back_ok = g.build_prev.get("ok", false)
 		# (something may have tumbled into that spot meanwhile: then a little way along)
-		for try_k in 10:
+		for try_k in 16:
 			if back_ok:
 				break
 			if t_why == "":
@@ -1202,7 +1254,7 @@ func run() -> void:
 					var wn: String = Defs.NAMES[wv & 255]
 					wm[wn] = int(wm.get(wn, 0)) + 1
 				t_why = "its old spot holds %s; " % str(wm)
-			g.test_aim = spot.call(-14.0 - float(try_k) * 5.0, 5.0)
+			g.test_aim = spot.call((-14.0 - try_k * 4.0) if try_k < 8 else (14.0 + (try_k - 8) * 4.0), 5.0)
 			await _frames(3)
 			back_ok = g.build_prev.get("ok", false)
 		g.build_click = true
@@ -1434,12 +1486,16 @@ func run() -> void:
 	var sk = g.spawn_enemy("skeleton", spot.call(16.0, 9.5))
 	var saw_wind := false
 	var hp_sk: float = g.player.hp
+	var cut := false
 	for fr2 in 200:
 		if sk.act == "windup":
 			saw_wind = true
+		if g.player.hp < hp_sk:
+			cut = true                    # (then healed straight away: a run of cuts mustn't kill him
+			g.player.hp = g.max_hp        # and leave the tests after this with a dead mage)
 		await _frames(1)
-	var cut: bool = g.player.hp < hp_sk
 	g.test_god = true
+	g.player.hp = g.max_hp
 	foe_lines.append("skeleton: wound up %s, cut you %s" % [saw_wind, cut])
 	foe_ok = foe_ok and saw_wind and cut
 	g.enemies.clear()
@@ -1780,6 +1836,19 @@ func run() -> void:
 	await _frames(240)
 	var wall := float(Time.get_ticks_usec() - tf) / 240.0 / 1000.0
 	_ok("holds 60 fps at the surface", wall < 18.5, "%.1f ms per frame, game %.1f ms, waiting for the GPU %.1f ms" % [wall, g.perf_cpu_ms, g.perf_wait_ms])
+	# the same with no frame cap: how much room there is, and where the time goes
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	await _frames(30)
+	g.prof_reset()
+	worst_us = 0
+	g.hitch_us = 0
+	var tu0 := Time.get_ticks_usec()
+	await _frames(300)
+	var uncapped := float(Time.get_ticks_usec() - tu0) / 300.0 / 1000.0
+	var ptxt: String = g.prof_text(14, "; ")
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
+	_ok("frame time with no cap", uncapped < 16.7, "%.2f ms a frame (%.0f fps), longest %.1f ms (the game's own %.1f); average ms (peak): %s" % [uncapped, 1000.0 / uncapped, worst_us / 1000.0, g.hitch_us / 1000.0, ptxt])
 	# ---- the world keeps its pace when frames are slow (a laptop on battery) ----
 	var t_before: float = g.time
 	Engine.max_fps = 30
@@ -1865,6 +1934,8 @@ func run() -> void:
 	g.brushes.append([_cell_pos(hang_c.x + 1, hang_c.y + 1), 3.0, 1, 0, 9, 0, 0, 0])
 	var hang_chunks := 0
 	var hang_shot := false
+	g.hitch_us = 0
+	g.prof_reset()
 	for hang_k in 560:
 		hang_chunks = maxi(hang_chunks, g.chunks.list.size())
 		if not hang_shot and g.chunks.list.size() > 3 and hang_k > 60:
@@ -1885,7 +1956,7 @@ func run() -> void:
 		elif (v & 255) == Defs.GRAVEL:
 			n_grav += 1
 	_ok("a collapsing building falls in pieces, not to dust", hang_chunks >= 3 and n_mas > int(hang0[0]) / 2,
-		"%d pieces at once; afterwards %d stone blocks and %d gravel (it had %d stone)" % [hang_chunks, n_mas, n_grav, hang0[0]])
+		"%d pieces at once; afterwards %d stone blocks and %d gravel (it had %d stone); the game's longest frame %.1f ms (%s, %s, %s)" % [hang_chunks, n_mas, n_grav, hang0[0], g.hitch_us / 1000.0, _peak("lifting pieces out"), _peak("falling pieces"), _peak("read back")])
 	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[4]) < int(hang0[0]) / 3 and int(hang1[2]) < int(hang0[2]) / 5,
 		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 9 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
 
