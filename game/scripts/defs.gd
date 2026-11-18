@@ -61,6 +61,9 @@ const CAP := 45           # a giant mushroom's cap (each mushroom has its own co
 const STALK := 46         # a giant mushroom's pale stem
 const MYCELIUM := 47      # fungal ground (the Mirecap Grove)
 const DRYGRASS := 48      # golden savanna grass: the ground's top and the tall tufts on it
+## The back walls a piece of furniture can stand in front of (see behind_index). 0 is none.
+const BEHIND := [0, PLANK, WOOD, MASONRY, BRICK, SANDSTONE, GLASS, MOSSBLOCK, STONE, TILE, OBSIDIAN,
+	RUNESTONE, DRYGRASS, CAP, STALK, DIRT, DEEPSTONE, ICE, LEAF, SCAFFOLD]
 
 const MAT_NAMES := {
 	0: "AIR", 1: "STONE", 2: "DIRT", 3: "GRASS", 4: "SAND", 5: "WATER", 6: "LAVA", 7: "WOOD", 8: "LEAF",
@@ -259,7 +262,18 @@ func glsl_prefix() -> String:
 	s += "const uint SPAN[NM] = uint[NM](%s);\n" % _join_u(SPAN)
 	s += "const uint DEBRIS[NM] = uint[NM](%s);\n" % _join_u(DEBRIS)
 	s += "const uint BGDEBRIS[NM] = uint[NM](%s);\n" % _join_u(BGDEBRIS)
+	var bh := []
+	for k in 32:
+		bh.append(str(BEHIND[k]) + "u" if k < BEHIND.size() else "0u")
+	s += "const uint BEHIND[32] = uint[32](%s);\n" % ", ".join(bh)
 	return s
+
+## The back walls a piece of furniture can stand in front of. Furniture is stamped into the
+## background layer, and each of its cells remembers which of these walls is behind it (an index,
+## in background bits 22-23 and 28-30), so when the piece burns, is taken whole or broken up for
+## planks, the wall behind it is still there: furniture is a layer in front of the wall. 0 is none.
+func behind_index(m: int) -> int:
+	return maxi(BEHIND.find(m), 0)
 
 func _join_i(a) -> String:
 	var p := []

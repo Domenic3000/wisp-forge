@@ -601,6 +601,7 @@ func _finish(bp: BP, build: bool) -> void:
 	if not build:
 		return
 	_roughen_underground(bp)
+	_weather_ground_line(bp)
 	# what the tests check later: the built cells (not fills and foundations), before anchoring
 	var cells := PackedInt32Array()
 	for k in bp.c.size():
@@ -1186,6 +1187,90 @@ func _roughen_underground(bp: BP) -> void:
 
 ## (a dungeon's runestone too: the roughening only ever adds cells outward into the earth, so its
 ## shafts and halls stay exactly as built)
+## Where masonry meets the ground line outside a building (a foundation's courses past its walls,
+## the buried steps of a ruin), the ground takes it back a little, so it doesn't sit in the earth
+## as a ruler-straight band: the ends of courses crumble into the ground around them, and the
+## biome's topsoil drifts unevenly over the exposed tops. Never inside a building (where there's a
+## back wall), never in front of a door, never the warded stone of dungeons and vaults.
+func _weather_ground_line(bp: BP) -> void:
+	var w := bp.w
+	var h := bp.h
+	var wr := RandomNumberGenerator.new()
+	wr.seed = hash(Vector2i(bp.x0, bp.y0)) ^ 0x5eed
+	var gj := PackedInt32Array()
+	gj.resize(w)
+	for i in w:
+		gj[i] = ground_row(bp.x0 + i) - bp.y0
+	# columns in front of doors stay clear (a drift there would trip you on the doorstep)
+	var near_door := PackedByteArray()
+	near_door.resize(w)
+	for d in bp.doors:
+		for i in range(int(d[0]) - 8, int(d[0]) + int(d[2]) + 8):
+			if i >= 0 and i < w:
+				near_door[i] = 1
+	var weatherable := func(f: int) -> bool:
+		return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.MOSSBLOCK or f == Defs.STONE
+	var outside := func(i: int, j: int) -> bool:
+		var b: int = bp.getb(i, j)
+		return b == 255 or b == 0
+	var earthy := func(f: int) -> bool:
+		return f == 255 or (f != 0 and Defs.KIND[f] == Defs.K_POWDER) or f == Defs.DIRT or f == Defs.GRASS or f == Defs.MUD
+	# 0. a ruin is half swallowed by the ground: its masonry near the ground line gives way to the
+	# ground's own soil in uneven lumps (most of it right at the surface, less deeper down), so its
+	# buried part reads as a ruin in the sand, not a band of bricks
+	if bp.ruined:
+		var p1 := wr.randf() * TAU
+		var p2 := wr.randf() * TAU
+		for i in w:
+			var gm0 := _ground_mats(bp.x0 + i)
+			for j in range(maxi(gj[i] - 1, 0), mini(gj[i] + 16, h)):
+				var f0 := bp.getf(i, j)
+				if not weatherable.call(f0):
+					continue
+				var nz := sin(float(i) * 0.21 + float(j) * 0.37 + p1) + sin(float(i) * 0.083 - float(j) * 0.19 + p2) + wr.randf() * 0.7
+				var depth0: int = j - gj[i]
+				if nz > -0.3 + float(maxi(depth0, 0)) * 0.12:
+					bp.fg(i, j, gm0[0] if depth0 < int(gm0[1]) else gm0[2], F_FILL | F_ANCHOR)
+	# 1. the ends of courses crumble: a block with earth beside it gives way to earth, and now and
+	# then the one behind it too
+	for pass_k in 2:
+		var turn := []
+		for i in w:
+			for j in range(maxi(gj[i], 0), mini(gj[i] + 9, h)):      # (at and below the ground line only)
+				var f := bp.getf(i, j)
+				if not weatherable.call(f) or not outside.call(i, j):
+					continue
+				var el: bool = (not bp.ok(i - 1, j)) or earthy.call(bp.getf(i - 1, j))
+				var er: bool = (not bp.ok(i + 1, j)) or earthy.call(bp.getf(i + 1, j))
+				if (el or er) and wr.randf() < (0.55 if pass_k == 0 else 0.3):
+					turn.append(Vector2i(i, j))
+		for q in turn:
+			var gm := _ground_mats(bp.x0 + q.x)
+			var depth: int = q.y - gj[q.x]
+			bp.fg(q.x, q.y, gm[0] if depth < int(gm[1]) else gm[2], F_FILL | F_ANCHOR)
+	# 2. drifts over the exposed tops near the ground line, a smooth bumpy height along the run,
+	# and a top block here and there worn away to soil
+	var phase := wr.randf() * TAU
+	for i in w:
+		if near_door[i] != 0:
+			continue
+		for j in range(maxi(gj[i] - 3, 1), mini(gj[i] + 5, h)):
+			var f := bp.getf(i, j)
+			if not weatherable.call(f) or not outside.call(i, j):
+				continue
+			var above := bp.getf(i, j - 1)
+			if not (above == 0 or above == 255) or not outside.call(i, j - 1):
+				break
+			var gm2 := _ground_mats(bp.x0 + i)
+			var dh := int(round(1.2 + sin(float(i) * 0.45 + phase) * 1.1 + wr.randf() * 0.9))
+			for k in range(1, dh + 1):
+				var a2 := bp.getf(i, j - k)
+				if (a2 == 0 or a2 == 255) and outside.call(i, j - k):
+					bp.fg(i, j - k, gm2[0], F_FILL | F_ANCHOR)
+			if wr.randf() < 0.3:
+				bp.fg(i, j, gm2[0], F_FILL | F_ANCHOR)
+			break
+
 func _rough_mat(f: int) -> bool:
 	return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.OBSIDIAN or f == Defs.MOSSBLOCK or f == Defs.RUNESTONE
 

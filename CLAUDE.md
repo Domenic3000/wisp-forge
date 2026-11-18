@@ -75,6 +75,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   so they obey the physics. Digging a door (open or shut) takes it whole into the satchel as a Door item.
   Structures (House, Room, Roof) are put together by buildings.gd's own parts (`Build.structure`, seeded, with
   `builds.rng` saved and restored); [ ] width, - = storeys, T style, R variation; cost from `structure_cost`.
+- Furniture is a layer in front of the back wall: each DECOR cell remembers the wall behind it (an index into
+  `Defs.BEHIND`, in background bits 22-23 and 28-30; bglayer.comp `behindIdx`/`withBehind`/`decorGone`). stamp.comp
+  fills it in as furniture is written (the wall already there, or the nearest wall beside it in the blueprint
+  row); burning (react.comp, brush ignition), breaking up (deconstruct) and taking a piece whole give the wall
+  back instead of a hole.
 - Furniture kinds: a prop's kind (props.gd `KINDS`, 15 at most: table, chair, bed...) travels in blueprint bits 28-31
   and lives in background bits 24-27 of its DECOR cells (`bp.bgv(..., kid)`, `Build.prop_stamp(cells, kid)`), so
   a picked-up piece keeps its name and a bed is known for a bed (`Props.BED`).
@@ -100,6 +105,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   shutting it stamps back only those parts; fire and blasts take parts off the open panel where they reach
   (`_hurt_open_door`), and overlay.gd draws the panel with those holes, charred at the edges. Less than a third
   left and the door falls apart.
+- Holding Shift + right mouse keeps harvesting: after a piece is taken whole there is a short pause
+  (`Mage.decon_pause`), not a need to let go.
 - Background harvest (`_pick_up_furniture`) checks the collision grid for furniture before reading the world back;
   a read that finds none isn't repeated at the same spot (`_pick_miss`).
 - Save slots: saves/slot_1..3 (`SLOTS`, `slot`, `_save_dir`), each with its progress.json and worlds; the title
@@ -108,8 +115,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_migrate_old_saves`). settings.json stays in saves/; the test mode uses saves/test.
 - Window: setting "window" (windowed, fullscreen, exclusive), F11 / Alt+Enter switch; the test mode stays windowed.
 - Foundations: two courses of the building's stone, then the biome's own ground layers (`_ground_mats`); yards are
-  made of the biome's soil too.
-- Test mode quits by itself after 7 minutes, so a broken run never leaves the game open.
+  made of the biome's soil too. `_weather_ground_line` (run by `_finish`) blends masonry at the ground line outside
+  buildings: course ends crumble into earth, topsoil drifts over exposed tops (never at doors), and a ruin's
+  buried part is half swallowed by the ground.
+- Test mode quits by itself after 7 minutes, so a broken run never leaves the game open. tests.gd is loaded at run
+  time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
+  stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
+  watch for a local that reuses a name already declared in the same function (lambdas included).
 - Below-ground masonry (dungeon runestone too) gets ragged, stepped outer edges (`_roughen_underground`, run by
   `_finish`), so shafts and buried halls don't meet the earth with ruler-straight lines. The added cells are written
   outright (anchored, not F_FILL: a fill only lands in open space, so it never showed against solid earth), and only

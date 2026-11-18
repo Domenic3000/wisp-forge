@@ -5,5 +5,20 @@
 layout(std430, set = 0, binding = 8) restrict buffer Aux { uint a[]; } aux;
 #define BG_WALL 0x4000u
 #define BG_ANCHOR 0x8000u
+// Furniture (DECOR) is a layer in front of the back wall: each of its cells remembers the wall
+// behind it, an index into BEHIND (defs.gd), in bits 22-23 and 28-30 (16-21 its colour, 24-27 its
+// kind). When the piece burns, is broken up or taken whole, decorGone gives back that wall.
+uint behindIdx(uint a) { return ((a >> 22) & 3u) | (((a >> 28) & 7u) << 2); }
+uint withBehind(uint a, uint k) { return (a & ~0x70C00000u) | ((k & 3u) << 22) | (((k >> 2) & 7u) << 28); }
+uint behindIndexOf(uint m) {
+	if (m == 0u) return 0u;
+	for (uint k = 1u; k < 32u; k++) if (BEHIND[k] == m) return k;
+	return 0u;
+}
+uint decorGone(uint a) {
+	if ((a & 255u) != M_DECOR) return 0u;
+	uint m = BEHIND[behindIdx(a)];
+	return m == 0u ? 0u : (m | BG_WALL | (a & (BG_ANCHOR | 0x3f00u)));
+}
 uint bgAtIdx(int i) { return i < 0 ? 0u : (aux.a[i] & 255u); }
 uint bgAtPos(vec2 p) { int i = idxAt(p); return i < 0 ? 0u : (aux.a[i] & 255u); }

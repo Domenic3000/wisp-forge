@@ -1165,6 +1165,71 @@ func run() -> void:
 		g._toggle_build()
 	_ok("build mode lays straight walls and back walls by dragging", shape_ok, "; ".join(shape_res))
 
+	# ---- furniture is a layer in front of the wall: burnt or taken, the wall behind it stays ----
+	var fw_at: Vector2 = spot.call(-95.0, 0.0)
+	var fw_c: Vector2i = Build.cell_of(fw_at)
+	var FWW := 44
+	var FWH := 22
+	var fwd := PackedInt32Array()
+	fwd.resize(FWW * FWH)
+	fwd.fill(0xff | (Defs.MASONRY << 8) | 0x40000 | 0x20000)     # an anchored stone back wall, standing on the ground
+	var fw_x0: int = fw_c.x - FWW / 2
+	var fw_y0: int = fw_c.y - FWH - 1
+	g.stamps.append({"x0": posmod(fw_x0, Defs.SH_N[0]), "y0": fw_y0, "w": FWW, "h": FWH, "data": fwd})
+	await _frames(3)
+	var trng := RandomNumberGenerator.new()
+	trng.seed = 77
+	var tdes: Dictionary = Build.Props.make("table", trng, null)
+	var trows: Array = tdes["rows"]
+	var t_boxes := []
+	for tk2 in 2:
+		var tcol: int = fw_x0 + 6 + tk2 * 22
+		var tpc: Array = Build.prop_cells(trows, tcol, fw_y0 + FWH - 2, false)
+		var tst: Dictionary = Build.prop_stamp(tpc, Build.Props.kind_id("table"))
+		g.stamps.append(tst)
+		t_boxes.append(tst)
+	await _frames(4)
+	var box_bg := func(st2: Dictionary) -> Dictionary:
+		var rr: Dictionary = g.gpu.read_rect(int(st2["x0"]), int(st2["y0"]), int(st2["w"]), int(st2["h"]))
+		var out := {"decor": 0, "stone": 0, "empty": 0}
+		for v in rr["bg"]:
+			var m2: int = v & 255
+			if m2 == Defs.DECOR:
+				out["decor"] += 1
+			elif m2 == Defs.MASONRY:
+				out["stone"] += 1
+			elif m2 == 0:
+				out["empty"] += 1
+		return out
+	var before_a: Dictionary = box_bg.call(t_boxes[0])
+	_go(spot.call(-95.0, 14.0))
+	await _frames(20)
+	# the first is taken whole
+	var tmid0: Dictionary = t_boxes[0]
+	var nfurn0: int = g.player.furn.size()
+	g.player.decon_pause = 0
+	g._deconstruct(g.player, _cell_pos(int(tmid0["x0"]) + int(tmid0["w"]) / 2, int(tmid0["y0"]) + int(tmid0["h"]) / 2))
+	var took: bool = g.player.furn.size() == nfurn0 + 1
+	# holding harvest carries on after a moment (no need to let go and press again)
+	var paused: int = g.player.decon_pause
+	var nb0: int = g.brushes.size()
+	for hk in paused + 1:
+		g._deconstruct(g.player, fw_at + fw_at.normalized() * 30.0)
+	var resumed: bool = g.brushes.size() > nb0
+	g.brushes.resize(nb0)
+	# the second burns
+	var tmid1: Dictionary = t_boxes[1]
+	var tfire: Vector2 = _cell_pos(int(tmid1["x0"]) + int(tmid1["w"]) / 2, int(tmid1["y0"]) + int(tmid1["h"]) / 2)
+	for fk2 in 24:
+		g.brushes.append([tfire + Vector2(randf() - 0.5, randf() - 0.5) * 8.0, 6.0, 3, Defs.FIRE, 0, 0, 0])
+		await _frames(4)
+	await _frames(150)
+	var after_a: Dictionary = box_bg.call(t_boxes[0])
+	var after_b: Dictionary = box_bg.call(t_boxes[1])
+	var burnt_pick: bool = g._pick_up_furniture(g.player, tfire)
+	_ok("burnt or taken, furniture leaves the wall behind it whole", before_a["decor"] > 20 and took and after_a["decor"] == 0 and after_a["empty"] == 0 and after_b["decor"] < before_a["decor"] / 4 and after_b["empty"] == 0 and (after_b["decor"] > 0 or not burnt_pick) and paused > 0 and resumed,
+		"before: %s; taken whole (%s): %s; burnt: %s; anything left to pick up where it burnt: %s; harvest carries on after a pickup (%d frames' pause): %s" % [str(before_a), took, str(after_a), str(after_b), burnt_pick, paused, resumed])
+
 	# ---- conjuring onto a foe strikes it instead of burying it ----
 	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))
 	var foe_hp: float = foe.hp
@@ -1492,6 +1557,7 @@ func run() -> void:
 		var st_lo := 99
 		var st_hi := -1
 		var life := 0
+		var n_still := 0
 		var near := {}
 		var fgs: PackedInt32Array = rr["fg"]
 		for k in fgs.size():
@@ -1501,10 +1567,12 @@ func run() -> void:
 				st_hi = maxi(st_hi, (v >> 24) & 63)
 				if ((v >> 16) & 255) > 0:
 					life += 1
+				else:
+					n_still += 1
 			elif (v & 255) != 0:
 				var nm: String = Defs.NAMES[v & 255]
 				near[nm] = int(near.get(nm, 0)) + 1
-		return [nf, anch, nb, "support %d-%d, %d moving, inside also %s" % [st_lo, st_hi, life, str(near)]]
+		return [nf, anch, nb, "support %d-%d, %d moving or creaking, inside also %s" % [st_lo, st_hi, life, str(near)], n_still]
 	var hang0: Array = hang_tally.call()
 	await _frames(120)
 	var hang_still: Array = hang_tally.call()     # left alone, it stays as built
@@ -1514,7 +1582,7 @@ func run() -> void:
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("hanging.png"))
 	var hang1: Array = hang_tally.call()
 	hang0.resize(3)
-	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[0]) < int(hang0[0]) / 3 and int(hang1[2]) < int(hang0[2]) / 5,
+	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[4]) < int(hang0[0]) / 3 and int(hang1[2]) < int(hang0[2]) / 5,
 		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 9 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
 
 	# ---- save and load give back the same world ----

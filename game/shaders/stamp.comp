@@ -36,6 +36,34 @@ void main() {
 	if (bc != 255u) {
 		uint a = bc == 0u ? 0u : (bc | ((d & 0x40000u) != 0u ? BG_WALL : 0u) | ((d & 0x20000u) != 0u ? BG_ANCHOR : 0u));
 		if (bc != 0u && (d & 0x8000000u) != 0u) a |= (((d >> 19) & 255u) << 16) | (((d >> 28) & 15u) << 24);   // which part of a chest; a prop's colour and kind
+		if (bc == M_DECOR) {
+			// the wall this piece stands in front of: the back wall already here (furniture set down
+			// in a room), or else the nearest wall beside it along its row in the blueprint (a
+			// generated room's furniture takes the place of the wall it covers)
+			uint old = aux.a[idx];
+			uint om = old & 255u;
+			uint bi = om == M_DECOR ? behindIdx(old) : (((old & BG_WALL) != 0u) ? behindIndexOf(om) : 0u);
+			if (bi == 0u) {
+				uint lb = 255u, rb = 255u;
+				int ld = 999, rd = 999;
+				for (int k = 1; k <= 48 && (lb == 255u || rb == 255u); k++) {
+					if (lb == 255u && i - k >= 0) {
+						uint dl = blue.d[pc.b.x + j * w + i - k];
+						uint bl = (dl >> 8) & 255u;
+						if (bl != 255u && bl != M_DECOR && bl != M_TORCH) { lb = ((dl & 0x40000u) != 0u) ? bl : 0u; ld = k; }
+					}
+					if (rb == 255u && i + k < w) {
+						uint dr = blue.d[pc.b.x + j * w + i + k];
+						uint br = (dr >> 8) & 255u;
+						if (br != 255u && br != M_DECOR && br != M_TORCH) { rb = ((dr & 0x40000u) != 0u) ? br : 0u; rd = k; }
+					}
+				}
+				uint wm = ld <= rd ? lb : rb;
+				if (wm == 255u) wm = ld <= rd ? rb : lb;
+				bi = (wm == 255u) ? 0u : behindIndexOf(wm);
+			}
+			a = withBehind(a, bi);
+		}
 		aux.a[idx] = a;
 	}
 }

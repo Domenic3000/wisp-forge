@@ -9,7 +9,8 @@ const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Build := preload("res://scripts/build.gd")
-const Tests := preload("res://scripts/tests.gd")
+# (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
+# and quits instead of failing to load itself and leaving a blank window open)
 const Audio := preload("res://scripts/audio.gd")
 var audio
 
@@ -195,7 +196,7 @@ class Mage extends Body:
 	var pending_mat := -1      # what the pending placement uses (-1: the conjure material)
 	var heal_left := 0.0       # health still to come from a draught or Mending
 	var potion_cd := 0         # frames before another draught
-	var decon_lock := false    # a piece was just picked up: no more deconstructing until the button is let go
+	var decon_pause := 0       # frames of pause after picking a piece up (holding the button carries on after)
 	var dig_tap := 0           # a quick right-click still digs for a few frames
 	var jump_held := false
 	var ground_t := 99         # frames since standing on something
@@ -330,7 +331,12 @@ func _ready() -> void:
 	HALF = GS / 2.0
 	if "--test" in OS.get_cmdline_user_args():
 		testing = true
-		_tests = Tests.new()   # kept as a member: a local would be freed before the tests run
+		var tests_script = load("res://scripts/tests.gd")
+		if tests_script == null or not tests_script.can_instantiate():
+			printerr("[Wisp Forge] the test script doesn't load (a parse error?); quitting")
+			get_tree().quit(2)
+			return
+		_tests = tests_script.new()   # kept as a member: a local would be freed before the tests run
 		_tests.g = self
 		_tests.run.call_deferred()
 		return
@@ -1394,7 +1400,7 @@ func _tick() -> void:
 			if m.input.decon:
 				_deconstruct(m, m.input.aim)
 			else:
-				m.decon_lock = false
+				m.decon_pause = 0
 		if m.dig_tap > 0:
 			m.dig_tap -= 1
 	_use_grid(player)
@@ -1681,10 +1687,11 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 ## you clear a wall on purpose; plain right-click never touches a building's walls.
 func _deconstruct(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
-	if m.decon_lock:
+	if m.decon_pause > 0:
+		m.decon_pause -= 1
 		return
 	if _pick_up_furniture(m, p):
-		m.decon_lock = true      # don't go on to take the wall behind it in the same press
+		m.decon_pause = 15       # a moment's pause, then harvesting carries on while the button is held
 		return
 	brushes.append([p, m.dig_r * 0.8, 8, 0, m.tier, 0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.9, 0.6, 0.3)])
@@ -1822,8 +1829,15 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 	data.fill(0xffff)
 	for k in cells:
 		var v := 0xff                                  # the front is left as it is
-		if wm != 0:
+		# the wall each cell stood in front of (furniture remembers it), or the wall around it
+		var bk := bgs[k]
+		var bmk: int = Defs.BEHIND[((bk >> 22) & 3) | (((bk >> 28) & 7) << 2)] if (bk & 255) == Defs.DECOR else 0
+		if bmk != 0:
+			v |= (bmk << 8) | 0x40000 | (0x20000 if (bk & 0x8000) != 0 else 0)
+		elif wm != 0:
 			v |= (wm << 8) | 0x40000 | (0x20000 if anchored * 2 >= walls else 0)
+		else:
+			v |= 0                                     # nothing behind: the background is left empty
 		data[(k / n - j0) * w + (k % n - i0)] = v
 	stamps.append({"x0": posmod(c0 + i0, Defs.SH_N[0]), "y0": r0 + j0, "w": w, "h": h, "data": data})
 	var rows := []
@@ -3322,7 +3336,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 26            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 27            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

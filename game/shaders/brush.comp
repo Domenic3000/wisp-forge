@@ -42,7 +42,7 @@ void main() {
 		if (mode == 2 && B.x > 0.5 && B.x < 1.5 && dist < rad + 2.5 && R < 0.5) {
 			// fire spells set burnable things alight (foreground and background plants)
 			if (FUEL[t] > 0u && t != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[t] << 16); continue; }
-			if (t == 0u && bgm != 0u && FUEL[bgm] > 0u && bgm != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); ab = 0u; continue; }
+			if (t == 0u && bgm != 0u && FUEL[bgm] > 0u && bgm != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); ab = decorGone(ab); continue; }
 		}
 		if (mode == 1 && dist > rad && dist < rad + 1.6) {
 			// knock off lone pixels around the hole so the mage doesn't snag on them
@@ -99,7 +99,7 @@ void main() {
 				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
 				if (R > 0.35) continue;
 				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
-				ab = 0u;
+				ab = decorGone(ab);          // (furniture: the wall behind it stays)
 			}
 		} else if (mode == 3) { // fill with liquid
 			if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE) c = withFG(c, uint(B.x), uint(B.x) == M_FIRE ? 20u : 0u);

@@ -68,7 +68,8 @@ void main() {
 			bool hot = a0 == M_FIRE || a1 == M_FIRE || a2 == M_FIRE || a3 == M_FIRE;
 			bool lava = a0 == M_LAVA || a1 == M_LAVA || a2 == M_LAVA || a3 == M_LAVA;
 			if ((hot && R < IGN[bgm] * 1.5) || (lava && R < IGN[bgm] * 3.0)) {
-				if (bgm != M_TORCH) { world.cells[i] = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); aux.a[i] = 0u; }
+				// (burnt furniture leaves the wall it stood in front of)
+				if (bgm != M_TORCH) { world.cells[i] = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); aux.a[i] = decorGone(ab); }
 			}
 		}
 		return;
