@@ -74,6 +74,13 @@ void main() {
 		}
 		return;
 	}
+	// loose earth (dug, dropped or set down: not the planet's untouched ground) soaks up water it
+	// touches and turns to mud
+	if (t == M_DIRT && (c & ST_ANCHOR) == 0u) {
+		int mu = nbr(s, y, x, 0), ml = nbr(s, y, x, 2), mr = nbr(s, y, x, 3);
+		bool wet = (mu >= 0 && tAt(mu) == M_WATER) || (ml >= 0 && tAt(ml) == M_WATER) || (mr >= 0 && tAt(mr) == M_WATER);
+		if (wet && R < 0.006) { setc(i, c, M_MUD, 0u); return; }
+	}
 	uint kd = KIND[t];
 	bool inert = kd == K_SOLID && FUEL[t] == 0u && t != M_ICE && t != M_FROST && t != M_GRASS && t != M_SAND;
 	if (inert) return;
@@ -122,6 +129,13 @@ void main() {
 			if (td == M_WATER && R < 0.04) { setc(i, c, 0u, 0u); return; }
 			if (tu == 0u && R < 0.0025 * dayAt(s, y, x)) { setc(i, c, 0u, 0u); return; }
 		}
+		return;
+	}
+	if (t == M_MUD && (c & ST_ANCHOR) == 0u) {
+		// mud left out in the air with no water near dries back into dirt (slowly; faster by day,
+		// at once by fire or lava); a bog's own mud stays
+		if (nFire || nLava) { if (R < 0.05) setc(i, c, M_DIRT, 0u); return; }
+		if (tu == 0u && !nWater && R < 0.0004 * (0.3 + dayAt(s, y, x))) { setc(i, c, M_DIRT, 0u); return; }
 		return;
 	}
 	if (t == M_SAND) { if (nLava && R < 0.003) setc(i, c, M_GLASS, 0u); return; }

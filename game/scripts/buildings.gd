@@ -963,15 +963,16 @@ func _ground_mats(col: int) -> Array:
 	var bd: Dictionary = Defs.BIOMES.get(biome(col), {})
 	var top: int = bd.get("top", Defs.DIRT)
 	var sub: int = bd.get("sub", Defs.DIRT)
+	var td: int = bd.get("topD", 1)
 	for k in 2:
 		var mm: int = top if k == 0 else sub
 		var kd: int = Defs.KIND[mm]
 		if kd != Defs.K_SOLID and kd != Defs.K_POWDER:
 			if k == 0:
-				top = Defs.DIRT
+				top = Defs.GRASS   # gen.comp packs a liquid top layer (mud) to grass over dirt
+				td = 1
 			else:
 				sub = Defs.DIRT
-	var td: int = bd.get("topD", 1)
 	if td <= 0:
 		top = sub
 		td = 1

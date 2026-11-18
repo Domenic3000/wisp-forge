@@ -140,6 +140,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   layer above the mountains; `cloudDensity` is both): render.comp draws them over everything
   at their height (fog when you fly in), react.comp spawns rain/snow/ash only under the high layer's undersides, and
   grid.comp writes each mage's cloud depth to counts[58] (`Mage.fog`: misted sprite, wisps in overlay).
+- Mud (`MUD`, a liquid): a biome's liquid ground layer (marsh top, jungle subsoil) is only liquid in bogs
+  (gen.comp `bogDepth`: hollows the ground rises around, or under standing water, never on building sites or
+  over caves); everywhere else it is generated as grass over dirt, so ground never hides a pool you sink into.
+  render.comp draws mud dark and glossy with a wet top sheen and bubbles. react.comp: loose (unanchored) dirt
+  touching water turns to mud; unanchored mud in the open with no water near dries back to dirt.
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 

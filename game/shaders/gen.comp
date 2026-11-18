@@ -104,6 +104,32 @@ uint settleSafe(uint m, vec2 p, float r, float th, float rs) {
 	return m;
 }
 
+// A liquid ground layer (the bog's or jungle's mud) is only liquid in a bog: a hollow the ground
+// rises around on both sides, or the floor under standing water, away from building sites and with
+// solid ground under and beside it. Returns how deep the bog is at this column (0 = no bog), with
+// a wobbling edge so bogs are lenses, not boxes. Everywhere else the layer is packed earth you can
+// walk on, so a slope of "ground" is never a hidden pool you sink into.
+float bogDepth(vec2 p, float r, float th, float rs, vec4 sb) {
+	if (onSite(th, 10.0)) return 0.0;
+	float stp = 3.0 / RS0;
+	float rimL = rs, rimR = rs;
+	for (int k = 1; k <= 16; k++) {
+		rimL = max(rimL, surfA(mod(th - stp * float(k), TAU)).x);
+		rimR = max(rimR, surfA(mod(th + stp * float(k), TAU)).x);
+	}
+	float lvl = min(rimL, rimR) - 1.0;
+	if (sb.y > 0.0) lvl = max(lvl, sb.y);   // under a pond or lake
+	float wob = fbm(p / 9.0, SEED + 95, 2);
+	float bog = clamp((lvl - rs) * 0.7 + (wob - 0.5) * 3.0, 0.0, 6.0);
+	float d = rs - r;
+	if (d >= bog) return bog;
+	vec2 dn = -p / r;
+	vec2 sd = vec2(-dn.y, dn.x);
+	vec2 bot = p + dn * (bog - d + 1.0);
+	if (!solidAt(bot) || !solidAt(p + sd * 2.0) || !solidAt(p - sd * 2.0)) return 0.0;   // it would drain into a cave
+	return bog;
+}
+
 float oreN(vec2 p, int k) { return fbm(p / 9.0 + vec2(float(k) * 17.3, float(k) * 9.1), SEED + 20 + k, 2); }
 
 uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
@@ -122,6 +148,14 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 	else if (r > magmaR) m = M_DEEPSTONE;
 	else if (r > coreR) m = M_MAGMAROCK;
 	else return M_CORE;
+	// mud: liquid in bogs, packed earth (grass on top) elsewhere
+	if (d < B.y + subD) {
+		uint liq = KIND[uint(A.z)] == K_LIQUID ? uint(A.z) : (KIND[uint(B.x)] == K_LIQUID ? uint(B.x) : 0u);
+		if (liq != 0u) {
+			if (d < bogDepth(p, r, th, rs, sb)) return liq;
+			if (KIND[m] == K_LIQUID) m = d < 1.0 ? M_GRASS : M_DIRT;
+		}
+	}
 
 	// ores and pockets
 	float rich = (P.p[7].w - 1.0) * 0.03;

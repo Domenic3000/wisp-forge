@@ -51,7 +51,7 @@ int pattern(uint t, ivec2 w, uint v) {
 		return 1 + int(vnoise(fw / 2.5, 7) * 2.4);
 	}
 	if (t == M_ICE) return 1 + int(vnoise(fw / 3.0, 9) * 2.5);
-	if (t == M_DIRT || t == M_MUD || t == M_ASH) {
+	if (t == M_DIRT || t == M_ASH) {
 		if (h > 0.95) return 3;
 		return int(vnoise(fw / 2.0, 5) * 2.2 + h * 0.6);
 	}
@@ -187,6 +187,20 @@ vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 		if (openUp) return vec3(1.0, 0.92, 0.55);
 		float sh = sin(TIME * 0.05 + float(w.x) * 0.7) + sin(TIME * 0.07 - float(w.y) * 0.9 + float(w.x) * 0.3);
 		return ramp(t, int(sh * 0.9 + 1.6));
+	}
+	if (t == M_MUD) {
+		// mud reads as wet, never as dry dirt: dark and glossy, with slow swirling flow lines, a
+		// shining wet skin along its top that catches the light, and the odd bubble
+		float fl = vnoise(vec2(float(w.x) / 7.0 + TIME * 0.004, float(w.y) / 1.6 + vnoise(vec2(w) / 9.0, 51) * 1.4), 52);
+		vec3 mc = ramp(t, clamp(int(fl * 2.7), 0, 2));
+		if (openUp) {
+			float gl = sin(TIME * 0.03 + float(w.x) * 0.37) + sin(TIME * 0.021 - float(w.x) * 0.61);
+			mc = gl > 1.25 ? ramp(t, 3) * 1.3 : mix(ramp(t, 3), ramp(t, 2), 0.45);
+			if ((hashu(uint(w.x) * 73u ^ uint(TIME * 0.02) * 19u) % 61u) == 0u) mc = ramp(t, 0);   // a bubble popping
+		} else if ((hashu(uint(w.x) * 31u ^ uint(w.y) * 57u ^ uint(TIME * 0.015) * 7u) % 211u) == 0u) {
+			mc = ramp(t, 3);   // a bubble rising through it
+		}
+		return mc;
 	}
 	if (t == M_FIRE) return ramp(t, int(hashu(uint(w.x) * 31u ^ uint(w.y) * 17u ^ uint(TIME * 0.25)) & 3u));
 	if (KIND[t] == K_GAS) return ramp(t, int(vnoise(vec2(w) / 2.0 + vec2(TIME * 0.01, 0.0), 21) * 3.99));

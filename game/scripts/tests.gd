@@ -638,6 +638,86 @@ func run() -> void:
 			grounded += 1
 	_ok("a mage standing still doesn't jiggle", r_max - r_min < 0.3 and grounded == 120, "moved %.2f cells up and down, on the ground %d of 120 frames" % [r_max - r_min, grounded])
 
+	# ---- mud is only liquid in bogs: under the jungle's and marsh's grass the ground is solid,
+	# so you (and the rain) don't sink through a slope that looks like dirt ----
+	var N_m: int = Defs.SH_N[0]
+	var raw_m: PackedByteArray = g.gpu.read_world()
+	var mud_cols := 0
+	var mud_seen := 0
+	var mud_deep := 0
+	var firm_col := -1
+	for cm in range(0, N_m, 3):
+		var bnm: String = b.biome(cm)
+		if bnm != "jungle" and bnm != "marsh":
+			continue
+		mud_cols += 1
+		var grm: int = b.ground_row(cm)
+		var has := false
+		for j in range(grm - 2, grm + 18):
+			if (raw_m.decode_u32((j * N_m + cm) * 4) & 255) == Defs.MUD:
+				has = true
+				mud_deep = maxi(mud_deep, j - grm)
+		if has:
+			mud_seen += 1
+		elif firm_col < 0 and bnm == "jungle" and not b.wet(cm) and b.biome(cm - 8) == "jungle" and b.biome(cm + 8) == "jungle" \
+				and b.free_span(cm - 15, 30, 12):
+			firm_col = cm
+	var firm_ok := true
+	var firm_txt := "no firm jungle column"
+	if firm_col >= 0:
+		var grf: int = b.ground_row(firm_col)
+		_go(_cell_pos(firm_col, grf - 30))
+		await _frames(150)
+		var pr: float = g.player.pos.length()
+		var top_r: float = Defs.R_TOP - float(grf) + 0.5
+		firm_ok = pr > top_r - 4.0 and pr < top_r + 20.0 and g.player.on_ground and not g.player.in_liquid
+		firm_txt = "mage stands %.1f cells from the jungle surface" % (pr - top_r)
+	_ok("jungle and marsh ground is solid, mud only in bogs", mud_cols > 0 and mud_seen * 100 < mud_cols * 40 and mud_deep <= 8 and firm_ok,
+		"%d of %d columns have mud (deepest %d below the surface); %s" % [mud_seen, mud_cols, mud_deep, firm_txt])
+
+	# ---- water soaks loose dirt into mud (a stone basin set into the ground: loose dirt under
+	# water; set down by hand it isn't anchored, so it has to rest on the ground) ----
+	var mb_a: float = g.spawn_angle - 0.13
+	var mb_s: float = g.gpu.surf_at(mb_a).x
+	var MBW := 20
+	var MBH := 16
+	var mb_x: int = Build.cell_of(Vector2(cos(mb_a), sin(mb_a)) * mb_s).x
+	var mb_c := Vector2i(mb_x, b.ground_row(mb_x + MBW / 2) - MBH + 3)
+	var mbd := PackedInt32Array()
+	mbd.resize(MBW * MBH)
+	for mj in MBH:
+		for mi in MBW:
+			var mb_wall := mi < 3 or mi >= MBW - 3 or mj >= MBH - 3
+			var cell := 0
+			if mb_wall:
+				cell = Defs.STONE | 0x20000
+			elif mj >= MBH - 7:
+				cell = Defs.DIRT
+			elif mj >= 3:
+				cell = Defs.WATER
+			mbd[mj * MBW + mi] = cell | (255 << 8)      # (the background is left as it is: no tree is cut)
+	g.stamps.append({"x0": mb_c.x, "y0": mb_c.y, "w": MBW, "h": MBH, "data": mbd})
+	_go(Vector2(cos(mb_a), sin(mb_a)) * (mb_s + 14.0))
+	var mb_count := func() -> String:
+		var mb_rr: Dictionary = g.gpu.read_rect(mb_c.x, mb_c.y, MBW, MBH)
+		var tally := {}
+		for mb_v in mb_rr["fg"]:
+			var mb_nm: String = Defs.MAT_NAMES.get(mb_v & 255, str(mb_v & 255))
+			tally[mb_nm] = int(tally.get(mb_nm, 0)) + 1
+		return str(tally)
+	await _frames(3)
+	var mb_t0: String = mb_count.call()
+	await _frames(600)
+	var mb_r: Dictionary = g.gpu.read_rect(mb_c.x, mb_c.y, MBW, MBH)
+	var n_mud := 0
+	var n_dirt := 0
+	for v in mb_r["fg"]:
+		if (v & 255) == Defs.MUD:
+			n_mud += 1
+		elif (v & 255) == Defs.DIRT:
+			n_dirt += 1
+	_ok("water soaks loose dirt into mud", n_mud >= 10, "%d mud, %d dirt left in the basin; at first %s, then %s" % [n_mud, n_dirt, mb_t0, mb_count.call()])
+
 	# ---- trees stand when you walk up to them, in every biome (tall ones, and ones rooted in
 	# marsh mud, used to fall apart) ----
 	var N0: int = Defs.SH_N[0]
