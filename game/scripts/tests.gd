@@ -898,6 +898,36 @@ func run() -> void:
 					var a6 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
 					if (a6 >> 16) == tid and (a6 & 255) == Defs.LEAF:
 						own_leaves += 1
+			# its roots: its own wood below the ground line, in the background behind the earth
+			var own_roots := 0
+			for j in range(grt, grt + 19):
+				for i in range(-40, 41):
+					var a7 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
+					if (a7 >> 16) == tid and (a7 & 255) == Defs.ROOT:
+						own_roots += 1
+			# and across the land around: no trunk ends in the air above a slope (a flat, bare bottom):
+			# the lowest wood of a tree in a column near the ground rests on earth (or its own roots)
+			var bare := 0
+			var feet := 0
+			for i in range(-600, 601):
+				var cb: int = posmod(tcol + i, N0)
+				var grb: int = b.ground_row(cb)
+				var foot := -1
+				var lid := 0
+				for j in range(grb - 8, grb + 3):
+					var abf := rw0.decode_u32(toff + (j * N0 + cb) * 4)
+					if ((abf & 255) == Defs.WOOD or (abf & 255) == Defs.ROOT) and (abf >> 30) == 2:
+						foot = j
+						lid = abf >> 16
+				if foot < 0:
+					continue
+				feet += 1
+				var below_f := rw0.decode_u32((foot + 1) * N0 * 4 + cb * 4) & 255
+				var below_b := rw0.decode_u32(toff + ((foot + 1) * N0 + cb) * 4)
+				if below_f == 0 and (below_b >> 16) != lid:
+					bare += 1
+			_ok("trees have roots, and trunks reach the ground on slopes", own_roots > 8 and feet > 20 and bare * 20 < feet,
+				"the felled tree has %d root cells; %d of %d trunk-foot columns end over open air" % [own_roots, bare, feet])
 			var max_chunks := 0
 			g.hitch_us = 0
 			g.prof_reset()
@@ -933,7 +963,7 @@ func run() -> void:
 			# lands on: a cottage wall crushes more of it than open ground; reported, not judged)
 			var tidy := bits1.x - bits0.x < 40
 			_ok("a felled tree topples whole and lies where it fell", whole and tidy,
-				"it came away as %d piece(s); wood around: %d before, %d after (the tree had %d); loose specks %d -> %d; leaves %d -> %d (its own %d); the game's longest frame %.1f ms (%s, %s, %s)" % [max_chunks, wood0, wood1, own_wood, bits0.x, bits1.x, bits0.y, bits1.y, own_leaves, g.hitch_us / 1000.0, _peak("lifting pieces out"), _peak("falling pieces"), _peak("read back")])
+				"it came away as %d piece(s); wood around: %d before, %d after (the tree had %d); loose specks %d -> %d; leaves %d -> %d (its own %d); the game's longest frame %.1f ms (%s [%s, %s, %s, %s], %s, %s)" % [max_chunks, wood0, wood1, own_wood, bits0.x, bits1.x, bits0.y, bits1.y, own_leaves, g.hitch_us / 1000.0, _peak("lifting pieces out"), _peak("lift: read"), _peak("lift: find"), _peak("lift: make"), _peak("lift: clear"), _peak("falling pieces"), _peak("read back")])
 			if not (before_n > 50 and after_n < before_n / 10):
 				cut_txt += " (before: %s; after: %s)" % [z0, z1]
 		else:
@@ -1080,6 +1110,9 @@ func run() -> void:
 	# (try a few places along the ground until it fits)
 	var table_at: Vector2 = spot.call(-14.0, 5.0)
 	var table_ok := false
+	# (try a few places along the ground until it fits; trees, and the one felled above, may fill this
+	# stretch: then walk on and try again further along)
+	var table_why := []
 	for tk in 16:
 		table_at = spot.call((-14.0 - tk * 4.0) if tk < 8 else (14.0 + (tk - 8) * 4.0), 5.0)
 		g.test_aim = table_at
@@ -1087,6 +1120,22 @@ func run() -> void:
 		table_ok = g.build_prev.get("ok", false)
 		if table_ok:
 			break
+		table_why.append(g.build_why)
+	if not table_ok:
+		for base in [-90.0, 90.0, -140.0, 140.0, -190.0, 190.0, -240.0, 240.0]:
+			_go(spot.call(base, 14.0))
+			await _frames(25)
+			for tk2 in 9:
+				table_at = spot.call(-16.0 + tk2 * 4.0, 5.0)
+				g.test_aim = table_at
+				await _frames(3)
+				table_ok = g.build_prev.get("ok", false)
+				if table_ok:
+					break
+			if table_ok:
+				break
+	if not table_ok:
+		print("[tests] no spot for the table: ", table_why)
 	g.build_click = true
 	await _frames(6)
 	var table_last: String = g.build_last
@@ -1120,10 +1169,17 @@ func run() -> void:
 	g.build_cat = 1
 	g.build_idx[1] = 0
 	var doors_before: int = g.doors.size()
-	var door_at: Vector2 = spot.call(-44.0, 6.0)
+	# (well clear of the table, which is set down again where it stood later on)
+	var t_ang: float = atan2(table_at.y, table_at.x)
+	var by_table := func(k: float, up: float) -> Vector2:
+		var aa: float = t_ang + k / Defs.RS0
+		return Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + up)
+	_go(by_table.call(-30.0, 14.0))
+	await _frames(25)
+	var door_at: Vector2 = by_table.call(-30.0, 6.0)
 	var door_ok := false
 	for dk2 in 6:
-		door_at = spot.call(-44.0 + dk2 * 5.0, 6.0)
+		door_at = by_table.call(-30.0 - dk2 * 5.0, 6.0)
 		g.test_aim = door_at
 		await _frames(3)
 		door_ok = g.build_prev.get("ok", false)
@@ -1219,8 +1275,8 @@ func run() -> void:
 			for tch in String(tr):
 				if tch != "." and tch != "t":
 					t_px += 1
-		# set it down again from the Satchel tab, where it stood
-		_go(Vector2(cos(bg_ang), sin(bg_ang)) * (bsurf + 12.0))
+		# set it down again from the Satchel tab, where it stood (from a little way off)
+		_go(by_table.call(24.0, 14.0))
 		await _frames(30)
 		if not g.build_on:
 			g._toggle_build()
@@ -1254,7 +1310,7 @@ func run() -> void:
 					var wn: String = Defs.NAMES[wv & 255]
 					wm[wn] = int(wm.get(wn, 0)) + 1
 				t_why = "its old spot holds %s; " % str(wm)
-			g.test_aim = spot.call((-14.0 - try_k * 4.0) if try_k < 8 else (14.0 + (try_k - 8) * 4.0), 5.0)
+			g.test_aim = by_table.call((-4.0 - try_k * 4.0) if try_k < 8 else (4.0 + (try_k - 8) * 4.0), 5.0)
 			await _frames(3)
 			back_ok = g.build_prev.get("ok", false)
 		g.build_click = true

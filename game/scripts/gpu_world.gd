@@ -19,6 +19,14 @@ var sub_frames := []     # the collision grid frames of the last submission
 var wait_us := 0         # how long the last collect waited for the GPU
 var read_us := 0         # and how long reading its results back took
 var gpu_us := {}         # GPU time per stage of the last frame (timestamps), for the profiler
+var read_parts := {}     # and how long each part of reading it back took
+## Everything the CPU reads back each frame (counters, light, picture, collision grids) is copied on the
+## GPU into this one buffer and read in a single call: each separate read has a fixed cost.
+var rb_buf := RID()
+var rb_off := [0, 0, 0, 0]   # where the counters, light, picture and grids start in it
+var _rb_slots := 1
+var grid_off := 0            # the collision grids are read where they lie in that buffer (no copy):
+var light_off := 0           # grid is the whole buffer, the grids start at grid_off, the light at light_off
 var topple_iters := 2    # falling-block passes per frame
 var blur_passes := 2     # light blur passes
 var sun_step := 2.0      # sunlight march step (cells)
@@ -148,7 +156,7 @@ func resize(w: int, h: int) -> void:
 	for key in ["light", "blur_h", "blur_v", "render", "grid"]:
 		if sets.has(key) and sets[key].is_valid() and rd.uniform_set_is_valid(sets[key]):
 			rd.free_rid(sets[key])
-	for b in [light_a, light_b, view_buf, grid_buf]:
+	for b in [light_a, light_b, view_buf, grid_buf, rb_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
 	grid_buf = rd.storage_buffer_create(GS * GS * MAXP)    # one collision grid per player
@@ -157,6 +165,8 @@ func resize(w: int, h: int) -> void:
 	light_a = rd.storage_buffer_create(LW * LH * 16)
 	light_b = rd.storage_buffer_create(LW * LH * 16)
 	view_buf = rd.storage_buffer_create(VW * VH * 4)
+	rb_off = [0, 64 * MAXP * 4, 64 * MAXP * 4 + LW * LH * 16, 64 * MAXP * 4 + LW * LH * 16 + VW * VH * 4]
+	rb_buf = rd.storage_buffer_create(rb_off[3] + GS * GS * MAXP)
 	sets["light"] = _mkset("light", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [8, aux_buf]])
 	sets["blur_h"] = _mkset("blur", [[4, light_a], [5, light_b]])
 	sets["blur_v"] = _mkset("blur", [[4, light_b], [5, light_a]])
@@ -416,6 +426,13 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		_dispatch(cl, "render", "render", [VW, VH, LW, LH], [], groups(VW, 16), groups(VH, 16))
 	rd.compute_list_end()
 	rd.capture_timestamp("picture")
+	if not sim_only:
+		# everything to be read back, into one buffer
+		_rb_slots = clampi(grid_frames.size(), 1, MAXP)
+		rd.buffer_copy(counts_buf, rb_buf, 0, rb_off[0], 64 * MAXP * 4)
+		rd.buffer_copy(light_a, rb_buf, 0, rb_off[1], LW * LH * 16)
+		rd.buffer_copy(view_buf, rb_buf, 0, rb_off[2], VW * VH * 4)
+		rd.buffer_copy(grid_buf, rb_buf, 0, rb_off[3], GS * GS * _rb_slots)
 	rd.submit()
 	if sim_only:
 		rd.sync()
@@ -439,11 +456,19 @@ func flush() -> void:
 	for k in range(1, nt):
 		var dt := rd.get_captured_timestamp_gpu_time(k) - rd.get_captured_timestamp_gpu_time(k - 1)
 		gpu_us[rd.get_captured_timestamp_name(k)] = int(dt / 1000)
-	counts = rd.buffer_get_data(counts_buf).to_int32_array()
-	grid = rd.buffer_get_data(grid_buf, 0, GS * GS * clampi(sub_frames.size(), 1, MAXP))   # only the slots in use
-	light = rd.buffer_get_data(light_a).to_float32_array()
-	var vb := rd.buffer_get_data(view_buf)
+	var tq := Time.get_ticks_usec()
+	var all := rd.buffer_get_data(rb_buf, 0, rb_off[3] + GS * GS * _rb_slots)
+	read_parts["read: one copy"] = Time.get_ticks_usec() - tq
+	tq = Time.get_ticks_usec()
+	counts = all.slice(rb_off[0], rb_off[1]).to_int32_array()
+	var vb := all.slice(rb_off[2], rb_off[3])
+	grid = all
+	grid_off = rb_off[3]
+	light_off = rb_off[1]
+	read_parts["read: unpack"] = Time.get_ticks_usec() - tq
+	tq = Time.get_ticks_usec()
 	view_img = Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, vb)
+	read_parts["read: picture to image"] = Time.get_ticks_usec() - tq
 	fresh = true
 	read_us = Time.get_ticks_usec() - t0
 
@@ -514,7 +539,7 @@ func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int, creak: int) 
 					_dispatch(cl, "boundary", "boundary", [s2, int(floor(w.x0 / 2.0)), c2, 0, frame * 8 + pass_i], [], groups(c2, 64), 1)
 
 func grid_type(slot: int, i: int, j: int) -> int:
-	var k := slot * GS * GS + j * GS + i
+	var k := grid_off + slot * GS * GS + j * GS + i
 	if i < 0 or j < 0 or i >= GS or j >= GS or k >= grid.size():
 		return 0
 	return grid[k] & 0x3F
@@ -522,7 +547,7 @@ func grid_type(slot: int, i: int, j: int) -> int:
 ## what's built in the background of a grid cell: 1 furniture (or a torch), 2 a back wall, 0 nothing;
 ## -1 outside the grid
 func grid_bg(slot: int, i: int, j: int) -> int:
-	var k := slot * GS * GS + j * GS + i
+	var k := grid_off + slot * GS * GS + j * GS + i
 	if i < 0 or j < 0 or i >= GS or j >= GS or k >= grid.size():
 		return -1
 	return grid[k] >> 6
@@ -530,10 +555,10 @@ func grid_bg(slot: int, i: int, j: int) -> int:
 func light_at(px: Vector2) -> Color:
 	var i := clampi(int(px.x / LS), 0, LW - 1)
 	var j := clampi(int(px.y / LS), 0, LH - 1)
-	var k := (j * LW + i) * 4
-	if k + 2 >= light.size():
+	var k := light_off + (j * LW + i) * 16
+	if light_off == 0 or k + 12 > grid.size():
 		return Color.WHITE
-	return Color(minf(sqrt(maxf(light[k], 0.0) + 0.008), 1.3), minf(sqrt(maxf(light[k + 1], 0.0) + 0.008), 1.3), minf(sqrt(maxf(light[k + 2], 0.0) + 0.008), 1.3))
+	return Color(minf(sqrt(maxf(grid.decode_float(k), 0.0) + 0.008), 1.3), minf(sqrt(maxf(grid.decode_float(k + 4), 0.0) + 0.008), 1.3), minf(sqrt(maxf(grid.decode_float(k + 8), 0.0) + 0.008), 1.3))
 
 ## A w x h block of shell-0 cells (column c0.., row r0..; columns wrap around the planet), both
 ## layers: {"fg": PackedInt32Array, "bg": PackedInt32Array}, row by row. For a one-off look (picking
@@ -578,7 +603,7 @@ func cleanup() -> void:
 	for nm in shaders:
 		rd.free_rid(shaders[nm]["pipeline"])
 		rd.free_rid(shaders[nm]["shader"])
-	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf]:
+	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
 	rd.free()

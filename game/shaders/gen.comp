@@ -398,9 +398,35 @@ uint mushroomTree(vec2 q, float hh, float h3, float h4) {
 	return 0u;
 }
 
+// Roots, for every kind of tree with a woody trunk: the trunk carries on down into the ground as a
+// tapering taproot (so on a slope it reaches the earth instead of ending flat in the air), and three to
+// five roots run out from its foot, near the surface first and then diving. Where the ground falls away
+// they show; below the surface they lie in the background behind the earth, found when you dig. q is
+// the cell from the trunk's foot (q.y < 0 below it), tw the trunk's width, mat its wood.
+float rootWidth(int ft) {
+	return ft == 1 ? 4.0 : (ft == 2 ? 3.0 : (ft == 4 ? 4.0 : (ft == 5 ? 2.0 : (ft == 6 ? 2.0 : (ft == 7 ? 5.5 : (ft == 8 ? 2.5 : 0.0))))));
+}
+uint treeRoots(vec2 q, float tw, float hh, float h3, int bb, uint mat) {
+	if (q.y < -18.0) return 0u;
+	float tap = 5.0 + floor(hh * 8.0);
+	if (-q.y < tap && abs(q.x) < tw * 0.5 * (1.0 + q.y / tap * 0.6) + 0.35) return mat;
+	int n = 3 + int(h3 * 3.0);
+	for (int k = 0; k < 5; k++) {
+		if (k >= n) break;
+		float hk = h2(ivec2(bb, 140 + k), SEED);
+		float side = (k % 2 == 0) ? 1.0 : -1.0;
+		float L = tw * 1.2 + 4.0 + hk * 12.0;
+		float D = 3.0 + h2(ivec2(bb, 150 + k), SEED) * 10.0;
+		vec2 a = vec2(side * tw * 0.3, 0.0), m = vec2(side * L * 0.55, -D * 0.25), e = vec2(side * L, -D);
+		float th = 1.25 - hk * 0.35;
+		if (segDist(q, a, m) < th || segDist(q, m, e) < th * 0.7) return mat;
+	}
+	return 0u;
+}
+
 uint floraId = 0u;   // which tree the cell flora() returned belongs to (aux bits 16-31, see react.comp)
 // trees and other surface plants, evaluated per cell from hashed "buckets" along the surface arc
-uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
+uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnly) {
 	float arc = th * RS0;
 	// One spacing grid for every kind of tree, and each tree takes its kind from the biome at its
 	// own trunk, so a crown reaching over a biome border is still drawn whole (it used to switch
@@ -435,10 +461,15 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 		if (tb.y > ta.x + 0.5) continue; // trunk would be underwater
 		float base = floor(ta.x);
 		vec2 q = vec2(da, r - base);
-		if (q.y > 112.0) continue;
+		if (q.y > 112.0 || q.y < -18.0) continue;
+		if (rootsOnly && q.y >= 0.0) continue;
 		float hh = h2(ivec2(bb, 79), SEED), h3 = h2(ivec2(bb, 83), SEED), h4 = h2(ivec2(bb, 84), SEED);
 		uint m = 0u;
-		if (ft == 1) m = oakTree(q, hh, h3, h4, nz);
+		if (q.y < 0.0) {
+			float rw = rootWidth(ft);
+			if (rw > 0.0) m = treeRoots(q, rw, hh, h3, bb, M_ROOT);
+		}
+		else if (ft == 1) m = oakTree(q, hh, h3, h4, nz);
 		else if (ft == 2) {
 			vec4 A = biomeA(int(ta.y));
 			bool snowy = uint(A.z) == M_SNOW || ((int(A.w) & 1) != 0 && ta.x > RS0 + 20.0);
@@ -452,11 +483,14 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater) {
 		else if (ft == 8) m = acaciaTree(q, hh, h4, bb, nz);
 		else if (ft == 9) m = mushroomTree(q, hh, h3, h4);
 		if (m != 0u) {
-			float sc = abs(da) - ((m == M_WOOD || m == M_COAL || m == M_CACTUS || m == M_STALK) ? 1000.0 : 0.0);
+			// wood wins over leaves (each tree stays one piece), and a root gives way to every other part
+			// of any tree (a root reaching under a downhill neighbour never cuts its branches or crown)
+			float sc = abs(da) - ((m == M_WOOD || m == M_COAL || m == M_CACTUS || m == M_STALK) ? 1000.0 : 0.0) + (m == M_ROOT ? 2000.0 : 0.0);
 			if (sc < bestScore) { bestScore = sc; best = m; bestId = 0x8000u | uint(bb + 1); }
 		}
 	}
 	if (best != 0u) { floraId = bestId; return best; }
+	if (rootsOnly) return 0u;
 	// undergrowth and small plants
 	if (onSite(th, 1.0)) return 0u;
 	int col = int(floor(arc));
@@ -581,6 +615,12 @@ void main() {
 	uint bgm = 0u;   // background decoration (no collisions)
 
 	if (r < rs) {
+		// tree roots in the background just under the surface (behind the earth until you dig)
+		if (r > rs - 18.0) {
+			floraId = 0u;
+			uint rt = flora(p, r, th, floraType, false, true);
+			if (rt != 0u) bgm = rt;
+		}
 		m = settleSafe(strata(p, r, th, sa, sb, b), p, r, th, rs);
 		if (m != M_CORE && carvedAt(p, r, rs, sb.x)) {
 			m = 0u;
@@ -612,7 +652,7 @@ void main() {
 						else if (ug == 2 && shallow && hv < 0.05) { mat = M_ICE; hgt = 2.0 + mod(floor(hv * 90.0), 4.0); }
 						else if (ug == 3 && hv < 0.04) { mat = M_EMBER; hgt = 1.0 + mod(floor(hv * 90.0), 3.0); }
 						else if (!shallow && r > sa.w && hv < 0.018) { mat = M_SHROOM; hgt = 2.0 + mod(floor(hv * 300.0), 3.0); }
-						if (float(k) <= hgt) bgm = mat;
+						if (mat != 0u && float(k) <= hgt) { bgm = mat; floraId = 0u; }
 						break;
 					}
 				}
@@ -622,7 +662,7 @@ void main() {
 		// above ground: seas / ponds / lava lakes, then plants
 		bool wet = sb.y > 0.0 && r < sb.y;
 		if (wet) m = uint(sb.z);
-		if (r < rs + 115.0) bgm = flora(p, r, th, floraType, wet);
+		if (r < rs + 115.0) bgm = flora(p, r, th, floraType, wet, false);
 	}
 
 	// the mantle guardian's arena

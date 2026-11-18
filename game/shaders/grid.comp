@@ -94,7 +94,7 @@ void main() {
 		uint bgf = 0u;
 		if (bm == M_DECOR || bm == M_TORCH || bm == M_OPENCHEST) bgf = 0x40u;
 		else if (bm != 0u && (ab & BG_WALL) != 0u) bgf = 0x80u;
-		else if (bm != 0u && (ab & 0xC0000000u) == 0x80000000u) bgf = 0xC0u;   // a tree (building over it would fell it; a bush is just covered)
+		else if (bm != 0u && bm != M_ROOT && (ab & 0xC0000000u) == 0x80000000u) bgf = 0xC0u;   // a tree (building over it would fell it; a bush or roots are just covered)
 		pk |= (t | bgf) << (8 * q);
 	}
 	grid.g[goff + j * (GS / 4) + gx4] = pk;

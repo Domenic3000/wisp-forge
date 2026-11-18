@@ -88,7 +88,7 @@ void main() {
 		// breaks up bit by bit. A building's vines and moss crumble gently.
 		bool fast = (ab & 0x80000000u) != 0u;
 		if (ns != olds) { ab = (ab & ~0x3f00u) | (ns << 8); aux.a[i] = ab; }
-		if (ns >= 62u && olds >= 62u && rnd3(uint(i), fr, 41u) < (fast ? 0.002 : 0.08)) {
+		if (ns >= 62u && olds >= 62u && rnd3(uint(i), fr, 41u) < (fast ? 0.0005 : 0.08)) {
 			// nothing holds it up any more: it breaks loose as falling debris
 			aux.a[i] = 0u;
 			if (t == 0u || KIND[t] == K_GAS) world.cells[i] = BGDEBRIS[bgm] | (c & 0xff00u);

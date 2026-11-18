@@ -86,9 +86,15 @@ var _solid := PackedByteArray()    # per material: does it stop a chunk
 var _grid := PackedByteArray()
 var _gbase := 0
 var _gs := 0
+var _pal := []                     # palette colours (material * 4 + variant), and furniture's
+var _decor := []
 
 func _init(game) -> void:
 	g = game
+	for k in Defs.NM * 4:
+		_pal.append(Color.hex((Defs.PAL[k] << 8) | 0xff))
+	for hx in Props.PALETTE:
+		_decor.append(Color.html(hx))
 	_solid.resize(64)
 	for t in Defs.NM:
 		var k: int = Defs.KIND[t]
@@ -160,12 +166,14 @@ func detect(m, cn: PackedInt32Array) -> void:
 	if cn[59] > 0:
 		var u: int = cn[60] & 0xFFFFFFFF
 		var wp: Vector2 = g.from_grid(Vector2((u & 1023) + 0.5, ((u >> 10) & 1023) + 0.5))
-		if not _seen(wp, 50.0, 40):
+		# (a tree just lifted out is gone from the world by the next frame, so only a short pause here:
+		# a long one left the rest of a big tree, or the next tree felled, crumbling meanwhile)
+		if not _seen(wp, 20.0, 6):
 			_take_tree(m, wp)
 	if cn[56] > 0 and list.size() < MAX_CHUNKS:
 		var u2: int = cn[57] & 0xFFFFFFFF
 		var wp2: Vector2 = g.from_grid(Vector2((u2 & 1023) + 0.5, ((u2 >> 10) & 1023) + 0.5))
-		if not _seen(wp2, 30.0, 20):
+		if not _seen(wp2, 20.0, 8):
 			_take_block(m, wp2)
 	g._use_grid(g.player)
 
@@ -196,7 +204,10 @@ func _read_around(p: Vector2, size: Vector2i, up_frac: float) -> Array:
 ## A felled tree: the cells of that plant (its id is in background bits 16-31) no longer joined, through
 ## each other, to its wood resting on the ground.
 func _take_tree(m, wp: Vector2) -> void:
+	var tr := Time.get_ticks_usec()
 	var R := _read_around(wp, TREE_READ, 0.6)
+	g.prof_add("lift: read", Time.get_ticks_usec() - tr)
+	tr = Time.get_ticks_usec()
 	if R.is_empty():
 		return
 	var c0: int = R[0]
@@ -215,67 +226,95 @@ func _take_tree(m, wp: Vector2) -> void:
 		return
 	# the plant's cells (all of them in the block: a crown tangled with a neighbour's isn't always joined
 	# up through its own cells), and those still standing: joined to wood (or a stem) touching the ground
-	var mine := {}
+	# (marks per cell of the block: 1 the plant's, 2 still standing, 3 loose and taken into a piece)
+	var mark := PackedByteArray()
+	mark.resize(w * h)
+	var mine := PackedInt32Array()
 	for k in w * h:
-		if ((bgs[k] >> 16) & 0xFFFF) == pid and (bgs[k] & 255) != 0:
-			mine[k] = true
-	var stand := {}
-	var q: Array = []
+		var b: int = bgs[k]
+		if ((b >> 16) & 0xFFFF) == pid and (b & 255) != 0:
+			mark[k] = 1
+			mine.append(k)
+	var q := PackedInt32Array()
 	var bush := (pid >> 14) == 3          # a bush (or a fallen tree) is held by any of it on the ground
 	for k in mine:
 		var bm: int = bgs[k] & 255
 		if not bush and (bm == Defs.LEAF or bm == Defs.SNOW or bm == Defs.CAP):
 			continue
-		var i: int = k % w
-		var j: int = k / w
-		for d in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
-			var ni: int = i + d.x
-			var nj: int = j + d.y
-			if ni >= 0 and nj >= 0 and ni < w and nj < h and _solid[fgs[nj * w + ni] & 63] == 1:
-				stand[k] = true
-				q.append(k)
-				break
-	while not q.is_empty():
-		var k2: int = q.pop_back()
-		var i2: int = k2 % w
-		var j2: int = k2 / w
-		for dj in [-1, 0, 1]:
-			for di in [-1, 0, 1]:
-				var ni2: int = i2 + di
-				var nj2: int = j2 + dj
-				if ni2 < 0 or nj2 < 0 or ni2 >= w or nj2 >= h:
-					continue
-				var k3 := nj2 * w + ni2
-				if mine.has(k3) and not stand.has(k3):
-					stand[k3] = true
-					q.append(k3)
-	var loose: Array = []
+		if _grounded(k, w, h, fgs, bush):
+			mark[k] = 2
+			q.append(k)
+	_spread(q, mark, w, h, 1, 2, null)
+	var loose := PackedInt32Array()
 	for k in mine:
-		if not stand.has(k):
+		if mark[k] == 1:
 			loose.append(k)
+	g.prof_add("lift: find", Time.get_ticks_usec() - tr)
 	if loose.is_empty():
 		return
-	if loose.size() < SMALL_TREE:
-		# a scrap of a crown or a twig: it flutters away as leaves rather than crumbling into specks
-		for k in loose:
+	var tp := Time.get_ticks_usec()
+	# what came loose, split into the pieces actually joined together: each falls on its own (a few
+	# stray cells must not fall as one object with a gap through it), and scraps flutter away as leaves
+	var pieces: Array = []
+	for k in loose:
+		if mark[k] != 1:
+			continue
+		mark[k] = 3
+		var comp := PackedInt32Array([k])
+		_spread(PackedInt32Array([k]), mark, w, h, 1, 3, comp)
+		pieces.append(Array(comp))
+	var scraps: Array = []
+	var cleared: Array = []
+	var side := 0.0
+	for bit in pieces:
+		if bit.size() < SMALL_TREE or list.size() >= MAX_CHUNKS:
+			scraps.append_array(bit)
+			continue
+		_fam += 1
+		var c := _make(bit, R, false, true)
+		if c == null:
+			scraps.append_array(bit)
+			continue
+		cleared.append_array(bit)
+		if g.testing:
+			print("[chunks] tree at %s: %d cells" % [str(Build.cell_of(c.pos)), bit.size()])
+		# it starts to topple: away from whoever felled it, now and then toward them
+		if side == 0.0:
+			side = signf((c.pos - m.pos).dot(g.basis_r(atan2(c.pos.y, c.pos.x))))
+			if side == 0.0 or randf() < 0.2:
+				side = -side if side != 0.0 else 1.0
+		c.omega = -side * (0.004 + randf() * 0.003)
+		g.audio.play("crack", c.pos, 0.9)
+	# a scrap of a crown or a twig flutters away as leaves rather than crumbling into specks
+	for k in scraps:
+		if randf() < 0.5:
 			var lp := cell_pos(c0 + k % w, r0 + k / w)
 			g._particle(lp, Vector2(randf() - 0.5, randf() - 0.7) * 0.4, 40 + randi() % 40, _colour_of(0, bgs[k], R, k, false), false, 0.015)
-		_clear(R, [], loose, [])
-		return
-	_fam += 1
-	var c := _make(loose, R, false, true)
-	if c == null:
-		return
-	# take it out of the world (its background cells)
-	_clear(R, [], loose, [])
-	if g.testing:
-		print("[chunks] tree at %s: %d cells" % [str(Build.cell_of(c.pos)), loose.size()])
-	# it starts to topple: away from whoever felled it, now and then toward them
-	var side := signf((c.pos - m.pos).dot(g.basis_r(atan2(c.pos.y, c.pos.x))))
-	if side == 0.0 or randf() < 0.2:
-		side = -side if side != 0.0 else 1.0
-	c.omega = -side * (0.004 + randf() * 0.003)
-	g.audio.play("crack", c.pos, 0.9)
+	cleared.append_array(scraps)
+	g.prof_add("lift: make", Time.get_ticks_usec() - tp)
+	tp = Time.get_ticks_usec()
+	_clear(R, [], cleared, [])
+	g.prof_add("lift: clear", Time.get_ticks_usec() - tp)
+
+## Flood through the 8 neighbours from the cells in `q`: cells marked `from` become `to` (and are
+## added to `got`, if given).
+func _spread(q: PackedInt32Array, mark: PackedByteArray, w: int, h: int, from: int, to: int, got) -> void:
+	while not q.is_empty():
+		var k: int = q[q.size() - 1]
+		q.resize(q.size() - 1)
+		var i := k % w
+		var j := k / w
+		var i0 := maxi(i - 1, 0)
+		var i1 := mini(i + 1, w - 1)
+		for nj in range(maxi(j - 1, 0), mini(j + 2, h)):
+			var row := nj * w
+			for ni in range(i0, i1 + 1):
+				var n := row + ni
+				if mark[n] == from:
+					mark[n] = to
+					q.append(n)
+					if got != null:
+						got.append(n)
 
 ## A piece of a building breaking loose: the loose blocks joined to the creaking one, with the back
 ## walls and furniture that hang off them; broken into fragments along jagged lines.
@@ -400,6 +439,46 @@ func _take_block(m, wp: Vector2) -> void:
 			_put(c0 + int(rb[0]) % w, r0 + int(rb[0]) / w, int(rb[1]) | (fgs[int(rb[0])] & 0xff00), -1)
 	g.audio.play("crack", wp, 0.7)
 
+## Is this plant cell held by what's around it? The same rule as plants.comp, so a tree the GPU holds up
+## is never lifted out whole: a tree's wood touching solid ground, or resting on settled powder, or on
+## mud or water (a root one cell above the mud still counts); a bush by any block or liquid below.
+const N4 := [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]
+
+func _grounded(k: int, w: int, h: int, fgs: PackedInt32Array, bush: bool) -> bool:
+	var i := k % w
+	var j := k / w
+	var tD := _fg_at(fgs, i, j + 1, w, h)
+	var lD := (_raw_at(fgs, i, j + 1, w, h) >> 16) & 255
+	if bush:
+		for d in N4:
+			var tn := _fg_at(fgs, i + d.x, j + d.y, w, h)
+			if tn != 0 and (Defs.KIND[tn] == Defs.K_SOLID or Defs.KIND[tn] == Defs.K_POWDER):
+				return true
+		return tD != 0 and Defs.KIND[tD] == Defs.K_LIQUID
+	for d2 in N4:
+		var tn2 := _fg_at(fgs, i + d2.x, j + d2.y, w, h)
+		if tn2 != 0 and Defs.KIND[tn2] == Defs.K_SOLID:
+			return true
+	if _rests_on(tD, lD):
+		return true
+	if tD == 0:
+		return _rests_on(_fg_at(fgs, i, j + 2, w, h), (_raw_at(fgs, i, j + 2, w, h) >> 16) & 255) or Defs.KIND[_fg_at(fgs, i, j + 2, w, h)] == Defs.K_SOLID
+	return false
+
+func _rests_on(t: int, life: int) -> bool:
+	if t == 0:
+		return false
+	var kd: int = Defs.KIND[t]
+	return (kd == Defs.K_POWDER and t != Defs.LITTER and t != Defs.TIMBER) or (kd == Defs.K_LIQUID and life != 1)
+
+func _fg_at(fgs: PackedInt32Array, i: int, j: int, w: int, h: int) -> int:
+	return _raw_at(fgs, i, j, w, h) & 255
+
+func _raw_at(fgs: PackedInt32Array, i: int, j: int, w: int, h: int) -> int:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return 0
+	return fgs[j * w + i]
+
 func _loose_fg(v: int) -> bool:
 	var t := v & 255
 	if t == 0 or t == Defs.TREASURE or t == Defs.WOODDOOR:
@@ -470,14 +549,15 @@ func _rebuild(c: Chunk) -> void:
 	# what it collides with: its outline. A tree's crown is soft (leaves give way and crush against the
 	# ground), so a tree collides by its wood alone: the trunk comes to lie on the ground, not propped
 	# up on its leaves
-	var hard := {}
-	for k in n:
-		var bm: int = c.bg[k] & 255
-		if not c.tree or (c.fg[k] != 0 or (bm != Defs.LEAF and bm != Defs.SNOW and bm != Defs.CAP)):
-			hard[Vector2i(c.ip[k])] = true
-	if hard.is_empty():
+	var hard: Dictionary = c.key        # (a building piece: all of it)
+	if c.tree:
+		hard = {}
 		for k in n:
-			hard[Vector2i(c.ip[k])] = true
+			var bm: int = c.bg[k] & 255
+			if c.fg[k] != 0 or (bm != Defs.LEAF and bm != Defs.SNOW and bm != Defs.CAP):
+				hard[Vector2i(c.ip[k])] = true
+		if hard.is_empty():
+			hard = c.key
 	var outline := PackedVector2Array()
 	for k in n:
 		var p: Vector2i = Vector2i(c.ip[k])
@@ -514,10 +594,10 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 	var row: int = int(R[1]) + k / w
 	var t := (f & 255) if f != 0 else (b & 255)
 	var v := (f >> 8) & 255 if f != 0 else 0
-	var pal := Color.hex((Defs.PAL[t * 4 + (v & 3)] << 8) | 0xff)
+	var pal: Color = _pal[t * 4 + (v & 3)]
 	if f == 0:
 		if t == Defs.DECOR:
-			pal = Color.html(Props.PALETTE[((b >> 16) & 63) % Props.PALETTE.size()])
+			pal = _decor[((b >> 16) & 63) % _decor.size()]
 		pal = pal * Color(0.72, 0.72, 0.76)             # background layers are drawn darker
 		pal.a = 1.0
 	if hidden or g.gpu.view_img == null:
@@ -526,12 +606,21 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 	if R.size() < 7:
 		var s0: Vector2 = g.world_to_screen(cell_pos(int(R[0]), int(R[1])))
 		R.append([s0, g.world_to_screen(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_screen(cell_pos(int(R[0]), int(R[1]) + 1)) - s0])
+		R.append({})                                    # light by light cell (each covers several pixels)
 	var lin: Array = R[6]
 	var sp: Vector2 = ((lin[0] as Vector2) + (lin[1] as Vector2) * float(k % w) + (lin[2] as Vector2) * float(k / w)).floor()
 	var img: Image = g.gpu.view_img
 	if sp.x < 0 or sp.y < 0 or sp.x >= img.get_width() or sp.y >= img.get_height():
 		return pal
-	var lit: Color = g.gpu.light_at(sp)
+	var ls: int = g.gpu.LS
+	var lk: int = int(sp.x) / ls * 65536 + int(sp.y) / ls
+	var lc: Dictionary = R[7]
+	var lit: Color
+	if lc.has(lk):
+		lit = lc[lk]
+	else:
+		lit = g.gpu.light_at(sp)
+		lc[lk] = lit
 	var lum := (lit.r + lit.g + lit.b) / 3.0
 	if lum < 0.25:
 		return pal
@@ -548,17 +637,34 @@ func _clear(R: Array, tf: Array, tb: Array, tb2: Array) -> void:
 	var c0: int = R[0]
 	var r0: int = R[1]
 	var w: int = R[2]
-	var h: int = R[3]
+	# the stamp covers just the box around the cells it clears
+	var i0 := w
+	var j0 := 1 << 30
+	var i1 := -1
+	var j1 := -1
+	for arr in [tf, tb, tb2]:
+		for k in arr:
+			var ki: int = k % w
+			var kj: int = k / w
+			i0 = mini(i0, ki)
+			i1 = maxi(i1, ki)
+			j0 = mini(j0, kj)
+			j1 = maxi(j1, kj)
+	if i1 < 0:
+		return
+	var bw := i1 - i0 + 1
+	var bh := j1 - j0 + 1
 	var data := PackedInt32Array()
-	data.resize(w * h)
+	data.resize(bw * bh)
 	data.fill(0xFFFF)
 	for k in tf:
-		data[k] = data[k] & 0xFF00          # front: air
-	for k in tb:
-		data[k] = data[k] & 0x00FF          # background: none
-	for k in tb2:
-		data[k] = data[k] & 0x00FF
-	g.stamps.append({"x0": posmod(c0, Defs.SH_N[0]), "y0": r0, "w": w, "h": h, "data": data})
+		var o: int = (k / w - j0) * bw + (k % w - i0)
+		data[o] = data[o] & 0xFF00          # front: air
+	for arr2 in [tb, tb2]:
+		for k in arr2:
+			var o2: int = (k / w - j0) * bw + (k % w - i0)
+			data[o2] = data[o2] & 0x00FF    # background: none
+	g.stamps.append({"x0": posmod(c0 + i0, Defs.SH_N[0]), "y0": r0 + j0, "w": bw, "h": bh, "data": data})
 
 ## one cell set into the world (raw: only where that layer is empty); -1 leaves a layer alone
 func _put(col: int, row: int, f: int, b: int) -> void:
@@ -585,7 +691,7 @@ func update() -> void:
 		g._use_grid(m)
 		_grid = g.gpu.grid
 		_gs = g.GS
-		_gbase = m.slot * _gs * _gs
+		_gbase = g.gpu.grid_off + m.slot * _gs * _gs
 		if not g.in_grid(c.pos, c.radius + 4.0) or c.age > MAX_AGE:
 			_settle(c)
 			list.remove_at(ci)
@@ -598,9 +704,11 @@ func update() -> void:
 		# a crown crushes against the ground once a frame (it rebuilds the whole piece, so not every step)
 		if not c.soft.is_empty() and c.age > 2:
 			_crush(c, _axes(c))
+		var v0 := c.vel
+		var p0 := c.pos
 		for s in steps:
 			_step(c, 1.0 / float(steps))
-		_strike(c)
+		_strike(c, v0, c.pos - p0)
 		# at rest: it hasn't gone anywhere for a while (a piece resting on two points jiggles a little
 		# in place; that counts as resting too)
 		var far_end := absf(wrapf(c.phi - c.rest_phi, -PI, PI)) * c.radius
@@ -804,10 +912,11 @@ func _remove(c: Chunk, gone: Dictionary, ax: Array) -> void:
 	_rebuild(c)
 
 ## a falling chunk that hits a mage or a foe hurts it (heavier and faster hurts more), once
-func _strike(c: Chunk) -> void:
+## (`v0`: its velocity coming into this frame, before landing slowed it; `moved`: how far it went)
+func _strike(c: Chunk, v0: Vector2, moved: Vector2) -> void:
 	# like falling rock (grid.comp): only a piece that has really fallen (ROCK_HURT_FALL cells' worth of
 	# speed) and comes down on your upper half hurts, so clods dropping into a pit you dig don't
-	var sp := c.vel.length()
+	var sp := v0.length()
 	if sp < sqrt(2.0 * GRAV * ROCK_HURT_FALL) or c.mass <= 0.0:
 		return
 	var ax := _axes(c)
@@ -817,14 +926,14 @@ func _strike(c: Chunk) -> void:
 			bodies.append(m)
 	bodies.append_array(g.enemies)
 	for b in bodies:
-		if c.hit.has(b) or b.pos.distance_to(c.pos) > c.radius + maxf(b.w, b.h):
+		if c.hit.has(b) or b.pos.distance_to(c.pos) > c.radius + maxf(b.w, b.h) + moved.length():
 			continue
 		var touched := false
 		var ba := atan2(b.pos.y, b.pos.x)
 		var br: Vector2 = g.basis_r(ba)
 		var bd: Vector2 = g.basis_d(ba)
-		for back in [0.0, 0.5]:
-			var shift: Vector2 = -c.vel * back       # (and where it was halfway through this frame)
+		for back in [0.0, 0.34, 0.67, 1.0]:
+			var shift: Vector2 = moved * back        # (and where it was on its way through this frame)
 			var oy: float = -b.h * 0.5 + 1.0
 			while oy <= 0.0 and not touched:
 				var ox: float = -b.w * 0.5 + 1.0
@@ -841,7 +950,7 @@ func _strike(c: Chunk) -> void:
 			continue
 		c.hit[b] = true
 		var dmg := clampf(sqrt(c.mass) * sp * 0.55, 3.0, 45.0)
-		var kx := signf(c.vel.dot(br)) * 2.0
+		var kx := signf(v0.dot(br)) * 2.0
 		if b in g.players:
 			g.hurt(b, dmg, Vector2(kx, -1.5), true)
 		else:

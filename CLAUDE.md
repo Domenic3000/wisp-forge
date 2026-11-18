@@ -136,6 +136,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each
   has a tree function in gen.comp (oak, pine, cactus, willow, charred, palm, jungle, acacia, mushroom) plus
   undergrowth in `flora()`; plant materials get their look in render.comp's `plantColor`.
+- Roots (`ROOT`, background only): gen.comp `treeRoots` draws a taproot and a few side roots under each tree
+  (`rootWidth` per flora type), into the ground below the surface and into the air where a slope drops away
+  under the trunk, so no tree shows a flat underside. Roots score lowest in `flora` (every other part of any
+  tree wins a cell), aren't tree-flagged in the collision grid (build over them freely), and dig up as Wood.
 - Clouds live in world space (`shaders/inc/clouds.comp`: `cloudLow` near the ground, `cloudHigh` the weather
   layer above the mountains; `cloudDensity` is both): render.comp draws them over everything
   at their height (fog when you fly in), react.comp spawns rain/snow/ash only under the high layer's undersides, and
@@ -170,10 +174,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   half (as falling rock). plants.comp lets felled trees wait (0.002 a pass) for the CPU; pieces nobody lifts out
   still crumble the old way. In test mode each lift-out prints a `[chunks]` line. Pixel colours come from the picture on screen divided by the light.
   `save_world` settles everything still moving first.
+  A tree's still-standing cells are found the way plants.comp grounds them (`_grounded`: wood on solid, on
+  settled powder or liquid), and what came loose is split into its joined-up pieces (`_spread` floods a byte
+  mark array); each piece falls on its own, scraps under SMALL_TREE flutter off as leaves.
 - Profiler: `main.prof_add(section, usec)` anywhere; `prof` holds [average, recent peak, this frame, max since
   `prof_reset`]. GPU stages are timed with RenderingDevice timestamps in `gpu.step` (simulation, collision grid,
   light, picture). F3 shows the top sections; `main.hitch_us` is the longest frame of the game's own work (tests
   reset and read it). The test "frame time with no cap" turns vsync off and logs the breakdown.
+- Readback: `gpu.step` copies counts, light, the picture and the collision grids into one buffer (`rb_buf`, offsets
+  `rb_off`) read in one call; `grid` is that whole buffer, so index it from `grid_off` (grids) and `light_off`
+  (light), never from 0.
 - Chests at rest only fall after CHEST_LET_GO frames with nothing found up to 3.5 cells under them (the
   collision grid tilts with the planet's curve as the mage walks, so a single check flickered).
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above

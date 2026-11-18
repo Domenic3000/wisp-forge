@@ -137,6 +137,8 @@ var build_click := false      # a fresh left click (furniture, doors and platfor
 var build_prev := {}          # what the overlay previews: {cells: [[pos, colour]], ok, circle}
 var build_pieces: Array = []
 var stamps: Array = []        # small blueprints to write into the world before the next GPU frame
+var build_why_cell := Vector2i.ZERO
+var build_why := ""                # why the last preview didn't fit (for the tests)
 var _build_warn_t := 0
 var build_last := ""          # what the last click did (for the test report)
 var build_last_stamp := {}
@@ -430,6 +432,9 @@ func _process(delta: float) -> void:
 	for k in gpu.gpu_us:
 		prof_add("GPU " + String(k), int(gpu.gpu_us[k]))
 	gpu.gpu_us.clear()
+	for k in gpu.read_parts:
+		prof_add(String(k), int(gpu.read_parts[k]))
+	gpu.read_parts.clear()
 	_prof_frame()
 	hitch_us = maxi(hitch_us, Time.get_ticks_usec() - t0 - gpu.wait_us)
 	perf_cpu_ms = lerpf(perf_cpu_ms, (Time.get_ticks_usec() - t0 - gpu.wait_us) / 1000.0, 0.1)
@@ -2974,6 +2979,7 @@ func _update_build(m: Mage) -> void:
 		return
 	var place := {}
 	var kid := 0
+	build_why = ""
 	if kind == "prop" or kind == "carried":
 		var d: Dictionary = Build.design(piece, build_seed) if kind == "prop" else {"rows": piece["rows"], "wall": piece["wall"]}
 		kid = Build.Props.kind_id(String(piece["prop"])) if kind == "prop" else int(piece["kid"])
@@ -2986,6 +2992,7 @@ func _update_build(m: Mage) -> void:
 			bottom = _floor_span(cell.x - pw / 2, pw, cell.y - rows.size() / 2, 40)
 		if bottom < 0:
 			ok = false
+			build_why = "no floor under it"
 			bottom = cell.y + rows.size() / 2
 		var pc := Build.prop_cells(rows, cell.x, bottom, build_flip)
 		var feet := 0
@@ -2995,6 +3002,9 @@ func _update_build(m: Mage) -> void:
 			# room in front, and no other furniture where it goes (a back wall behind it is fine)
 			var bga := _bg_at(cc.x, cc.y)
 			if not _open_at(cc.x, cc.y) or bga == 1 or bga == 3 or bga < 0:     # (3: a tree it would cut)
+				if ok:
+					build_why = "cell %s: %s, background %d" % [str(cc), Defs.NAMES[type_at(Build.cell_pos(cc.x, cc.y))], bga]
+					build_why_cell = cc
 				ok = false
 				if bga == 3:
 					tree_in_way = true
@@ -3005,6 +3015,8 @@ func _update_build(m: Mage) -> void:
 			var ch: String = c[2]
 			cells.append([Build.cell_pos(cc.x, cc.y), Color(1, 0.85, 0.3) if ch == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch])])])
 		if not wall and held * 2 < feet:
+			if ok:
+				build_why = "only %d of %d feet held" % [held, feet]
 			ok = false
 		place = {"stamp": Build.prop_stamp(pc, kid)}
 	elif kind == "door":
@@ -3452,7 +3464,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 28            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 29            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

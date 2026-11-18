@@ -285,7 +285,7 @@ vec3 plantColor(uint b, uint ab, ivec2 w, uint bu, uint bd, uint bl, uint br) {
 		else if (hr > 0.97 && l > 0) l = 0;           // a gap in the foliage
 		return ramp(b, l) * 0.86;
 	}
-	if (b == M_WOOD || b == M_COAL) {
+	if (b == M_WOOD || b == M_COAL || b == M_ROOT) {
 		bool le = bl != b, re = br != b;
 		int groove = (w.x + int(vnoise(vec2(0.0, float(w.y)) / 5.0, 21) * 3.0)) % 3;
 		l = groove == 0 ? 0 : (groove == 1 ? 1 : 2);
@@ -498,7 +498,7 @@ void main() {
 		if (!opaque) {
 			if (b != 0u) {
 				uint bu = 0u, bd = 0u, bl = 0u, br = 0u;
-				bool plant = (b == M_LEAF || b == M_WOOD || b == M_CACTUS || b == M_COAL || b == M_CAP || b == M_STALK || b == M_DRYGRASS) && (ab & BG_WALL) == 0u;
+				bool plant = (b == M_LEAF || b == M_WOOD || b == M_ROOT || b == M_CACTUS || b == M_COAL || b == M_CAP || b == M_STALK || b == M_DRYGRASS) && (ab & BG_WALL) == 0u;
 				if (plant) {
 					bu = bgAtPos(screenToWorld(px + vec2(0.0, -1.0))); bd = bgAtPos(screenToWorld(px + vec2(0.0, 1.0)));
 					bl = bgAtPos(screenToWorld(px + vec2(-1.0, 0.0))); br = bgAtPos(screenToWorld(px + vec2(1.0, 0.0)));

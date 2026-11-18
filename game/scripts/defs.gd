@@ -61,6 +61,8 @@ const CAP := 45           # a giant mushroom's cap (each mushroom has its own co
 const STALK := 46         # a giant mushroom's pale stem
 const MYCELIUM := 47      # fungal ground (the Mirecap Grove)
 const DRYGRASS := 48      # golden savanna grass: the ground's top and the tall tufts on it
+const ROOT := 49          # a tree's roots (background): they give way to every other part of a tree, and
+                          # building over them is fine (it can't fell the tree); dug up they give Wood
 ## The back walls a piece of furniture can stand in front of (see behind_index). 0 is none.
 const BEHIND := [0, PLANK, WOOD, MASONRY, BRICK, SANDSTONE, GLASS, MOSSBLOCK, STONE, TILE, OBSIDIAN,
 	RUNESTONE, DRYGRASS, CAP, STALK, DIRT, DEEPSTONE, ICE, LEAF, SCAFFOLD]
@@ -71,7 +73,7 @@ const MAT_NAMES := {
 	16: "EMBER", 17: "FROST", 18: "WISP", 19: "MUD", 20: "ICE", 21: "MAGMAROCK", 22: "CORE",
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
-	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS",
+	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT",
 }
 
 # ---- planet geometry (polar shells; column count halves as radius halves) ----
@@ -177,6 +179,7 @@ func _init() -> void:
 	_def(STALK, "Mushroom Stalk", K_SOLID, ["#cfc4a8", "#b8ab8c", "#e4dcc4", "#9a8e72"], {"fuel": 40, "ign": 0.03})
 	_def(MYCELIUM, "Mycelium", K_SOLID, ["#4a3a58", "#5e4a70", "#7a6290", "#3a2c46"], {"glow": Vector3(0.004, 0.002, 0.008)})
 	_def(DRYGRASS, "Dry Grass", K_SOLID, ["#9a7a2a", "#c8a040", "#e0c060", "#7a5a1e"], {"fuel": 30, "ign": 0.06})
+	_def(ROOT, "Roots", K_SOLID, ["#4a2e18", "#5a3820", "#6a4428", "#3e2614"], {"fuel": 110, "ign": 0.03})
 	# warded stone: the walls of dungeons, carved with faintly glowing runes. Too hard for any staff
 	# but the Core Siphon, so a dungeon is explored through its halls, not dug around.
 	_def(RUNESTONE, "Warded Stone", K_SOLID, ["#2c3044", "#353a52", "#3f4560", "#24283a"], {"hard": 4, "glow": Vector3(0.025, 0.045, 0.06)})
