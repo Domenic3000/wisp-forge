@@ -656,8 +656,12 @@ func _chest(bp: BP, i: int, fl: int, sure := false) -> void:
 func _guard(bp: BP, i: int, fl: int, type: String) -> void:
 	if _quiet:
 		return
-	var d: Dictionary = Defs.ENEMY[type]
 	var col := posmod(bp.x0 + i, N0)
+	# about a third of the skeletons on guard carry bows instead (picked by where they stand, so
+	# planning stays the same from run to run)
+	if type == "skeleton" and posmod(col * 7 + fl * 13, 3) == 0:
+		type = "archer"
+	var d: Dictionary = Defs.ENEMY[type]
 	var a := (float(col) + 0.5) / N0 * TAU
 	var r := Defs.R_TOP - float(bp.y0 + fl) + float(d["h"]) * 0.5 + 1.0
 	if type == "bat":

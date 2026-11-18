@@ -1,6 +1,7 @@
 extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Build := preload("res://scripts/build.gd")
+const FoeAI := preload("res://scripts/foe_ai.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important
 ## things still work, writes saves/test_report.txt and quits.
@@ -548,6 +549,7 @@ func run() -> void:
 		var shown: bool = g.chests.has(cobj)
 		await _frames(90)
 		_ok("an opened chest shows its inside, then vanishes", shown and not g.chests.has(cobj), "")
+
 		# right-click leaves a building's back wall alone; Shift + right-click (deconstruct) takes it
 		var raw2: PackedByteArray = g.gpu.read_world()
 		var boff: int = Defs.total_cells() * 4
@@ -581,6 +583,29 @@ func run() -> void:
 			_ok("right-click leaves a building's back wall alone", false, "no back wall found near the chest")
 	else:
 		_ok("F opens a chest and gives loot", false, "no intact chest found")
+
+	# ---- a chest lying on the ground stays still while you walk about (it used to jiggle) ----
+	var still_c = null
+	for ch in g.chests:
+		if not ch.opened:
+			still_c = ch
+			break
+	if still_c == null:
+		_ok("a chest stays still while you walk about", false, "no closed chest")
+	else:
+		var ca0 := atan2(still_c.pos.y, still_c.pos.x)
+		var walk_at := func(k: float) -> Vector2:
+			var aa: float = ca0 + k / Defs.RS0
+			return Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + 14.0)
+		_go(walk_at.call(-60.0))
+		await _frames(60)
+		var cp0: Vector2 = still_c.pos
+		var dev := 0.0
+		for walk_k in 150:
+			_go(walk_at.call(-60.0 - float(walk_k) * 0.8 + (40.0 if walk_k > 75 else 0.0)))
+			await _frames(1)
+			dev = maxf(dev, still_c.pos.distance_to(cp0))
+		_ok("a chest stays still while you walk about", dev < 0.01, "moved %.3f cells as you walked" % dev)
 
 	# ---- a chest whose floor is dug out falls, whole (it doesn't float or come apart) ----
 	var chest2 := Vector2i(-1, -1)
@@ -824,19 +849,53 @@ func run() -> void:
 				return "wood in cut %d, front cells %d, sup %s, best %s" % [nwz, nfg, ",".join(sup), where]
 			var before_n: int = count_tree.call(g.gpu.read_world())
 			var z0: String = zone.call(g.gpu.read_world())
+			# wood in the background all around (this tree and its neighbours): a felled tree should
+			# still be wood afterwards, lying where it fell, not a heap of timber grains
+			var wood_round := func(raw: PackedByteArray) -> int:
+				var n := 0
+				for j in range(grt - 150, grt + 6):
+					for i in range(-170, 171):
+						var kw := (j * N0 + posmod(tcol + i, N0)) * 4
+						if (raw.decode_u32(toff + kw) & 255) == Defs.WOOD or (raw.decode_u32(kw) & 255) == Defs.WOOD:
+							n += 1
+				return n
+			var own_wood := 0
+			var rw0: PackedByteArray = g.gpu.read_world()
+			for j in range(grt - 110, grt - 9):
+				for i in range(-40, 41):
+					var a5 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
+					if (a5 >> 16) == tid and (a5 & 255) == Defs.WOOD:
+						own_wood += 1
+			var wood0: int = wood_round.call(rw0)
+			var max_chunks := 0
 			# hold the dig on the trunk for a moment (each frame harvests about a third of it)
 			for fk in 15:
 				for dc in [-2, 0, 2]:
 					g.brushes.append([_cell_pos(tcol + dc, grt - 7), 2.5, 1, 0, 4, 0, 0, 0])
 				await _frames(1)
 			_go(_cell_pos(tcol - 30, grt - 10))
-			await _frames(40)
+			for fall_k in 40:
+				max_chunks = maxi(max_chunks, g.chunks.list.size())
+				await _frames(1)
 			var mid_n: int = count_tree.call(g.gpu.read_world())
 			var z1: String = zone.call(g.gpu.read_world())
-			await _frames(50)
+			for fk3 in 50:
+				max_chunks = maxi(max_chunks, g.chunks.list.size())
+				await _frames(1)
 			var after_n: int = count_tree.call(g.gpu.read_world())
 			cut_ok = before_n > 50 and after_n < before_n / 10
 			cut_txt = "column %d: %d cells of that tree above the cut, %d after 0.7 s, %d after 1.5 s" % [tcol, before_n, mid_n, after_n]
+			# then it lies where it fell, still wood (it toppled as one piece)
+			for fk4 in 400:
+				if g.chunks.list.is_empty():
+					break
+				await _frames(1)
+			await _frames(30)
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("felled_tree.png"))
+			var wood1: int = wood_round.call(g.gpu.read_world())
+			var whole := max_chunks > 0 and wood0 - wood1 < own_wood * 2 / 5
+			_ok("a felled tree topples whole and lies where it fell", whole,
+				"it came away as %d piece(s); wood around: %d before, %d after (the tree had %d)" % [max_chunks, wood0, wood1, own_wood])
 			if not (before_n > 50 and after_n < before_n / 10):
 				cut_txt += " (before: %s; after: %s)" % [z0, z1]
 		else:
@@ -968,6 +1027,15 @@ func run() -> void:
 	await _frames(12)
 	g.test_cast = false
 	await _frames(6)
+	var wall_first := 0
+	var rawf: PackedByteArray = g.gpu.read_world()
+	var cqf: Vector2i = Build.cell_of(wall_at)
+	for djf in range(-34, 70):
+		for dif in range(-16, 17):
+			var kf: int = ((cqf.y + djf) * int(Defs.SH_N[0]) + posmod(cqf.x + dif, Defs.SH_N[0])) * 4
+			var af: int = rawf.decode_u32(Defs.total_cells() * 4 + kf)
+			if (af & 255) == Defs.PLANK and (af & 0x4000) != 0:
+				wall_first += 1
 	# a table
 	g.build_cat = 2
 	g.build_idx[2] = 0
@@ -1091,7 +1159,7 @@ func run() -> void:
 					n_door += 1
 	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
 	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and doors_mid == doors_before + 1,
-		"wall cells %d, table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
+		"wall cells %d (%d when painted), table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, wall_first, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
 	var furn0: int = g.player.furn.size()
@@ -1101,6 +1169,7 @@ func run() -> void:
 	var t_left := -1
 	var t_back := -1
 	var back_ok := false
+	var t_why := ""
 	if not tstamp.is_empty():
 		var t_mid: Vector2 = Build.cell_pos(int(tstamp["x0"]) + int(tstamp["w"]) / 2, int(tstamp["y0"]) + 3)
 		picked = g._pick_up_furniture(g.player, t_mid)
@@ -1122,11 +1191,31 @@ func run() -> void:
 		g.test_aim = table_at
 		await _frames(3)
 		back_ok = g.build_prev.get("ok", false)
+		# (something may have tumbled into that spot meanwhile: then a little way along)
+		for try_k in 10:
+			if back_ok:
+				break
+			if t_why == "":
+				var wr: Dictionary = g.gpu.read_rect(int(tstamp["x0"]), int(tstamp["y0"]), int(tstamp["w"]), int(tstamp["h"]))
+				var wm := {}
+				for wv in wr["fg"]:
+					var wn: String = Defs.NAMES[wv & 255]
+					wm[wn] = int(wm.get(wn, 0)) + 1
+				t_why = "its old spot holds %s; " % str(wm)
+			g.test_aim = spot.call(-14.0 - float(try_k) * 5.0, 5.0)
+			await _frames(3)
+			back_ok = g.build_prev.get("ok", false)
 		g.build_click = true
 		await _frames(8)
-		t_back = count_decor.call(g.gpu.read_world())
+		t_back = 0
+		var st3: Dictionary = g.build_last_stamp
+		if not st3.is_empty():
+			var rb3: Dictionary = g.gpu.read_rect(int(st3["x0"]), int(st3["y0"]), int(st3["w"]), int(st3["h"]))
+			for bv in rb3["bg"]:
+				if (bv & 255) == Defs.DECOR:
+					t_back += 1
 	_ok("furniture is picked up whole and set down again", picked and t_item.get("name", "") == "Table" and t_left == 0 and t_px == table_now and back_ok and t_back >= table_now - 2 and g.player.furn.size() == furn0,
-		"picked %s as %s (%d pixels, %d were placed), left behind %d; set down again: fits %s, %d cells; carried %d -> %d" % [picked, t_item.get("name", "-"), t_px, table_now, t_left, back_ok, t_back, furn0, g.player.furn.size()])
+		"picked %s as %s (%d pixels, %d were placed), left behind %d; set down again: %sfits %s, %d cells; carried %d -> %d" % [picked, t_item.get("name", "-"), t_px, table_now, t_left, t_why, back_ok, t_back, furn0, g.player.furn.size()])
 	# a bed from the Wisp Forge
 	var bed_r: Dictionary = {}
 	for r in g.recipes:
@@ -1332,6 +1421,116 @@ func run() -> void:
 	_ok("conjuring onto a foe hurts it and doesn't bury it", (g.enemies.has(foe) and foe.hp < foe_hp) or foe.hp <= 0.0, "still there: %s, health %.0f -> %.0f" % [g.enemies.has(foe), foe_hp, foe.hp])
 	g.enemies.erase(foe)      # out of the way of the tests that conjure next
 	g.sel = 0
+
+	# ---- foes are dangerous: they see you, wind up (glowing) and then lunge, shoot, swoop or blink ----
+	var keep_foes: Array = g.enemies.duplicate()
+	g.enemies.clear()
+	var foe_lines := []
+	var foe_ok := true
+	g.player.hp = g.max_hp
+	g.iframes = 0
+	# a swordsman beside you winds up, then lunges and cuts
+	g.test_god = false
+	var sk = g.spawn_enemy("skeleton", spot.call(16.0, 9.5))
+	var saw_wind := false
+	var hp_sk: float = g.player.hp
+	for fr2 in 200:
+		if sk.act == "windup":
+			saw_wind = true
+		await _frames(1)
+	var cut: bool = g.player.hp < hp_sk
+	g.test_god = true
+	foe_lines.append("skeleton: wound up %s, cut you %s" % [saw_wind, cut])
+	foe_ok = foe_ok and saw_wind and cut
+	g.enemies.clear()
+	g.player.hp = g.max_hp
+	# an archer with a clear line to you looses arrows
+	var arc_at := Vector2.ZERO
+	for arc_side in [-1.0, 1.0]:
+		for arc_dk in [90.0, 70.0, 110.0]:
+			var ap: Vector2 = spot.call(arc_side * arc_dk, 9.5)
+			if FoeAI.clear_line(g, ap - ap.normalized() * 5.0, g.player.pos):
+				arc_at = ap
+				break
+		if arc_at != Vector2.ZERO:
+			break
+	if arc_at != Vector2.ZERO:
+		var arc = g.spawn_enemy("archer", arc_at)
+		var arrows := 0
+		for fr3 in 260:
+			for arc_pr in g.projs:
+				if arc_pr["type"] == "arrow" and arc_pr["life"] == int(Defs.PROJ["arrow"]["life"]) - 1:
+					arrows += 1
+			await _frames(1)
+		foe_lines.append("archer %.0f cells off: %d arrows" % [arc_at.distance_to(g.player.pos), arrows])
+		foe_ok = foe_ok and arrows > 0
+	else:
+		foe_lines.append("archer: no clear line nearby (skipped)")
+	g.enemies.clear()
+	g.projs.clear()
+	g.player.hp = g.max_hp
+	# a bat above you hangs a moment, then dives
+	var bat = g.spawn_enemy("bat", spot.call(30.0, 45.0))
+	var dived := false
+	for fr4 in 240:
+		if bat.act == "dive":
+			dived = true
+			break
+		await _frames(1)
+	foe_lines.append("bat dived: %s" % dived)
+	foe_ok = foe_ok and dived
+	g.enemies.clear()
+	# an imp you close in on vanishes and appears again some way off
+	var imp = g.spawn_enemy("imp", spot.call(14.0, 22.0))
+	var imp0: Vector2 = imp.pos
+	var blinked := false
+	for fr5 in 120:
+		if imp.blink_cd > 0:
+			blinked = true
+			break
+		await _frames(1)
+	foe_lines.append("imp blinked away: %s (%.0f cells)" % [blinked, imp.pos.distance_to(imp0)])
+	foe_ok = foe_ok and blinked
+	g.enemies.clear()
+	g.projs.clear()
+	g.player.hp = g.max_hp
+	_ok("foes wind up, then lunge, shoot, swoop or blink", foe_ok, "; ".join(foe_lines))
+
+	# ---- a skeleton opens a door to get at you (a slime can't) ----
+	var door_f := {}
+	for dd in g.doors:
+		if not bool(dd["open"]) and not dd.has("cells") and int(dd["row"]) < Defs.SH_Y0[1]:
+			door_f = dd
+			break
+	if door_f.is_empty():
+		_ok("a skeleton opens a door to get at you", false, "no shut door left")
+	else:
+		var dpf: Vector2 = door_f["pos"]
+		var daf := atan2(dpf.y, dpf.x)
+		var outw: Vector2 = g.basis_r(daf) * float(door_f["side"])
+		var bottom: Vector2 = dpf + g.basis_d(daf) * (float(door_f["h"]) * 0.5)
+		var up_f: Vector2 = -g.basis_d(daf)
+		_go(bottom + up_f * 10.0 - outw * 24.0)
+		await _frames(30)
+		var sl = g.spawn_enemy("slime", bottom + up_f * 6.0 + outw * 22.0)
+		sl.alert_t = 9999
+		sl.seen_pos = g.player.pos
+		await _frames(150)
+		var slime_opened: bool = door_f["open"]
+		g.enemies.clear()
+		var sk2 = g.spawn_enemy("skeleton", bottom + up_f * 10.0 + outw * 26.0)
+		var opened_t := -1
+		for fr6 in 360:
+			sk2.alert_t = 200
+			sk2.seen_pos = g.player.pos
+			if bool(door_f["open"]):
+				opened_t = fr6
+				break
+			await _frames(1)
+		_ok("a skeleton opens a door to get at you", opened_t >= 0 and not slime_opened,
+			"a slime pushing at it for 2.5 s opened it: %s; the skeleton opened it after %d frames" % [slime_opened, opened_t])
+		g.enemies.clear()
+	g.enemies.append_array(keep_foes)
 
 	# ---- foes come in from out of sight: none appears on screen ----
 	var spv := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
@@ -1616,7 +1815,7 @@ func run() -> void:
 	# anchored and built; digging at one corner must wake all of it, and with nothing under it, it falls)
 	var hang_a: float = g.spawn_angle + 0.09
 	var hang_s: float = g.gpu.surf_at(hang_a).x
-	var hang_c: Vector2i = Build.cell_of(Vector2(cos(hang_a), sin(hang_a)) * (hang_s + 70.0))
+	var hang_c: Vector2i = Build.cell_of(Vector2(cos(hang_a), sin(hang_a)) * (hang_s + 130.0))   # above the treetops
 	var HW := 30
 	var hd := PackedInt32Array()
 	hd.resize(HW * HW)
@@ -1664,14 +1863,38 @@ func run() -> void:
 	var hang_still: Array = hang_tally.call()     # left alone, it stays as built
 	hang_still.resize(3)
 	g.brushes.append([_cell_pos(hang_c.x + 1, hang_c.y + 1), 3.0, 1, 0, 9, 0, 0, 0])
-	await _frames(560)
+	var hang_chunks := 0
+	var hang_shot := false
+	for hang_k in 560:
+		hang_chunks = maxi(hang_chunks, g.chunks.list.size())
+		if not hang_shot and g.chunks.list.size() > 3 and hang_k > 60:
+			hang_shot = true
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("collapse.png"))
+		await _frames(1)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("hanging.png"))
 	var hang1: Array = hang_tally.call()
 	hang0.resize(3)
+	# it came down in pieces that stayed stone, not in a shower of gravel
+	var gr_h: int = b.ground_row(hang_c.x + HW / 2)
+	var hang_wide: Dictionary = g.gpu.read_rect(hang_c.x - 90, hang_c.y, HW + 180, gr_h - hang_c.y + 8)
+	var n_mas := 0
+	var n_grav := 0
+	for v in hang_wide["fg"]:
+		if (v & 255) == Defs.MASONRY:
+			n_mas += 1
+		elif (v & 255) == Defs.GRAVEL:
+			n_grav += 1
+	_ok("a collapsing building falls in pieces, not to dust", hang_chunks >= 3 and n_mas > int(hang0[0]) / 2,
+		"%d pieces at once; afterwards %d stone blocks and %d gravel (it had %d stone)" % [hang_chunks, n_mas, n_grav, hang0[0]])
 	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[4]) < int(hang0[0]) / 3 and int(hang1[2]) < int(hang0[2]) / 5,
 		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 9 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
 
 	# ---- save and load give back the same world ----
+	# (pieces still tumbling are set down first: saving would set them down anyway)
+	g.chunks.settle_all()
+	if not g.stamps.is_empty():
+		g.gpu.stamp(g.stamps, g.frame)
+		g.stamps.clear()
 	var a: PackedByteArray = g.gpu.read_world()
 	g.save_world(true)
 	var loaded: bool = g._load_world(0)

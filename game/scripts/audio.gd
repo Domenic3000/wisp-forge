@@ -28,7 +28,7 @@ var _mood := ""
 var _fade := 1.0
 
 const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak": 50, "rumble": 25, "land": 8,
-	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3}
+	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6}
 
 func _ready() -> void:
 	for k in 10:
@@ -257,4 +257,11 @@ func _build_sfx() -> void:
 	# a wooden door: a creak and a soft knock as it opens, a firmer thud as it shuts
 	sfx["door_open"] = _wav(_mix(_sweep(0.32, 180.0, 260.0, "saw", 5.0, 0.07), _noise(0.08, 0.3, 40.0, 0.35)))
 	sfx["door_close"] = _wav(_mix(_sweep(0.12, 110.0, 70.0, "sine", 20.0, 0.5), _noise(0.1, 0.2, 35.0, 0.55)))
+	# foes: a blade's whoosh, a bowstring, a bat's screech
+	sfx["swing"] = _wav(_lowpass(_noise(0.16, 0.3, 14.0, 0.5), 0.5))
+	sfx["bow"] = _wav(_mix(_sweep(0.14, 220.0, 150.0, "square", 18.0, 0.12), _noise(0.05, 0.5, 60.0, 0.25)))
+	sfx["screech"] = _wav(_sweep(0.22, 2400.0, 1500.0, "square", 9.0, 0.07))
+	# falling pieces: wood cracking as a trunk goes, and the heavy thud of a piece landing
+	sfx["crack"] = _wav(_mix(_noise(0.18, 0.6, 22.0, 0.7), _sweep(0.12, 180.0, 90.0, "saw", 20.0, 0.15)))
+	sfx["thud"] = _wav(_mix(_lowpass(_noise(0.35, 0.05, 9.0, 1.1), 0.25), _sweep(0.3, 75.0, 38.0, "sine", 9.0, 0.6)))
 	randomize()

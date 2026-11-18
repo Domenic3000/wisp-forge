@@ -9,6 +9,8 @@ const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Build := preload("res://scripts/build.gd")
+const FoeAI := preload("res://scripts/foe_ai.gd")
+const Chunks := preload("res://scripts/chunks.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
 const Audio := preload("res://scripts/audio.gd")
@@ -41,6 +43,7 @@ class Body:
 class Chest extends Body:
 	var opened := false
 	var open_t := -1          # frames since it was opened (-1: closed); it vanishes after a moment
+	var unsup_t := 0          # frames in a row with nothing found under it
 	func _init() -> void:
 		w = float(Defs.CHEST_W)
 		h = float(Defs.CHEST_H)
@@ -71,6 +74,19 @@ class Enemy extends Body:
 	var prog_t := 0
 	var avoid := Vector2.ZERO
 	var avoid_t := 0
+	# what it knows and what it's doing (scripts/foe_ai.gd)
+	var see := false           # it can see its target right now
+	var look_t := 0            # frames until it looks again
+	var alert_t := 0           # frames it keeps hunting
+	var seen_pos := Vector2.ZERO
+	var act := ""              # "", "windup", "strike", "air", "dive", "recover"
+	var act_t := 0
+	var act_len := 1           # how long this wind-up lasts (for its glow)
+	var act_cd := 0            # frames until it may attack again
+	var hit_done := false      # this cut already landed
+	var aim := Vector2.ZERO    # a bat's dive heading
+	var blink_cd := 0
+	var door_t := 0            # frames waiting for a door it opened to swing out of the way
 
 var gpu
 var ui
@@ -277,6 +293,7 @@ var dig_blocked: int:
 	set(v): player.dig_blocked = v
 
 var enemies: Array = []
+var chunks = null          # pieces breaking off as rigid bodies (scripts/chunks.gd)
 var chests: Array = []        # Chest objects on this planet
 var doors: Array = []         # {pos, w, h, side, col, row, open}: the doors of this planet's buildings
 var projs: Array = []
@@ -518,6 +535,8 @@ func _apply_counts(m: Mage) -> void:
 		return
 	var cn := all.slice(o, o + 64)
 	m.fog = lerpf(m.fog, cn[58] / 1000.0, 0.25)
+	if chunks != null and state == "play":
+		chunks.detect(m, cn)            # a felled tree or a creaking piece: lift it out whole
 	_use_grid(m)
 	if m.local and cn[56] > 0:
 		# something loose is about to fall: dust trickles from it and the ground rumbles
@@ -863,8 +882,8 @@ func _door_cells(d: Dictionary) -> int:
 				n += 1
 	return n
 
-## walking into a closed door opens it
-func _door_bump(m: Mage) -> void:
+## walking into a closed door opens it (the mage, and foes that know how: Defs.ENEMY ai "doors")
+func _door_bump(m: Body) -> void:
 	var d := _door_near(m.pos, 24.0)
 	if not d.is_empty() and not d["open"]:
 		_set_door(d, true, m.pos)
@@ -883,9 +902,11 @@ func _interact() -> void:
 		_set_door(d, not d["open"], player.pos)
 
 ## Chests near a mage obey gravity: one rigid object, so it falls and lands whole. A chest
-## resting on something stays exactly where it is (the collision grid is built around the mage,
-## so re-checking a resting chest every frame made it bob as you walked); it only moves again
-## once nothing is under it.
+## resting on something stays exactly where it is: the collision grid is built around the mage and
+## tilts with the planet's curve as he walks, so a chest some way off sees its ground shift a cell
+## or so. It looks a few cells down for ground and only falls once nothing has been under it for
+## CHEST_LET_GO frames in a row.
+const CHEST_LET_GO := 12
 const CHEST_VANISH := 110      # an opened chest shows its empty inside, then fades away in sparkles
 func _update_chests() -> void:
 	for k in range(chests.size() - 1, -1, -1):
@@ -909,9 +930,14 @@ func _update_chests() -> void:
 		if not in_grid(c.pos, 16.0):
 			continue
 		var l := to_grid(c.pos)
-		if c.on_ground and box_solid(l.x - c.w * 0.5, l.y - c.h * 0.5 + 1.5, c.w, c.h):
-			c.vy = 0.0           # still something under it: it stays put
-			continue
+		if c.on_ground:
+			var held := box_solid(l.x - c.w * 0.5, l.y - c.h * 0.5 + 1.5, c.w, c.h) \
+				or box_solid(l.x - c.w * 0.5 + 1.0, l.y + c.h * 0.5, c.w - 2.0, 3.5)
+			c.unsup_t = 0 if held else c.unsup_t + 1
+			if c.unsup_t < CHEST_LET_GO:
+				c.vy = 0.0           # still something under it: it stays put
+				continue
+		c.unsup_t = 0
 		c.vx *= 0.8
 		c.vy = minf(c.vy + 0.17 * gravity_at(c.pos), 6.0)
 		move_body(c)
@@ -1270,8 +1296,12 @@ func move_body(e: Body) -> void:
 			if not climbed:
 				e.vx = 0.0
 				e.hit_wall = true
-				if e is Mage and box_count(x + st, y, e.w, e.h, Defs.WOODDOOR) > 0:
-					_door_bump(e as Mage)
+				if box_count(x + st, y, e.w, e.h, Defs.WOODDOOR) > 0:
+					if e is Mage:
+						_door_bump(e)
+					elif e is Enemy and e.d.get("ai", {}).get("doors", false):
+						_door_bump(e)       # a skeleton lifts the latch too
+						(e as Enemy).door_t = 40
 				break
 		dx -= st
 	e.on_ground = false
@@ -1406,6 +1436,8 @@ func _tick() -> void:
 	_use_grid(player)
 	_update_enemies()
 	_update_chests()
+	if chunks != null:
+		chunks.update()
 	_use_grid(player)
 	_update_projectiles()
 	_use_grid(player)
@@ -2023,6 +2055,8 @@ func _update_projectiles() -> void:
 			_impact(pr, hit, hit_enemy, hit_m)
 			projs.remove_at(k)
 			continue
+		if pr["type"] == "arrow":
+			continue                  # an arrow neither glows nor sparks
 		var col: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
 		lights.append([pos, float(pd["light"]), col * 0.85])
 		if randf() < 0.6:
@@ -2067,6 +2101,14 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 					en.slow = 200
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb, 0.0)
+		"arrow":
+			if hit_m != null:
+				var av: Vector2 = pr["vel"]
+				var ha := atan2(hit_m.pos.y, hit_m.pos.x)
+				hurt(hit_m, float(pd["dmg"]), Vector2(signf(av.dot(basis_r(ha))) * 1.6, -0.8), true)
+			for k in 6:
+				_particle(p, Vector2(randf() - 0.5, randf() - 0.9) * 0.9, 12 + randi() % 10, Color(0.62, 0.44, 0.26), false, 0.06)
+			return
 		"efire":
 			if hit_m != null:
 				hurt(hit_m, float(pd["dmg"]) * (0.6 if hit_m.heat_ward else 1.0), Vector2(signf(randf() - 0.5) * 1.5, -1.0), true)
@@ -2185,6 +2227,8 @@ func _walker_nav(e: Enemy, dx: float, dist: float, speed: float, jump_v: float, 
 			e.wander_t = 80 + randi() % 80
 		e.prog_pos = e.pos
 		e.prog_t = 0
+	if e.door_t > 0:
+		return e.nav_dir           # it just opened a door: wait for it to swing open, don't turn back
 	if e.hit_wall and e.on_ground:
 		var reach := jump_v * jump_v / (2.0 * maxf(g, 0.01)) - 2.0
 		var need := _wall_height(e, e.nav_dir, reach)
@@ -2257,76 +2301,103 @@ func _update_enemies() -> void:
 		var dy := pl.y - lt.y
 		e.in_liquid = Defs.KIND[type_at(e.pos)] == Defs.K_LIQUID
 		var g := 0.17 * gravity_at(e.pos)
-		e.facing = -1 if dx < 0 else 1
+		if e.act == "":
+			e.facing = -1 if dx < 0 else 1
 		if tgt.dead:
 			e.vx *= 0.9
+		# what it knows (sees you, heard a spell, was warned) and where it is heading
+		var gl := Vector2.ZERO
+		if not e.boss:
+			FoeAI.think(self, e, tgt, dist)
+			gl = FoeAI.goal(self, e, tgt)
 		match e.type:
-			"slime":
-				if e.on_ground:
-					e.vx *= 0.75
+			"slime", "mimic":
+				# hops after you once it knows you're there; close by, a crouch and a leap aimed at you
+				var busy := FoeAI.leap(self, e, tgt, dx, dy, g)
+				if not busy and e.on_ground:
+					e.vx *= 0.75 if e.type == "slime" else 0.7
 					e.t -= 1
-					if e.t <= 0 and dist < 200:
-						var sd := _walker_nav(e, dx, dist, 0.0, 5.4, g)
-						e.vx = sd * (1.4 + randf() * 0.9) * slow_f
-						var hop := 3.8 + randf() * 1.3
-						var wall := _wall_height(e, sd, 56.0)
+					if e.t <= 0 and gl != Vector2.ZERO:
+						var jv := 5.4 if e.type == "slime" else 4.6
+						var sd := _walker_nav(e, gl.x, gl.length(), 0.0, jv, g)
+						e.vx = sd * ((1.4 + randf() * 0.9) if e.type == "slime" else (1.9 + randf() * 0.8)) * slow_f
+						var hop := (3.8 + randf() * 1.3) if e.type == "slime" else (3.7 + randf() * 0.8)
+						var wall := _wall_height(e, sd, 56.0 if e.type == "slime" else 40.0)
 						if wall > 0:
-							hop = minf(5.4, sqrt(2.0 * g * (wall + 5.0)))   # hop up onto the ledge
+							hop = minf(jv, sqrt(2.0 * g * (wall + 5.0)))   # hop up onto the ledge
 						elif wall < 0:
 							e.nav_dir = -sd
 							e.wander_t = 90
 						e.vy = -hop
-						e.t = 45 + randf() * 50
+						e.t = (45 + randf() * 50) if e.type == "slime" else (28 + randf() * 25)
+					elif e.t <= 0:
+						# nothing to chase: the odd idle hop
+						e.t = 70 + randf() * 90
+						if e.type == "slime" and randf() < 0.4:
+							e.vx = (1.0 if randf() < 0.5 else -1.0) * 0.7
+							e.vy = -2.4
 				e.vy += g * 0.3 if e.in_liquid else g
 				if e.in_liquid:
 					e.vy *= 0.9
-			"skeleton":
-				# walks toward you once it notices you, hops over steps and rubble
-				if dist < 210 and not tgt.dead:
-					var kd := _walker_nav(e, dx, dist, 0.85, 3.9, g)
-					if e.on_ground:
-						e.vx += (kd * 0.85 * slow_f - e.vx) * 0.2
-				elif e.on_ground:
-					e.vx *= 0.8
+			"skeleton", "archer":
+				# walks toward you once it knows you're there (through doors), hops over steps; a
+				# swordsman closes in and lunges, an archer keeps its distance and shoots
+				var ai: Dictionary = e.d["ai"]
+				var busy2 := FoeAI.melee(self, e, tgt, dx, dy) if ai.has("melee") else FoeAI.ranged(self, e, tgt, dist)
+				if not busy2:
+					if gl != Vector2.ZERO:
+						var want := gl.x
+						var keep: Array = ai.get("keep", [])
+						if not keep.is_empty() and e.see:
+							if dist < float(keep[0]):
+								want = -gl.x                  # too close: back off
+							elif dist < float(keep[1]):
+								want = 0.0                    # a good range: hold here
+						if want == 0.0:
+							if e.on_ground:
+								e.vx *= 0.8
+						else:
+							var spd := 0.85 if ai.has("melee") else 0.75
+							var kd := _walker_nav(e, want, maxf(gl.length(), 40.0) if want != gl.x else gl.length(), spd, 3.9, g)
+							if e.on_ground:
+								e.vx += (kd * spd * slow_f - e.vx) * 0.2
+					elif e.on_ground:
+						e.vx *= 0.8
 				e.vy += g * 0.3 if e.in_liquid else g
-			"mimic":
-				if e.on_ground:
-					e.vx *= 0.7
-					e.t -= 1
-					if e.t <= 0 and not tgt.dead:
-						var md := _walker_nav(e, dx, dist, 0.0, 4.6, g)
-						e.vx = md * (1.9 + randf() * 0.8) * slow_f
-						var mw := _wall_height(e, md, 40.0)
-						e.vy = -(minf(4.6, sqrt(2.0 * g * (mw + 5.0))) if mw > 0 else 3.7 + randf() * 0.8)
-						e.t = 28 + randf() * 25
-				e.vy += g
 			"bat":
 				e.phase += 0.12
-				if dist < 200:
-					var bw := _flier_steer(e, Vector2(dx, dy + sin(e.phase) * 14.0))
-					e.vx += bw.x * 0.12
-					e.vy += bw.y * 0.11
-				else:
-					e.vx += (randf() - 0.5) * 0.1
-					e.vy += (randf() - 0.5) * 0.1
-				var sp := 1.6 * slow_f
-				e.vx = clampf(e.vx, -sp, sp)
-				e.vy = clampf(e.vy, -sp, sp)
-				if e.hit_wall:
-					e.vy -= 0.3
+				if not FoeAI.swoop(self, e, tgt, dx, dy, dist):
+					if gl != Vector2.ZERO:
+						# it circles above you, waiting for its moment to dive
+						var bwant := Vector2(gl.x, gl.y - (26.0 if e.see else 0.0) + sin(e.phase) * 14.0)
+						var bw := _flier_steer(e, bwant)
+						e.vx += bw.x * 0.12
+						e.vy += bw.y * 0.11
+					else:
+						e.vx += (randf() - 0.5) * 0.1
+						e.vy += (randf() - 0.5) * 0.1
+					var sp := 1.6 * slow_f
+					e.vx = clampf(e.vx, -sp, sp)
+					e.vy = clampf(e.vy, -sp, sp)
+					if e.hit_wall:
+						e.vy -= 0.3
 			"imp":
+				# keeps its distance and throws fire that leads you; close in and it blinks away
 				e.phase += 0.05
-				var ax := signf(dx) if dist > 45 else -signf(dx)
-				var iw := _flier_steer(e, Vector2(ax * maxf(absf(dx), 10.0), dy - 20.0 + sin(e.phase) * 10.0))
-				e.vx += iw.x * 0.05
-				e.vy += iw.y * 0.05
-				var sp2 := 1.0 * slow_f
+				FoeAI.blink(self, e, tgt, dist)
+				FoeAI.ranged(self, e, tgt, dist)
+				if gl != Vector2.ZERO:
+					var gd := gl.length()
+					var ax := signf(gl.x) if gd > 45 else -signf(gl.x)
+					var iw := _flier_steer(e, Vector2(ax * maxf(absf(gl.x), 10.0), gl.y - 20.0 + sin(e.phase) * 10.0))
+					e.vx += iw.x * 0.05
+					e.vy += iw.y * 0.05
+				else:
+					e.vx += (randf() - 0.5) * 0.04
+					e.vy += sin(e.phase) * 0.01
+				var sp2 := (0.5 if e.act == "windup" else 1.0) * slow_f
 				e.vx = clampf(e.vx, -sp2, sp2)
 				e.vy = clampf(e.vy, -sp2, sp2)
-				e.shoot_t -= 1
-				if e.shoot_t <= 0 and dist < 190 and not tgt.dead:
-					_spawn_proj("efire", e.pos, (player.pos - e.pos).normalized() * 1.7, "enemy")
-					e.shoot_t = 140 + randf() * 60
 			"golem":
 				if not e.awake and dist < 150:
 					e.awake = true
@@ -2341,11 +2412,7 @@ func _update_enemies() -> void:
 					e.t -= 1
 					e.shoot_t -= 1
 					if e.shoot_t <= 0:
-						var n := 7 if enraged else 5
-						var to := (player.pos - e.pos).normalized()
-						for s in n:
-							var ang := (s - (n - 1) / 2.0) * 0.18
-							_spawn_proj("efire", e.pos, to.rotated(ang) * 1.9, "enemy")
+						FoeAI.shoot(self, e, tgt, "efire", 7 if enraged else 5, 0.18, 0.6)
 						e.shoot_t = 110 if enraged else 170
 					if e.t <= 0 and e.on_ground:
 						e.vy = -5.2
@@ -2408,14 +2475,23 @@ func _try_spawn() -> void:
 	var night := _local_daylight(player.pos) < 0.3
 	var type := ""
 	if r > sa.x - 14.0:
-		# the surface is gentle by day, busier at night
-		var slimes := 0
-		for e in enemies:
-			if e.type == "slime":
-				slimes += 1
-		if slimes >= (5 if night else 2) or randf() > (0.5 if night else 0.12):
-			return
-		type = "slime"
+		# the surface is gentle by day, busier at night, when the dead walk too (a swordsman or an
+		# archer now and then)
+		if night and randf() < 0.22:
+			var undead := 0
+			for e in enemies:
+				if (e.type == "skeleton" or e.type == "archer") and e.guard_id < 0:
+					undead += 1
+			if undead < 2:
+				type = "skeleton" if randf() < 0.55 else "archer"
+		if type == "":
+			var slimes := 0
+			for e in enemies:
+				if e.type == "slime":
+					slimes += 1
+			if slimes >= (5 if night else 2) or randf() > (0.5 if night else 0.12):
+				return
+			type = "slime"
 	elif r > sa.z:
 		if randf() > 0.45:
 			return
@@ -2435,7 +2511,7 @@ func _try_spawn() -> void:
 	var reach_y := VH * 0.5 * zoom + float(d["h"]) + 10.0
 	var cv := _view()
 	var ca := atan2(cv.y, cv.x)
-	if type == "slime":
+	if not d["fly"]:
 		# on the ground just past the edge of the view (it waits, still, until you come near)
 		for tries in 6:
 			var side := -1.0 if randf() < 0.5 else 1.0
@@ -2460,6 +2536,9 @@ func _try_spawn() -> void:
 			continue                          # it would appear on screen
 		if not box_solid(lx - d["w"] * 0.5, ly - d["h"] * 0.5, d["w"], d["h"]) and Defs.KIND[gtype(int(lx), int(ly))] != Defs.K_LIQUID:
 			spawn_enemy(type, from_grid(Vector2(lx, ly)))
+			# bats often hunt in pairs
+			if type == "bat" and randf() < 0.5 and not box_solid(lx + 6.0 - d["w"] * 0.5, ly - 4.0 - d["h"] * 0.5, d["w"], d["h"]):
+				spawn_enemy(type, from_grid(Vector2(lx + 6.0, ly - 4.0)))
 			return
 
 ## Inside a cloud: wisps of vapour stream past you with the wind, in front of everything.
@@ -3278,6 +3357,9 @@ func _enter_planet(index: int) -> void:
 		builds.structs.clear()
 	_make_chests(loaded)
 	_make_doors(loaded)
+	if chunks == null:
+		chunks = Chunks.new(self)
+	chunks.clear()
 	enemies.clear()
 	_guards_alive.clear()
 	projs.clear()
@@ -3461,6 +3543,12 @@ func save_world(blocking: bool) -> void:
 				return
 		WorkerThreadPool.wait_for_task_completion(_save_task)
 		_save_task = -1
+	# pieces still tumbling go into the world first, so nothing is lost
+	if chunks != null and not chunks.list.is_empty():
+		chunks.settle_all()
+	if not stamps.is_empty():
+		gpu.stamp(stamps, frame)
+		stamps.clear()
 	var raw: PackedByteArray = gpu.read_world()
 	planet_state["player"] = [player.pos.x, player.pos.y]
 	var cs := []

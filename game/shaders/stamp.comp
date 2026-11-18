@@ -6,7 +6,10 @@
 // background wall too), bit 18 = background is a built back wall,
 // bits 19-26 = colour variant, used when bit 27 is set (chests use it to know which part they are),
 // bits 28-31 = a furniture piece's kind (props.gd KINDS), kept in background bits 24-27.
-// pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, 0, 0)
+// pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, mode, 0)
+// mode 1 (raw, scripts/chunks.gd setting a fallen piece down): two words per cell, the front cell and
+// the background cell exactly as they go in the world (0xffffffff = leave it); each only lands where
+// that layer is empty (a front cell where nothing solid is, a background cell where there's none).
 #include "common"
 #include "world"
 #include "bglayer"
@@ -20,6 +23,16 @@ void main() {
 	int row = pc.a.y + j;
 	if (row < 0 || row >= SH_Y0[1]) return;
 	int col = wrapc(pc.a.x + i, SH_N[0]);
+	if (pc.b.z == 1) {
+		int ri = cellIdx(0, row, col);
+		uint fw = blue.d[pc.b.x + 2 * (j * w + i)], bw = blue.d[pc.b.x + 2 * (j * w + i) + 1];
+		if (fw != 0xffffffffu) {
+			uint kc = KIND[world.cells[ri] & 255u];
+			if (!(kc == K_SOLID || kc == K_POWDER)) world.cells[ri] = fw;
+		}
+		if (bw != 0xffffffffu && (aux.a[ri] & 255u) == 0u) aux.a[ri] = bw;
+		return;
+	}
 	uint d = blue.d[pc.b.x + j * w + i];
 	uint fc = d & 255u, bc = (d >> 8) & 255u;
 	int idx = cellIdx(0, row, col);

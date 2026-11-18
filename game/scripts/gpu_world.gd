@@ -264,7 +264,8 @@ func stamp(structs: Array, seed: int) -> void:
 	var cl := rd.compute_list_begin()
 	for k in structs.size():
 		var st: Dictionary = structs[k]
-		_dispatch_set(cl, "stamp", uset, [st["x0"], st["y0"], st["w"], st["h"], offs[k], seed + k], groups(st["w"], 16), groups(st["h"], 16))
+		var mode := 1 if st.get("raw", false) else 0      # raw: two words a cell (scripts/chunks.gd)
+		_dispatch_set(cl, "stamp", uset, [st["x0"], st["y0"], st["w"], st["h"], offs[k], seed + k, mode, 0], groups(st["w"], 16), groups(st["h"], 16))
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()
@@ -524,6 +525,21 @@ func read_rect(c0: int, r0: int, w: int, h: int) -> Dictionary:
 	var bg := PackedInt32Array()
 	fg.resize(w * h)
 	bg.resize(w * h)
+	# all in shell 0 and clear of the seam: read the band of whole rows in one go per layer (two reads
+	# instead of two per row), then cut the rectangle out of it
+	var col0 := posmod(c0, n0)
+	if r0 >= 0 and r0 + h <= Defs.SH_Y0[1] and col0 + w <= n0 and h > 0:
+		var boff: int = (Defs.SH_OFF[0] + (r0 - Defs.SH_Y0[0]) * n0) * 4
+		var blen: int = h * n0 * 4
+		var fb := rd.buffer_get_data(world_buf, boff, blen).to_int32_array()
+		var bb := rd.buffer_get_data(aux_buf, boff, blen).to_int32_array()
+		var fo := PackedInt32Array()
+		var bo := PackedInt32Array()
+		for j in h:
+			var src := j * n0 + col0
+			fo.append_array(fb.slice(src, src + w))
+			bo.append_array(bb.slice(src, src + w))
+		return {"fg": fo, "bg": bo}
 	for j in h:
 		var row := r0 + j
 		if row < 0 or row >= Defs.SH_Y0[1]:

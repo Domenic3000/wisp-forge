@@ -1,4 +1,5 @@
 extends Node2D
+const FoeAI := preload("res://scripts/foe_ai.gd")
 ## Draws everything that isn't terrain, in screen pixels on top of the GPU
 ## picture: the mage, the wisp, foes, spells, particles and the reticle.
 
@@ -150,7 +151,7 @@ func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
 		sp = sp.round()
 	return [sp, raw]
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0) -> void:
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1)) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
 	# upright in the unrolled view; turned with the planet's curve in the round map view
@@ -158,7 +159,7 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	var z: float = game.zoom
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
-	var mod := Color(4, 4, 4) if white else _lit(game.world_to_screen(wpos))
+	var mod := Color(4, 4, 4) if white else _lit(game.world_to_screen(wpos)) * tint
 	mod.a = alpha
 	# feet (last opaque row, above the outline) rest on the bottom of the body box
 	var ts := t.get_size()
@@ -241,10 +242,39 @@ func _draw() -> void:
 				tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"]), dc, int(d["w"])))
 		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true)
 	# foes
+	# pieces breaking off: felled trees and fragments of buildings, turned as they tumble
+	if game.chunks != null:
+		var cam_a := atan2(game.cam_c.y, game.cam_c.x)
+		for c in game.chunks.list:
+			game.chunks.textures(c)
+			if c.tex_f == null:
+				continue
+			var csp: Vector2 = game.world_to_screen(c.pos)
+			var ref := atan2(c.pos.y, c.pos.x) if game.unrolled() else cam_a
+			draw_set_transform(csp, game.chunks.screen_angle(c, ref), Vector2.ONE / float(game.zoom))
+			var cm := _lit(csp)
+			draw_texture(c.tex_b, c.img_origin, cm)
+			draw_texture(c.tex_f, c.img_origin, cm)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	for e in game.enemies:
-		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground)
+		var tl: float = FoeAI.tell(e)
+		var tint := Color(1, 1, 1).lerp(Color(2.2, 0.75, 0.5), tl)
+		var sq := 1.0 - 0.22 * tl if (e.type == "slime" or e.type == "mimic") else 1.0
+		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground, 1.0, sq, tint)
 	# projectiles
 	for pr in game.projs:
+		if pr["type"] == "arrow":
+			# a shaft three cells long along its flight, with a pale head
+			var av: Vector2 = pr["vel"]
+			var ap: Vector2 = pr["pos"]
+			var a0: Vector2 = game.world_to_screen(ap)
+			var a1: Vector2 = game.world_to_screen(ap - av.normalized() * 3.0)
+			var lc := _lit(a0)
+			for k in 4:
+				var q := a1.lerp(a0, float(k) / 3.0).floor()
+				draw_rect(Rect2(q, Vector2.ONE), (Color(0.85, 0.82, 0.72) if k == 3 else Color(0.55, 0.38, 0.22)) * lc)
+			continue
 		var c: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
 		var sp: Vector2 = game.world_to_screen(pr["pos"])
 		var big := 1 if pr["type"] == "fireball" or pr["type"] == "quake" else 0

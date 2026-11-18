@@ -356,6 +356,7 @@ const PROJ := {
 	"quake": {"speed": 3.0, "g": 0.09, "life": 160, "dmg": 0.0, "light": 28.6},
 	"starfall": {"speed": 3.4, "g": 0.02, "life": 160, "dmg": 0.0, "light": 41.6},
 	"efire": {"speed": 2.2, "g": 0.0, "life": 200, "dmg": 12.0, "light": 18.2},
+	"arrow": {"speed": 4.4, "g": 0.05, "life": 130, "dmg": 10.0, "light": 0.0},
 }
 
 # ---------------------------------------------------------------- recipes ---
@@ -928,6 +929,56 @@ const SPRITES := {
 			"..bB.......Bb.",
 		],
 		"pal": {"b": "#e2dccb", "B": "#a8a08c", "D": "#6e6858", "e": "#ff6a3a", "E": "#ffd27a", "m": "#7a7e8c", "M": "#a6aab8", "x": "#4a4e5a", "t": "#5a3a2a", "T": "#7a5236", "s": "#9a8e7a", "S": "#c9bfa8", "u": "#6a5a44"}},
+	"archer": {"rows": [
+			"....xmmmMx....",
+			"...xmmmmMMx...",
+			"..xmmmmmmmMx..",
+			"..xbbbbbbbbx..",
+			"...bDebbDeb...",
+			"...bbbBbbbb...",
+			"....bDbDbB....",
+			".....bBBb...w.",
+			"......bb....lw",
+			"...bbbbbbbb.lw",
+			"..b.bbbbbb.blw",
+			"..b...bb...bhw",
+			"..b.bBbbBb.blw",
+			"..b...bb...blw",
+			"..B..bBBb..blw",
+			"..b...bb....w.",
+			"....tTbbTt....",
+			"....tTtTtt....",
+			"....bt..tb....",
+			"....bB..Bb....",
+			"...bb....bb...",
+			"...bB....Bb...",
+		],
+		"pal": {"b": "#e2dccb", "B": "#a8a08c", "D": "#6e6858", "e": "#7aff6a", "E": "#ffd27a", "m": "#3e5a36", "M": "#5f7d4c", "x": "#26341f", "t": "#4a3a2a", "T": "#6a5236", "w": "#8a5a2e", "l": "#d8d0b8", "h": "#a8a08c"}},
+	"archer2": {"rows": [
+			"....xmmmMx....",
+			"...xmmmmMMx...",
+			"..xmmmmmmmMx..",
+			"..xbbbbbbbbx..",
+			"...bDebbDeb...",
+			"...bbbBbbbb...",
+			"....bDbDbB....",
+			".....bBBb...w.",
+			"......bb....lw",
+			"...bbbbbbbb.lw",
+			"..b.bbbbbb.blw",
+			"..b...bb...bhw",
+			"..b.bBbbBb.blw",
+			"..b...bb...blw",
+			"..B..bBBb..blw",
+			"..b...bb....w.",
+			"....tTttTt....",
+			"....ttTtTt....",
+			"....bb...bb...",
+			"....bB...Bb...",
+			"...bb.....bb..",
+			"..bB.......Bb.",
+		],
+		"pal": {"b": "#e2dccb", "B": "#a8a08c", "D": "#6e6858", "e": "#7aff6a", "E": "#ffd27a", "m": "#3e5a36", "M": "#5f7d4c", "x": "#26341f", "t": "#4a3a2a", "T": "#6a5236", "w": "#8a5a2e", "l": "#d8d0b8", "h": "#a8a08c"}},
 	"mimic": {"rows": [
 			"...wwwwwwwwwwww...",
 			"..wWWWWWWWWWWWWw..",
@@ -1196,12 +1247,28 @@ const MAGE_ANCHORS := {
 	"mage_hurt": {"hat": [8, 1], "hand": [14, 17], "chin": [9, 16], "neck": [5, 12]},
 }
 
+## Foes. "ai" picks and tunes the shared behaviours in scripts/foe_ai.gd:
+##   sight: how far it notices you (with a clear line of sight; close by, or when you cast nearby, it
+##     notices anyway), and it hunts where it last saw you for a few seconds, rallying foes near it
+##   doors: it opens doors to get at you
+##   leap: a crouch, then a jump aimed to land on you    melee: a wind-up, then a lunge with its blade
+##   ranged: a wind-up, then a shot that leads you (and allows for the drop)    keep: the distance it holds
+##   swoop: a hover, then a dive straight at you, then it climbs away    blink: it vanishes when you close in
+## Every attack is telegraphed: the foe glows (overlay.gd) through its wind-up.
 const ENEMY := {
-	"slime": {"w": 12.0, "h": 9.0, "hp": 22.0, "dmg": 6.0, "fly": false, "spr": "slime", "drops": [[WISP, 1, 0.35], [WATER, 4, 1.0]]},
-	"bat": {"w": 11.0, "h": 6.0, "hp": 16.0, "dmg": 7.0, "fly": true, "spr": "bat1", "drops": [[COAL, 2, 0.8], [SHROOM, 2, 0.5]]},
-	"imp": {"w": 9.0, "h": 12.0, "hp": 34.0, "dmg": 11.0, "fly": true, "spr": "imp", "drops": [[EMBER, 3, 1.0], [OBSIDIAN, 2, 0.4]]},
-	"skeleton": {"w": 7.0, "h": 17.0, "hp": 40.0, "dmg": 8.0, "fly": false, "spr": "skeleton", "step": 2, "drops": [[TORCH, 2, 0.5], [CRYSTAL, 2, 0.4], [WISP, 1, 0.25]]},
-	"mimic": {"w": 16.0, "h": 9.0, "hp": 90.0, "dmg": 14.0, "fly": false, "spr": "mimic", "step": 2, "drops": [[WISP, 4, 1.0], [EMBER, 4, 0.8], [CRYSTAL, 4, 0.8]]},
+	"slime": {"w": 12.0, "h": 9.0, "hp": 22.0, "dmg": 6.0, "fly": false, "spr": "slime", "drops": [[WISP, 1, 0.35], [WATER, 4, 1.0]],
+		"ai": {"sight": 150.0, "leap": {"range": 90.0, "windup": 22, "speed": 3.2, "v": 5.6, "cd": 80}}},
+	"bat": {"w": 11.0, "h": 6.0, "hp": 16.0, "dmg": 7.0, "fly": true, "spr": "bat1", "drops": [[COAL, 2, 0.8], [SHROOM, 2, 0.5]],
+		"ai": {"sight": 160.0, "swoop": {"range": 100.0, "windup": 16, "speed": 3.8, "time": 30, "cd": 100}}},
+	"imp": {"w": 9.0, "h": 12.0, "hp": 34.0, "dmg": 11.0, "fly": true, "spr": "imp", "drops": [[EMBER, 3, 1.0], [OBSIDIAN, 2, 0.4]],
+		"ai": {"sight": 210.0, "ranged": {"proj": "efire", "range": 200.0, "windup": 26, "cd": 130, "n": 1, "lead": 0.8},
+			"burst": {"n": 3, "spread": 0.16, "below": 0.5}, "blink": {"near": 34.0, "cd": 220}}},
+	"skeleton": {"w": 7.0, "h": 17.0, "hp": 40.0, "dmg": 6.0, "fly": false, "spr": "skeleton", "step": 2, "drops": [[TORCH, 2, 0.5], [CRYSTAL, 2, 0.4], [WISP, 1, 0.25]],
+		"ai": {"sight": 180.0, "doors": true, "melee": {"reach": 22.0, "windup": 16, "lunge": 3.4, "dmg": 14.0, "cd": 50}}},
+	"archer": {"w": 7.0, "h": 17.0, "hp": 30.0, "dmg": 5.0, "fly": false, "spr": "archer", "step": 2, "drops": [[TORCH, 1, 0.4], [CRYSTAL, 1, 0.35], [WISP, 1, 0.3], [WOOD, 3, 0.5]],
+		"ai": {"sight": 230.0, "doors": true, "keep": [55.0, 140.0], "ranged": {"proj": "arrow", "range": 220.0, "windup": 38, "cd": 85, "n": 1, "lead": 1.0}}},
+	"mimic": {"w": 16.0, "h": 9.0, "hp": 90.0, "dmg": 14.0, "fly": false, "spr": "mimic", "step": 2, "drops": [[WISP, 4, 1.0], [EMBER, 4, 0.8], [CRYSTAL, 4, 0.8]],
+		"ai": {"sight": 160.0, "leap": {"range": 110.0, "windup": 14, "speed": 3.8, "v": 5.0, "cd": 45}}},
 	"golem": {"w": 28.0, "h": 40.0, "hp": 900.0, "dmg": 18.0, "fly": false, "spr": "golem", "boss": true, "drops": []},
 }
 

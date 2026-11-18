@@ -145,6 +145,29 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   over caves); everywhere else it is generated as grass over dirt, so ground never hides a pool you sink into.
   render.comp draws mud dark and glossy with a wet top sheen and bubbles. react.comp: loose (unanchored) dirt
   touching water turns to mud; unanchored mud in the open with no water near dries back to dirt.
+- Foe AI (`scripts/foe_ai.gd`, static behaviours; each foe's `ai` entry in `Defs.ENEMY` picks and tunes them):
+  `think` (line of sight through the collision grid every few frames, spells heard nearby, memory of where you
+  were, `rally` alerts foes within 90 cells), `goal`, and attacks as small state machines on `Enemy.act`
+  ("windup" -> "strike" / "air" / "dive" -> "recover"): `leap` (slimes, mimics, aimed ballistic jump), `melee`
+  (skeleton lunge + blade reach), `ranged` (archers' arrows, imps' fire; `shoot` leads the target and allows for
+  drop), `swoop` (bats), `blink` (imps). Every wind-up is a tell: overlay.gd tints the foe (`FoeAI.tell`).
+  Foes with `ai.doors` open doors by walking into them (`move_body` -> `_door_bump`, `door_t` stops them turning
+  back). Archers are a third of structure guards (picked by position in `_guard`); the dead walk at night.
+- Rigid chunks (`scripts/chunks.gd`): grid.comp reports one felled-tree cell (counts[59]/[60]: a plant cell whose
+  support reached 62) and one creaking block (counts[56]/[57]) per mage; `detect` reads the world around it
+  (`gpu.read_rect`, which reads whole row bands in one call), takes the loose cells out with a stamp and makes
+  rigid bodies: a tree's detached cells (CPU flood from wood on the ground), or a building piece (loose blocks +
+  the loose back walls and furniture joined to them) split along staggered, jittered lines. `update` steps them
+  against the collision grid and each other (one averaged contact, impulse, friction); hard landings knock pixels
+  off as chips and rubble (`_splinter`); hits on mages/foes hurt (`_strike`). A tree collides by its wood only (leaves give
+  way), so it comes to lie on the ground. At rest (it hasn't moved or turned more than ~1 cell for 20 frames)
+  `_settle` writes it back with a raw stamp (stamp.comp mode 1: two words a cell, each layer only where it is
+  empty): blocks unanchored (keeping their own built flag); a tree in FRONT, its wood as logs and ~30% of its
+  leaves as leaf litter. plants.comp lets felled trees wait (0.005 a pass) for the CPU; pieces nobody lifts out
+  still crumble the old way. In test mode each lift-out prints a `[chunks]` line. Pixel colours come from the picture on screen divided by the light.
+  `save_world` settles everything still moving first.
+- Chests at rest only fall after CHEST_LET_GO frames with nothing found up to 3.5 cells under them (the
+  collision grid tilts with the planet's curve as the mage walks, so a single check flickered).
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 
