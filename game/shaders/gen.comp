@@ -96,7 +96,10 @@ uint settleSafe(uint m, vec2 p, float r, float th, float rs) {
 		float stp = 1.0 / RS0;
 		float sl = max(abs(surfA(th - 2.0 * stp).x - rs), abs(surfA(th + 2.0 * stp).x - rs)) * 0.5;
 		if (sl > 0.85) return packedSolid(m);                          // a steep face
-		if (onSite(th, 14.0)) return packedSolid(m);                   // around a building's yard
+		// around a building's yard; how deep and how far out the packed ground reaches wanders, so
+		// it has no flat bottom or straight ends
+		float wob = fbm(p / 7.0, SEED + 93, 2);
+		if (d < 8.0 + 9.0 * wob && onSite(th, 6.0 + 14.0 * wob)) return packedSolid(m);
 	}
 	return m;
 }

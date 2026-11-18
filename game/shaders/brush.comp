@@ -135,7 +135,8 @@ void main() {
 			if (!(t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE || (KIND[t] == K_LIQUID && t != m))) continue;
 			if (isBlock(m) && distance(p, P.p[6].zw) < B.w) continue;
 			uint used = atomicAdd(counts.n[ob + (51)], 1u);
-			if (used < uint(B.z)) c = withFG(c, m, m == M_FIRE ? 30u : 0u);
+			// (what you conjure is built: dressed blocks look like blocks, not the planet's own rock)
+			if (used < uint(B.z)) c = withFG(c, m, m == M_FIRE ? 30u : 0u) | (KIND[m] == K_SOLID ? ST_BUILT : 0u);
 		}
 	}
 	world.cells[i] = c;

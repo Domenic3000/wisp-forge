@@ -118,6 +118,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   made of the biome's soil too. `_weather_ground_line` (run by `_finish`) blends masonry at the ground line outside
   buildings: course ends crumble into earth, topsoil drifts over exposed tops (never at doors), and a ruin's
   buried part is half swallowed by the ground.
+- Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
+  building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
+  ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
 - Test mode quits by itself after 7 minutes, so a broken run never leaves the game open. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:

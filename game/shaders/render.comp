@@ -191,6 +191,15 @@ vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 	if (t == M_FIRE) return ramp(t, int(hashu(uint(w.x) * 31u ^ uint(w.y) * 17u ^ uint(TIME * 0.25)) & 3u));
 	if (KIND[t] == K_GAS) return ramp(t, int(vnoise(vec2(w) / 2.0 + vec2(TIME * 0.01, 0.0), 21) * 3.99));
 	if (t == M_TORCH) return torchColor(w);
+	if (t == M_SANDSTONE && (c & ST_BUILT) == 0u) {
+		// the planet's own sandstone (sand packed hard): soft wavy strata, not dressed blocks
+		float sn = vnoise(vec2(float(w.x) / 11.0, float(w.y) / 2.4 + vnoise(vec2(w) / 13.0, 49) * 1.6), 47) + vnoise(vec2(w) / 2.0, 48) * 0.35;
+		vec3 sc = ramp(t, clamp(int(sn * 2.7), 0, 3));
+		if (openUp) sc *= 1.1;
+		else if (!solidC(cd)) sc *= 0.72;
+		if (!solidC(cl) || !solidC(cr)) sc *= 0.88;
+		return sc;
+	}
 	if (isMasonry(t)) {
 		vec3 bc = blockTex(t, w, v);
 		if (openUp) bc *= 1.15;

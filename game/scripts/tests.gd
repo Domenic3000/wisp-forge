@@ -1184,7 +1184,7 @@ func run() -> void:
 	var t_boxes := []
 	for tk2 in 2:
 		var tcol: int = fw_x0 + 6 + tk2 * 22
-		var tpc: Array = Build.prop_cells(trows, tcol, fw_y0 + FWH - 2, false)
+		var tpc: Array = Build.prop_cells(trows, tcol, fw_y0 + FWH - 8, false)    # (clear of the ground: in open air)
 		var tst: Dictionary = Build.prop_stamp(tpc, Build.Props.kind_id("table"))
 		g.stamps.append(tst)
 		t_boxes.append(tst)
@@ -1210,8 +1210,12 @@ func run() -> void:
 	g.player.decon_pause = 0
 	g._deconstruct(g.player, _cell_pos(int(tmid0["x0"]) + int(tmid0["w"]) / 2, int(tmid0["y0"]) + int(tmid0["h"]) / 2))
 	var took: bool = g.player.furn.size() == nfurn0 + 1
+	var paused0: int = g.player.decon_pause    # (letting go of the button clears it, so read it now)
+	await _frames(4)
+	var taken_now: Dictionary = box_bg.call(t_boxes[0])
 	# holding harvest carries on after a moment (no need to let go and press again)
-	var paused: int = g.player.decon_pause
+	var paused: int = paused0
+	g.player.decon_pause = paused0             # still holding the button
 	var nb0: int = g.brushes.size()
 	for hk in paused + 1:
 		g._deconstruct(g.player, fw_at + fw_at.normalized() * 30.0)
@@ -1220,15 +1224,17 @@ func run() -> void:
 	# the second burns
 	var tmid1: Dictionary = t_boxes[1]
 	var tfire: Vector2 = _cell_pos(int(tmid1["x0"]) + int(tmid1["w"]) / 2, int(tmid1["y0"]) + int(tmid1["h"]) / 2)
-	for fk2 in 24:
-		g.brushes.append([tfire + Vector2(randf() - 0.5, randf() - 0.5) * 8.0, 6.0, 3, Defs.FIRE, 0, 0, 0])
-		await _frames(4)
+	# (a fireball's blast: it sets what burns alight where it reaches)
+	for fk2 in 4:
+		g._explode(tfire, 7.0, 1, 1, 0.0)
+		await _frames(12)
 	await _frames(150)
 	var after_a: Dictionary = box_bg.call(t_boxes[0])
 	var after_b: Dictionary = box_bg.call(t_boxes[1])
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("furniture_wall.png"))
 	var burnt_pick: bool = g._pick_up_furniture(g.player, tfire)
-	_ok("burnt or taken, furniture leaves the wall behind it whole", before_a["decor"] > 20 and took and after_a["decor"] == 0 and after_a["empty"] == 0 and after_b["decor"] < before_a["decor"] / 4 and after_b["empty"] == 0 and (after_b["decor"] > 0 or not burnt_pick) and paused > 0 and resumed,
-		"before: %s; taken whole (%s): %s; burnt: %s; anything left to pick up where it burnt: %s; harvest carries on after a pickup (%d frames' pause): %s" % [str(before_a), took, str(after_a), str(after_b), burnt_pick, paused, resumed])
+	_ok("burnt or taken, furniture leaves the wall behind it whole", before_a["decor"] > 20 and took and taken_now["decor"] == 0 and taken_now["empty"] == 0 and after_b["decor"] < before_a["decor"] / 4 and after_b["empty"] == 0 and (after_b["decor"] > 0 or not burnt_pick) and paused > 0 and resumed,
+		"before: %s; taken whole (%s): %s (after the fire next to it: %s); burnt: %s; anything left to pick up where it burnt: %s; harvest carries on after a pickup (%d frames' pause): %s" % [str(before_a), took, str(taken_now), str(after_a), str(after_b), burnt_pick, paused, resumed])
 
 	# ---- conjuring onto a foe strikes it instead of burying it ----
 	var foe = g.spawn_enemy("slime", spot.call(18.0, 8.0))
