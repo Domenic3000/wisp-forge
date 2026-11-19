@@ -586,7 +586,13 @@ void main() {
 	int s = pc.a.x;
 	int x = int(gl_GlobalInvocationID.x);
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
-	if (x >= SH_N[s] || y >= pc.a.z || y >= SH_Y0[s + 1]) return;
+	if (x >= SH_N[s] || y >= pc.a.z || y >= SH_Y1[s]) return;
+	if (s == ORB) {                                  // the orbit band starts empty
+		int oi = cellIdx(s, y, x);
+		world.cells[oi] = 0u;
+		aux.a[oi] = 0u;
+		return;
+	}
 	SEED = int(P.p[0].w);
 	vec2 p = cellCenter(s, y, x);
 	float r = length(p);

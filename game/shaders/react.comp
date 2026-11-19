@@ -17,13 +17,11 @@ ivec3 stepC(int s, int y, int x, int dir) {
 	if (dir == 3) return ivec3(s, y, x == n - 1 ? 0 : x + 1);
 	if (dir == 0) {
 		int yy = y - 1;
-		if (yy < 0) return ivec3(-1);
-		if (yy < SH_Y0[s]) return ivec3(s - 1, yy, x * 2);
+		if (yy < SH_Y0[s]) { int a = shAbove(s); return a < 0 ? ivec3(-1) : ivec3(a, yy, x * 2); }
 		return ivec3(s, yy, x);
 	}
 	int yy = y + 1;
-	if (yy >= ROWS) return ivec3(-1);
-	if (yy >= SH_Y0[s + 1]) return ivec3(s + 1, yy, x / 2);
+	if (yy >= SH_Y1[s]) { int b = shBelow(s); return b < 0 ? ivec3(-1) : ivec3(b, yy, x / 2); }
 	return ivec3(s, yy, x);
 }
 uint cellC(ivec3 q) { return q.x < 0 ? 0u : world.cells[cellIdx(q.x, q.y, q.z)]; }
@@ -41,6 +39,17 @@ void main() {
 	uint fr = uint(pc.b.y);
 	float R = rnd3(uint(i), fr, 17u);
 
+	// vacuum, above the air (the orbit band): nothing burns, gases boil off into space, water and
+	// mud freeze solid, lava sets
+	if (s == ORB && t != 0u) {
+		uint kt = KIND[t];
+		if (t == M_FIRE || kt == K_GAS) { world.cells[i] = 0u; return; }
+		if (R < 0.12) {
+			if (t == M_WATER) { world.cells[i] = M_ICE | (c & 0xff00u); return; }
+			if (t == M_MUD) { world.cells[i] = M_DIRT | (c & 0xff00u); return; }
+			if (t == M_LAVA) { world.cells[i] = M_OBSIDIAN | (c & 0xff00u); return; }
+		}
+	}
 	// (background plants are held up by plants.comp, which runs several times per frame)
 	uint ab = aux.a[i];
 	uint bgm = ab & 255u;
@@ -62,7 +71,7 @@ void main() {
 			}
 		}
 		// background plants and wooden walls catch fire from burning neighbours, then are gone
-		if (bgm != 0u && FUEL[bgm] > 0u) {
+		if (bgm != 0u && FUEL[bgm] > 0u && s != ORB) {
 			int nu0 = nbr(s, y, x, 0), nd0 = nbr(s, y, x, 1), nl0 = nbr(s, y, x, 2), nr0 = nbr(s, y, x, 3);
 			uint a0 = tAt(nu0), a1 = tAt(nd0), a2 = tAt(nl0), a3 = tAt(nr0);
 			bool hot = a0 == M_FIRE || a1 == M_FIRE || a2 == M_FIRE || a3 == M_FIRE;

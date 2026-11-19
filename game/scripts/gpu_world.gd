@@ -76,7 +76,7 @@ func init() -> bool:
 	sites_buf = rd.storage_buffer_create((MAX_SITES + 1) * 16)
 	rd.buffer_clear(sites_buf, 0, (MAX_SITES + 1) * 16)
 	params_buf = rd.storage_buffer_create(NPARAM * 16)
-	surf_buf = rd.storage_buffer_create(Defs.SH_N[0] * 32)
+	surf_buf = rd.storage_buffer_create(Defs.NS * 32)
 	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
 	var prefix: String = Defs.glsl_prefix()
 	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants", "rectread"]:
@@ -223,7 +223,7 @@ func build_surface(planet: Dictionary) -> void:
 	setp(120, Vector4(0, 0, 0, 0))
 	_upload_params()
 	var cl := rd.compute_list_begin()
-	_dispatch(cl, "surface", "surface", [Defs.SH_N[0]], [], groups(Defs.SH_N[0], 64), 1)
+	_dispatch(cl, "surface", "surface", [Defs.NS], [], groups(Defs.NS, 64), 1)
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()
@@ -245,9 +245,9 @@ func generate(spawn_angle: float, boss: Vector4, sites: Array) -> void:
 	setp(120, boss)
 	setp(121, Vector4(spawn_angle, 0, 0, 0))
 	_upload_params()
-	for s in 4:
+	for s in Defs.NSH:
 		var y0: int = Defs.SH_Y0[s]
-		var y1: int = Defs.SH_Y0[s + 1]
+		var y1: int = Defs.SH_Y1[s]
 		var n: int = Defs.SH_N[s]
 		var band := 48 if s == 0 else 96
 		var y := y0
@@ -314,13 +314,13 @@ func _dispatch_set(cl: int, shader_name: String, uset: RID, ints: Array, gx: int
 	rd.compute_list_add_barrier(cl)
 
 func surf_at(angle: float) -> Vector4:
-	var n: int = Defs.SH_N[0]
+	var n: int = Defs.NS
 	var a := fposmod(angle, TAU)
 	var i := mini(int(a / TAU * n), n - 1)
 	return Vector4(surface[i * 8], surface[i * 8 + 1], surface[i * 8 + 2], surface[i * 8 + 3])
 
 func surf_b(angle: float) -> Vector4:
-	var n: int = Defs.SH_N[0]
+	var n: int = Defs.NS
 	var a := fposmod(angle, TAU)
 	var i := mini(int(a / TAU * n), n - 1)
 	return Vector4(surface[i * 8 + 4], surface[i * 8 + 5], surface[i * 8 + 6], surface[i * 8 + 7])
@@ -331,15 +331,15 @@ func _window(center: Vector2, half := -1.0) -> Array:
 	var rc := center.length()
 	if half < 0.0:
 		half = sqrt(float(VW * VW + VH * VH)) * 0.5 + 56.0
-	var y0 := clampi(int(Defs.R_TOP - (rc + half)), 0, Defs.ROWS)
-	var y1 := clampi(int(Defs.R_TOP - (rc - half)) + 1, 0, Defs.ROWS)
+	var y0 := clampi(Defs.row_at(rc + half), -Defs.ORBIT_ROWS, Defs.ROWS)
+	var y1 := clampi(Defs.row_at(rc - half) + 1, -Defs.ORBIT_ROWS, Defs.ROWS)
 	var rmin := maxf(rc - half, Defs.R_IN)
 	var dth := half / rmin
 	var thc := atan2(center.y, center.x)
 	var out := []
-	for s in 4:
+	for s in Defs.NSH:
 		var sy0 := maxi(y0, Defs.SH_Y0[s])
-		var sy1 := mini(y1, Defs.SH_Y0[s + 1])
+		var sy1 := mini(y1, Defs.SH_Y1[s])
 		if sy0 >= sy1:
 			continue
 		var n: int = Defs.SH_N[s]
@@ -525,15 +525,15 @@ func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int, creak: int) 
 		for w in win:
 			var s: int = w.s
 			var ybase: int = Defs.SH_Y0[s] + ((w.y0 - Defs.SH_Y0[s]) / 2) * 2
-			var ylim: int = mini(w.y1 + 1, Defs.SH_Y0[s + 1])
+			var ylim: int = mini(w.y1 + 1, Defs.SH_Y1[s])
 			var brows: int = (ylim - ybase) / 2 + 1
 			_dispatch(cl, "move", "move", [s, ybase, ylim, w.x0, w.count, frame * 8 + pass_i, o[0], o[1]], [0.0 if full else 1.0], groups(w.count / 2 + 1, 16), groups(brows, 16))
 		if full:
 			for w in win:
 				var s2: int = w.s
-				if s2 >= 3:
+				if Defs.shell_below(s2) < 0:
 					continue
-				var seam: int = Defs.SH_Y0[s2 + 1]
+				var seam: int = Defs.SH_Y1[s2]
 				if w.y0 <= seam - 1 and w.y1 >= seam:
 					var c2: int = w.count / 2 + 2
 					_dispatch(cl, "boundary", "boundary", [s2, int(floor(w.x0 / 2.0)), c2, 0, frame * 8 + pass_i], [], groups(c2, 64), 1)
@@ -571,7 +571,7 @@ func read_rect(c0: int, r0: int, w: int, h: int) -> Dictionary:
 	var buf := rd.storage_buffer_create(w * h * 8)
 	var uset := _mkset("rectread", [[0, world_buf], [8, aux_buf], [9, buf]])
 	var cl := rd.compute_list_begin()
-	_dispatch_set(cl, "rectread", uset, [posmod(c0, Defs.SH_N[0]), r0, w, h], groups(w, 16), groups(h, 16))
+	_dispatch_set(cl, "rectread", uset, [posmod(c0, Defs.NS), r0, w, h], groups(w, 16), groups(h, 16))
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()
@@ -608,3 +608,11 @@ func cleanup() -> void:
 			rd.free_rid(b)
 	rd.free()
 	rd = null
+	# (so a fresh init() on another device, for a planet of another size, starts clean)
+	sets = {}
+	shaders = {}
+	world_buf = RID(); aux_buf = RID(); sites_buf = RID(); params_buf = RID(); surf_buf = RID(); counts_buf = RID()
+	grid_buf = RID(); light_a = RID(); light_b = RID(); view_buf = RID(); rb_buf = RID()
+	grid = PackedByteArray()
+	grid_off = 0
+	light_off = 0

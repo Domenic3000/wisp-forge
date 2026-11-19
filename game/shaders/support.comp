@@ -26,8 +26,11 @@ bool solidC(uint c) { return KIND[c & 255u] == K_SOLID; }
 uint restOn(int s, int y, int x, uint t) {
 	for (int k = 0; k < 48; k++) {
 		int yy = y + 1;
-		if (yy >= ROWS) return 0u;                 // resting on the planet's heart
-		if (yy >= SH_Y0[s + 1]) { s += 1; x /= 2; }
+		if (yy >= SH_Y1[s]) {
+			int b = shBelow(s);
+			if (b < 0) return 0u;                  // resting on the planet's heart
+			s = b; x /= 2;
+		}
 		y = yy;
 		uint cb = world.cells[cellIdx(s, y, x)];
 		uint kb = KIND[cb & 255u];

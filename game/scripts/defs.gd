@@ -76,13 +76,24 @@ const MAT_NAMES := {
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT",
 }
 
-# ---- planet geometry (polar shells; column count halves as radius halves) ----
-const R_TOP := 1800.0        # edge of space
+# ---- planet geometry: polar shells of cells, set per planet by set_geometry(radius) ----
+# Shell 0 runs from the top of the atmosphere (row 0, radius R_TOP) down to half the surface radius,
+# with the surface's square cells; each shell further in has half the columns, down to the heart. The
+# orbit band (shell ORB, stored last) sits above the atmosphere with twice the surface's columns; its
+# rows are negative (-ORBIT_ROWS .. -1), so every row from 0 down means what it always has.
+const ATMO := 496.0          # the atmosphere's height above the mean surface
+const ORBIT_ROWS := 256      # the orbit band's height: room to build into space
 const R_IN := 80.0           # the planet's heart (not simulated)
-const RS0 := 1304.0          # mean surface radius (cells are ~square here)
-const SH_Y0 := [0, 1148, 1474, 1638, 1720]   # shell start rows (row 0 = R_TOP)
-const SH_N := [8192, 4096, 2048, 1024]       # columns per shell
-const ROWS := 1720
+var RS0 := 1304.0            # mean surface radius (cells are ~square here)
+var R_TOP := 1800.0          # top of the atmosphere: row 0
+var R_SPACE := 2056.0        # the orbit band's ceiling: nothing above is cells
+var ROWS := 1720             # rows from the top of the atmosphere to the heart
+var NSH := 5                 # shells, the orbit band included
+var ORB := 4                 # the orbit band's shell
+var SH_Y0 := []              # each shell's first row
+var SH_Y1 := []              # one past each shell's last row
+var SH_N := []               # columns per shell
+var NS := 8192               # columns of the surface shell (SH_N[0]), typed for scripts
 
 var KIND := PackedInt32Array()
 var DENS := PackedInt32Array()
@@ -202,11 +213,62 @@ func _init() -> void:
 			[ICE, SNOW], [EMBER, GRAVEL], [MASONRY, GRAVEL], [MOSSBLOCK, GRAVEL], [BRICK, GRAVEL], [STONE, GRAVEL],
 			[SANDSTONE, SAND], [TILE, GRAVEL], [OBSIDIAN, GRAVEL]]:
 		BGDEBRIS[kv[0]] = kv[1]
+	set_geometry(RS0)
+
+## Lays out the shells for a planet of mean surface radius `rs`. The surface shell gets as many
+## columns as fit square cells at the surface (a multiple of 64, so every shell inward halves evenly).
+func set_geometry(rs: float) -> void:
+	RS0 = rs
+	R_TOP = rs + ATMO
+	R_SPACE = R_TOP + ORBIT_ROWS
+	ROWS = int(R_TOP - R_IN)
+	var ns := int(round(TAU * rs / 64.0)) * 64
+	NS = ns
+	var tops := [R_TOP]                # each inner shell's top radius
+	var rb := rs * 0.5
+	while rb > R_IN * 1.4:
+		tops.append(rb)
+		rb *= 0.5
+	SH_Y0 = []
+	SH_Y1 = []
+	SH_N = []
+	for k in tops.size():
+		SH_Y0.append(int(round(R_TOP - float(tops[k]))))
+		SH_N.append(ns >> k)
+	for k in tops.size():
+		SH_Y1.append(int(SH_Y0[k + 1]) if k + 1 < tops.size() else ROWS)
+	SH_Y0.append(-ORBIT_ROWS)
+	SH_Y1.append(0)
+	SH_N.append(ns * 2)
+	NSH = SH_N.size()
+	ORB = NSH - 1
+	SH_OFF = []
 	var off := 0
-	for s in 4:
+	for s in NSH:
 		SH_OFF.append(off)
-		off += (SH_Y0[s + 1] - SH_Y0[s]) * SH_N[s]
+		off += (int(SH_Y1[s]) - int(SH_Y0[s])) * int(SH_N[s])
 	SH_OFF.append(off)
+
+## the shell holding a row (rows above the atmosphere are the orbit band's)
+func shell_of_row(row: int) -> int:
+	if row < 0:
+		return ORB
+	for s in range(1, ORB):
+		if row < int(SH_Y0[s]):
+			return s - 1
+	return ORB - 1
+
+## the shell just outward of shell s (twice its columns), or -1 at the orbit band's ceiling
+func shell_above(s: int) -> int:
+	return ORB if s == 0 else (-1 if s == ORB else s - 1)
+
+## the shell just inward of shell s (half its columns), or -1 at the heart
+func shell_below(s: int) -> int:
+	return 0 if s == ORB else (s + 1 if s + 1 < ORB else -1)
+
+## the row of a cell at radius r (negative in the orbit band)
+func row_at(r: float) -> int:
+	return int(floor(R_TOP - r))
 
 func _def(id: int, nm: String, kind: int, cols: Array, o: Dictionary) -> void:
 	KIND[id] = kind
@@ -232,23 +294,25 @@ func _def(id: int, nm: String, kind: int, cols: Array, o: Dictionary) -> void:
 	PLACE[id] = 1 if collect else 0
 
 func total_cells() -> int:
-	return SH_OFF[4]
+	return SH_OFF[NSH]
 
 ## GLSL constants injected in front of every compute shader.
 func glsl_prefix() -> String:
 	var s := "#version 450\n#define NM %d\n#define TAU 6.28318530718\n" % NM
 	s += "#define R_TOP %.1f\n#define R_IN %.1f\n#define RS0 %.1f\n#define ROWS %d\n" % [R_TOP, R_IN, RS0, ROWS]
+	s += "#define R_SPACE %.1f\n#define NSH %d\n#define ORB %d\n#define ORBIT_ROWS %d\n" % [R_SPACE, NSH, ORB, ORBIT_ROWS]
 	s += "#define K_EMPTY 0u\n#define K_SOLID 1u\n#define K_POWDER 2u\n#define K_LIQUID 3u\n#define K_GAS 4u\n#define K_FIRE 5u\n"
 	for id in MAT_NAMES:
 		s += "#define M_%s %du\n" % [MAT_NAMES[id], id]
-	s += "const int SH_Y0[5] = int[5](%s);\n" % _join_i(SH_Y0)
+	s += "const int SH_Y0[NSH] = int[NSH](%s);\n" % _join_i(SH_Y0)
+	s += "const int SH_Y1[NSH] = int[NSH](%s);\n" % _join_i(SH_Y1)
 	var dp := []
 	for k in 64:
 		var c := Color.html(Props.PALETTE[k % Props.PALETTE.size()])
 		dp.append("vec3(%.4f, %.4f, %.4f)" % [c.r, c.g, c.b])
 	s += "const vec3 DECOR_PAL[64] = vec3[64](%s);\n" % ", ".join(dp)
-	s += "const int SH_N[4] = int[4](%s);\n" % _join_i(SH_N)
-	s += "const int SH_OFF[5] = int[5](%s);\n" % _join_i(SH_OFF)
+	s += "const int SH_N[NSH] = int[NSH](%s);\n" % _join_i(SH_N)
+	s += "const int SH_OFF[NSH + 1] = int[NSH + 1](%s);\n" % _join_i(SH_OFF)
 	s += "const uint KIND[NM] = uint[NM](%s);\n" % _join_u(KIND)
 	s += "const uint DENS[NM] = uint[NM](%s);\n" % _join_u(DENS)
 	s += "const uint HARD[NM] = uint[NM](%s);\n" % _join_u(HARD)
@@ -314,12 +378,13 @@ const BIOMES := {
 	"ocean": {"name": "Drowned Shelf", "under": "Abyssal Grottos", "off": 62.0, "amp": 18.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 6, "ug": 0, "flags": 0},
 }
 
+## Each planet has its own size: "radius" is its mean surface radius in cells (Verdance 1304).
 const PLANETS := [
-	{"name": "Verdance", "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},
-	{"name": "Cindrel", "desc": "A volcanic world. The mantle is close to the surface.", "biomes": ["ashland", "mountain", "desert", "ashland", "ashland"], "magmaR": 780.0, "sea": -1.0, "rich": 1.4, "lava": 2.6, "sky": Color(1.25, 0.78, 0.7)},
-	{"name": "Thalassa", "desc": "A water world: scattered islands over drowned shelves.", "biomes": ["ocean", "forest", "ocean", "marsh", "ocean", "tundra", "ocean"], "magmaR": 580.0, "sea": 26.0, "rich": 1.2, "lava": 0.8, "sky": Color(0.85, 1.05, 1.15)},
-	{"name": "Sere", "desc": "An endless desert world baked under twin suns.", "biomes": ["desert", "mountain", "desert", "desert", "ashland"], "magmaR": 640.0, "sea": -1.0, "rich": 1.5, "lava": 1.5, "sky": Color(1.15, 1.0, 0.8)},
-	{"name": "Fenhollow", "desc": "A drowned marsh world with deep black lakes.", "biomes": ["marsh", "grove", "marsh", "tundra", "marsh", "jungle"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
+	{"name": "Verdance", "radius": 1304.0, "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},
+	{"name": "Cindrel", "radius": 1100.0, "desc": "A volcanic world. The mantle is close to the surface.", "biomes": ["ashland", "mountain", "desert", "ashland", "ashland"], "magmaR": 780.0, "sea": -1.0, "rich": 1.4, "lava": 2.6, "sky": Color(1.25, 0.78, 0.7)},
+	{"name": "Thalassa", "radius": 1600.0, "desc": "A water world: scattered islands over drowned shelves.", "biomes": ["ocean", "forest", "ocean", "marsh", "ocean", "tundra", "ocean"], "magmaR": 580.0, "sea": 26.0, "rich": 1.2, "lava": 0.8, "sky": Color(0.85, 1.05, 1.15)},
+	{"name": "Sere", "radius": 1450.0, "desc": "An endless desert world baked under twin suns.", "biomes": ["desert", "mountain", "desert", "desert", "ashland"], "magmaR": 640.0, "sea": -1.0, "rich": 1.5, "lava": 1.5, "sky": Color(1.15, 1.0, 0.8)},
+	{"name": "Fenhollow", "radius": 950.0, "desc": "A drowned marsh world with deep black lakes.", "biomes": ["marsh", "grove", "marsh", "tundra", "marsh", "jungle"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
 ]
 
 func make_planet(i: int) -> Dictionary:
@@ -330,6 +395,8 @@ func make_planet(i: int) -> Dictionary:
 	if cycle > 0:
 		base["name"] = "%s %d" % [base["name"], cycle + 1]
 	base["rich"] = float(base["rich"]) * (1.0 + cycle * 0.25)
+	# depths were set for a planet of Verdance's size: the mantle sits as deep in proportion
+	base["magmaR"] = float(base["magmaR"]) * float(base["radius"]) / 1304.0
 	return base
 
 # ---------------------------------------------------------------- spells ----

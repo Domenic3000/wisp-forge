@@ -18,7 +18,7 @@ void main() {
 	int k = int(gl_GlobalInvocationID.x);
 	if (k >= pc.b.x) return;
 	int x = wrapc(pc.a.w + k, SH_N[s]);
-	int yEnd = min(pc.a.z, SH_Y0[s + 1]) - 1;
+	int yEnd = min(pc.a.z, SH_Y1[s]) - 1;
 	uint fr = uint(pc.b.y);
 	uint creakN = uint(pc.b.z);          // frames a loose piece creaks before it drops (0 = at once)
 	bool runFree = false;                // the loose run below this cell has open space under it
@@ -31,7 +31,7 @@ void main() {
 		bool canMove = false;
 		int ib = -1;
 		uint cb = 0u;
-		if (y < SH_Y0[s + 1] - 1) {
+		if (y < SH_Y1[s] - 1) {
 			ib = cellIdx(s, y + 1, x);
 			cb = world.cells[ib];
 			uint kb = KIND[cb & 255u];

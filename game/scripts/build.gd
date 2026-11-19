@@ -118,7 +118,7 @@ static func carried_item(name: String, d: Dictionary, prop: String) -> Dictionar
 ## lines and frames `thick` cells thick; a line is snapped to across, up or 45 degrees. Columns
 ## wrap around the planet, so a drag across the seam still goes the short way.
 static func shape_cells(a: Vector2i, b: Vector2i, shape: int, thick: int) -> Array:
-	var n0: int = Defs.SH_N[0]
+	var n0: int = Defs.NS
 	var dx := b.x - a.x
 	if dx > n0 / 2:
 		dx -= n0
@@ -171,7 +171,7 @@ static func shape_cells(a: Vector2i, b: Vector2i, shape: int, thick: int) -> Arr
 ## a stamp laying `mat` on these cells, as solid blocks or (back) as a built back wall; not anchored,
 ## so it obeys the physics like everything you build
 static func shape_stamp(cells: Array, mat: int, back: bool) -> Dictionary:
-	var n0: int = Defs.SH_N[0]
+	var n0: int = Defs.NS
 	var c0: int = cells[0].x
 	var r0: int = cells[0].y
 	var c1 := c0
@@ -239,13 +239,13 @@ static func design(piece: Dictionary, seed: int) -> Dictionary:
 # ---------------------------------------------------------------- cells --
 ## world position of a cell's centre (shell 0: column, row)
 static func cell_pos(col: int, row: int) -> Vector2:
-	var a := (float(posmod(col, Defs.SH_N[0])) + 0.5) / Defs.SH_N[0] * TAU
+	var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
 	var r := Defs.R_TOP - (float(row) + 0.5)
 	return Vector2(cos(a), sin(a)) * r
 
 static func cell_of(p: Vector2) -> Vector2i:
 	var a := fposmod(atan2(p.y, p.x), TAU)
-	return Vector2i(int(a / TAU * Defs.SH_N[0]), int(floor(Defs.R_TOP - p.length())))
+	return Vector2i(int(a / TAU * Defs.NS), int(floor(Defs.R_TOP - p.length())))
 
 ## The cells a prop would fill with its bottom row on `bottom` and its middle at column `col`:
 ## [[col, row, char], ...] (columns increase to the left on screen, as in the generator).
@@ -287,14 +287,14 @@ static func prop_stamp(cells: Array, kid := 0) -> Dictionary:
 			data[k] = (Defs.TORCH << 8) | 0x40000
 		else:
 			data[k] = (Defs.DECOR << 8) | ((int(Props.CHARS[ch]) & 255) << 19) | 0x8000000 | 0x40000 | ((kid & 15) << 28)
-	return {"x0": posmod(c0, Defs.SH_N[0]), "y0": r0, "w": w, "h": h, "data": data}
+	return {"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data}
 
 ## a strip of scaffold, as a blueprint
 static func platform_stamp(col: int, row: int) -> Dictionary:
 	var data := PackedInt32Array()
 	data.resize(PLATFORM_W)
 	data.fill(0xff00 | Defs.SCAFFOLD)
-	return {"x0": posmod(col - PLATFORM_W / 2, Defs.SH_N[0]), "y0": row, "w": PLATFORM_W, "h": 1, "data": data}
+	return {"x0": posmod(col - PLATFORM_W / 2, Defs.NS), "y0": row, "w": PLATFORM_W, "h": 1, "data": data}
 
 # ------------------------------------------------------------- structures --
 ## A structure's blueprint, put together from the planet generator's own parts (builds: the planet's

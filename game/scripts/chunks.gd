@@ -119,7 +119,7 @@ func _to_local(c: Chunk, ax: Array, w: Vector2) -> Vector2:
 
 ## where a shell-0 cell's centre is
 static func cell_pos(col: int, row: int) -> Vector2:
-	var a := (float(posmod(col, Defs.SH_N[0])) + 0.5) / Defs.SH_N[0] * TAU
+	var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
 	return Vector2(cos(a), sin(a)) * (Defs.R_TOP - (float(row) + 0.5))
 
 ## On screen, a chunk's pixels are turned by this (canvas radians, clockwise): `ref` is the angle round
@@ -217,7 +217,7 @@ func _take_tree(m, wp: Vector2) -> void:
 	var fgs: PackedInt32Array = R[4]
 	var bgs: PackedInt32Array = R[5]
 	var cc: Vector2i = Build.cell_of(wp)
-	var ii := posmod(cc.x - c0, Defs.SH_N[0])
+	var ii := posmod(cc.x - c0, Defs.NS)
 	var jj := cc.y - r0
 	if ii < 0 or ii >= w or jj < 0 or jj >= h:
 		return
@@ -329,7 +329,7 @@ func _take_block(m, wp: Vector2) -> void:
 	var fgs: PackedInt32Array = R[4]
 	var bgs: PackedInt32Array = R[5]
 	var cc: Vector2i = Build.cell_of(wp)
-	var ii := posmod(cc.x - c0, Defs.SH_N[0])
+	var ii := posmod(cc.x - c0, Defs.NS)
 	var jj := cc.y - r0
 	if ii < 1 or ii >= w - 1 or jj < 1 or jj >= h - 1:
 		return
@@ -664,14 +664,14 @@ func _clear(R: Array, tf: Array, tb: Array, tb2: Array) -> void:
 		for k in arr2:
 			var o2: int = (k / w - j0) * bw + (k % w - i0)
 			data[o2] = data[o2] & 0x00FF    # background: none
-	g.stamps.append({"x0": posmod(c0 + i0, Defs.SH_N[0]), "y0": r0 + j0, "w": bw, "h": bh, "data": data})
+	g.stamps.append({"x0": posmod(c0 + i0, Defs.NS), "y0": r0 + j0, "w": bw, "h": bh, "data": data})
 
 ## one cell set into the world (raw: only where that layer is empty); -1 leaves a layer alone
 func _put(col: int, row: int, f: int, b: int) -> void:
 	if row < 0 or row >= Defs.SH_Y0[1]:
 		return
 	var d := PackedInt32Array([f, b])
-	g.stamps.append({"x0": posmod(col, Defs.SH_N[0]), "y0": row, "w": 1, "h": 1, "data": d, "raw": true})
+	g.stamps.append({"x0": posmod(col, Defs.NS), "y0": row, "w": 1, "h": 1, "data": d, "raw": true})
 
 # ------------------------------------------------------------------ moving ---
 
@@ -971,7 +971,7 @@ func _settle(c: Chunk) -> void:
 	for v in c.px:
 		var w := _to_world(c, ax, v)
 		var cc: Vector2i = Build.cell_of(w)
-		var dc := wrapi(cc.x - ref.x, -Defs.SH_N[0] / 2, Defs.SH_N[0] / 2)
+		var dc := wrapi(cc.x - ref.x, -Defs.NS / 2, Defs.NS / 2)
 		cmin = Vector2i(mini(cmin.x, dc), mini(cmin.y, cc.y))
 		cmax = Vector2i(maxi(cmax.x, dc), maxi(cmax.y, cc.y))
 	cmin -= Vector2i(1, 1)
@@ -1019,7 +1019,7 @@ func _settle(c: Chunk) -> void:
 	if c.tree:
 		_prune_crown(data, w2, h2, ax, c, ref, cmin)
 	if any:
-		g.stamps.append({"x0": posmod(ref.x + cmin.x, Defs.SH_N[0]), "y0": cmin.y, "w": w2, "h": h2, "data": data, "raw": true})
+		g.stamps.append({"x0": posmod(ref.x + cmin.x, Defs.NS), "y0": cmin.y, "w": w2, "h": h2, "data": data, "raw": true})
 
 ## A felled crown keeps only the leaves joined (through each other) to its logs: plants.comp holds a
 ## fallen crown up by what it rests on, and a scrap cut off from the rest would only come loose again.

@@ -28,7 +28,7 @@ void main() {
 	float magmaR = P.p[7].x + (fbm(dir * RS0 / 50.0, seed + 4, 2) - 0.5) * 50.0;
 	float deepR = min(RS0 - 270.0 + (fbm(dir * RS0 / 60.0, seed + 3, 2) - 0.5) * 40.0, rs - 40.0);
 	deepR = max(deepR, magmaR + 30.0);
-	float coreR = 420.0 + (fbm(dir * RS0 / 40.0, seed + 5, 2) - 0.5) * 24.0;
+	float coreR = RS0 * 0.322 + (fbm(dir * RS0 / 40.0, seed + 5, 2) - 0.5) * 24.0;
 
 	// surface liquids: sea level, bog ponds, lava lakes
 	float flags = P.p[8 + 2 * bsel].w;

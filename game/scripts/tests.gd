@@ -34,7 +34,7 @@ func _peak(sec: String) -> String:
 	return "%s %.1f ms" % [sec, (p[3] / 1000.0) if p != null else 0.0]
 
 func _cell_pos(col: int, row: int) -> Vector2:
-	var a := (float(posmod(col, Defs.SH_N[0])) + 0.5) / Defs.SH_N[0] * TAU
+	var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
 	var r := Defs.R_TOP - (float(row) + 0.5)
 	return Vector2(cos(a), sin(a)) * r
 
@@ -50,7 +50,7 @@ func _go(p: Vector2) -> void:
 ## background plant cells (leaves, wood, cactus, coal from charred trees, snow on pines) in a
 ## 120-column window from 100 rows above the ground at the middle down to 10 below
 func _plants(raw: PackedByteArray, toff: int, c0: int, gr: int) -> int:
-	var N: int = Defs.SH_N[0]
+	var N: int = Defs.NS
 	var n := 0
 	for j in range(maxi(0, gr - 112), gr + 10):
 		for i in 120:
@@ -62,7 +62,7 @@ func _plants(raw: PackedByteArray, toff: int, c0: int, gr: int) -> int:
 
 ## positions of powder cells (sand, gravel, snow, ash) in a 150-column window around the ground
 func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
-	var N: int = Defs.SH_N[0]
+	var N: int = Defs.NS
 	var out := {}
 	for j in range(maxi(0, gr - 40), gr + 40):
 		for i in 150:
@@ -93,7 +93,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 	var at := []
 	var allm := {}
 	var bgn := 0
-	var N: int = Defs.SH_N[0]
+	var N: int = Defs.NS
 	var boff: int = Defs.total_cells() * 4      # the background layer follows the cells
 	var w: int = int(info["w"])
 	for k in info.get("cells", PackedInt32Array()):
@@ -260,7 +260,7 @@ func run() -> void:
 					if yy < 0 or yy >= vh:
 						continue
 					for ii in iw:
-						var xx := posmod(int(inf["x0"]) + ii - vx0, Defs.SH_N[0])
+						var xx := posmod(int(inf["x0"]) + ii - vx0, Defs.NS)
 						if xx >= vw:
 							continue
 						var v2: int = dat2[jj * iw + ii]
@@ -279,10 +279,10 @@ func run() -> void:
 					var cv: int = comp[yy2 * vw + xx2]
 					cimg.set_pixel(xx2, yy2, _cell_col(cv & 255, (cv >> 8) & 255, src[yy2 * vw + xx2]))
 					var row3: int = vy0 + yy2
-					var col3 := posmod(vx0 + xx2, Defs.SH_N[0])
+					var col3 := posmod(vx0 + xx2, Defs.NS)
 					if row3 < 0 or row3 >= Defs.SH_Y0[1]:
 						continue
-					var kw: int = (row3 * int(Defs.SH_N[0]) + col3) * 4
+					var kw: int = (row3 * int(Defs.NS) + col3) * 4
 					wimg.set_pixel(xx2, yy2, _cell_col(rawv.decode_u32(kw) & 255, rawv.decode_u32(boffv2 + kw) & 255, -1))
 			cimg.resize(vw * 2, vh * 2, Image.INTERPOLATE_NEAREST)
 			wimg.resize(vw * 2, vh * 2, Image.INTERPOLATE_NEAREST)
@@ -360,7 +360,7 @@ func run() -> void:
 			# where the lost tree stood: its lowest wood cell that is gone now, and what was under it
 			var raw_v1: PackedByteArray = g.gpu.read_world()
 			var boffv: int = Defs.total_cells() * 4
-			var Nv: int = Defs.SH_N[0]
+			var Nv: int = Defs.NS
 			var low := ""
 			var lowrow := -1
 			for jj in int(info["h"]):
@@ -439,10 +439,10 @@ func run() -> void:
 		await _frames(150)
 		g.test_move = 0
 		var a_now: float = fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU)
-		var col_now := int(a_now / TAU * Defs.SH_N[0])
+		var col_now := int(a_now / TAU * Defs.NS)
 		# it must get through the doorway: past the wall into (or through) the house
-		var moved := posmod(col_now - start_col, Defs.SH_N[0])
-		walk_ok = moved > 16 and moved < Defs.SH_N[0] / 2
+		var moved := posmod(col_now - start_col, Defs.NS)
+		walk_ok = moved > 16 and moved < Defs.NS / 2
 		walked = "%s: walked from column %d to %d (the inside starts at %d)" % [nm2, start_col, col_now, int(info["x0"]) + ox + 6]
 		break
 	_ok("you can walk into a cottage through its door", walk_ok, walked)
@@ -466,7 +466,7 @@ func run() -> void:
 		var nd2 := 0
 		for jd in int(door_t["h"]):
 			for id2 in int(door_t["w"]):
-				var kd: int = ((int(door_t["row"]) + jd) * int(Defs.SH_N[0]) + posmod(int(door_t["col"]) + id2, Defs.SH_N[0])) * 4
+				var kd: int = ((int(door_t["row"]) + jd) * int(Defs.NS) + posmod(int(door_t["col"]) + id2, Defs.NS)) * 4
 				if (rawd.decode_u32(kd) & 255) == Defs.WOODDOOR:
 					nd2 += 1
 		var want: int = int(door_t["w"]) * int(door_t["h"])
@@ -567,9 +567,9 @@ func run() -> void:
 		var wall := Vector2i(-1, -1)
 		for dj in range(12, 26):
 			for di in range(-8, 20):
-				var col2 := posmod(chest.x + di, Defs.SH_N[0])
+				var col2 := posmod(chest.x + di, Defs.NS)
 				var row2 := chest.y - dj
-				var k2 := (row2 * Defs.SH_N[0] + col2) * 4
+				var k2 := (row2 * Defs.NS + col2) * 4
 				if (raw2.decode_u32(k2) & 255) == 0 and (raw2.decode_u32(boff + k2) & 0x4000) != 0:
 					wall = Vector2i(col2, row2)
 					break
@@ -581,7 +581,7 @@ func run() -> void:
 				g.brushes.append([wp, 2.5, 1, 0, 4, 0, 0, 0])
 				await _frames(1)
 			var r3: PackedByteArray = g.gpu.read_world()
-			var kk := (wall.y * Defs.SH_N[0] + wall.x) * 4
+			var kk := (wall.y * Defs.NS + wall.x) * 4
 			var still_wall := (r3.decode_u32(boff + kk) & 0x4000) != 0
 			for f in 30:
 				g.brushes.append([wp, 2.5, 8, 0, 4, 0, 0, 0])
@@ -676,7 +676,7 @@ func run() -> void:
 
 	# ---- mud is only liquid in bogs: under the jungle's and marsh's grass the ground is solid,
 	# so you (and the rain) don't sink through a slope that looks like dirt ----
-	var N_m: int = Defs.SH_N[0]
+	var N_m: int = Defs.NS
 	var raw_m: PackedByteArray = g.gpu.read_world()
 	var mud_cols := 0
 	var mud_seen := 0
@@ -756,7 +756,7 @@ func run() -> void:
 
 	# ---- trees stand when you walk up to them, in every biome (tall ones, and ones rooted in
 	# marsh mud, used to fall apart) ----
-	var N0: int = Defs.SH_N[0]
+	var N0: int = Defs.NS
 	var toff: int = Defs.total_cells() * 4
 	var raw_t: PackedByteArray = g.gpu.read_world()
 	var tree_lines := []
@@ -1100,7 +1100,7 @@ func run() -> void:
 	var cqf: Vector2i = Build.cell_of(wall_at)
 	for djf in range(-34, 70):
 		for dif in range(-16, 17):
-			var kf: int = ((cqf.y + djf) * int(Defs.SH_N[0]) + posmod(cqf.x + dif, Defs.SH_N[0])) * 4
+			var kf: int = ((cqf.y + djf) * int(Defs.NS) + posmod(cqf.x + dif, Defs.NS)) * 4
 			var af: int = rawf.decode_u32(Defs.total_cells() * 4 + kf)
 			if (af & 255) == Defs.PLANK and (af & 0x4000) != 0:
 				wall_first += 1
@@ -1147,7 +1147,7 @@ func run() -> void:
 		var boff3: int = Defs.total_cells() * 4
 		for tj in int(tstamp["h"]):
 			for ti in int(tstamp["w"]):
-				var kt: int = ((int(tstamp["y0"]) + tj) * int(Defs.SH_N[0]) + posmod(int(tstamp["x0"]) + ti, Defs.SH_N[0])) * 4
+				var kt: int = ((int(tstamp["y0"]) + tj) * int(Defs.NS) + posmod(int(tstamp["x0"]) + ti, Defs.NS)) * 4
 				if (raw.decode_u32(boff3 + kt) & 255) == Defs.DECOR:
 					n += 1
 		return n
@@ -1160,7 +1160,7 @@ func run() -> void:
 	if not tstamp.is_empty():
 		for tj2 in int(tstamp["h"]):
 			for ti2 in int(tstamp["w"]):
-				var kt2: int = ((int(tstamp["y0"]) + tj2) * int(Defs.SH_N[0]) + posmod(int(tstamp["x0"]) + ti2, Defs.SH_N[0])) * 4
+				var kt2: int = ((int(tstamp["y0"]) + tj2) * int(Defs.NS) + posmod(int(tstamp["x0"]) + ti2, Defs.NS)) * 4
 				var fn: String = Defs.NAMES[rawt.decode_u32(kt2) & 255]
 				var bn2: String = "bg " + Defs.NAMES[rawt.decode_u32(Defs.total_cells() * 4 + kt2) & 255]
 				box_mats[fn] = int(box_mats.get(fn, 0)) + 1
@@ -1236,7 +1236,7 @@ func run() -> void:
 		var cq: Vector2i = Build.cell_of(bq[0])
 		for dj in range(-34, 70):
 			for di in range(-16, 17):
-				var kb: int = ((cq.y + dj) * int(Defs.SH_N[0]) + posmod(cq.x + di, Defs.SH_N[0])) * 4
+				var kb: int = ((cq.y + dj) * int(Defs.NS) + posmod(cq.x + di, Defs.NS)) * 4
 				var fb: int = rawb.decode_u32(kb) & 255
 				var ab: int = rawb.decode_u32(boffb + kb)
 				if bq[1] == 0 and (ab & 255) == Defs.PLANK and (ab & 0x4000) != 0:
@@ -1248,7 +1248,7 @@ func run() -> void:
 		var nd3: Dictionary = g.doors[doors_mid - 1]
 		for dj3 in int(nd3["h"]):
 			for di3 in int(nd3["w"]):
-				var kd3: int = ((int(nd3["row"]) + dj3) * int(Defs.SH_N[0]) + posmod(int(nd3["col"]) + di3, Defs.SH_N[0])) * 4
+				var kd3: int = ((int(nd3["row"]) + dj3) * int(Defs.NS) + posmod(int(nd3["col"]) + di3, Defs.NS)) * 4
 				if (rawb.decode_u32(kd3) & 255) == Defs.WOODDOOR:
 					n_door += 1
 	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
@@ -1452,7 +1452,7 @@ func run() -> void:
 	fwd.fill(0xff | (Defs.MASONRY << 8) | 0x40000 | 0x20000)     # an anchored stone back wall, standing on the ground
 	var fw_x0: int = fw_c.x - FWW / 2
 	var fw_y0: int = fw_c.y - FWH - 1
-	g.stamps.append({"x0": posmod(fw_x0, Defs.SH_N[0]), "y0": fw_y0, "w": FWW, "h": FWH, "data": fwd})
+	g.stamps.append({"x0": posmod(fw_x0, Defs.NS), "y0": fw_y0, "w": FWW, "h": FWH, "data": fwd})
 	await _frames(3)
 	var trng := RandomNumberGenerator.new()
 	trng.seed = 77
@@ -1707,7 +1707,7 @@ func run() -> void:
 	_ok("the view isn't stretched deep down", view_ok, "world units per pixel across at radius " + ", ".join(widths))
 
 	# ---- one-way platforms: land on one, drop through it (down + jump), jump up through it ----
-	var pcol := int(fposmod(g.spawn_angle, TAU) / TAU * Defs.SH_N[0]) + 40
+	var pcol := int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 40
 	var pg: int = b.ground_row(pcol)
 	for pc2 in range(pcol - 16, pcol + 17):
 		pg = mini(pg, b.ground_row(pc2))
@@ -2016,6 +2016,81 @@ func run() -> void:
 	_ok("a building left hanging comes down once you dig at any part of it", int(hang0[0]) > 250 and hang_still == hang0 and int(hang1[1]) == 0 and int(hang1[4]) < int(hang0[0]) / 3 and int(hang1[2]) < int(hang0[2]) / 5,
 		"stone %d (anchored %d), back wall %d; left alone 2 s: %s; 9 s after digging one corner: stone %d (anchored %d), back wall %d; %s" % [hang0[0], hang0[1], hang0[2], str(hang_still), hang1[0], hang1[1], hang1[2], hang1[3]])
 
+	# ---- the orbit band: cells above the air that can be built into, and vacuum ----
+	var ob_ang: float = atan2(g.player.pos.y, g.player.pos.x) + 0.05
+	var ob_up := Vector2(cos(ob_ang), sin(ob_ang))
+	g.time = fposmod(ob_ang - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+	# (alive and well: a mage killed by an earlier test isn't updated, breath included)
+	g.player.dead = false
+	g.player.hp = g.player.max_hp
+	g.test_god = true
+	_go(ob_up * (Defs.R_TOP + 70.0))
+	await _frames(10)
+	# a stone ledge stamped into the band (a blueprint is laid out in surface columns; up there each of
+	# its cells covers two), a patch of fire beside it
+	var ob_c: Vector2i = Build.cell_of(ob_up * (Defs.R_TOP + 40.0))
+	var ob_led := PackedInt32Array()
+	ob_led.resize(24 * 3)
+	ob_led.fill(Defs.STONE | 0xFF00 | 0x20000)        # anchored stone, background left alone
+	g.stamps.append({"x0": ob_c.x - 12, "y0": ob_c.y, "w": 24, "h": 3, "data": ob_led})
+	var ob_fire := PackedInt32Array()
+	ob_fire.resize(16)
+	ob_fire.fill(Defs.FIRE | 0xFF00)
+	g.stamps.append({"x0": ob_c.x + 16, "y0": ob_c.y - 6, "w": 4, "h": 4, "data": ob_fire})
+	await _frames(3)
+	var ob_rr: Dictionary = g.gpu.read_rect(ob_c.x - 12, ob_c.y, 24, 3)
+	var ob_stone := 0
+	for v in ob_rr["fg"]:
+		if (v & 255) == Defs.STONE:
+			ob_stone += 1
+	var ob_raw: PackedByteArray = g.gpu.read_world()
+	var ob_fires := 0
+	for v2 in g.gpu.read_rect(ob_c.x + 14, ob_c.y - 8, 8, 8)["fg"]:
+		if (v2 & 255) == Defs.FIRE:
+			ob_fires += 1
+	# water poured on the ledge freezes; sand dropped beside it falls out of the band into the air below
+	g.brushes.append([ob_up * (Defs.R_TOP + 47.0), 2.5, 5, Defs.WATER, 0, 18, 0])
+	var ob_side: Vector2 = Vector2(-ob_up.y, ob_up.x)
+	await _frames(2)          # (conjuring brushes in one frame share one count of cells placed)
+	g.brushes.append([ob_up * (Defs.R_TOP + 24.0) + ob_side * 30.0, 2.0, 5, Defs.SAND, 0, 12, 0])
+	g.player.inv[Defs.SAND] += 60
+	g.player.inv[Defs.WATER] += 60
+	var ob_inv0: int = g.player.inv[Defs.SAND]
+	var ob_b0: float = g.player.breath
+	var ob_st := "%s, dead %s" % [g.state, g.player.dead]
+	var ob_f0: int = g.frame
+	for obk in 90:
+		_go(ob_up * (Defs.R_TOP + 70.0))
+		await _frames(1)
+	var ob_b1: float = g.player.breath
+	ob_st += ", %d ticks, at radius %.0f; sand in the satchel %d -> %d" % [g.frame - ob_f0, g.player.pos.length(), ob_inv0, g.player.inv[Defs.SAND]]
+	var ob_above: Dictionary = g.gpu.read_rect(ob_c.x - 14, ob_c.y - 10, 28, 10)
+	var ob_m := {}
+	for v3 in ob_above["fg"]:
+		var nm3: String = Defs.NAMES[v3 & 255]
+		ob_m[nm3] = int(ob_m.get(nm3, 0)) + 1
+	var ob_sc: Vector2i = Build.cell_of(ob_up * (Defs.R_TOP + 24.0) + ob_side * 30.0)
+	var ob_sand_up := 0
+	for v4 in g.gpu.read_rect(ob_sc.x - 16, -Defs.ORBIT_ROWS, 32, Defs.ORBIT_ROWS)["fg"]:
+		if (v4 & 255) == Defs.SAND:
+			ob_sand_up += 1
+	var ob_sand_air := 0
+	for v5 in g.gpu.read_rect(ob_sc.x - 20, 0, 40, 520)["fg"]:
+		if (v5 & 255) == Defs.SAND:
+			ob_sand_air += 1
+	var ob_fires2 := 0
+	for v6 in g.gpu.read_rect(ob_c.x + 14, ob_c.y - 8, 8, 8)["fg"]:
+		if (v6 & 255) == Defs.FIRE:
+			ob_fires2 += 1
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("orbit.png"))
+	_ok("the orbit band above the air takes building", ob_stone == 72 and ob_raw.size() == Defs.total_cells() * 8,
+		"ledge %d of 72 stone cells at row %d (radius %.0f, the air ends at %.0f); %d shells, the band %d columns" % [ob_stone, ob_c.y, Defs.R_TOP - ob_c.y, Defs.R_TOP, Defs.NSH, Defs.SH_N[Defs.ORB]])
+	_ok("vacuum: water freezes, fire goes out, sand falls out of the band, you hold your breath",
+		int(ob_m.get("Ice", 0)) > 0 and int(ob_m.get("Water", 0)) == 0 and ob_fires2 == 0 and ob_sand_up == 0 and ob_sand_air > 0 and ob_b1 < ob_b0,
+		"above the ledge %s; fire %d -> %d; sand left up there %d, fallen into the air %d; breath %.0f -> %.0f (%s)" % [str(ob_m), ob_fires, ob_fires2, ob_sand_up, ob_sand_air, ob_b0, ob_b1, ob_st])
+	g.player.breath = g.player.max_breath
+	g.chunks.clear()
+
 	# ---- save and load give back the same world ----
 	# (pieces still tumbling are set down first: saving would set them down anyway)
 	g.chunks.settle_all()
@@ -2027,6 +2102,17 @@ func run() -> void:
 	var loaded: bool = g._load_world(0)
 	var bb: PackedByteArray = g.gpu.read_world()
 	_ok("saving and loading the world round-trips", loaded and _sha(a) == _sha(bb), "%.1f MB raw" % (a.size() / 1048576.0))
+
+	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
+	var sp_t := Time.get_ticks_msec()
+	g._enter_planet(4)
+	var sp_ms := Time.get_ticks_msec() - sp_t
+	await _frames(60)
+	var sp_a: float = atan2(g.player.pos.y, g.player.pos.x)
+	var sp_off: float = g.player.pos.length() - g.gpu.surf_at(sp_a).x
+	_ok("a planet of another size is laid out and generated to fit", absf(Defs.RS0 - float(g.planet["radius"])) < 0.5 and Defs.RS0 < 1304.0 and int(Defs.NS) < 8192 and absf(sp_off) < 40.0 and g.builds.infos.size() >= 5,
+		"%s: radius %.0f, %d surface columns, %d shells (%.1f M cells); generated in %d ms; you stand %.1f from the surface; %d structures" % [g.planet["name"], Defs.RS0, Defs.NS, Defs.NSH, Defs.total_cells() / 1000000.0, sp_ms, sp_off, g.builds.infos.size()])
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("small_planet.png"))
 
 	lines.append("")
 	lines.append("%d passed, %d failed, %.1f s" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0])

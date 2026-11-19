@@ -14,6 +14,25 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Deterministic per planet, and re-planned on load for labels and guards. Bump `GEN_VERSION` in main.gd when it changes.
 - `game/scripts/main.gd`: game loop, physics, spells, enemies, chests, guards, saving.
 
+## Planet geometry (per planet)
+- `Defs.set_geometry(radius)` lays out the shells for a planet's mean surface radius (`PLANETS[i]["radius"]`,
+  Verdance 1304): shell 0 from the top of the atmosphere (`R_TOP` = radius + `ATMO`, row 0) down to half the
+  radius with square cells at the surface (`NS` = `SH_N[0]` columns, a multiple of 64), each shell inward half the
+  columns down to `R_IN`, and the orbit band (`ORB`, stored last) above the atmosphere: `ORBIT_ROWS` rows with
+  NEGATIVE row numbers (-256..-1) and twice the surface's columns, up to `R_SPACE`. Every row from 0 down keeps its
+  old meaning. Shell ends are `SH_Y1[s]` (never `SH_Y0[s + 1]`); neighbours across shells go through
+  `shAbove`/`shBelow` (GLSL) and `shell_above`/`shell_below`/`shell_of_row`/`row_at` (Defs). Use `floor` for rows
+  (they go negative). In scripts use `Defs.NS` (typed) rather than `Defs.SH_N[0]`: the geometry values are vars, so
+  `:=` can't infer from their array elements.
+- A planet of another size re-creates the GPU world (`gpu.cleanup()` + `init()`, shaders have the geometry built in)
+  in `_enter_planet`. buildings.gd takes `N0` from `Defs.NS`. Depths that scale with size: `magmaR` (make_planet),
+  the core radius (surface.comp).
+- Stamps and `read_rect` work in the orbit band too: a blueprint is laid out in surface columns, and up there each
+  of its cells covers two (stamp.comp `put`; rectread reads the first of the two).
+- Vacuum (react.comp, `s == ORB`): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
+  holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
+- Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).
+
 ## Cell format
 - Main buffer (binding 0), uint per cell:
   - bits 0-7: material

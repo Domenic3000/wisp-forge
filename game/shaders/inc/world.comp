@@ -13,13 +13,11 @@ int nbr(int s, int y, int x, int dir) {
 	if (dir == 3) return cellIdx(s, y, x == n - 1 ? 0 : x + 1);
 	if (dir == 0) {
 		int yy = y - 1;
-		if (yy < 0) return -1;
-		if (yy < SH_Y0[s]) return cellIdx(s - 1, yy, x * 2);
+		if (yy < SH_Y0[s]) { int a = shAbove(s); return a < 0 ? -1 : cellIdx(a, yy, x * 2); }
 		return cellIdx(s, yy, x);
 	}
 	int yy = y + 1;
-	if (yy >= ROWS) return -1;
-	if (yy >= SH_Y0[s + 1]) return cellIdx(s + 1, yy, x / 2);
+	if (yy >= SH_Y1[s]) { int b = shBelow(s); return b < 0 ? -1 : cellIdx(b, yy, x / 2); }
 	return cellIdx(s, yy, x);
 }
 uint cellAt(vec2 p) {

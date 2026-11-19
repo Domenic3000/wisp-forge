@@ -448,11 +448,7 @@ func _process(delta: float) -> void:
 func _grid_frame(p: Vector2) -> Array:
 	var r := p.length()
 	var a := atan2(p.y, p.x)
-	var row := int(Defs.R_TOP - r)
-	var n: int = Defs.SH_N[0]
-	for s in 4:
-		if row >= Defs.SH_Y0[s] and row < Defs.SH_Y0[s + 1]:
-			n = Defs.SH_N[s]
+	var n: int = Defs.SH_N[Defs.shell_of_row(Defs.row_at(r))]
 	var sa := roundf(a / TAU * n) / n * TAU
 	return [Vector2(cos(sa), sin(sa)) * roundf(r), sa]
 
@@ -761,7 +757,7 @@ func _set_door(d: Dictionary, open: bool, opener := Vector2.ZERO) -> void:
 		for k in dc.size():
 			if int(dc[k]) >= 0:
 				data[k] = Defs.WOODDOOR | 0xff00 | 0x10000 | 0x20000 | 0x8000000 | ((int(dc[k]) & 255) << 19)
-		stamps.append({"x0": posmod(int(d["col"]), Defs.SH_N[0]), "y0": int(d["row"]), "w": w, "h": int(d["h"]), "data": data})
+		stamps.append({"x0": posmod(int(d["col"]), Defs.NS), "y0": int(d["row"]), "w": w, "h": int(d["h"]), "data": data})
 	audio.play("door_open" if open else "door_close", d["pos"])
 
 ## A door's parts, cell by cell across its doorway (w x h, row by row): the part each cell is (which
@@ -907,7 +903,7 @@ func _door_cells(d: Dictionary) -> int:
 	var row0: int = d["row"]
 	for j in int(d["h"]):
 		for i in int(d["w"]):
-			var a := (float(posmod(col0 + i, Defs.SH_N[0])) + 0.5) / Defs.SH_N[0] * TAU
+			var a := (float(posmod(col0 + i, Defs.NS)) + 0.5) / Defs.NS * TAU
 			var r := Defs.R_TOP - (float(row0 + j) + 0.5)
 			if type_at(Vector2(cos(a), sin(a)) * r) == Defs.WOODDOOR:
 				n += 1
@@ -1158,22 +1154,21 @@ func basis_d(a: float) -> Vector2:
 ## Near a shell boundary the scale eases from one shell's to the next over 48 rows.
 func unroll_step(r: float) -> float:
 	var row := Defs.R_TOP - r
-	var s := 0
-	for k in 4:
-		if row >= Defs.SH_Y0[k]:
-			s = k
+	var s: int = Defs.shell_of_row(int(floor(row)))
 	var st := TAU / float(Defs.SH_N[s])
 	# blend toward the neighbouring shell near its boundary
-	if s < 3:
-		var dn: float = float(Defs.SH_Y0[s + 1]) - row
+	var sb: int = Defs.shell_below(s)
+	if sb >= 0:
+		var dn: float = float(Defs.SH_Y1[s]) - row
 		if dn < 24.0:
 			var t := smoothstep(24.0, -24.0, dn)
-			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[s + 1])), t))
-	if s > 0:
+			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[sb])), t))
+	var sa: int = Defs.shell_above(s)
+	if sa >= 0:
 		var up: float = row - float(Defs.SH_Y0[s])
 		if up < 24.0:
 			var t2 := smoothstep(24.0, -24.0, up)
-			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[s - 1])), t2))
+			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[sa])), t2))
 	return st
 
 func unrolled() -> bool:
@@ -1394,8 +1389,8 @@ func move_body(e: Body) -> void:
 		e.stuck = 0
 	e.pos = from_grid(Vector2(x + e.w * 0.5, y + e.h * 0.5))
 	var r := e.pos.length()
-	if r > Defs.R_TOP - 8.0:
-		e.pos = e.pos.normalized() * (Defs.R_TOP - 8.0)
+	if r > Defs.R_SPACE - 8.0:          # (the top of the orbit band: the space map comes later)
+		e.pos = e.pos.normalized() * (Defs.R_SPACE - 8.0)
 		e.vy = maxf(e.vy, 0.0)
 
 func gravity_at(p: Vector2) -> float:
@@ -1593,7 +1588,8 @@ func _update_player(m: Mage) -> void:
 	var sa: Vector4 = gpu.surf_at(a)
 	if p.pos.length() < sa.w + 20.0 and not m.heat_ward:
 		hurt(m, 0.05, Vector2.ZERO, false)
-	if Defs.KIND[head_t] == Defs.K_LIQUID:
+	# under water, or above the air: holding your breath
+	if Defs.KIND[head_t] == Defs.K_LIQUID or p.pos.length() > Defs.R_TOP + 4.0:
 		m.breath -= 1.0
 		if m.breath <= 0:
 			m.breath = 0
@@ -1910,7 +1906,7 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 		else:
 			v |= 0                                     # nothing behind: the background is left empty
 		data[(k / n - j0) * w + (k % n - i0)] = v
-	stamps.append({"x0": posmod(c0 + i0, Defs.SH_N[0]), "y0": r0 + j0, "w": w, "h": h, "data": data})
+	stamps.append({"x0": posmod(c0 + i0, Defs.NS), "y0": r0 + j0, "w": w, "h": h, "data": data})
 	var rows := []
 	for ln2 in pix:
 		rows.append("".join(ln2))
@@ -2060,7 +2056,7 @@ func _update_projectiles() -> void:
 		_use_grid(_nearest_mage(pos))
 		for s in steps:
 			pos += vel / steps
-			if pos.length() >= Defs.R_TOP - 1.0 or pos.length() < Defs.R_IN:
+			if pos.length() >= Defs.R_SPACE - 1.0 or pos.length() < Defs.R_IN:
 				hit = true
 				break
 			if in_grid(pos, 2.0):
@@ -2955,7 +2951,7 @@ func _update_build(m: Mage) -> void:
 	var p := _reach(m, m.input.aim)
 	var cell := Build.cell_of(p)
 	var kind: String = piece["kind"]
-	if cell.y < 0 or cell.y >= Defs.SH_Y0[1] - 40:
+	if cell.y < -Defs.ORBIT_ROWS or cell.y >= Defs.SH_Y0[1] - 40:
 		return
 	var cost: Dictionary = Build.payable(piece, m.inv)
 	var cells := []      # [world pos, colour]
@@ -3037,12 +3033,12 @@ func _update_build(m: Mage) -> void:
 				dheld += 1
 		if dheld == 0:
 			ok = false
-		var da := (float(posmod(c0, Defs.SH_N[0])) + Build.DOOR_W * 0.5) / Defs.SH_N[0] * TAU
+		var da := (float(posmod(c0, Defs.NS)) + Build.DOOR_W * 0.5) / Defs.NS * TAU
 		var dr := Defs.R_TOP - float(r0) - Build.DOOR_H * 0.5
 		var mc := Build.cell_of(m.pos)
-		var side := 1 if posmod(mc.x - c0, Defs.SH_N[0]) < Defs.SH_N[0] / 2 else -1
+		var side := 1 if posmod(mc.x - c0, Defs.NS) < Defs.NS / 2 else -1
 		var rec := {"pos": Vector2(cos(da), sin(da)) * dr, "w": Build.DOOR_W, "h": Build.DOOR_H, "side": side,
-			"col": posmod(c0, Defs.SH_N[0]), "row": r0, "open": true}
+			"col": posmod(c0, Defs.NS), "row": r0, "open": true}
 		if _door_blocked(rec):
 			ok = false
 		place = {"door": rec}
@@ -3092,10 +3088,10 @@ func _update_build(m: Mage) -> void:
 		_set_door(rec2, false)
 	if place.has("structure"):
 		var sbp = place["structure"]["bp"]
-		stamps.append({"x0": posmod(sbp.x0, Defs.SH_N[0]), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c})
+		stamps.append({"x0": posmod(sbp.x0, Defs.NS), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c})
 		for dd in sbp.doors:
-			var dcol := posmod(sbp.x0 + int(dd[0]), Defs.SH_N[0])
-			var dang := (float(dcol) + float(dd[2]) * 0.5) / Defs.SH_N[0] * TAU
+			var dcol := posmod(sbp.x0 + int(dd[0]), Defs.NS)
+			var dang := (float(dcol) + float(dd[2]) * 0.5) / Defs.NS * TAU
 			var drr := Defs.R_TOP - float(sbp.y0 + int(dd[1])) - float(dd[3]) * 0.5
 			doors.append({"pos": Vector2(cos(dang), sin(dang)) * drr, "w": int(dd[2]), "h": int(dd[3]), "side": int(dd[4]),
 				"col": dcol, "row": sbp.y0 + int(dd[1]), "open": false, "swing": int(dd[4])})
@@ -3365,6 +3361,13 @@ func start_game(use_save: bool) -> void:
 
 func _enter_planet(index: int) -> void:
 	planet = Defs.make_planet(index)
+	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
+		# a planet of another size: its shells are laid out anew, and the GPU world (buffers and
+		# shaders, which have the geometry built in) is made again to fit
+		Defs.set_geometry(float(planet["radius"]))
+		gpu.cleanup()
+		if not gpu.init():
+			push_error(gpu.error_text)
 	gpu.build_surface(planet)
 	# spawn in the middle of the first friendly biome
 	var bl: Array = planet["biomes"]
@@ -3679,6 +3682,8 @@ func region_name() -> String:
 	var sa: Vector4 = gpu.surf_at(a)
 	var sb: Vector4 = gpu.surf_b(a)
 	var b := _biome_at(a)
+	if r > Defs.R_TOP:
+		return "Orbit"
 	if r > Defs.R_TOP - 60.0:
 		return "Edge of Space"
 	if r > sa.x + 160.0:

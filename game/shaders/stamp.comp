@@ -16,26 +16,10 @@
 layout(std430, set = 0, binding = 9) restrict readonly buffer Blue { uint d[]; } blue;
 layout(local_size_x = 16, local_size_y = 16) in;
 
-void main() {
-	int i = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
-	int w = pc.a.z, h = pc.a.w;
-	if (i >= w || j >= h) return;
-	int row = pc.a.y + j;
-	if (row < 0 || row >= SH_Y0[1]) return;
-	int col = wrapc(pc.a.x + i, SH_N[0]);
-	if (pc.b.z == 1) {
-		int ri = cellIdx(0, row, col);
-		uint fw = blue.d[pc.b.x + 2 * (j * w + i)], bw = blue.d[pc.b.x + 2 * (j * w + i) + 1];
-		if (fw != 0xffffffffu) {
-			uint kc = KIND[world.cells[ri] & 255u];
-			if (!(kc == K_SOLID || kc == K_POWDER)) world.cells[ri] = fw;
-		}
-		if (bw != 0xffffffffu && (aux.a[ri] & 255u) == 0u) aux.a[ri] = bw;
-		return;
-	}
+// one blueprint cell into the world cell idx (column col, row row)
+void put(int idx, int i, int j, int w, int col, int row) {
 	uint d = blue.d[pc.b.x + j * w + i];
 	uint fc = d & 255u, bc = (d >> 8) & 255u;
-	int idx = cellIdx(0, row, col);
 	if (fc != 255u) {
 		uint c = world.cells[idx];
 		uint kc = KIND[c & 255u];
@@ -78,5 +62,30 @@ void main() {
 			a = withBehind(a, bi);
 		}
 		aux.a[idx] = a;
+	}
+}
+
+void main() {
+	int i = int(gl_GlobalInvocationID.x), j = int(gl_GlobalInvocationID.y);
+	int w = pc.a.z, h = pc.a.w;
+	if (i >= w || j >= h) return;
+	int row = pc.a.y + j;
+	if (row < -ORBIT_ROWS || row >= SH_Y0[1]) return;
+	int col = wrapc(pc.a.x + i, SH_N[0]);
+	// a blueprint is laid out in surface columns; in the orbit band (twice the columns) each of its
+	// cells covers two
+	int reps = row < 0 ? 2 : 1;
+	for (int q = 0; q < reps; q++) {
+		int ri = row < 0 ? cellIdx(ORB, row, col * 2 + q) : cellIdx(0, row, col);
+		if (pc.b.z == 1) {
+			uint fw = blue.d[pc.b.x + 2 * (j * w + i)], bw = blue.d[pc.b.x + 2 * (j * w + i) + 1];
+			if (fw != 0xffffffffu) {
+				uint kc = KIND[world.cells[ri] & 255u];
+				if (!(kc == K_SOLID || kc == K_POWDER)) world.cells[ri] = fw;
+			}
+			if (bw != 0xffffffffu && (aux.a[ri] & 255u) == 0u) aux.a[ri] = bw;
+			continue;
+		}
+		put(ri, i, j, w, col, row);
 	}
 }

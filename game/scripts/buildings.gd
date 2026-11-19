@@ -10,7 +10,7 @@ extends RefCounted
 ## Coordinates: shell-0 columns (x, wraps at N0) and rows (y, 0 = edge of space, grows inward).
 ## A blueprint is a w x h grid; local (i, j) is column x0 + i, row y0 + j.
 
-const N0 := 8192
+var N0: int = Defs.NS        # the surface shell's columns (Defs.NS), taken when a planet is planned
 const Props := preload("res://scripts/props.gd")
 ## the test mode keeps each blueprint (to draw it), the game doesn't need them after stamping
 var KEEP_DATA := "--test" in OS.get_cmdline_user_args()
@@ -242,6 +242,7 @@ func _any_wet(x0: int, w: int) -> bool:
 ## Plans every structure on the planet. Deterministic for a given planet, so it can be
 ## re-run when a saved world is loaded (for the region names) without stamping again.
 func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, boss_angle: float, build: bool) -> void:
+	N0 = Defs.NS
 	surf = surface
 	rng.seed = int(planet["seed"]) * 31 + 7
 	biome_names = []
