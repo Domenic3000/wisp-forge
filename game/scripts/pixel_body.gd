@@ -7,12 +7,24 @@
 ## centre of mass (`com`, the point `pos` is), the outline it collides by, and a texture made of the
 ## materials' own palette colours. Damage carves cells out (`carve`); a body cut in two can be
 ## pulled apart into its joined-up pieces (`pieces`).
+##
+## Room inside: the cells its hull closes in (`room`, found from the outside by `rebuild`) are a
+## space that can be built in, like a house: blocks in front (`place`, `remove`: they never change
+## the outline it collides by) and a back layer behind (`bg`: back walls, later furniture), drawn
+## behind whoever is inside. What was built is told apart from the hull (`made`), and everything is
+## saved cell by cell (`save_cells` / `load_cells`).
 extends RefCounted
 
 var w := 0
 var h := 0
 var cells := PackedByteArray()     # material per cell (0 = empty)
 var vars := PackedByteArray()      # colour variant per cell
+var made := PackedByteArray()      # 1: built inside (not part of the hull)
+var bg := PackedByteArray()        # back layer: material per cell (0 = none)
+var bgv := PackedByteArray()       # back layer: colour variant
+var room := PackedByteArray()      # 1: closed in by the hull (a place to build)
+var outside := PackedByteArray()   # 1: open to the outside (rebuild's flood)
+var keel := Vector2.ZERO           # its lowest outline point (body coordinates, from the centre of mass)
 var pos := Vector2.ZERO            # where the centre of mass is (world, or the space frame)
 var ang := 0.0                     # world angle of the body's +x axis
 var facing := 1                    # -1: mirrored (the nose points along -x)
@@ -23,6 +35,7 @@ var com := Vector2.ZERO            # centre of mass, in cell coordinates
 var outline := PackedVector2Array()   # boundary cells (body coordinates, from the centre of mass)
 var tex: ImageTexture
 var dirty := true                  # the texture needs making again
+var bg_tex: ImageTexture
 
 func setup(width: int, height: int) -> void:
 	w = width
@@ -31,6 +44,9 @@ func setup(width: int, height: int) -> void:
 	cells.fill(0)
 	vars.resize(w * h)
 	vars.fill(0)
+	for a in [made, bg, bgv, room, outside]:
+		a.resize(w * h)
+		a.fill(0)
 
 func at(i: int, j: int) -> int:
 	if i < 0 or j < 0 or i >= w or j >= h:
@@ -43,26 +59,139 @@ func put(i: int, j: int, m: int, v := -1) -> void:
 	cells[j * w + i] = m
 	vars[j * w + i] = (randi() & 3) if v < 0 else v
 
-## Mass, centre of mass and outline from the cells (after building or damage).
+func hull_at(i: int, j: int) -> bool:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return false
+	return cells[j * w + i] != 0 and made[j * w + i] == 0
+
+## Mass, centre of mass, the room inside and the outline from the cells (after building or damage).
 func rebuild() -> void:
 	mass = 0.0
 	var sum := Vector2.ZERO
 	for j in h:
 		for i in w:
-			var m := cells[j * w + i]
+			var k := j * w + i
+			var dm := 0.0
+			var m := cells[k]
 			if m != 0:
-				var dm := 0.4 if m == Defs.GLASS else 1.0
+				dm = 0.4 if m == Defs.GLASS else 1.0
+			if bg[k] != 0:
+				dm += 0.1 if bg[k] == Defs.GLASS else 0.25
+			if dm > 0.0:
 				mass += dm
 				sum += Vector2(i + 0.5, j + 0.5) * dm
 	com = sum / maxf(mass, 0.001)
+	# what's open to the outside: a flood from the edges through everything but the hull
+	outside.fill(0)
+	var q := PackedInt32Array()
+	for k2 in w * h:
+		var bi := k2 % w
+		var bj := k2 / w
+		if (bi == 0 or bj == 0 or bi == w - 1 or bj == h - 1) and not hull_at(bi, bj):
+			outside[k2] = 1
+			q.append(k2)
+	while not q.is_empty():
+		var c: int = q[q.size() - 1]
+		q.resize(q.size() - 1)
+		var ci := c % w
+		var cj := c / w
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var ni: int = ci + d.x
+			var nj: int = cj + d.y
+			if ni < 0 or nj < 0 or ni >= w or nj >= h:
+				continue
+			var nk := nj * w + ni
+			if outside[nk] == 0 and not hull_at(ni, nj):
+				outside[nk] = 1
+				q.append(nk)
+	# the room: closed in, and not hull
+	for k3 in w * h:
+		room[k3] = 1 if outside[k3] == 0 and (cells[k3] == 0 or made[k3] == 1) else 0
+	# the outline it collides by: cells that touch the outside (what's built inside never does)
 	outline = PackedVector2Array()
+	keel = Vector2.ZERO
 	for j2 in h:
 		for i2 in w:
 			if cells[j2 * w + i2] == 0:
 				continue
-			if at(i2 - 1, j2) == 0 or at(i2 + 1, j2) == 0 or at(i2, j2 - 1) == 0 or at(i2, j2 + 1) == 0:
-				outline.append(Vector2(i2 + 0.5, j2 + 0.5) - com)
+			if _open(i2 - 1, j2) or _open(i2 + 1, j2) or _open(i2, j2 - 1) or _open(i2, j2 + 1):
+				var b := Vector2(i2 + 0.5, j2 + 0.5) - com
+				outline.append(b)
+				if b.y > keel.y:
+					keel = b
 	dirty = true
+
+func _open(i: int, j: int) -> bool:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return true
+	return outside[j * w + i] == 1
+
+# ------------------------------------------------------------- building ---
+
+## a cell of the room inside (closed in by the hull)
+func in_room(i: int, j: int) -> bool:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return false
+	return room[j * w + i] == 1
+
+## Build a block inside (front, `back` false: only into an empty cell of the room) or a back wall
+## (`back` true: anywhere in the room). Returns whether it went in.
+func place(i: int, j: int, m: int, back := false, v := -1) -> bool:
+	if not in_room(i, j) or m == 0:
+		return false
+	var k := j * w + i
+	if back:
+		bg[k] = m
+		bgv[k] = (randi() & 3) if v < 0 else v
+	else:
+		if cells[k] != 0:
+			return false
+		cells[k] = m
+		vars[k] = (randi() & 3) if v < 0 else v
+		made[k] = 1
+	rebuild()
+	return true
+
+## Take out what was built in a cell of the room (the hull itself only comes away by `carve`).
+## Returns the material taken, 0 if none.
+func remove(i: int, j: int, back := false) -> int:
+	if not in_room(i, j):
+		return 0
+	var k := j * w + i
+	var m := 0
+	if back:
+		m = bg[k]
+		bg[k] = 0
+	elif made[k] == 1:
+		m = cells[k]
+		cells[k] = 0
+		made[k] = 0
+	if m != 0:
+		rebuild()
+	return m
+
+## the cells as saved: both layers and what was built, packed
+func save_cells() -> Dictionary:
+	var raw := PackedByteArray()
+	for a in [cells, vars, made, bg, bgv]:
+		raw.append_array(a)
+	return {"w": w, "h": h, "cells": Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))}
+
+## Back from `save_cells` (a body of the same size only). Returns whether it took.
+func load_cells(d: Dictionary) -> bool:
+	if int(d.get("w", -1)) != w or int(d.get("h", -1)) != h or not d.has("cells"):
+		return false
+	var n := w * h
+	var raw := Marshalls.base64_to_raw(String(d["cells"])).decompress(n * 5, FileAccess.COMPRESSION_DEFLATE)
+	if raw.size() != n * 5:
+		return false
+	cells = raw.slice(0, n)
+	vars = raw.slice(n, n * 2)
+	made = raw.slice(n * 2, n * 3)
+	bg = raw.slice(n * 3, n * 4)
+	bgv = raw.slice(n * 4, n * 5)
+	rebuild()
+	return true
 
 # ------------------------------------------------------------ transforms ---
 
@@ -114,8 +243,27 @@ func texture() -> ImageTexture:
 		tex = ImageTexture.create_from_image(img)
 	else:
 		tex.update(img)
+	# the back layer, drawn behind whoever is inside (shaded like a back wall; glass faint)
+	var bimg := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for j2 in h:
+		for i2 in w:
+			var bm := bg[j2 * w + i2]
+			if bm == 0:
+				continue
+			var bc := Color.hex((Defs.PAL[bm * 4 + (bgv[j2 * w + i2] & 3)] << 8) | 0xff).darkened(0.35)
+			if bm == Defs.GLASS:
+				bc.a = 0.2
+			bimg.set_pixel(i2, j2, bc)
+	if bg_tex == null or bg_tex.get_width() != w or bg_tex.get_height() != h:
+		bg_tex = ImageTexture.create_from_image(bimg)
+	else:
+		bg_tex.update(bimg)
 	dirty = false
 	return tex
+
+func back_texture() -> ImageTexture:
+	texture()
+	return bg_tex
 
 # --------------------------------------------------------------- damage ---
 
@@ -127,6 +275,7 @@ func carve(p: Vector2, r: float) -> int:
 		for i in range(maxi(0, int(b.x - r - 1)), mini(w, int(b.x + r + 2))):
 			if cells[j * w + i] != 0 and Vector2(i + 0.5, j + 0.5).distance_to(b) <= r:
 				cells[j * w + i] = 0
+				made[j * w + i] = 0
 				n += 1
 	if n > 0:
 		rebuild()

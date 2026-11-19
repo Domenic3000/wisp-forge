@@ -99,7 +99,7 @@ func try_enter() -> void:
 	easing = false
 	jetting = false
 	if sk != null:
-		game.ui.toast("Space. Hold cast to fly the skiff toward the cursor; head back down to land.", Color(0.75, 0.9, 1.0), 4.0)
+		game.ui.toast("Space. Fly with WASD (or hold cast toward the cursor); head back down to land.", Color(0.75, 0.9, 1.0), 4.0)
 	else:
 		game.ui.toast("Space. Hold cast to fly by the staff's jet; fall back to land.", Color(0.75, 0.9, 1.0), 4.0)
 
@@ -142,12 +142,12 @@ func tick() -> void:
 	var focus: Vector2 = sk.pos if m.aboard != null else m.pos
 	_find_near(focus)
 	if sk != null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
-		# the skiff: flown by its pilot (hold cast), or drifting if nobody's aboard (one left down on
-		# the planet waits there)
+		# the skiff: flown by its pilot (keys, or hold cast toward the cursor), or drifting if nobody's
+		# aboard (one left down on the planet waits there)
 		var pl = sk.pilot()
-		var aim: Vector2 = pl.input.aim if pl != null else sk.pos
 		sk.centre = centre
-		sk.fly(aim, pl != null and pl.input.cast, pull(sk.pos), 0.9995)
+		var want: Vector2 = sk.steer(pl.input) if pl != null else Vector2.ZERO
+		sk.fly(want, pl != null, pull(sk.pos), true, 0.0, 0.9995)
 		sk.pos = _hold(sk.pos, sk)
 		sk.advance(Callable())
 		for rider in sk.riders:

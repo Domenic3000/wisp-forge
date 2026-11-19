@@ -3608,6 +3608,9 @@ func _make_world(index: int, arriving: bool) -> void:
 			skiff.pos = Vector2(float(sp[0]), float(sp[1]))
 			skiff.ang = float(sk.get("ang", 0.0))
 			skiff.facing = int(sk.get("facing", 1))
+			skiff.look = float(skiff.facing)
+			if sk.has("cells"):
+				skiff.load_cells(sk["cells"])     # (as it was: whatever was built in it too)
 	enemies.clear()
 	_guards_alive.clear()
 	projs.clear()
@@ -3632,10 +3635,11 @@ func _update_skiff() -> void:
 	if pl == null and not in_grid(skiff.pos, 40.0):
 		return
 	var g := 0.17 * gravity_at(skiff.pos)
-	var aim: Vector2 = pl.input.aim if pl != null else skiff.pos
-	var push: bool = pl != null and pl.input.cast and state == "play"
-	# the air drags at it (none above the atmosphere): hands off it comes down at a few cells a tick
-	skiff.fly(aim, push, g, 0.97 if skiff.pos.length() < Defs.R_TOP else 0.999)
+	var want: Vector2 = skiff.steer(pl.input) if pl != null and state == "play" else Vector2.ZERO
+	var high: bool = skiff.pos.length() > Defs.R_TOP
+	skiff.centre = Vector2.ZERO
+	# faster above the air; with nobody at the controls the air drags at it as it falls
+	skiff.fly(want, pl != null, g, false, Skiff.CRUISE_HIGH if high else Skiff.CRUISE, 0.999 if high else 0.97)
 	skiff.advance(_skiff_solid if in_grid(skiff.pos, 40.0) else Callable())
 	var up: Vector2 = skiff.pos.normalized()
 	if skiff.pos.length() > Defs.R_SPACE - 9.5:
@@ -3647,7 +3651,7 @@ func _update_skiff() -> void:
 	if skiff.thrusting:
 		_skiff_exhaust()
 	# coming down fast through the air, it glows where it meets it
-	if skiff.pos.length() < Defs.R_TOP and skiff.vel.length() > 5.0 and skiff.vel.dot(up) < 0.0:
+	if skiff.pos.length() < Defs.R_TOP and skiff.vel.length() > Skiff.CRUISE + 1.0 and skiff.vel.dot(up) < 0.0:
 		var lead: Vector2 = skiff.pos + skiff.vel.normalized() * 14.0
 		for k in 2:
 			_particle(lead + Vector2(randf() - 0.5, randf() - 0.5) * 16.0, -skiff.vel * (0.3 + randf() * 0.3), 10 + randi() % 8, Color8(255, 170, 90), true, 0.0)
@@ -3714,6 +3718,7 @@ func call_skiff() -> bool:
 			skiff.pos = player.pos + right * float(side) * (skiff.w * 0.5 + 8.0) + up * (6.0 + rise)
 			skiff.ang = right.angle()
 			skiff.facing = 1
+			skiff.look = 1.0
 			if _skiff_fits():
 				placed = true
 				break
@@ -3752,7 +3757,7 @@ func _skiff_interact(m: Mage) -> bool:
 	if m.pos.distance_to(skiff.pos) < skiff.w * 0.5 + 10.0:
 		if skiff.board(m):
 			m.aboard = skiff
-			ui.toast("Aboard. Hold cast to fly toward the cursor; F to step out", Color(0.7, 0.85, 1.0), 3.0)
+			ui.toast("Aboard. Fly with WASD (or hold cast toward the cursor); F to step out", Color(0.7, 0.85, 1.0), 3.0)
 		else:
 			ui.toast("The skiff is full", Color(1, 0.7, 0.5), 1.5)
 		return true
@@ -3956,7 +3961,8 @@ func _world_meta(without_skiff: bool) -> String:
 		var sp: Vector2 = skiff.pos
 		if space.active and (player.aboard == skiff or skiff.pos.length() > Defs.R_SPACE - 9.5):
 			sp = space.safe_return()
-		planet_state["skiff"] = {"pos": [sp.x, sp.y], "ang": skiff.ang, "facing": skiff.facing, "seed": skiff.design_seed}
+		planet_state["skiff"] = {"pos": [sp.x, sp.y], "ang": skiff.ang, "facing": skiff.facing, "seed": skiff.design_seed,
+			"cells": skiff.save_cells()}
 	else:
 		planet_state.erase("skiff")
 	var cs := []

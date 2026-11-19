@@ -222,7 +222,10 @@ func _skiff_xf(sk) -> Transform2D:
 	var yn := Vector2(-xn.y, xn.x)
 	if yn.dot(ey) < 0.0:
 		yn = -yn                     # (the same way round as the world's own axes: mirrored when it is)
-	return Transform2D(xn / zs, yn / zs, p)
+	# turning round, it narrows to its edge and opens out the other way
+	var turn: float = sk.look * float(sk.facing)
+	turn = signf(turn) * maxf(absf(turn), 0.08) if turn != 0.0 else 0.08
+	return Transform2D(xn * turn / zs, yn / zs, p)
 
 ## The skiff, with its riders seated in it (drawn first: the hull hides their legs, the canopy
 ## is glass), turning and mirroring with it.
@@ -237,6 +240,10 @@ func _draw_skiff() -> void:
 	if p.x < -200 or p.y < -200 or p.x > game.VW + 200 or p.y > game.VH + 200:
 		return
 	var rot := wrapf(xf.y.angle() - PI * 0.5, -PI, PI)
+	# the cabin's back (glass, and whatever is built there), then whoever sits in it, then the hull
+	draw_set_transform_matrix(xf)
+	draw_texture(sk.back_texture(), -sk.com, _lit(p))
+	draw_set_transform_matrix(Transform2D.IDENTITY)
 	for k in sk.riders.size():
 		var m = sk.riders[k]
 		if m == null or m.dead:

@@ -1,20 +1,28 @@
 ## The Wisp Skiff: a small ship for two, a pixel body (pixel_body.gd) grown from parts.
 ##
 ## Parts, each a small function so other ships can reuse them: a planked hull with a keel that
-## rises to the bow (`_hull`), a trim stripe along the gunwale (`_trim`), a glass canopy over the
-## cockpit (`_canopy`), a wisp-ore engine at the stern (`_engine`), a tail fin (`_fin`). The seed
-## varies the proportions. Two seats under the canopy (pilot forward).
+## rises to the bow (`_hull`), a trim stripe along the gunwale (`_trim`), a cabin under a glass
+## canopy (`_canopy`: a timber frame, a glass shell, open room inside with a glass back pane), a
+## wisp-ore engine at the stern (`_engine`), a tail fin (`_fin`). The seed varies the proportions.
+## Two seats on the cabin floor (pilot forward). The cabin is the body's room (pixel_body.gd): it can
+## be built in.
 ##
-## Flying (`fly`): hold cast to push toward the cursor; the skiff turns its nose that way first
-## (mirroring when you aim behind it, so it never flies upside down). On a planet the pull of the
-## ground and the air's drag act on it, and it collides with the world by its outline (`collide`,
-## through main's collision grid), settling level on its keel; in space there's only the planet's
-## fading pull.
+## Flying (`fly`): the pilot steers with the movement keys (up and down too) or by holding cast
+## toward the cursor (`steer`). In the air the skiff eases to the speed you steer for and, hands
+## off, to a hover (just above the ground it settles onto it, softly); its engine holds it up. The
+## hull stays level with the ground below, tilting into climbs and dives on a spring, and turns
+## round when you steer the other way (`look` eases through the turn for the picture). Nobody at the
+## controls: it falls. In space it keeps its speed (thrust adds to it) and the nearest planet pulls.
+## It collides with the world by its outline (`collide`, through main's collision grid).
 extends "res://scripts/pixel_body.gd"
 
-const THRUST := 0.24            # (gravity at the surface is 0.17 a tick)
-const TURN := 0.06              # how fast it turns toward the cursor (radians a tick)
+const CRUISE := 7.0             # top speed in the air (cells a tick)
+const CRUISE_HIGH := 16.0       # above the atmosphere
+const ACCEL := 0.32             # how quickly it reaches the speed you steer for (a tick)
+const BRAKE := 0.2              # hands off: how quickly it slows to a hover
+const SPACE_THRUST := 0.3
 const MAX_SPEED := 40.0
+const TILT := 0.42              # the most it tilts into a climb or a dive (radians)
 const SEATS := 2
 
 var design_seed := 0       # (the shape of this skiff)
@@ -24,6 +32,8 @@ var thrusting := false
 var grounded := false
 var ground_t := 0               # ticks resting on something
 var centre := Vector2.ZERO      # the centre of the planet it flies over (space.gd: the nearest one)
+var look := 1.0                 # which way it's drawn facing: eases from one side to the other in a turn
+var clear_below := 99.0         # air under the keel (cells, up to 24; `advance` measures it)
 
 static func make(sd: int):
 	var s = load("res://scripts/skiff.gd").new()
@@ -42,9 +52,9 @@ func _design() -> void:
 	var crx := 15 + rng.randi_range(0, 3)
 	_hull(length, deck, depth, rng)
 	_trim(length, deck)
-	_canopy(cx, deck, crx, deck - 1, rng)
 	_engine(deck, depth)
 	_fin(deck, rng)
+	_canopy(cx, deck, crx, deck - 1, rng)          # (last: its room stays clear)
 	seat_cells = [Vector2i(cx + 4, deck - 1), Vector2i(cx - 6, deck - 1)]
 	riders = []
 	riders.resize(SEATS)
@@ -74,16 +84,30 @@ func _trim(length: int, deck: int) -> void:
 				put(i2, j, Defs.WOOD)
 				break
 
-## a glass dome over the cockpit, with a timber rim
-func _canopy(cx: int, deck: int, rx: int, ry: int, rng: RandomNumberGenerator) -> void:
+## a cabin over the cockpit: a timber frame, a glass shell, and the room inside left open (its back
+## a pane of glass), so the riders sit in it and it can be built in
+func _canopy(cx: int, deck: int, rx: float, ry: float, rng: RandomNumberGenerator) -> void:
 	var lean := rng.randf_range(-0.15, 0.25)          # (the dome leans back a little)
-	for j in range(deck - ry, deck):
-		for i in range(cx - rx - 4, cx + rx + 5):
-			var dy := float(deck - j) / float(ry)
-			var dx := (float(i - cx) + dy * lean * rx) / float(rx)
-			var d := dx * dx + dy * dy
-			if d <= 1.0:
-				put(i, j, Defs.WOOD if d > 0.86 else Defs.GLASS)
+	for j in range(deck - int(ry), deck):
+		for i in range(cx - int(rx) - 4, cx + int(rx) + 5):
+			var up_by := float(deck - j)
+			var shift := up_by / float(ry) * lean * rx
+			if _ellipse(float(i - cx) + shift, up_by, rx, ry, 0.0) > 1.0:
+				continue
+			if _ellipse(float(i - cx) + shift, up_by, rx, ry, 1.5) > 1.0:
+				put(i, j, Defs.WOOD)                       # the frame
+			elif _ellipse(float(i - cx) + shift, up_by, rx, ry, 3.0) > 1.0:
+				put(i, j, Defs.GLASS if up_by > 2.5 else Defs.WOOD)   # the shell (timber at its foot)
+			else:
+				cells[j * w + i] = 0
+				bg[j * w + i] = Defs.GLASS                 # the room inside: a glass back pane
+				bgv[j * w + i] = randi() & 3
+
+## (how far out a point is in an ellipse shrunk by `inset` cells: 1 on its edge)
+func _ellipse(x: float, y: float, rx: float, ry: float, inset: float) -> float:
+	var ax := maxf(rx - inset, 1.0)
+	var ay := maxf(ry - inset, 1.0)
+	return (x * x) / (ax * ax) + (y * y) / (ay * ay)
 
 ## the wisp-ore engine at the stern, glowing where it pushes
 func _engine(deck: int, depth: int) -> void:
@@ -139,45 +163,78 @@ func aboard_all(ps: Array) -> bool:
 
 # ------------------------------------------------------------- flying ---
 
-## One tick of flight (speeds and turning; `advance` moves it). `aim` is where the pilot points
-## (world), `push` whether they hold cast, `g` the planet's pull here (toward the centre, per tick),
-## `drag` per tick.
-func fly(aim: Vector2, push: bool, g: float, drag: float) -> void:
+## The pilot's wish as a direction in the world (length up to 1): the movement keys (left, right, up,
+## down over the planet below) and, holding cast, toward the cursor.
+func steer(inp) -> Vector2:
+	var up := (pos - centre).normalized()
+	var right := Vector2(up.y, -up.x)
+	var s := right * float(inp.move) + up * ((1.0 if inp.jump else 0.0) - (1.0 if inp.down else 0.0))
+	if inp.cast:
+		var d: Vector2 = inp.aim - pos
+		if d.length() > 4.0:
+			s += d.normalized()
+	return s.limit_length(1.0)
+
+## One tick of flight (speeds and turning; `advance` moves it). `want`: the pilot's wish (`steer`),
+## `piloted`: someone is at the controls, `g`: the pull here (toward `centre`, per tick), `in_space`:
+## no air (it keeps its speed), `cruise`: its top speed in the air here, `drag`: the air's, per tick.
+func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, drag: float) -> void:
 	thrusting = false
 	var up := (pos - centre).normalized()      # (centre: the planet it flies over; out in space the nearest)
 	var right := Vector2(up.y, -up.x)          # the planet's "right" here (its "up" turned a quarter clockwise)
-	if not push and grounded and vel.length() < 0.5:
-		# resting on its keel: it stays put, settling level
-		vel = Vector2.ZERO
-		ang = rotate_toward(ang, right.angle(), TURN * 0.6)
-		return
-	if push:
-		var d := aim - pos
-		if d.length() > 2.0:
-			var want := d.normalized()
-			# face the way you push: mirror when aiming clearly behind (keel stays down; straight up or
-			# down it keeps the way it faces, so it doesn't flip back and forth)
-			var side := want.dot(right)
-			if side * float(facing) < -0.15:
-				facing = -facing
-			var target := (want * float(facing)).angle()
-			ang = rotate_toward(ang, target, TURN)
-			vel += nose() * THRUST * clampf(nose().dot(want) * 1.2, 0.2, 1.0)
+	var steering := piloted and want.length() > 0.05
+	# turn round when steered the other way (the picture eases through it: `look`)
+	if steering and want.dot(right) * float(facing) < -0.25:
+		facing = -facing
+	if not piloted:
+		# nobody at the controls: it falls, and drifts
+		if grounded and vel.length() < 0.5:
+			vel = Vector2.ZERO
+		else:
+			vel -= up * g
+			vel *= drag
+	elif in_space:
+		if steering:
+			vel += want * SPACE_THRUST
 			thrusting = true
+		vel -= up * g
+		vel *= drag
+	elif grounded and not steering and vel.length() < 0.6:
+		vel = Vector2.ZERO                     # resting on its keel
 	else:
-		# hands off: it eases level
-		ang = rotate_toward(ang, right.angle(), TURN * (0.6 if grounded else 0.25))
-	vel -= up * g
-	vel *= drag
+		# the engine holds it up: it eases to the speed you steer for, or to a hover
+		var target := want * cruise
+		if not steering and clear_below < 10.0:
+			target = -up * 1.2                 # (hands off just above the ground: it settles onto it)
+		var down := -target.dot(up)
+		if down > 0.0 and clear_below < 16.0:
+			# coming down close to the ground: gently
+			target += up * (down - minf(down, lerpf(1.2, cruise, clear_below / 16.0)))
+		vel += (target - vel).limit_length(ACCEL if steering else BRAKE)
+		# (faster than it can fly here, coming in from above: the air takes the extra off quickly)
+		if vel.length() > cruise:
+			vel = vel.normalized() * maxf(cruise, vel.length() * 0.93)
+		thrusting = steering
 	if vel.length() > MAX_SPEED:
 		vel = vel.normalized() * MAX_SPEED
+	# the hull: level with the ground below, tilted into a climb or a dive, on a spring
+	var tilt := 0.0
+	if not (grounded and vel.length() < 0.6):
+		tilt = clampf(vel.dot(up) * 0.07, -TILT, TILT)
+	var nd := (right * float(facing) + up * tilt).normalized()
+	omega += angle_difference(ang, (nd * float(facing)).angle()) * 0.05
+	omega *= 0.78
+	ang += omega
+	look = move_toward(look, float(facing), 0.14)
 
 ## Move by this tick's velocity, in steps small enough not to pass through the ground, colliding
-## at each (no `solid`: out in space, or away from any collision grid).
+## at each (no `solid`: out in space, or away from any collision grid); then how much air is under
+## the keel.
 func advance(solid: Callable) -> void:
 	if not solid.is_valid():
 		pos += vel
 		grounded = false
+		clear_below = 99.0
 		return
 	var n := clampi(int(ceil(vel.length() / 2.0)), 1, 24)
 	var was_grounded := false
@@ -186,6 +243,13 @@ func advance(solid: Callable) -> void:
 		collide(solid)
 		was_grounded = was_grounded or grounded
 	grounded = was_grounded
+	var up := (pos - centre).normalized()
+	var kp := to_world(keel)
+	clear_below = 24.0
+	for d in range(1, 25):
+		if solid.call(kp - up * float(d)):
+			clear_below = float(d - 1)
+			break
 
 ## Push it out of the ground: `solid(p)` says whether a world point is solid. Its outline is
 ## checked; where it has gone into something it steps back out along the way it came (and up),
@@ -223,7 +287,8 @@ func collide(solid: Callable) -> void:
 	var vn := vel.dot(n)
 	if vn < 0.0:
 		vel -= n * vn
-	vel *= 0.82
+	# friction along whatever it scrapes
+	vel -= (vel - n * vel.dot(n)) * 0.12
 	if n.dot(up) > 0.5:
 		grounded = true
 		ground_t += 1

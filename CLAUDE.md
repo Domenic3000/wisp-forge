@@ -61,12 +61,23 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   + variant per cell in a w x h grid, body coords x along the nose, y down; `pos` = centre of mass, `ang` the +x
   axis's world angle, `facing` -1 mirrors). `rebuild` (mass, `com`, `outline`), `to_world`/`to_body`, `texture()`
   (palette colours, glass see-through), `carve` (damage), `pieces` (joined-up parts). The skiff uses it; asteroids,
-  enemy ships and wrecks are meant to.
+  enemy ships and wrecks are meant to. Room inside: `rebuild` floods from the grid's edges through everything that
+  isn't hull (`outside`); what the hull closes in is `room`, a place to build: `place(i, j, m, back)` (front blocks
+  only into empty room cells, marked `made`; back layer `bg`/`bgv` anywhere in the room) and `remove` (only what was
+  built; the hull comes away by `carve`). The `outline` it collides by is only cells touching the outside, so
+  building inside never changes how it collides; `keel` is its lowest outline point. `save_cells`/`load_cells`
+  pack all five layers (saved in `planet_state["skiff"]["cells"]`). `back_texture()` is drawn behind the riders.
 - The Wisp Skiff (`scripts/skiff.gd`, extends pixel_body.gd; `Skiff.make(seed)`): grown from parts (`_hull`, `_trim`,
-  `_canopy`, `_engine`, `_fin`), two seats (`seat_cells`, `riders`, pilot first). `fly` (hold cast: turn toward the
-  cursor, mirroring when aiming behind so the keel stays down, push along the nose; hands off it eases level;
-  resting on its keel it stays put), `advance` (moves in sub-steps, colliding its outline through main's collision
-  grid via `collide`). Forged at the Wisp Forge (recipe "skiff": `items["skiff"]` is its seed); K `call_skiff`
+  `_engine`, `_fin`, then `_canopy`: a timber frame and glass shell around an open cabin with a glass back pane, the
+  body's room), two seats on the cabin floor (`seat_cells`, `riders`, pilot first). `steer(input)`: the movement keys
+  (over the planet below: left/right, W/space up, S down) plus, holding cast, toward the cursor. `fly(want, piloted,
+  g, in_space, cruise, drag)`: piloted in the air it eases to `want * cruise` (`ACCEL`) or, hands off, to a hover
+  (`BRAKE`; within 10 cells of the ground it settles onto it; coming down near the ground it slows); `CRUISE` in the
+  air, `CRUISE_HIGH` above it, extra speed shed quickly in the air; nobody at the controls it falls with drag; in
+  space thrust adds to its speed. The hull stays level over `centre`'s ground, tilted into climbs and dives on a
+  spring (`omega`); `facing` flips when steered the other way and `look` eases through it (overlay squashes the
+  picture by `look * facing`). `advance` (moves in sub-steps, colliding its outline through main's collision
+  grid via `collide`, which slides with friction; then `clear_below`, the air under the keel). Forged at the Wisp Forge (recipe "skiff": `items["skiff"]` is its seed); K `call_skiff`
   sets it down beside you; F (`_skiff_interact`, before chests and doors) boards or steps out; riders follow their
   seat (`_ride`: no casting or digging aboard, its air to breathe). main `_update_skiff` flies it on the planet;
   flown out of the top of the orbit band it takes everyone into space (`space.try_enter` needs the whole party
@@ -266,5 +277,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   "Identifier not found: Defs" is expected (the autoload isn't loaded); real parse errors show up as Parse Error.
 - The test mode saves pictures of a few ruins and buildings to `saves/shots/` (midday, no title screen);
   stage them through the device bridge to look at the art without walking around in the game.
+- Don't take computer-use screenshots while the test mode runs: the screenshot hides (minimizes) the Godot window,
+  it stops redrawing, and every picture in `saves/shots/` after that is the same stale frame (the tests still pass).
 - Testing on the user's laptop: files are committed to `C:\Wisp Forge` through the device bridge. Wait about 12 s after
   writing to `/mnt/user-data/outputs` before committing, otherwise stale copies get written.

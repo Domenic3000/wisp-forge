@@ -2,6 +2,7 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
+const Skiff := preload("res://scripts/skiff.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important
 ## things still work, writes saves/test_report.txt and quits.
@@ -2200,6 +2201,29 @@ func run() -> void:
 	await _frames(40)
 	var sf_drift: float = sf_sk.pos.distance_to(sf_rest)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("skiff.png"))
+	# ---- the cabin is a room: open air the riders sit in, that can be built in ----
+	var sr_room := 0
+	for sr_k in sf_sk.w * sf_sk.h:
+		sr_room += sf_sk.room[sr_k]
+	var sr_head := true             # (a mage's height of room over each seat)
+	for sr_s in sf_sk.seat_cells:
+		for sr_dy in 18:
+			sr_head = sr_head and sf_sk.in_room(sr_s.x, sr_s.y - sr_dy) and sf_sk.at(sr_s.x, sr_s.y - sr_dy) == 0
+	var sr_outline: int = sf_sk.outline.size()
+	var sr_mass: float = sf_sk.mass
+	var sr_c: Vector2i = sf_sk.seat_cells[0] + Vector2i(-2, -12)
+	var sr_block: bool = sf_sk.place(sr_c.x, sr_c.y, Defs.PLANK)
+	var sr_back: bool = sf_sk.place(sr_c.x + 1, sr_c.y, Defs.BRICK, true)
+	var sr_hull: bool = sf_sk.place(sf_sk.w / 2, sf_sk.h - 3, Defs.PLANK)      # (into the hull: refused)
+	var sr_same: bool = sf_sk.outline.size() == sr_outline and sf_sk.mass > sr_mass
+	g.save_world(true)
+	var sr_saved: bool = g.planet_state.has("skiff") and g.planet_state["skiff"].has("cells")
+	var sr_copy = Skiff.make(sf_sk.design_seed)
+	var sr_loaded: bool = sr_copy.load_cells(sf_sk.save_cells()) and sr_copy.at(sr_c.x, sr_c.y) == Defs.PLANK and sr_copy.bg[sr_c.y * sr_copy.w + sr_c.x + 1] == Defs.BRICK and sr_copy.made[sr_c.y * sr_copy.w + sr_c.x] == 1
+	var sr_took: bool = sf_sk.remove(sr_c.x, sr_c.y) == Defs.PLANK and sf_sk.remove(sr_c.x + 1, sr_c.y, true) == Defs.BRICK
+	_ok("the skiff's cabin is a room that can be built in (and is saved cell by cell)",
+		sr_room > 300 and sr_head and sr_block and sr_back and not sr_hull and sr_same and sr_saved and sr_loaded and sr_took and sf_sk.outline.size() == sr_outline,
+		"%d cells of room; headroom over the seats %s; a block built inside %s, a back wall %s, into the hull %s; outline the same (%d) %s; saved with the world %s; loaded back into a fresh skiff %s; taken out again %s" % [sr_room, sr_head, sr_block, sr_back, sr_hull, sr_outline, sr_same, sr_saved, sr_loaded, sr_took])
 	# aboard
 	g.player.pos = sf_sk.pos
 	var sf_board: bool = g._skiff_interact(g.player) and g.player.aboard == sf_sk
@@ -2218,7 +2242,7 @@ func run() -> void:
 			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("skiff_climb.png"))
 		# drawn one cell to a pixel at every height (the ground's columns widen with height; the ship mustn't)
 		if sfk2 % 40 == 0 and not g.space.active:
-			sf_scale.append(snappedf(g.overlay._skiff_xf(sf_sk).x.length() * g.zoom, 0.01))
+			sf_scale.append(snappedf(g.overlay._skiff_xf(sf_sk).y.length() * g.zoom, 0.01))
 		if g.space.active:
 			sf_up = sfk2
 			break
@@ -2235,6 +2259,7 @@ func run() -> void:
 			break
 	g.test_cast = false
 	g.test_aim = Vector2.ZERO
+	g.test_down = true          # (hands off it would hover: hold down to come in and land)
 	var sf_land := -1
 	var sf_vmax := 0.0
 	for sfk4 in 1800:
@@ -2244,6 +2269,7 @@ func run() -> void:
 		if sf_sk.grounded and sf_sk.vel.length() < 0.5:
 			sf_land = sfk4
 			break
+	g.test_down = false
 	var sf_la: float = atan2(sf_sk.pos.y, sf_sk.pos.x)
 	var sf_above: float = sf_sk.pos.length() - g.gpu.surf_at(sf_la).x
 	var sf_with: bool = g.player.aboard == sf_sk and g.player.pos.distance_to(sf_sk.pos) < 30.0
@@ -2251,7 +2277,7 @@ func run() -> void:
 	var sf_out: bool = g._skiff_interact(g.player) and g.player.aboard == null
 	await _frames(30)
 	_ok("the Wisp Skiff: forged, called, boarded, flown into space and back, landed and left",
-		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 200.0 and sf_vmax < 9.0 and sf_land > 90 and sf_scale.min() > 0.99 and sf_scale.max() < 1.01,
+		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 200.0 and sf_vmax < float(Skiff.CRUISE_HIGH) + 0.5 and sf_land > 40 and sf_scale.min() > 0.99 and sf_scale.max() < 1.01,
 		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later (fastest through the air %.1f a tick), %.0f above the ground line, you still aboard %s; stepped out %s; drawn cells per pixel while climbing %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_vmax, sf_above, sf_with, sf_out, str(sf_scale)])
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
@@ -2299,12 +2325,14 @@ func run() -> void:
 			break
 	g.test_cast = false
 	g.test_aim = Vector2.ZERO
+	g.test_down = true
 	var tv_land := -1
 	for tvk3 in 1800:
 		await _frames(1)
 		if sf_sk.grounded and sf_sk.vel.length() < 0.5:
 			tv_land = tvk3
 			break
+	g.test_down = false
 	await _frames(30)
 	var tv_la: float = atan2(sf_sk.pos.y, sf_sk.pos.x)
 	var tv_above: float = sf_sk.pos.length() - g.gpu.surf_at(tv_la).x
