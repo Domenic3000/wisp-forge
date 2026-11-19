@@ -8,6 +8,8 @@ const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Space := preload("res://scripts/space.gd")
+const BossAI := preload("res://scripts/boss_ai.gd")
+const BossArt := preload("res://scripts/boss_art.gd")
 const Skiff := preload("res://scripts/skiff.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Build := preload("res://scripts/build.gd")
@@ -89,6 +91,17 @@ class Enemy extends Body:
 	var aim := Vector2.ZERO    # a bat's dive heading
 	var blink_cd := 0
 	var door_t := 0            # frames waiting for a door it opened to swing out of the way
+	# a biome guardian (scripts/boss_ai.gd)
+	var move := ""             # the move under way ("charge", "spit2"...)
+	var mi := -1               # (which move came last)
+	var moves_done := 0
+	var spot := Vector2.ZERO   # where the move aims (the ground under you, for an eruption)
+	var raged := false         # below half health
+	var raged_burst := false
+	var under := false         # a burrower under the ground: unseen, untouchable, not moved by move_body
+	var gvel := Vector2.ZERO   # (its flight out of the ground, in world units)
+	var trail := PackedVector2Array()   # a serpent's segments, head first
+	var summoner = null        # the guardian that called it
 
 var gpu
 var ui
@@ -116,6 +129,7 @@ var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
 var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed"}
 var boss_info := Vector4.ZERO
+var boss_clouds := []          # the Mycelord's spore clouds (boss_ai.gd update_clouds)
 var scale_px := 4
 var VW := 480
 var VH := 270
@@ -128,6 +142,7 @@ var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1
 var test_aim := Vector2.ZERO # test mode: where the local mage points (zero: the mouse)
 var test_cast := false       # test mode: hold the left button
 var test_dig := false        # test mode: hold the right button
+var test_calm := false       # test mode: the biome guardians stay asleep (except while their own test runs)
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
@@ -1560,6 +1575,9 @@ func _tick() -> void:
 	_use_grid(player)
 	var tq := Time.get_ticks_usec()
 	_update_enemies()
+	BossAI.update_clouds(self)
+	if player.items.has("lantern") and not player.dead:
+		lights.append([player.pos, 70.0, Color(0.55, 0.95, 0.85)])      # (the Glowcap Lantern)
 	_update_chests()
 	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
@@ -1620,7 +1638,7 @@ func _update_player(m: Mage) -> void:
 	var face := (aim - p.pos).dot(R)
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
-	var speed := 0.9 if p.in_liquid else 1.5
+	var speed := (0.9 if p.in_liquid else 1.5) * (1.2 if m.items.has("coil") else 1.0)
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
 	var jump: bool = m.input.jump
 	if p.on_ground:
@@ -1653,7 +1671,7 @@ func _update_player(m: Mage) -> void:
 		audio.play("levitate", p.pos, 0.35)
 		p.vy -= g + 0.28
 		p.vy = maxf(p.vy, -2.5)
-		m.mana -= 0.55
+		m.mana -= 0.27 if m.items.has("roc") else 0.55
 		if randf() < 0.6:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
 	if p.in_liquid:
@@ -1694,7 +1712,7 @@ func _update_player(m: Mage) -> void:
 	if p.pos.length() < sa.w + 20.0 and not m.heat_ward:
 		hurt(m, 0.05, Vector2.ZERO, false)
 	# under water, or above the air: holding your breath
-	if Defs.KIND[head_t] == Defs.K_LIQUID or p.pos.length() > Defs.R_TOP + 4.0:
+	if (Defs.KIND[head_t] == Defs.K_LIQUID and not m.items.has("pearl")) or p.pos.length() > Defs.R_TOP + 4.0:
 		m.breath -= 1.0
 		if m.breath <= 0:
 			m.breath = 0
@@ -1722,6 +1740,8 @@ func _update_player(m: Mage) -> void:
 func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 	if m.dead or test_god:
 		return
+	if m.items.has("ironbark"):
+		dmg *= 0.75
 	if hit:
 		if m.iframes > 0:
 			return
@@ -2154,6 +2174,10 @@ func _update_projectiles() -> void:
 		var pos: Vector2 = pr["pos"]
 		var vel: Vector2 = pr["vel"]
 		vel += -pos.normalized() * float(pd["g"]) * gravity_at(pos)
+		if pd.has("home") and pr["owner"] != "player":
+			# (a spore drifts after you)
+			var hm := _nearest_mage(pos)
+			vel = vel.lerp((hm.pos - pos).normalized() * float(pd["speed"]), float(pd["home"]))
 		pr["life"] = int(pr["life"]) - 1
 		var steps := maxi(1, int(ceil(vel.length() * 2.0)))
 		var hit := false
@@ -2176,7 +2200,7 @@ func _update_projectiles() -> void:
 					break
 			if pr["owner"] == "player":
 				for e in enemies:
-					if not e.dead and _overlaps(pos, e):
+					if not e.dead and not e.under and _overlaps(pos, e):
 						hit = true
 						hit_enemy = e
 						break
@@ -2198,8 +2222,9 @@ func _update_projectiles() -> void:
 			continue
 		if pr["type"] == "arrow":
 			continue                  # an arrow neither glows nor sparks
-		var col: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
-		lights.append([pos, float(pd["light"]), col * 0.85])
+		var col: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else pd.get("col", Color(1, 0.35, 0.12))
+		if float(pd["light"]) > 0.0:
+			lights.append([pos, float(pd["light"]), col * 0.85])
 		if randf() < 0.6:
 			_particle(pos, Vector2(randf() - 0.5, randf() - 0.5) * 0.3, 10 + randi() % 8, col, true, 0.0)
 
@@ -2223,6 +2248,8 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 		"spark":
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb, -0.6)
+				if items.has("rimefang"):
+					e.slow = maxi(e.slow, 150)
 			elif hit:
 				brushes.append([p, 2.4, 6, 0, tier, 0, 0])
 		"fireball":
@@ -2255,7 +2282,15 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 				hurt(hit_m, float(pd["dmg"]) * (0.6 if hit_m.heat_ward else 1.0), Vector2(signf(randf() - 0.5) * 1.5, -1.0), true)
 			else:
 				brushes.append([p, 1.8, 3, Defs.FIRE, 0, 0, 0])
-	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else Color(1, 0.35, 0.12)
+		_:
+			# the guardians' shots: they hurt you, or leave their matter where they land
+			if hit_m != null:
+				var hv: Vector2 = pr["vel"]
+				var hha := atan2(hit_m.pos.y, hit_m.pos.x)
+				hurt(hit_m, float(pd["dmg"]), Vector2(signf(hv.dot(basis_r(hha))) * 1.8, -1.2), true)
+			elif pd.has("splat") and hit:
+				brushes.append([p, 2.2, 3, int(pd["splat"]), 0, 0, 0])
+	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else pd.get("col", Color(1, 0.35, 0.12))
 	for k in 10:
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.8) * 1.5, 14 + randi() % 10, col, true, 0.05)
 
@@ -2278,7 +2313,7 @@ func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 
 # =============================================================== enemies ===
 func spawn_enemy(type: String, p: Vector2) -> Enemy:
-	var d: Dictionary = Defs.ENEMY[type]
+	var d: Dictionary = Defs.enemy_def(type)
 	var e := Enemy.new()
 	e.type = type
 	e.d = d
@@ -2297,6 +2332,8 @@ func spawn_enemy(type: String, p: Vector2) -> Enemy:
 	return e
 
 func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
+	if items.has("sunidol"):
+		dmg *= 1.25
 	e.hp -= dmg
 	e.flash = 6
 	audio.play("hit", e.pos, 0.7)
@@ -2332,7 +2369,9 @@ func _kill_enemy(e: Enemy) -> void:
 			var n := 1 + randi() % int(dr[1])
 			player.inv[int(dr[0])] += n
 			ui.toast("+%d %s" % [n, Defs.NAMES[int(dr[0])]], Defs.COLOR[int(dr[0])])
-	if e.boss:
+	if e.d.has("def"):
+		_guardian_falls(e)
+	if e.type == "golem":
 		items["heart"] = true
 		planet_state["boss_dead"] = true
 		player.inv[Defs.EMBER] += 40
@@ -2341,6 +2380,45 @@ func _kill_enemy(e: Enemy) -> void:
 		ui.toast("+40 Ember Crystal, +20 Obsidian. The Core Siphon can now be forged.", Color(1, 0.85, 0.3), 6.0)
 		shake = 18.0
 		save_game()
+
+## A biome guardian is beaten: its relic is yours, with its hoard; it stays dead on this planet.
+func _guardian_falls(e: Enemy) -> void:
+	var bd: Dictionary = e.d["def"]
+	var biome: String = e.d["biome"]
+	var dead_list: Array = planet_state.get("bosses_dead", [])
+	if not dead_list.has(biome):
+		dead_list.append(biome)
+	planet_state["bosses_dead"] = dead_list
+	var rid: String = bd["relic"]
+	var rel: Dictionary = Defs.RELICS[rid]
+	ui.toast("%s falls!" % bd["name"], bd["col"], 6.0)
+	if not items.has(rid):
+		items[rid] = true
+		if rid == "lionheart":
+			max_hp += 40
+			hp += 40
+		ui.toast("RELIC: %s. %s" % [rel["name"], rel["desc"]], Color(1.0, 0.88, 0.45), 8.0)
+	var loot: Dictionary = bd["loot"]
+	for mt in loot:
+		player.inv[int(mt)] += int(loot[mt])
+	_roll_loot(4, 1.5)
+	shake = 16.0
+	audio.play("rare")
+	for o in enemies:
+		if o.summoner == e:
+			o.summoner = null
+	save_game()
+
+## the guardians of this planet's biomes, each in its lair (not the ones already beaten)
+func _spawn_guardians() -> void:
+	var dead_list: Array = planet_state.get("bosses_dead", [])
+	for lr in builds.lair_list:
+		var biome: String = lr["biome"]
+		if dead_list.has(biome) or not Defs.BOSSES.has(biome):
+			continue
+		var d: Dictionary = Defs.boss_enemy("boss_" + biome)
+		var at: Vector2 = lr["pos"]
+		spawn_enemy("boss_" + biome, at + at.normalized() * (float(d["h"]) * 0.5 + 2.0))
 
 ## How high a walker must climb to get past the wall in front of it (cells), or -1 if it is
 ## taller than `reach`. Uses the collision grid currently in use.
@@ -2419,6 +2497,11 @@ func _update_enemies() -> void:
 					e.hp = e.max_hp
 					e.awake = false
 					e.leaping = false
+					e.act = ""
+					e.move = ""
+					e.raged = false
+					e.under = false
+					e.trail.clear()
 					e.pos = e.home
 					e.vx = 0.0
 					e.vy = 0.0
@@ -2451,6 +2534,8 @@ func _update_enemies() -> void:
 		if not e.boss:
 			FoeAI.think(self, e, tgt, dist)
 			gl = FoeAI.goal(self, e, tgt)
+		if e.d.has("def"):
+			BossAI.tick(self, e, tgt, dist, dx, dy, g, slow_f)
 		match e.type:
 			"slime", "mimic":
 				# hops after you once it knows you're there; close by, a crouch and a leap aimed at you
@@ -2571,7 +2656,11 @@ func _update_enemies() -> void:
 			e.vy *= 0.98
 		elif e.vy > 6.0:
 			e.vy = 6.0
-		move_body(e)
+		if e.under or e.move == "breach":
+			e.vx = 0.0                     # (under the ground, or flung out of it: boss_ai moves it)
+			e.vy = 0.0
+		else:
+			move_body(e)
 		e.anim += absf(e.vx) * 0.2 + 0.02
 		if e.stuck > 30:
 			# wedged in (sand piled on, a block conjured into it): work it free to the nearest open
@@ -2586,12 +2675,20 @@ func _update_enemies() -> void:
 				_guards_alive.erase(e.guard_id)
 			enemies.remove_at(k)
 			continue
-		if e.type != "golem" and e.type != "imp":
+		if e.type != "golem" and e.type != "imp" and not e.boss:
 			var l2 := to_grid(e.pos)
 			if box_count(l2.x - e.w * 0.5, l2.y - e.h * 0.5, e.w, e.h, Defs.LAVA) > 0:
 				_hurt_enemy(e, 0.6, 0, 0)
-		if not tgt.dead and absf(dx) < (e.w + tgt.w) * 0.5 and absf(dy) < (e.h + tgt.h) * 0.5:
+		if not tgt.dead and not e.under and absf(dx) < (e.w + tgt.w) * 0.5 and absf(dy) < (e.h + tgt.h) * 0.5:
 			hurt(tgt, float(e.d["dmg"]), Vector2(signf(dx) * 2.2, -1.6), true)
+		if not tgt.dead and not e.under and not e.trail.is_empty() and e.awake:
+			# a serpent's body hurts too
+			for sk in e.trail.size():
+				if e.trail[sk].distance_to(tgt.pos) < BossArt.seg_radius(e.d["def"]["body"], sk) + 4.0:
+					hurt(tgt, float(e.d["dmg"]) * 0.6, Vector2(signf(dx) * 2.0, -1.5), true)
+					break
+		if e.d.has("def") and e.awake and not e.under:
+			lights.append([e.pos, 26.0, Color(e.d["def"]["col"]) * 0.45])
 		if e.type == "golem":
 			lights.append([e.pos, 40.0, Color(1.0, 0.4, 0.1)])
 		elif e.type == "skeleton":
@@ -3576,7 +3673,7 @@ func _make_world(index: int, arriving: bool) -> void:
 	var loaded := _load_world(index)
 	if loaded and int(planet_state.get("gen", 1)) != GEN_VERSION:
 		# saved by an older structure generator: build the planet again (your progress is kept)
-		var kept := {"boss_dead": planet_state.get("boss_dead", false)}
+		var kept := {"boss_dead": planet_state.get("boss_dead", false), "bosses_dead": planet_state.get("bosses_dead", [])}
 		loaded = false
 		planet_state = kept
 		print("[Wisp Forge] regenerating %s with the new structure generator" % planet["name"])
@@ -3647,12 +3744,14 @@ func _make_world(index: int, arriving: bool) -> void:
 			if sk.has("cells"):
 				skiff.load_cells(sk["cells"])     # (as it was: whatever was built in it too)
 	enemies.clear()
+	boss_clouds.clear()
 	_guards_alive.clear()
 	projs.clear()
 	parts.clear()
 	var bd := Vector2(cos(boss_a), sin(boss_a))
 	if not planet_state.get("boss_dead", false):
 		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
+	_spawn_guardians()
 	if loaded:
 		time = float(planet_state.get("time", time))
 	if arriving:
@@ -3830,7 +3929,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 31            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 32            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

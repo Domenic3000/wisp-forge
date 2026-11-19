@@ -269,6 +269,25 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   drop), `swoop` (bats), `blink` (imps). Every wind-up is a tell: overlay.gd tints the foe (`FoeAI.tell`).
   Foes with `ai.doors` open doors by walking into them (`move_body` -> `_door_bump`, `door_t` stops them turning
   back). Archers are a third of structure guards (picked by position in `_guard`); the dead walk at night.
+- Biome guardians (one boss per biome; Vulkhar the Ember Golem stays the planet's deep boss): `Defs.BOSSES` (per
+  biome: name, title, lair name, colour, `body` (plan + features), stats, `go`, `moves`/`rage` (dicts of move ->
+  settings; a trailing digit is the same move with other settings), `relic`, `loot`, lair materials `wall`, `floor`,
+  `trim`, optional `glow`), `Defs.RELICS`, `Defs.boss_enemy("boss_<biome>")` / `enemy_def` (the foe dict, with
+  "def" and "biome"). Bodies: `scripts/boss_art.gd` grows pixel frames from parts at first sight (overlay
+  `_boss_art`): plans beast (antlers, mane, spikes, ears, tails), bird, toad, fungus, serpent (head + segments drawn
+  along `Enemy.trail` by overlay `_draw_serpent`; birds and serpents are drawn centred, `_sprite_mid`). Behaviour:
+  `scripts/boss_ai.gd` `tick` (called from `_update_enemies` before the fixed foes' match): getting around (walk,
+  hop, fly, slither, burrow: `Enemy.under` = hidden and untouchable, not moved by move_body), moves as state
+  machines on `Enemy.act` windup -> go -> recover (charge, slam, spit, rain, erupt, roar, summon, cloud, dive, gust,
+  breach), enraged below half health. New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
+  spore) with "col", "splat" (matter left where they land) and "home" (spores drift after you); `boss_clouds`.
+  Lairs: buildings.gd `_lairs` (one per biome of the planet, on dry ground in the middle of a stretch of it,
+  planned before the dungeons and other structures) / `_lair` (a level arena paved in the middle, ramping to the
+  land, cleared to the sky; edge pillars with trim capitals, cover stubs, a stepped dais with an altar, braziers
+  and a carved stele behind it, a sure chest); `lair_list` -> main `_spawn_guardians`. Beaten: `_guardian_falls`
+  (relic into `items`, loot, `planet_state["bosses_dead"]`). Relic effects live where they matter: ironbark in
+  `hurt`, coil in `_update_player`'s speed, pearl in the breath check, rimefang in the spark's impact, roc in
+  levitation, lionheart +40 max health once, sunidol in `_hurt_enemy`, lantern a light in `_tick`.
 - Rigid chunks (`scripts/chunks.gd`): grid.comp reports one felled-tree cell (counts[59]/[60]: a plant cell whose
   support reached 62) and one creaking block (counts[56]/[57]) per mage; `detect` reads the world around it
   (`gpu.read_rect`: `shaders/rectread.comp` copies just the rectangle into a small buffer, read back in one go), takes the loose cells out with a stamp and makes

@@ -560,6 +560,13 @@ const PROJ := {
 	"starfall": {"speed": 3.4, "g": 0.02, "life": 160, "dmg": 0.0, "light": 41.6},
 	"efire": {"speed": 2.2, "g": 0.0, "life": 200, "dmg": 12.0, "light": 18.2},
 	"arrow": {"speed": 4.4, "g": 0.05, "life": 130, "dmg": 10.0, "light": 0.0},
+	# the biome guardians' (scripts/boss_ai.gd): "col" their glow, "splat" what they leave where they land
+	"venom": {"speed": 3.0, "g": 0.05, "life": 160, "dmg": 11.0, "light": 14.0, "col": Color(0.55, 1.0, 0.3)},
+	"mudball": {"speed": 3.2, "g": 0.08, "life": 160, "dmg": 10.0, "light": 0.0, "col": Color(0.42, 0.32, 0.2), "splat": MUD},
+	"ice": {"speed": 3.6, "g": 0.06, "life": 200, "dmg": 12.0, "light": 12.0, "col": Color(0.7, 0.92, 1.0), "splat": SNOW},
+	"rock": {"speed": 3.0, "g": 0.09, "life": 220, "dmg": 16.0, "light": 0.0, "col": Color(0.55, 0.52, 0.5), "splat": GRAVEL},
+	"sandball": {"speed": 3.4, "g": 0.07, "life": 160, "dmg": 9.0, "light": 0.0, "col": Color(0.93, 0.8, 0.5), "splat": SAND},
+	"spore": {"speed": 1.6, "g": 0.0, "life": 260, "dmg": 9.0, "light": 16.0, "col": Color(0.8, 0.5, 1.0), "home": 0.03},
 }
 
 # ---------------------------------------------------------------- recipes ---
@@ -1475,6 +1482,88 @@ const ENEMY := {
 		"ai": {"sight": 160.0, "leap": {"range": 110.0, "windup": 14, "speed": 3.8, "v": 5.0, "cd": 45}}},
 	"golem": {"w": 28.0, "h": 40.0, "hp": 900.0, "dmg": 18.0, "fly": false, "spr": "golem", "boss": true, "drops": []},
 }
+
+# ------------------------------------------------------------- guardians ---
+## Each biome's guardian, waiting in its lair (buildings.gd `_lair`) over the relic it guards. Bodies
+## are grown from parts by scripts/boss_art.gd (`body`: a plan and its features), behaviour is put
+## together from moves by scripts/boss_ai.gd (`moves`: what it does, in turn; `rage`: added below half
+## health), `go`: how it gets around (walk, hop, fly, slither, burrow).
+## Body plans: beast (four legs; antlers, tusks, mane, spikes, tail), bird, toad, fungus, serpent.
+const BOSSES := {
+	"forest": {"name": "Bramblehorn", "title": "the Thicket King", "lair": "Bramblehorn's Glade", "col": Color(0.55, 0.85, 0.35),
+		"body": {"plan": "beast", "len": 40, "tall": 18, "leg": 17, "head": 10, "neck": 9, "base": "#6a4e33", "belly": "#9c8160",
+			"accent": "#5e9a34", "dark": "#2e2216", "eye": "#ffd23a", "skin": "moss", "antlers": 4, "tail": "short"},
+		"w": 30.0, "h": 34.0, "hp": 620.0, "dmg": 14.0, "go": "walk", "speed": 0.95,
+		"moves": {"charge": {}, "erupt": {"mat": WOOD, "col": Color(0.45, 0.32, 0.18)}, "slam": {}}, "rage": {"roar": {}},
+		"relic": "ironbark", "loot": {WOOD: 40, LEAF: 20, MOSSBLOCK: 20}, "wall": MOSSBLOCK, "floor": MASONRY, "trim": WOOD},
+	"jungle": {"name": "Ssirra", "title": "the Canopy Serpent", "lair": "Ssirra's Coil", "col": Color(0.45, 1.0, 0.45),
+		"body": {"plan": "serpent", "segs": 11, "rad": 6.5, "base": "#2f8a3c", "belly": "#d4c75a", "accent": "#d84a2a", "dark": "#173f1d", "eye": "#ffe14a"},
+		"w": 14.0, "h": 12.0, "hp": 520.0, "dmg": 13.0, "go": "slither", "speed": 2.4, "fly": true,
+		"moves": {"spit": {"proj": "venom", "n": 3, "spread": 0.22}, "dive": {}}, "rage": {"spit2": {"proj": "venom", "n": 5, "spread": 0.18}},
+		"relic": "coil", "loot": {WOOD: 30, CRYSTAL: 6, MOSSBLOCK: 10}, "wall": MOSSBLOCK, "floor": MASONRY, "trim": TIMBER},
+	"marsh": {"name": "The Bog Mother", "title": "Queen of the Mire", "lair": "The Bog Mother's Pool", "col": Color(0.6, 0.8, 0.4),
+		"body": {"plan": "toad", "len": 38, "tall": 24, "base": "#5a6e34", "belly": "#b8b070", "accent": "#8a5a2a", "dark": "#26301a", "eye": "#ffb21a", "skin": "warts"},
+		"w": 32.0, "h": 24.0, "hp": 600.0, "dmg": 13.0, "go": "hop", "speed": 1.0,
+		"moves": {"slam": {"far": true}, "spit": {"proj": "mudball", "n": 4, "spread": 0.2}, "summon": {"type": "slime", "n": 2, "max": 4}},
+		"rage": {"summon2": {"type": "slime", "n": 3, "max": 5}},
+		"relic": "pearl", "loot": {MUD: 40, WATER: 30, SHROOM: 8}, "wall": MASONRY, "floor": MOSSBLOCK, "trim": WOOD},
+	"tundra": {"name": "Rimefang", "title": "the Winter Wolf", "lair": "Rimefang's Den", "col": Color(0.7, 0.9, 1.0),
+		"body": {"plan": "beast", "len": 38, "tall": 16, "leg": 16, "head": 10, "neck": 5, "base": "#d8e2ea", "belly": "#f4f8fc",
+			"accent": "#8fe8ff", "dark": "#5a6a7a", "eye": "#5cf0ff", "skin": "fur", "spikes": 6, "tail": "long", "ears": true},
+		"w": 30.0, "h": 28.0, "hp": 580.0, "dmg": 15.0, "go": "walk", "speed": 1.2,
+		"moves": {"charge": {}, "rain": {"proj": "ice", "n": 7}, "spit": {"proj": "ice", "n": 3, "spread": 0.12}}, "rage": {"roar": {}},
+		"relic": "rimefang", "loot": {ICE: 30, FROST: 12, SNOW: 30}, "wall": STONE, "floor": MASONRY, "trim": ICE, "glow": FROST},
+	"mountain": {"name": "Skarn", "title": "the Crag Roc", "lair": "Skarn's Eyrie", "col": Color(0.85, 0.75, 0.6),
+		"body": {"plan": "bird", "len": 30, "span": 40, "base": "#6a5442", "belly": "#b49a78", "accent": "#e8b23a", "dark": "#2e241c", "eye": "#ff5a2a", "skin": "fur"},
+		"w": 26.0, "h": 20.0, "hp": 560.0, "dmg": 14.0, "go": "fly", "speed": 2.6, "fly": true,
+		"moves": {"dive": {}, "rain": {"proj": "rock", "n": 5}, "gust": {}}, "rage": {"dive2": {}},
+		"relic": "roc", "loot": {STONE: 40, COPPER: 15, DEEPSTONE: 10}, "wall": STONE, "floor": MASONRY, "trim": TIMBER},
+	"savanna": {"name": "Sunmane", "title": "Lord of the Grasslands", "lair": "Sunmane's Rock", "col": Color(1.0, 0.8, 0.35),
+		"body": {"plan": "beast", "len": 38, "tall": 17, "leg": 16, "head": 10, "neck": 5, "base": "#c8923e", "belly": "#e8c88a",
+			"accent": "#8a4a1a", "dark": "#4a2c12", "eye": "#ffe85a", "skin": "fur", "mane": true, "tail": "tuft"},
+		"w": 30.0, "h": 28.0, "hp": 600.0, "dmg": 15.0, "go": "walk", "speed": 1.15,
+		"moves": {"slam": {"far": true}, "charge": {}, "roar": {}}, "rage": {"charge2": {}},
+		"relic": "lionheart", "loot": {DRYGRASS: 30, SANDSTONE: 20, COPPER: 10}, "wall": SANDSTONE, "floor": SANDSTONE, "trim": TIMBER},
+	"desert": {"name": "The Dune Wyrm", "title": "Devourer of Caravans", "lair": "The Wyrm's Hollow", "col": Color(1.0, 0.75, 0.4),
+		"body": {"plan": "serpent", "segs": 13, "rad": 8.5, "base": "#b8864a", "belly": "#e8cf96", "accent": "#7a3a1a", "dark": "#4e3218", "eye": "#ff3a1a", "teeth": true},
+		"w": 18.0, "h": 16.0, "hp": 640.0, "dmg": 16.0, "go": "burrow", "speed": 2.0, "fly": true,
+		"moves": {"breach": {"proj": "sandball", "n": 5, "spread": 0.3}}, "rage": {},
+		"relic": "sunidol", "loot": {SAND: 40, SANDSTONE: 20, CRYSTAL: 8}, "wall": SANDSTONE, "floor": SANDSTONE, "trim": TILE},
+	"grove": {"name": "The Mycelord", "title": "Heart of the Rot", "lair": "The Mycelord's Hollow", "col": Color(0.85, 0.55, 1.0),
+		"body": {"plan": "fungus", "len": 30, "tall": 36, "base": "#7a4aa0", "belly": "#e8d4c0", "accent": "#3fe0c8", "dark": "#2e1c3e", "eye": "#3fffe0", "skin": "spots"},
+		"w": 26.0, "h": 34.0, "hp": 600.0, "dmg": 12.0, "go": "walk", "speed": 0.6,
+		"moves": {"cloud": {}, "erupt": {"mat": MYCELIUM, "col": Color(0.6, 0.4, 0.8)}, "spit": {"proj": "spore", "n": 3, "spread": 0.5}},
+		"rage": {"cloud2": {}},
+		"relic": "lantern", "loot": {SHROOM: 20, MYCELIUM: 30, CRYSTAL: 6}, "wall": MASONRY, "floor": MYCELIUM, "trim": MYCELIUM, "glow": SHROOM},
+}
+
+## The relics the guardians keep (items[id]; main.gd applies them where they matter).
+const RELICS := {
+	"ironbark": {"name": "Ironbark Shell", "desc": "You take a quarter less damage."},
+	"coil": {"name": "Serpent's Coil", "desc": "You move a fifth faster."},
+	"pearl": {"name": "Mire Pearl", "desc": "You breathe under water."},
+	"rimefang": {"name": "Rimefang's Tooth", "desc": "Your Spark Bolts chill what they hit."},
+	"roc": {"name": "Roc Feather", "desc": "Levitating costs half the mana."},
+	"lionheart": {"name": "Lionheart", "desc": "+40 max health."},
+	"sunidol": {"name": "Sun Idol", "desc": "Your spells hit a quarter harder."},
+	"lantern": {"name": "Glowcap Lantern", "desc": "A soft light goes with you."},
+}
+
+var _boss_enemy := {}
+
+## A guardian as a foe ("boss_<biome>"): the fields every foe has, the boss's own definition in "def".
+func boss_enemy(type: String) -> Dictionary:
+	if _boss_enemy.has(type):
+		return _boss_enemy[type]
+	var b: Dictionary = BOSSES[type.trim_prefix("boss_")]
+	var d := {"w": b["w"], "h": b["h"], "hp": b["hp"], "dmg": b["dmg"], "fly": bool(b.get("fly", false)), "spr": type,
+		"boss": true, "drops": [], "def": b, "biome": type.trim_prefix("boss_"), "ai": {"sight": 400.0}}
+	_boss_enemy[type] = d
+	return d
+
+## any foe's definition (the fixed ones, or a guardian)
+func enemy_def(type: String) -> Dictionary:
+	return ENEMY[type] if ENEMY.has(type) else boss_enemy(type)
 
 func sprite_texture(key: String) -> ImageTexture:
 	# draws the sprite with a 1-pixel dark outline, 16-bit style

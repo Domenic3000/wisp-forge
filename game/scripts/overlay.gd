@@ -4,11 +4,13 @@ const FoeAI := preload("res://scripts/foe_ai.gd")
 ## picture: the mage, the wisp, foes, spells, particles and the reticle.
 
 const MageRig := preload("res://scripts/mage_rig.gd")
+const BossArt := preload("res://scripts/boss_art.gd")
 
 var game
 var tex := {}
 var _door_keys := []          # pictures of damaged open doors made so far (oldest first)
 var _masks := {}
+var _boss_made := {}          # guardians whose frames have been grown (boss_art.gd), by type
 
 func _ready() -> void:
 	for k in Defs.SPRITES:
@@ -107,6 +109,8 @@ func _mage_frame(m) -> String:
 
 # two-frame foes: slimes squash as they hop, imps and bats flap, skeletons and golems step, mimics bite
 func _foe_frame(e) -> String:
+	if e.d.has("def"):
+		return _boss_frame(e)
 	var key: String = e.d["spr"]
 	match e.type:
 		"bat":
@@ -129,6 +133,69 @@ func _foe_frame(e) -> String:
 			if tex.has(key + "2") and absf(e.vx) > 0.1 and int(e.anim) % 2 == 1:
 				return key + "2"
 	return key
+
+## a guardian's frame for what it's doing (boss_art.gd names them)
+func _boss_frame(e) -> String:
+	var id: String = e.type
+	var plan: String = e.d["def"]["body"]["plan"]
+	if plan == "bird":
+		if e.move.begins_with("dive") and e.act == "go":
+			return id + "_dive"
+		if e.act == "windup":
+			return id + "_wind"
+		return "%s_fly%d" % [id, int(float(game.frame) * 0.16 + e.phase) % 4]
+	if plan == "serpent":
+		return id + "_head"
+	if not e.awake:
+		return id
+	if e.act == "windup":
+		return id + "_wind"
+	if e.leaping or not e.on_ground:
+		return id + "_air"
+	if absf(e.vx) > 0.1:
+		return "%s_walk%d" % [id, int(e.anim * 0.6) % 4]
+	return id
+
+func _boss_art(e) -> void:
+	if _boss_made.has(e.type):
+		return
+	_boss_made[e.type] = true
+	var fr: Dictionary = BossArt.frames(e.type, e.d["def"]["body"])
+	for k in fr:
+		tex[k] = ImageTexture.create_from_image(fr[k])
+
+## a serpent: its segments along its trail (tail first; a burrower's are hidden in the ground), then
+## its head, jaws open while it strikes
+func _draw_serpent(e, tint: Color) -> void:
+	var white: bool = e.flash > 0
+	var burrow: bool = e.d["def"]["go"] == "burrow"
+	for k in range(e.trail.size() - 1, -1, -1):
+		var p: Vector2 = e.trail[k]
+		if burrow:
+			var kd: int = Defs.KIND[game.type_at(p)]
+			if e.under or kd == Defs.K_SOLID or kd == Defs.K_POWDER:
+				continue
+		_sprite_mid("%s_seg%d" % [e.type, k], p, false, white, tint)
+	if e.under:
+		return
+	var open: bool = e.act == "windup" or e.act == "go"
+	_sprite_mid(e.type + ("_head_open" if open else "_head"), e.pos, e.facing < 0, white, tint)
+
+## a picture centred on a world point (fliers and serpents, which have no feet to stand on)
+func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Color(1, 1, 1)) -> void:
+	if not tex.has(key):
+		return
+	var t: Texture2D = tex[key]
+	var sp: Vector2 = game.world_to_screen(wpos)
+	if sp.x < -80 or sp.y < -80 or sp.x > game.VW + 80 or sp.y > game.VH + 80:
+		return
+	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
+	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / float(game.zoom)
+	draw_set_transform(sp.round() if game.unrolled() else sp, rot, sc)
+	var mod := Color(4, 4, 4) if white else _lit(sp) * tint
+	var ts := t.get_size()
+	draw_texture(t, -(ts * 0.5).floor(), mod)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _lit(sp: Vector2) -> Color:
 	if game.space.active and not game.space.live:
@@ -347,6 +414,16 @@ func _draw_all() -> void:
 		var tl: float = FoeAI.tell(e)
 		var tint := Color(1, 1, 1).lerp(Color(2.2, 0.75, 0.5), tl)
 		var sq := 1.0 - 0.22 * tl if (e.type == "slime" or e.type == "mimic") else 1.0
+		if e.d.has("def"):
+			# a guardian: its frames grown from parts the first time it's seen
+			_boss_art(e)
+			var plan: String = e.d["def"]["body"]["plan"]
+			if plan == "serpent":
+				_draw_serpent(e, tint)
+				continue
+			if plan == "bird":
+				_sprite_mid(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, tint)
+				continue
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground, 1.0, sq, tint)
 	# projectiles
 	for pr in game.projs:

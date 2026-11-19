@@ -188,6 +188,7 @@ func _cell_col(f: int, gb: int, src: int) -> Color:
 
 func run() -> void:
 	var t_all := Time.get_ticks_msec()
+	g.test_calm = true          # (the guardians sleep through the checks that aren't about them)
 	lines.append("Wisp Forge test report  %s" % Time.get_datetime_string_from_system())
 	lines.append("GPU: %s" % RenderingServer.get_video_adapter_name())
 	lines.append("")
@@ -531,7 +532,7 @@ func run() -> void:
 		# (the cottage's guards and any foe wandering by are cleared away first: a foe standing in the
 		# doorway rightly keeps it from shutting, and a skeleton walking into it opens it again)
 		for fe in g.enemies.duplicate():
-			if fe.pos.distance_to(dp) < 300.0:
+			if fe.pos.distance_to(dp) < 300.0 and not fe.boss:      # (a guardian in a lair nearby stays)
 				g._kill_enemy(fe)
 		var foe_near := func() -> String:
 			var nf_best := "none"
@@ -1286,13 +1287,22 @@ func run() -> void:
 	g.build_w = 36
 	g.build_floors = 1
 	var house_ok := false
+	var house_why := []
 	var house_at := Vector2.ZERO
 	var doors_mid: int = g.doors.size()
 	var hb_ang: float = atan2(g.player.pos.y, g.player.pos.x)
 	var at_ang := func(k: float, up: float) -> Vector2:
 		var aa: float = hb_ang + k / Defs.RS0
 		return Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + up)
-	for hk in [-150.0, -190.0, -230.0, -270.0, -310.0, -350.0, -390.0, -430.0, -470.0, -510.0, -550.0, -590.0, -630.0, -670.0]:
+	# (both ways along the ground, a good way out: structures and a guardian's levelled lair may lie
+	# across the near spots, so spots inside any named structure are passed over)
+	var hks := []
+	for hd in range(150, 1210, 40):
+		hks.append(-float(hd))
+		hks.append(float(hd))
+	for hk in hks:
+		if b.label_at(at_ang.call(hk, 8.0)) != "" or b.label_at(at_ang.call(hk - 20.0, 8.0)) != "" or b.label_at(at_ang.call(hk + 20.0, 8.0)) != "":
+			continue
 		# stand next to the spot (you can only build within reach), well away from the pieces above
 		_go(at_ang.call(hk + 30.0, 14.0))
 		await _frames(25)
@@ -1302,6 +1312,8 @@ func run() -> void:
 		house_ok = g.build_prev.get("ok", false)
 		if house_ok:
 			break
+		if house_why.size() < 6:
+			house_why.append("%d: plan %s tree %s cost %s at %s" % [int(hk), g._struct.get("ok", "-"), g._struct.get("tree", "-"), str(g._struct.get("cost", {})), b.label_at(house_at)])
 	if house_ok:
 		g.build_click = true
 		await _frames(30)
@@ -1341,7 +1353,7 @@ func run() -> void:
 				var kd3: int = Defs.raw_idx(int(nd3["row"]) + dj3, posmod(int(nd3["col"]) + di3, Defs.NS)) * 4
 				if (rawb.decode_u32(kd3) & 255) == Defs.WOODDOOR:
 					n_door += 1
-	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
+	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s; %s" % [house_ok, house_doors, g.build_last, "; ".join(house_why)])
 	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and doors_mid == doors_before + 1,
 		"wall cells %d (%d when painted), table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, wall_first, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
 
@@ -1766,7 +1778,7 @@ func run() -> void:
 	# ---- a boss nobody is fighting recovers ----
 	var boss_e = null
 	for e in g.enemies:
-		if e.boss:
+		if e.type == "golem":
 			boss_e = e
 	if boss_e != null:
 		# a picture of Vulkhar in his arena (saves/shots/boss.png)
@@ -2271,6 +2283,58 @@ func run() -> void:
 		"above the ledge %s; fire %d -> %d; sand left up there %d, fallen into the air %d; breath %.0f -> %.0f (%s)" % [str(ob_m), ob_fires, ob_fires2, ob_sand_up, ob_sand_air, ob_b0, ob_b1, ob_st])
 	g.player.breath = g.player.max_breath
 	g.chunks.clear()
+
+	# ---- the biome guardians: each waits in its lair, wakes, fights with its moves, falls, gives its relic ----
+	var gd_items0: Dictionary = g.items.duplicate()
+	var gd_hp0: float = g.max_hp
+	var gd_god0: bool = g.test_god
+	var gd_back: Vector2 = g.player.pos
+	g.test_god = true
+	g.test_calm = false
+	var gd_rows := []
+	var gd_ok := 0
+	var gd_lairs: Array = g.builds.lair_list
+	for gd_l in gd_lairs:
+		var gd_bio: String = gd_l["biome"]
+		var gd_e = null
+		for gd_en in g.enemies:
+			if gd_en.d.has("def") and gd_en.d["biome"] == gd_bio and not gd_en.dead:
+				gd_e = gd_en
+		if gd_e == null:
+			gd_rows.append("%s: no guardian" % gd_bio)
+			continue
+		var gd_at: Vector2 = gd_l["pos"]
+		var gd_side: Vector2 = g.basis_r(atan2(gd_at.y, gd_at.x))
+		_go(gd_at + gd_side * 50.0 + gd_at.normalized() * 12.0)
+		g.player.dead = false
+		await _frames(110)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("boss_%s.png" % gd_bio))
+		await _frames(40)
+		var gd_moves: int = gd_e.moves_done
+		var gd_awake: bool = gd_e.awake
+		var gd_rel: String = gd_e.d["def"]["relic"]
+		g._hurt_enemy(gd_e, 99999.0, 0.0, 0.0)
+		await _frames(2)
+		var gd_got: bool = g.items.has(gd_rel)
+		var gd_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(gd_bio)
+		if gd_awake and gd_moves >= 1 and gd_got and gd_dead:
+			gd_ok += 1
+		var gd_rs: float = g.gpu.surf_at(atan2(gd_at.y, gd_at.x)).x
+		gd_rows.append("%s%s: awake %s, %d moves, relic %s (floor %.0f deep, you %.0f deep)" % [gd_bio, " (underground)" if gd_l.get("deep", false) else "", gd_awake, gd_moves, gd_got,
+			gd_rs - gd_at.length(), gd_rs - g.player.pos.length()])
+	# (the relics are given back, so the checks after this aren't changed by them)
+	for gd_r in Defs.RELICS:
+		if not gd_items0.has(gd_r):
+			g.items.erase(gd_r)
+	g.max_hp = gd_hp0
+	g.hp = minf(g.hp, gd_hp0)
+	g.test_god = gd_god0
+	g.test_calm = true
+	g.boss_clouds.clear()
+	_go(gd_back)                   # (back where the checks after this one expect you)
+	await _frames(60)
+	_ok("each biome has a guardian in its lair that wakes, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
+		"%d lairs; %s; no room: %s" % [gd_lairs.size(), "; ".join(gd_rows), str(g.builds.lair_why)])
 
 	# ---- save and load give back the same world ----
 	# (pieces still tumbling are set down first: saving would set them down anyway)

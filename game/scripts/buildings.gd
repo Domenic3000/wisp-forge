@@ -31,6 +31,8 @@ var settle := []                  # [world position, half size] windows to settl
 var labels := []                  # {x0, x1, ymin, ymax, name}: for the region name on the HUD
 var chest_list := []             # {pos (world centre), ruined}: treasure chests (objects, not cells)
 var door_list := []              # {pos (world centre), w, h, side}: doors (closed cells; the game opens and closes them)
+var lair_why := {}                # biome -> why no lair fitted (candidates, and what turned them down)
+var lair_list := []               # {biome, pos (the arena floor's middle), name}: the guardians' lairs
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
 var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
 var used := []                    # occupied surface column ranges
@@ -266,6 +268,9 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	deep.clear()
 	chest_list.clear()
 	door_list.clear()
+	lair_list.clear()
+	lair_why.clear()
+	_lair_cols.clear()
 	used.append(Vector2i(spawn_col - 70, spawn_col + 70))
 	# something to discover a short walk from where you arrive
 	for tries in 40:
@@ -276,6 +281,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		_quiet = false
 		if ok:
 			break
+
 	var target := 26
 	var placed := 0
 	for tries in 900:
@@ -294,6 +300,13 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	# underground: sealed vaults, out of sight
 	for k in 6:
 		_vault(rng.randi_range(0, N0 - 1), build)
+	# each biome's guardian, in a lair in the middle of a stretch of its biome: last, in the room
+	# the rest left, with a random sequence of its own (so adding them moved nothing else)
+	var keep_rng := rng
+	rng = RandomNumberGenerator.new()
+	rng.seed = int(planet["seed"]) * 131 + 977
+	_lairs(build)
+	rng = keep_rng
 
 func _pick(weights: Dictionary) -> String:
 	var tot := 0.0
@@ -1778,6 +1791,255 @@ func label_at(pos: Vector2) -> String:
 		if k >= 0 and k < int(l["w"]):
 			return l["name"]
 	return ""
+
+# ------------------------------------------------------------------ lairs ---
+## A guardian's lair (Defs.BOSSES): an arena of level ground, paved in the middle and ramping back to
+## the land at both ends, cleared to the sky; tall pillars of the biome's stone at its edges (their
+## capitals in its trim: ice, timber, glowcaps...), broken stubs to take cover behind, and at one end
+## a stepped dais with an altar, braziers and a carved back wall, where a chest is sure. The guardian
+## waits in the middle (lair_list).
+const LAIR_W := 180
+const LAIR_UP := 96            # air cleared over the arena floor
+const LAIR_RAMP := 28          # columns at each end ramping back to the land
+
+func _lairs(build: bool) -> void:
+	var done := {}
+	for bname in biome_names:
+		if done.has(bname) or not Defs.BOSSES.has(bname):
+			continue
+		done[bname] = true
+		# spots well inside this biome (every 16 columns), the deepest into it first
+		var cands := []
+		for x in range(0, N0, 16):
+			if biome(x) != bname:
+				continue
+			var depth := 0
+			while depth < 480 and biome(x - depth) == bname and biome(x + depth) == bname:
+				depth += 16
+			if depth >= 32:
+				cands.append([x, depth])
+		cands.sort_custom(func(ca, cb): return ca[1] > cb[1])
+		_why = {"spots": cands.size()}
+		var placed := false
+		# an open arena well away from where you arrive (wide, then narrower), else a hall dug under
+		# the ground with a shaft down to it; only then a little nearer
+		for near in [600, 380]:
+			for tryk in 4:
+				var slope: int = [30, 56, 84, 84][tryk]
+				var lw: int = [180, 180, 180, 140][tryk]
+				for cd in cands:
+					var x: int = cd[0]
+					if cdist(x, spawn_col) < near or cdist(x, boss_col) < 200:
+						_why["near start"] = int(_why.get("near start", 0)) + 1
+						continue
+					if _near_lair(x, 420):
+						_why["near a lair"] = int(_why.get("near a lair", 0)) + 1
+						continue
+					if _lair(x, bname, slope, lw, build):
+						placed = true
+						break
+				if placed:
+					break
+			if placed:
+				break
+			for cd2 in cands:
+				var x2: int = cd2[0]
+				if cdist(x2, spawn_col) < near or cdist(x2, boss_col) < 260 or _near_lair(x2, 420):
+					continue
+				if _lair_deep(x2, bname, build):
+					placed = true
+					break
+			if placed:
+				break
+		if not placed:
+			lair_why[bname] = _why
+
+var _why := {}
+var _lair_cols := []
+
+## is there a lair already within d columns of x? (two guardians shouldn't wake together)
+func _near_lair(x: int, d: int) -> bool:
+	for c in _lair_cols:
+		if cdist(x, int(c)) < d:
+			return true
+	return false
+
+## an open-air arena lair, `W` wide
+func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
+	var bd: Dictionary = Defs.BOSSES[b]
+	var x0 := x - W / 2
+	if not free_span(x0, W, 3):
+		_why["taken"] = int(_why.get("taken", 0)) + 1
+		return false
+	var gr := _ground_range(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP)
+	if gr.y - gr.x > slope:
+		_why["steep"] = int(_why.get("steep", 0)) + 1
+		return false
+	if _any_wet(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP):
+		_why["wet"] = int(_why.get("wet", 0)) + 1
+		return false
+	var floor_row := _median_ground(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP)
+	var top := floor_row - LAIR_UP
+	var bot := floor_row + 16
+	var bp := BP.new(x0, top, W, bot - top + 1)
+	var fl := floor_row - top                     # the floor's top row, in the blueprint
+	var wall: int = bd["wall"]
+	var pave: int = bd["floor"]
+	var trim: int = bd["trim"]
+	# the arena: level, paved in the middle, ramping back to the land at the ends, open to the sky
+	for i in W:
+		var g := ground_row(x0 + i) - top
+		var e := mini(i, W - 1 - i)
+		var t := clampf(1.0 - float(e) / float(LAIR_RAMP), 0.0, 1.0)
+		t = t * t * (3.0 - 2.0 * t)
+		var target := int(round(lerpf(float(fl), float(g), t)))
+		var clear_from := int(round(lerpf(0.0, float(mini(target, g)) - 4.0, t)))
+		bp.rect(i, maxi(0, clear_from), i, target - 1, 0)
+		bp.rect_bg(i, maxi(0, clear_from), i, target - 1, 0, false)
+		var gm := _ground_mats(x0 + i)
+		for j in range(target, mini(bp.h, maxi(target + 1, g + 2))):
+			bp.fg(i, j, gm[0] if j - target < int(gm[1]) else gm[2], F_FILL | F_ANCHOR)
+		if t < 0.05:
+			# paving: two courses, set into the ground
+			for j2 in range(target, target + 2):
+				bp.fg(i, j2, pave, F_ANCHOR)
+	# the pillars at its edges (one may have fallen to a stub), capitals in the trim
+	for side in 2:
+		var pw := 7
+		var pi := LAIR_RAMP + 2 if side == 0 else W - LAIR_RAMP - 2 - pw
+		var ph := rng.randi_range(44, 64)
+		if rng.randf() < 0.25:
+			ph = rng.randi_range(14, 24)
+		_pillar(bp, bd, pi, pw, fl, ph)
+	_shrine(bp, bd, W, fl, LAIR_RAMP)
+	var row := top + fl
+	lair_list.append({"biome": b, "pos": _bp_at(bp, float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": false})
+	_lair_cols.append(x)
+	_claim(x0, W, bd["lair"], top, bot)
+	_finish(bp, build)
+	return true
+
+## A lair dug under the ground: a hall walled in the biome's stone far below, reached by a shaft
+## with landings from a small gate on the surface (for biomes whose surface is all taken).
+func _lair_deep(x: int, b: String, build: bool) -> bool:
+	var bd: Dictionary = Defs.BOSSES[b]
+	var W := 170
+	var HH := 74                 # the hall's inside height
+	var T := 4                   # its walls
+	var x0 := x - W / 2
+	if not _deep_free(x0 - 10, W + 20):
+		_why["deep taken"] = int(_why.get("deep taken", 0)) + 1
+		return false
+	# the shaft's spot on the surface: somewhere over the hall, free and dry
+	var SW := 26
+	var sx := -1
+	for k in range(30, W - 30 - SW, 10):
+		var c := x0 + k
+		if free_span(c, SW, 3) and not _any_wet(c, SW):
+			var gr := _ground_range(c, SW)
+			if gr.y - gr.x <= 10:
+				sx = c
+				break
+	if sx < 0:
+		_why["no shaft"] = int(_why.get("no shaft", 0)) + 1
+		return false
+	var gtop := _ground_range(sx, SW).x
+	var hall_fl := ground_row(x) + 130                # the hall's floor (top row of its paving)
+	var top := gtop - 34
+	var bot := hall_fl + T + 2
+	var bp := BP.new(x0 - T, top, W + 2 * T, bot - top + 1)
+	var wall: int = bd["wall"]
+	var pave: int = bd["floor"]
+	var trim: int = bd["trim"]
+	var fl := hall_fl - top
+	var ox := T                                        # the hall's first inside column
+	# the hall: walls round it, the floor paved, a back wall, torches along the walls
+	bp.solid(0, fl - HH - T, W + 2 * T - 1, fl + T - 1, wall, F_ANCHOR)
+	bp.rect(ox, fl - HH, ox + W - 1, fl - 1, 0)
+	bp.rect(ox, fl, ox + W - 1, fl + 1, pave, F_ANCHOR)
+	for tk in range(ox + 12, ox + W - 12, 36):
+		bp.bg(tk, fl - 30, Defs.TORCH)
+	# the shaft down from the gate, with landings, into the hall's roof
+	var si := sx - bp.x0
+	bp.solid(si - 3, 0, si + SW + 2, fl - HH - 1, wall, F_ANCHOR)
+	bp.rect(si, 0, si + SW - 1, fl - HH - 1, 0)
+	bp.rect_bg(si, 0, si + SW - 1, fl - HH - 1, wall)
+	_landings(bp, si, si + SW - 1, gtop - top + 12, fl - HH - 10)
+	# the gate on the surface: two posts and a lintel of the trim, open above the ground
+	var gl := gtop - top
+	bp.rect(si - 3, 0, si + SW + 2, gl - 1, 0)
+	bp.rect(si - 4, gl - 26, si - 1, gl - 1, wall)
+	bp.rect(si + SW, gl - 26, si + SW + 3, gl - 1, wall)
+	bp.rect(si - 6, gl - 29, si + SW + 5, gl - 27, trim)
+	# inside: columns at the ends, then the same shrine an open lair has
+	for side in 2:
+		var pw := 7
+		var pi := ox + 6 if side == 0 else ox + W - 13
+		_pillar(bp, bd, pi, pw, fl, HH)
+	_shrine(bp, bd, W, fl, ox + 4, ox)
+	var row := top + fl
+	lair_list.append({"biome": b, "pos": _bp_at(bp, float(ox) + float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": true})
+	_lair_cols.append(x)
+	_claim(sx - 4, SW + 8, bd["lair"], top, bot)
+	deep.append(Vector2i(x0 - T, x0 + W + T))
+	labels.append({"x0": posmod(x0, N0), "w": W, "ymin": hall_fl - HH - T, "ymax": bot, "name": bd["lair"]})
+	_finish(bp, build)
+	return true
+
+## a pillar of the lair's stone, `ph` tall on floor row fl, a capital of its trim with a notched top
+func _pillar(bp: BP, bd: Dictionary, pi: int, pw: int, fl: int, ph: int) -> void:
+	var wall: int = bd["wall"]
+	var trim: int = bd["trim"]
+	bp.solid(pi, fl - ph, pi + pw - 1, fl - 1, wall)
+	bp.rect(pi - 1, fl - ph - 3, pi + pw, fl - ph - 1, trim)
+	if bd.has("glow"):
+		for gi in range(pi, pi + pw, 2):
+			bp.fg(gi, fl - ph - 4, int(bd["glow"]))
+	for k in rng.randi_range(1, 3):
+		var ni := pi + rng.randi_range(0, pw - 2)
+		bp.rect(ni, fl - ph - 3, ni + 1, fl - ph - 2 + rng.randi_range(0, 2), 0)
+
+## The shrine of a lair W wide (from column ox) on floor row fl: cover stubs on one side, at the
+## other a stepped dais with an altar, braziers and a carved stele, and a sure chest at its foot.
+func _shrine(bp: BP, bd: Dictionary, W: int, fl: int, edge: int, ox := 0) -> void:
+	var wall: int = bd["wall"]
+	var pave: int = bd["floor"]
+	var trim: int = bd["trim"]
+	var right := rng.randf() < 0.5
+	for q in ([0.3, 0.44] if right else [0.56, 0.7]):
+		var si := ox + int(float(W) * q) + rng.randi_range(-6, 6)
+		var sh := rng.randi_range(6, 13)
+		var sw := rng.randi_range(5, 8)
+		for i3 in sw:
+			var hgt := sh - absi(i3 - sw / 2) * rng.randi_range(0, 2)
+			bp.rect(si + i3, fl - hgt, si + i3, fl - 1, wall)
+		bp.fg(si + sw / 2, fl - sh - 1, int(bd.get("glow", trim)))
+	var dw := [38, 28, 18]
+	var dmid := ox + W - edge - 30 if right else ox + edge + 30
+	var lvl := fl
+	for k2 in 3:
+		var hw: int = dw[k2] / 2
+		bp.solid(dmid - hw, lvl - 3, dmid + hw, lvl - 1, wall if k2 < 2 else pave)
+		lvl -= 3
+	bp.rect(dmid - 4, lvl - 5, dmid + 4, lvl - 1, trim)          # (the stele is its back wall)
+	bp.rect(dmid - 5, lvl - 6, dmid + 5, lvl - 6, wall)
+	for k3 in 3:
+		bp.fg(dmid - 1 + k3, lvl - 7, Defs.CRYSTAL)
+	# the stele behind it, standing on the floor, tapering to a point
+	for up in range(0, 52):
+		var hw2 := 17 if up < 38 else 17 - int(float(up - 38) * 1.25)
+		var j3 := fl - 1 - up
+		for i4 in range(dmid - hw2, dmid + hw2 + 1):
+			var edge2 := absi(i4 - dmid) >= hw2 - 1
+			var carved := not edge2 and up > 10 and up < 44 and ((i4 + j3) % 6 == 0 or (i4 - j3) % 6 == 0)
+			bp.bg(i4, j3, pave if carved else wall)
+	# braziers either side of the altar, their flames set in the stele
+	for s2 in [-1, 1]:
+		var bi: int = dmid + s2 * 12
+		bp.rect(bi, lvl - 9, bi, lvl - 1, Defs.MASONRY)
+		bp.bg(bi, lvl - 10, Defs.TORCH)
+	# (the sure chest stands on the floor at the dais's foot, on the arena's side)
+	_chest(bp, dmid - 22 - Defs.CHEST_W if right else dmid + 22, fl, true)
 
 # --------------------------------------------------------------- dungeons ---
 ## A dungeon: a stone gatehouse on the surface with a shaft down to a grid of halls far below.

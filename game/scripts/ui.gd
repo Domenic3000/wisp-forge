@@ -774,6 +774,12 @@ func update_hud(g) -> void:
 		for rel in [["ring", "Warden's Ring"], ["circlet", "Sage's Circlet"], ["boots", "Featherstep Boots"]]:
 			if g.items.has(rel[0]):
 				extra += " · " + rel[1]
+		var nrel := 0
+		for rid in Defs.RELICS:
+			if g.items.has(rid):
+				nrel += 1
+		if nrel > 0:
+			extra += " · %d guardian relic%s" % [nrel, "" if nrel == 1 else "s"]
 		info.text = "%s · %s\n%s · %s · %s\nStaff %s%s\n%d FPS" % [g.planet["name"], g.region_name(), depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, Engine.get_frames_per_second()]
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
@@ -939,6 +945,15 @@ func update_hud(g) -> void:
 	if boss != null:
 		boss_bar.max_value = boss.max_hp
 		boss_bar.value = boss.hp
+		# (a biome guardian's own name and colour)
+		var bname := "Vulkhar, the Ember Golem"
+		var bcol := Color(1, 0.72, 0.36)
+		if boss.d.has("def"):
+			bname = "%s, %s" % [boss.d["def"]["name"], boss.d["def"]["title"]]
+			bcol = boss.d["def"]["col"]
+		if boss_lbl.text != bname:
+			boss_lbl.text = bname
+			boss_lbl.add_theme_color_override("font_color", bcol)
 	dig_warn.visible = g.dig_blocked > 0
 	var want := Input.MOUSE_MODE_HIDDEN if g.state == "play" and not mouse_over_ui() else Input.MOUSE_MODE_VISIBLE
 	if Input.mouse_mode != want:
