@@ -281,10 +281,15 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   machines on `Enemy.act` windup -> go -> recover (charge, slam, spit, rain, erupt, roar, summon, cloud, dive, gust,
   breach), enraged below half health. New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
   spore) with "col", "splat" (matter left where they land) and "home" (spores drift after you); `boss_clouds`.
-  Lairs: buildings.gd `_lairs` (one per biome of the planet, on dry ground in the middle of a stretch of it,
-  planned before the dungeons and other structures) / `_lair` (a level arena paved in the middle, ramping to the
-  land, cleared to the sky; edge pillars with trim capitals, cover stubs, a stepped dais with an altar, braziers
-  and a carved stele behind it, a sure chest); `lair_list` -> main `_spawn_guardians`. Beaten: `_guardian_falls`
+  Lairs: buildings.gd `_lairs` runs LAST in `plan`, with its own RNG (so adding lairs moved no other structure:
+  several tests depend on the layout near the start), one per biome: spots deep inside the biome first; an open
+  arena (`_lair`: dry, level enough, 180 or 140 wide, levelled and paved, ramping to the land, cleared to the sky)
+  at least 600 columns from the start, else an underground hall (`_lair_deep`: 170 x 74, 130 rows down, a shaft with
+  landings from a small gate on the surface), then the same at 380; never within 420 columns of another lair.
+  Both use `_pillar` and `_shrine` (cover stubs, a stepped dais with an altar, braziers, a carved stele standing on
+  the floor, a sure chest). `lair_list` ({biome, pos, name, deep}) -> main `_spawn_guardians`; `lair_why` says why
+  a biome got none. A guardian wakes within `BossAI.WAKE` (110). Test mode sets `test_calm` (guardians stay asleep)
+  except during the guardians' own test, so other checks aren't disturbed by a boss nearby. Beaten: `_guardian_falls`
   (relic into `items`, loot, `planet_state["bosses_dead"]`). Relic effects live where they matter: ironbark in
   `hurt`, coil in `_update_player`'s speed, pearl in the breath check, rimefang in the spark's impact, roc in
   levitation, lionheart +40 max health once, sunidol in `_hurt_enemy`, lantern a light in `_tick`.
