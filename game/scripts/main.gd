@@ -8,6 +8,7 @@ const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const Space := preload("res://scripts/space.gd")
+const Skiff := preload("res://scripts/skiff.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
@@ -93,6 +94,7 @@ var gpu
 var ui
 var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
+var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
 var view_rect: TextureRect
 var pix: Node2D
@@ -228,6 +230,7 @@ class Mage extends Body:
 	var jump_buf := 0          # frames a jump press is remembered
 	var cast_frame := -100     # when the last spell was cast (for the cast pose)
 	var floating := false      # levitating (for the float pose)
+	var aboard = null          # the skiff this mage rides in (null: on foot)
 	func _init() -> void:
 		h = 17.0
 		w = 7.0
@@ -952,6 +955,8 @@ func _door_bump(m: Body) -> void:
 
 ## F: open a chest in reach, otherwise open or close the nearest door
 func _interact() -> void:
+	if _skiff_interact(player):
+		return
 	if not _chest_in_reach().is_empty():
 		_try_open_chest()
 		return
@@ -1481,6 +1486,7 @@ func _tick() -> void:
 		shake *= 0.88
 		hurt_flash *= 0.9
 		return
+	_update_skiff()
 	var tm := Time.get_ticks_usec()
 	for m in players:
 		if m.cast_cd > 0:
@@ -1490,7 +1496,7 @@ func _tick() -> void:
 		_use_grid(m)
 		_update_player(m)
 		m.sel = clampi(m.sel, 0, m.known.size() - 1)
-		if not m.dead and state == "play":
+		if not m.dead and state == "play" and m.aboard == null:
 			if m.local and build_on:
 				_update_build(m)
 			elif m.input.cast:
@@ -1553,6 +1559,9 @@ func _update_player(m: Mage) -> void:
 	var p := m
 	var aim: Vector2 = m.input.aim
 	if m.dead:
+		return
+	if m.aboard != null:
+		_ride(m)
 		return
 	var a := atan2(p.pos.y, p.pos.x)
 	var R := basis_r(a)
@@ -2714,6 +2723,7 @@ func recipe_done(r: Dictionary) -> bool:
 		"vital": return items.has("vital") or (max_hp >= 150 and not items.has("ring"))
 		"mana": return items.has("mana_crystal") or (max_mana >= 170 and not items.has("circlet"))
 		"ward": return heat_ward
+		"skiff": return items.has("skiff")
 	return false
 
 func recipe_unlocked(r: Dictionary) -> bool:
@@ -2788,6 +2798,11 @@ func craft(r: Dictionary) -> bool:
 		known.sort_custom(func(x, y): return Defs.SPELL_ORDER.find(x) < Defs.SPELL_ORDER.find(y))
 		ui.toast("New spell learned: %s" % Defs.SPELLS[r["spell"]]["name"], Color(1, 0.82, 0.23), 4.0)
 	match r["id"]:
+		"skiff":
+			items["skiff"] = randi() % 1000000      # (its seed: the shape of your skiff)
+			ui.toast("Wisp Skiff forged: press K to call it to you", Color(1, 0.82, 0.23), 4.0)
+			save_game()
+			return true
 		"tier2": tier = 2
 		"tier3": tier = 3
 		"tier4": tier = 4
@@ -2843,6 +2858,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_drink(player)
 		elif k == KEY_F:
 			_interact()
+		elif k == KEY_K:
+			call_skiff()
 		elif k == KEY_M or k == KEY_Z:
 			zoom_i = (zoom_i + 1) % zoom_levels.size()
 			zoom = zoom_levels[zoom_i]
@@ -3458,6 +3475,16 @@ func _enter_planet(index: int) -> void:
 	if chunks == null:
 		chunks = Chunks.new(self)
 	chunks.clear()
+	# the skiff, where it was left on this planet
+	player.aboard = null
+	skiff = null
+	if loaded and planet_state.has("skiff") and items.has("skiff"):
+		var sk: Dictionary = planet_state["skiff"]
+		skiff = Skiff.make(int(sk.get("seed", items["skiff"])))
+		var sp: Array = sk["pos"]
+		skiff.pos = Vector2(float(sp[0]), float(sp[1]))
+		skiff.ang = float(sk.get("ang", 0.0))
+		skiff.facing = int(sk.get("facing", 1))
 	enemies.clear()
 	_guards_alive.clear()
 	projs.clear()
@@ -3483,6 +3510,138 @@ func _enter_planet(index: int) -> void:
 	if not loaded:
 		save_world(false)
 	ui.toast("%s: %s" % [planet["name"], planet["desc"]], Color(0.8, 0.95, 0.9), 6.0)
+
+# ================================================================= skiff ===
+## The skiff on this planet: flown by whoever sits in its first seat (hold cast: toward the cursor),
+## otherwise falling and settling on its keel under its own weight. Away from every collision grid it
+## waits where it is. Flown out of the top of the orbit band, it carries its riders into space.
+func _update_skiff() -> void:
+	if skiff == null:
+		return
+	_use_grid(player)
+	var pl = skiff.pilot()
+	if pl == null and not in_grid(skiff.pos, 40.0):
+		return
+	var g := 0.17 * gravity_at(skiff.pos)
+	var aim: Vector2 = pl.input.aim if pl != null else skiff.pos
+	var push: bool = pl != null and pl.input.cast and state == "play"
+	skiff.fly(aim, push, g, 0.985 if skiff.pos.length() < Defs.R_TOP else 0.999)
+	skiff.advance(_skiff_solid if in_grid(skiff.pos, 40.0) else Callable())
+	var up: Vector2 = skiff.pos.normalized()
+	if skiff.pos.length() > Defs.R_SPACE - 9.5:
+		if pl != null and skiff.vel.dot(up) > 0.0:
+			space.try_enter()
+		if not space.active:
+			skiff.pos = up * (Defs.R_SPACE - 9.5)
+			skiff.vel -= up * maxf(skiff.vel.dot(up), 0.0)
+	if skiff.thrusting:
+		_skiff_exhaust()
+
+## the wisp engine's glow streaming from the stern
+func _skiff_exhaust() -> void:
+	var back: Vector2 = -skiff.nose()
+	var stern: Vector2 = skiff.to_world(Vector2(-skiff.com.x + 1.0, 0.0))
+	for k in 2:
+		_particle(stern + Vector2(randf() - 0.5, randf() - 0.5) * 4.0, back * (0.8 + randf() * 1.2) + skiff.vel * 0.7,
+			14 + randi() % 10, Color8(150, 170, 255), true, 0.0)
+	if not space.active:
+		lights.append([stern, 40.0, Color(0.6, 0.7, 1.3)])
+
+## a rider sits in their seat: they go where the skiff goes, breathe its air, and don't fall
+func _ride(m: Mage) -> void:
+	var k: int = skiff.seat_of(m) if skiff != null else -1
+	if k < 0:
+		m.aboard = null
+		return
+	m.pos = skiff.seat_world(k, m.h)
+	m.vx = 0.0
+	m.vy = 0.0
+	m.on_ground = true
+	m.floating = false
+	m.air_time = 0
+	m.facing = skiff.facing
+	m.breath = minf(m.max_breath, m.breath + 4.0)
+	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	if m.iframes > 0:
+		m.iframes -= 1
+
+## where the skiff's hull meets the world
+func _skiff_solid(p: Vector2) -> bool:
+	var kd: int = Defs.KIND[type_at(p)]
+	return kd == Defs.K_SOLID or kd == Defs.K_POWDER
+
+func _skiff_fits() -> bool:
+	for b in skiff.outline:
+		if _skiff_solid(skiff.to_world(b)):
+			return false
+	return true
+
+## K: the skiff answers its maker, set down beside you wherever it was (it's wisp-bound)
+func call_skiff() -> bool:
+	if not items.has("skiff"):
+		ui.toast("You have no skiff yet: forge one at the Wisp Forge (C)", Color(1, 0.7, 0.5), 2.5)
+		return false
+	if player.aboard != null or space.active:
+		return false
+	if skiff == null:
+		skiff = Skiff.make(int(items["skiff"]))
+	for k in Skiff.SEATS:
+		if skiff.riders[k] != null:
+			skiff.riders[k].aboard = null
+			skiff.riders[k] = null
+	_use_grid(player)
+	var a := atan2(player.pos.y, player.pos.x)
+	var right := basis_r(a)
+	var up := player.pos.normalized()
+	var placed := false
+	for side in [player.facing, -player.facing]:
+		for rise in range(0, 90, 3):
+			skiff.pos = player.pos + right * float(side) * (skiff.w * 0.5 + 8.0) + up * (6.0 + rise)
+			skiff.ang = right.angle()
+			skiff.facing = 1
+			if _skiff_fits():
+				placed = true
+				break
+		if placed:
+			break
+	if not placed:
+		skiff.pos = player.pos + up * (skiff.h + 30.0)
+	skiff.vel = Vector2.ZERO
+	for n in 30:
+		_particle(skiff.pos + Vector2(randf() - 0.5, randf() - 0.5) * Vector2(skiff.w, skiff.h), Vector2(randf() - 0.5, randf() - 0.5) * 0.6, 30 + randi() % 20, Color8(150, 190, 255), true, 0.0)
+	audio.play("blink", skiff.pos, 0.7)
+	ui.toast("Your skiff answers. F to board", Color(0.7, 0.85, 1.0), 2.5)
+	return true
+
+## F by the skiff: board it, or step out of it
+func _skiff_interact(m: Mage) -> bool:
+	if skiff == null:
+		return false
+	if m.aboard != null:
+		if not space.active and skiff.vel.length() > 3.0:
+			ui.toast("Too fast to step out", Color(1, 0.7, 0.5), 1.5)
+			return true
+		skiff.leave(m)
+		m.aboard = null
+		# out beside it, behind the cockpit (on top of it if that's blocked)
+		var out: Vector2 = skiff.to_world(Vector2(-skiff.com.x - 6.0, float(skiff.h) - skiff.com.y - m.h * 0.5 - 1.0))
+		_use_grid(m)
+		if box_solid(to_grid(out).x - m.w * 0.5, to_grid(out).y - m.h * 0.5, m.w, m.h):
+			out = skiff.to_world(Vector2(0.0, -skiff.com.y - m.h * 0.5 - 2.0))
+		m.pos = out
+		m.vx = 0.0
+		m.vy = 0.0
+		if space.active:
+			space.vel = skiff.vel
+		return true
+	if m.pos.distance_to(skiff.pos) < skiff.w * 0.5 + 10.0:
+		if skiff.board(m):
+			m.aboard = skiff
+			ui.toast("Aboard. Hold cast to fly toward the cursor; F to step out", Color(0.7, 0.85, 1.0), 3.0)
+		else:
+			ui.toast("The skiff is full", Color(1, 0.7, 0.5), 1.5)
+		return true
+	return false
 
 func _respawn() -> void:
 	var rs: float = gpu.surf_at(spawn_angle).x
@@ -3649,6 +3808,15 @@ func save_world(blocking: bool) -> void:
 		stamps.clear()
 	var raw: PackedByteArray = gpu.read_world()
 	planet_state["player"] = [player.pos.x, player.pos.y]
+	if space.active:
+		# (saved while out in space: you, and the skiff, are kept just above where you'd come back down)
+		var back: Vector2 = space.safe_return()
+		planet_state["player"] = [back.x, back.y]
+	if skiff != null:
+		var sp: Vector2 = space.safe_return() if space.active else skiff.pos
+		planet_state["skiff"] = {"pos": [sp.x, sp.y], "ang": skiff.ang, "facing": skiff.facing, "seed": skiff.design_seed}
+	else:
+		planet_state.erase("skiff")
 	var cs := []
 	for c in chests:
 		cs.append([c.pos.x, c.pos.y, c.opened])

@@ -42,6 +42,20 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   other planets (procedural discs from their biomes, `_disc_image`) and the planet's picture (a Sprite2D masked to a
   disc, placed by the world->screen affine). Back below `R_SPACE - 10` moving inward: `exit()`, the zoom eases back
   (`planet_tick`), a short cooldown. Space shares the planet's world coordinates (the planet at the origin).
+- Pixel bodies (`scripts/pixel_body.gd`, RefCounted): the general flying/drifting object made of cells (material
+  + variant per cell in a w x h grid, body coords x along the nose, y down; `pos` = centre of mass, `ang` the +x
+  axis's world angle, `facing` -1 mirrors). `rebuild` (mass, `com`, `outline`), `to_world`/`to_body`, `texture()`
+  (palette colours, glass see-through), `carve` (damage), `pieces` (joined-up parts). The skiff uses it; asteroids,
+  enemy ships and wrecks are meant to.
+- The Wisp Skiff (`scripts/skiff.gd`, extends pixel_body.gd; `Skiff.make(seed)`): grown from parts (`_hull`, `_trim`,
+  `_canopy`, `_engine`, `_fin`), two seats (`seat_cells`, `riders`, pilot first). `fly` (hold cast: turn toward the
+  cursor, mirroring when aiming behind so the keel stays down, push along the nose; hands off it eases level;
+  resting on its keel it stays put), `advance` (moves in sub-steps, colliding its outline through main's collision
+  grid via `collide`). Forged at the Wisp Forge (recipe "skiff": `items["skiff"]` is its seed); K `call_skiff`
+  sets it down beside you; F (`_skiff_interact`, before chests and doors) boards or steps out; riders follow their
+  seat (`_ride`: no casting or digging aboard, its air to breathe). main `_update_skiff` flies it on the planet;
+  flown out of the top of the orbit band it takes everyone into space (`space.try_enter` needs the whole party
+  aboard), and space.gd flies it out there. Saved per planet in `planet_state["skiff"]`; overlay `_draw_skiff`.
 
 ## Cell format
 - Main buffer (binding 0), uint per cell:

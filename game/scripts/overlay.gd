@@ -202,6 +202,34 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 	MageRig.draw_pixels(self, m.rig.front_pixels(gem), origin, 1.0, mod, _masks[key])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+## The skiff: its cells' picture placed by the world -> screen map at its centre (so it turns and
+## mirrors with it). Out in space, where the view zooms far out, it's drawn bigger (like the mage)
+## and placed so the pilot's seat sits where the pilot is drawn.
+func _draw_skiff() -> void:
+	var sk = game.skiff
+	if sk == null:
+		return
+	if game.space.active and sk.pos.length() < Defs.R_SPACE - 9.5 and sk.pilot() == null:
+		return                       # (left on the planet below: not drawn out in space)
+	var tx: ImageTexture = sk.texture()
+	var p: Vector2 = game.world_to_screen(sk.pos)
+	var ex: Vector2 = game.world_to_screen(sk.pos + sk.axis_x()) - p
+	var ey: Vector2 = game.world_to_screen(sk.pos + sk.axis_y()) - p
+	if game.space.active and not game.space.live:
+		var sc: float = float(game.zoom) / minf(float(game.zoom), 2.0)
+		ex *= sc
+		ey *= sc
+		if game.player.aboard == sk:
+			# (the seat under the pilot's feet, where the overlay draws his feet)
+			var pm = game.player
+			var bs: Vector2 = sk.to_body(pm.pos) + Vector2(0.0, pm.h * 0.5)
+			p = _feet(pm.pos, pm.h, pm.on_ground)[0] - ex * bs.x - ey * bs.y
+	if p.x < -200 or p.y < -200 or p.x > game.VW + 200 or p.y > game.VH + 200:
+		return
+	draw_set_transform_matrix(Transform2D(ex, ey, p))
+	draw_texture(tx, -sk.com, _lit(p))
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+
 ## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the
 ## light streaming from the staff, and the reticle.
 func _draw_in_space() -> void:
@@ -209,6 +237,7 @@ func _draw_in_space() -> void:
 		_px(p["pos"], p["col"])
 	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 	_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
+	_draw_skiff()
 	if game.ui.mouse_over_ui():
 		return
 	var m: Vector2 = (get_viewport().get_mouse_position() / game.scale_px).floor()
@@ -319,6 +348,8 @@ func _draw_all() -> void:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)
+	# the skiff (over its riders: the hull hides their legs, the canopy is glass)
+	_draw_skiff()
 	# wisp companion
 	var ws: Vector2 = game.world_to_screen(game.wisp)
 	var wf := ws.floor()

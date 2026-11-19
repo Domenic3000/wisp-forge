@@ -2172,6 +2172,76 @@ func run() -> void:
 		sx_in >= 0 and sx_pic and sx_off >= 0 and sx_gf1 == sx_gf0 and sx_far > 800.0 and sx_back >= 0 and g.gpu.frame > sx_gf2 + 60 and absf(g.zoom - float(g.zoom_levels[g.zoom_i])) < 0.05 and sx_r < Defs.R_SPACE,
 		"out after %d ticks of levitating (picture taken: %s); the picture took over after %d ticks of the jet (GPU frames while it showed: %d); %.0f past the orbit band at zoom %.1f; back in the band after %d ticks; then the planet ran again (%d GPU frames in 150 ticks), zoom %.2f, you at radius %.0f" % [sx_in, sx_pic, sx_off, sx_gf1 - sx_gf0, sx_far, sx_zoom, sx_back, g.gpu.frame - sx_gf2, g.zoom, sx_r])
 
+	# ---- the Wisp Skiff: forged, called, boarded, flown up into space and back, landed, left ----
+	g.player.dead = false
+	g.test_god = true
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	var sf_rec: Dictionary = {}
+	for sf_r in g.recipes:
+		if sf_r["id"] == "skiff":
+			sf_rec = sf_r
+	for sf_k in sf_rec.get("cost", {}):
+		g.player.inv[int(sf_k)] += int(sf_rec["cost"][sf_k])
+	var sf_forged: bool = not sf_rec.is_empty() and g.craft(sf_rec) and g.items.has("skiff")
+	var sf_ang: float = g.spawn_angle + 0.03
+	_go(Vector2(cos(sf_ang), sin(sf_ang)) * (g.gpu.surf_at(sf_ang).x + 12.0))
+	g.time = fposmod(sf_ang - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+	await _frames(40)
+	var sf_called: bool = g.call_skiff()
+	var sf_sk = g.skiff
+	var sf_settle := -1
+	for sfk1 in 300:
+		await _frames(1)
+		if sf_sk.grounded and sf_sk.vel.length() < 0.5:
+			sf_settle = sfk1
+			break
+	var sf_rest: Vector2 = sf_sk.pos
+	await _frames(40)
+	var sf_drift: float = sf_sk.pos.distance_to(sf_rest)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("skiff.png"))
+	# aboard
+	g.player.pos = sf_sk.pos
+	var sf_board: bool = g._skiff_interact(g.player) and g.player.aboard == sf_sk
+	# up, holding cast with the cursor straight overhead, until out in space
+	var sf_r0: float = sf_sk.pos.length()
+	g.test_cast = true
+	var sf_up := -1
+	for sfk2 in 1500:
+		g.test_aim = sf_sk.pos * 1.5
+		await _frames(1)
+		if g.space.active:
+			sf_up = sfk2
+			break
+	await _frames(90)
+	var sf_far: float = sf_sk.pos.length() - Defs.R_SPACE
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("skiff_space.png"))
+	# back: cursor on the planet until in the orbit band again, then let go and come down
+	var sf_back := -1
+	for sfk3 in 1500:
+		g.test_aim = sf_sk.pos * 0.3
+		await _frames(1)
+		if not g.space.active:
+			sf_back = sfk3
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	var sf_land := -1
+	for sfk4 in 1800:
+		await _frames(1)
+		if sf_sk.grounded and sf_sk.vel.length() < 0.5:
+			sf_land = sfk4
+			break
+	var sf_la: float = atan2(sf_sk.pos.y, sf_sk.pos.x)
+	var sf_above: float = sf_sk.pos.length() - g.gpu.surf_at(sf_la).x
+	var sf_with: bool = g.player.aboard == sf_sk and g.player.pos.distance_to(sf_sk.pos) < 30.0
+	await _frames(20)
+	var sf_out: bool = g._skiff_interact(g.player) and g.player.aboard == null
+	await _frames(30)
+	_ok("the Wisp Skiff: forged, called, boarded, flown into space and back, landed and left",
+		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 60.0,
+		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later, %.0f above the ground line, you still aboard %s; stepped out %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_above, sf_with, sf_out])
+
 	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
 	var sp_t := Time.get_ticks_msec()
 	g._enter_planet(4)

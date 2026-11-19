@@ -61,16 +61,22 @@ func _ready() -> void:
 
 # ------------------------------------------------------------- crossing ---
 
-## The mage has risen to the top of the orbit band: out into space. A party travels together, so
-## (for now, before the skiff) only a mage on their own can leave.
+## The mage (or the skiff they ride) has risen to the top of the orbit band: out into space. A party
+## travels together: in the skiff, everyone has to be aboard; on foot, only a mage on their own.
 func try_enter() -> void:
 	if active or cooldown > 0:
 		return
-	if game.players.size() > 1:
-		if game.frame % 90 == 0:
-			game.ui.toast("Your party has to leave together (that comes with the skiff)", Color(0.8, 0.9, 1.0), 2.0)
-		return
 	var m = game.player
+	var sk = m.aboard
+	if sk != null:
+		if not sk.aboard_all(game.players):
+			if game.frame % 90 == 0:
+				game.ui.toast("Everyone has to be aboard to leave the planet", Color(0.8, 0.9, 1.0), 2.0)
+			return
+	elif game.players.size() > 1:
+		if game.frame % 90 == 0:
+			game.ui.toast("Your party has to leave together: in the skiff", Color(0.8, 0.9, 1.0), 2.0)
+		return
 	var a := atan2(m.pos.y, m.pos.x)
 	vel = game.basis_r(a) * m.vx + game.basis_d(a) * m.vy
 	vel += m.pos.normalized() * 0.6          # (a nudge out, so you don't drop straight back in)
@@ -80,15 +86,27 @@ func try_enter() -> void:
 	live = true
 	easing = false
 	jetting = false
-	game.ui.toast("Space. Hold cast to fly by the staff's jet; fall back to land.", Color(0.75, 0.9, 1.0), 4.0)
+	if sk != null:
+		game.ui.toast("Space. Hold cast to fly the skiff toward the cursor; head back down to land.", Color(0.75, 0.9, 1.0), 4.0)
+	else:
+		game.ui.toast("Space. Hold cast to fly by the staff's jet; fall back to land.", Color(0.75, 0.9, 1.0), 4.0)
 
 ## Back into the orbit band: the planet's own physics take over again, and the view eases back in.
 func exit() -> void:
 	var m = game.player
-	var a := atan2(m.pos.y, m.pos.x)
-	m.vx = vel.dot(game.basis_r(a))
-	m.vy = clampf(vel.dot(game.basis_d(a)), -6.0, 6.0)
-	m.pos = m.pos.normalized() * minf(m.pos.length(), Defs.R_SPACE - 12.0)
+	var sk = game.skiff
+	if m.aboard != null:
+		sk.pos = sk.pos.normalized() * minf(sk.pos.length(), Defs.R_SPACE - 12.0)
+		game._ride(m)
+	else:
+		var a := atan2(m.pos.y, m.pos.x)
+		m.vx = vel.dot(game.basis_r(a))
+		m.vy = clampf(vel.dot(game.basis_d(a)), -6.0, 6.0)
+		m.pos = m.pos.normalized() * minf(m.pos.length(), Defs.R_SPACE - 12.0)
+		if sk != null and sk.pos.length() > Defs.R_SPACE - 9.0:
+			# a skiff left drifting out there follows you home, into the orbit band above you
+			sk.pos = m.pos.normalized() * (Defs.R_SPACE - 30.0) + game.basis_r(atan2(m.pos.y, m.pos.x)) * 50.0
+			sk.vel = Vector2.ZERO
 	active = false
 	live = true
 	easing = true
@@ -102,10 +120,29 @@ func exit() -> void:
 ## One tick out in space (main._tick hands over to this while active).
 func tick() -> void:
 	var m = game.player
+	var sk = game.skiff
+	if sk != null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
+		# the skiff: flown by its pilot (hold cast), or drifting if nobody's aboard (one left down on
+		# the planet waits there)
+		var pl = sk.pilot()
+		var aim: Vector2 = pl.input.aim if pl != null else sk.pos
+		sk.fly(aim, pl != null and pl.input.cast, pull(sk.pos), 0.9995)
+		sk.advance(Callable())
+		for rider in sk.riders:
+			if rider != null:
+				game._ride(rider)
+		if sk.thrusting:
+			game._skiff_exhaust()
+	if m.aboard != null:
+		vel = sk.vel
+		_follow(m)
+		if sk.pos.length() < Defs.R_SPACE - 10.0 and sk.vel.dot(sk.pos.normalized()) < 0.0:
+			exit()
+		return
 	var r: float = m.pos.length()
 	var up: Vector2 = m.pos / r
 	# the planet's pull: as at the top of the orbit band, fading with the square of the distance
-	vel -= up * 0.17 * 0.06 * pow(Defs.R_SPACE / r, 2.0)
+	vel -= up * pull(m.pos)
 	jetting = false
 	if m.input.cast and m.mana > JET_MANA:
 		var d: Vector2 = m.input.aim - m.pos
@@ -133,6 +170,18 @@ func tick() -> void:
 	m.breath = minf(m.max_breath, m.breath + 4.0)       # (inside the wisp bubble)
 	if m.iframes > 0:
 		m.iframes -= 1
+	_follow(m)
+	# back down into the orbit band
+	if m.pos.length() < Defs.R_SPACE - 10.0 and vel.dot(up) < 0.0:
+		exit()
+
+## the planet's pull out here (per tick, toward its centre): as at the top of the orbit band,
+## fading with the square of the distance
+func pull(p: Vector2) -> float:
+	return 0.17 * 0.06 * pow(Defs.R_SPACE / maxf(p.length(), Defs.R_SPACE), 2.0)
+
+## the camera follows the mage
+func _follow(m) -> void:
 	# the camera follows, zooming out as you go so the planet's near side stays well on screen (a
 	# quarter of the view's height below you)
 	var zt := clampf((m.pos.length() - Defs.R_TOP) / (0.25 * float(game.VH)), SWAP_ZOOM * 0.98, 160.0)
@@ -144,9 +193,11 @@ func tick() -> void:
 	visible = not live
 	game.view_rect.visible = live
 	queue_redraw()
-	# back down into the orbit band
-	if m.pos.length() < Defs.R_SPACE - 10.0 and vel.dot(up) < 0.0:
-		exit()
+
+## Where to keep you (and the skiff) if the game is saved out here: just inside the orbit band
+## above where you'd come back down.
+func safe_return() -> Vector2:
+	return game.player.pos.normalized() * (Defs.R_SPACE - 20.0)
 
 ## Every tick on the planet: just back from space, the view eases in to the zoom you chose.
 func planet_tick() -> void:
@@ -223,8 +274,9 @@ func _draw() -> void:
 	for d2 in discs:
 		_marker(xf, d2["pos"], d2["radius"], String(d2["name"]), Color(0.85, 0.85, 1.0))
 	# you, in your wisp bubble (drawn by the overlay; the bubble here, under the sprite)
-	var ms: Vector2 = xf * game.player.pos
-	draw_arc(ms, 11.0, 0.0, TAU, 28, Color(0.55, 0.85, 1.0, 0.35 if jetting else 0.22), 1.0)
+	if game.player.aboard == null:
+		var ms: Vector2 = xf * game.player.pos
+		draw_arc(ms, 11.0, 0.0, TAU, 28, Color(0.55, 0.85, 1.0, 0.35 if jetting else 0.22), 1.0)
 
 func _marker(xf: Transform2D, wpos: Vector2, rad: float, text: String, col: Color) -> void:
 	var w := float(game.VW)
