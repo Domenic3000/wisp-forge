@@ -62,7 +62,53 @@ var counts := PackedInt32Array()
 var view_img: Image
 var frame := 0
 
+var create_ms := {}     # (init_async: how long each shader took to make on the device)
+const SHADERS := ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants", "rectread"]
+
 func init() -> bool:
+	if not _alloc():
+		return false
+	var prefix: String = Defs.glsl_prefix()
+	for nm in SHADERS:
+		if not _compile(nm, prefix):
+			return false
+	_make_static_sets()
+	resize(VW, VH)
+	return true
+
+## init(), spread over frames (a shader compiled a frame), for a planet of another size made while
+## the game goes on (space travel: main.arrive_planet).
+func init_async() -> bool:
+	create_ms.clear()
+	var ta := Time.get_ticks_usec()
+	if not _alloc():
+		return false
+	create_ms["(buffers)"] = (Time.get_ticks_usec() - ta) / 1000
+	var prefix: String = Defs.glsl_prefix()
+	# every shader to SPIR-V on a worker thread, then made on the device one a frame
+	var spirvs := {}
+	var task := WorkerThreadPool.add_task(func():
+		for sn in SHADERS:
+			spirvs[sn] = _spirv(sn, prefix))
+	while not WorkerThreadPool.is_task_completed(task):
+		await Engine.get_main_loop().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	for nm in SHADERS:
+		if spirvs.get(nm) == null:
+			return false
+		var t0 := Time.get_ticks_usec()
+		if not _create(nm, spirvs[nm]):
+			return false
+		create_ms[nm] = (Time.get_ticks_usec() - t0) / 1000
+		await Engine.get_main_loop().process_frame
+	ta = Time.get_ticks_usec()
+	_make_static_sets()
+	resize(VW, VH)
+	create_ms["(sets and screen buffers)"] = (Time.get_ticks_usec() - ta) / 1000
+	return true
+
+## the device and the world's buffers, sized for the planet's geometry
+func _alloc() -> bool:
 	rd = RenderingServer.create_local_rendering_device()
 	if rd == null:
 		error_text = "This PC's graphics driver doesn't support compute shaders (Vulkan or Direct3D 12 needed)."
@@ -78,12 +124,6 @@ func init() -> bool:
 	params_buf = rd.storage_buffer_create(NPARAM * 16)
 	surf_buf = rd.storage_buffer_create(Defs.NS * 32)
 	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
-	var prefix: String = Defs.glsl_prefix()
-	for nm in ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants", "rectread"]:
-		if not _compile(nm, prefix):
-			return false
-	_make_static_sets()
-	resize(VW, VH)
 	return true
 
 func _load_text(path: String) -> String:
@@ -93,10 +133,17 @@ func _load_text(path: String) -> String:
 	return f.get_as_text()
 
 func _compile(nm: String, prefix: String) -> bool:
+	var spirv = _spirv(nm, prefix)
+	if spirv == null:
+		return false
+	return _create(nm, spirv)
+
+## GLSL -> SPIR-V (glslang: CPU work only, so it can run beside the game)
+func _spirv(nm: String, prefix: String) -> RDShaderSPIRV:
 	var body := _load_text("res://shaders/%s.comp" % nm)
 	if body == "":
 		error_text = "Missing shader file: shaders/%s.comp" % nm
-		return false
+		return null
 	var lines := body.split("\n")
 	var out := prefix
 	for ln in lines:
@@ -113,7 +160,11 @@ func _compile(nm: String, prefix: String) -> bool:
 	if spirv.compile_error_compute != "":
 		error_text = "Shader '%s' failed to compile:\n%s" % [nm, spirv.compile_error_compute]
 		printerr(error_text)
-		return false
+		return null
+	return spirv
+
+## the shader and its pipeline on the device
+func _create(nm: String, spirv: RDShaderSPIRV) -> bool:
 	var sh: RID = rd.shader_create_from_spirv(spirv, nm)
 	if not sh.is_valid():
 		error_text = "Shader '%s' could not be created." % nm
@@ -231,6 +282,12 @@ func build_surface(planet: Dictionary) -> void:
 
 ## Generates every cell, in row bands so no single GPU job runs too long.
 func generate(spawn_angle: float, boss: Vector4, sites: Array) -> void:
+	for job in generate_prepare(spawn_angle, boss, sites):
+		generate_band(job)
+
+## The generation of a whole planet, set up and split into its row bands: each band can run on its
+## own (`generate_band`), so a planet can also be made a band a frame while the game goes on.
+func generate_prepare(spawn_angle: float, boss: Vector4, sites: Array) -> Array:
 	flush()
 	var sd := PackedFloat32Array()
 	sd.resize((MAX_SITES + 1) * 4)
@@ -245,20 +302,27 @@ func generate(spawn_angle: float, boss: Vector4, sites: Array) -> void:
 	setp(120, boss)
 	setp(121, Vector4(spawn_angle, 0, 0, 0))
 	_upload_params()
+	var jobs := []
 	for s in Defs.NSH:
 		var y0: int = Defs.SH_Y0[s]
 		var y1: int = Defs.SH_Y1[s]
-		var n: int = Defs.SH_N[s]
 		var band := 48 if s == 0 else 96
 		var y := y0
 		while y < y1:
 			var ye := mini(y + band, y1)
-			var cl := rd.compute_list_begin()
-			_dispatch(cl, "gen", "gen", [s, y, ye], [], groups(n, 16), groups(ye - y, 16))
-			rd.compute_list_end()
-			rd.submit()
-			rd.sync()
+			jobs.append([s, y, ye])
 			y = ye
+	return jobs
+
+func generate_band(job: Array) -> void:
+	var s: int = job[0]
+	var y: int = job[1]
+	var ye: int = job[2]
+	var cl := rd.compute_list_begin()
+	_dispatch(cl, "gen", "gen", [s, y, ye], [], groups(int(Defs.SH_N[s]), 16), groups(ye - y, 16))
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
 
 ## Writes generated structures into the planet. Each: {x0, y0, w, h, data: PackedInt32Array}.
 func stamp(structs: Array, seed: int) -> void:
@@ -314,13 +378,17 @@ func _dispatch_set(cl: int, shader_name: String, uset: RID, ints: Array, gx: int
 	rd.compute_list_add_barrier(cl)
 
 func surf_at(angle: float) -> Vector4:
-	var n: int = Defs.NS
+	var n: int = surface.size() / 8          # (its own size: a planet being made may not have one yet)
+	if n == 0:
+		return Vector4.ZERO
 	var a := fposmod(angle, TAU)
 	var i := mini(int(a / TAU * n), n - 1)
 	return Vector4(surface[i * 8], surface[i * 8 + 1], surface[i * 8 + 2], surface[i * 8 + 3])
 
 func surf_b(angle: float) -> Vector4:
-	var n: int = Defs.NS
+	var n: int = surface.size() / 8          # (its own size: a planet being made may not have one yet)
+	if n == 0:
+		return Vector4.ZERO
 	var a := fposmod(angle, TAU)
 	var i := mini(int(a / TAU * n), n - 1)
 	return Vector4(surface[i * 8 + 4], surface[i * 8 + 5], surface[i * 8 + 6], surface[i * 8 + 7])
@@ -585,6 +653,21 @@ func read_world() -> PackedByteArray:
 	flush()
 	var out := rd.buffer_get_data(world_buf)
 	out.append_array(rd.buffer_get_data(aux_buf))
+	return out
+
+## read_world a slice a frame (8 MB at a time). Await it.
+func read_world_async() -> PackedByteArray:
+	flush()
+	var out := PackedByteArray()
+	var n: int = Defs.total_cells() * 4
+	var step := 8 << 20
+	for buf in [world_buf, aux_buf]:
+		var o := 0
+		while o < n:
+			var sz := mini(step, n - o)
+			out.append_array(rd.buffer_get_data(buf, o, sz))
+			o += sz
+			await Engine.get_main_loop().process_frame
 	return out
 
 func write_world(data: PackedByteArray) -> void:

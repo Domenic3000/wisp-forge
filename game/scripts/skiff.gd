@@ -23,6 +23,7 @@ var riders: Array = []          # [mage or null] per seat
 var thrusting := false
 var grounded := false
 var ground_t := 0               # ticks resting on something
+var centre := Vector2.ZERO      # the centre of the planet it flies over (space.gd: the nearest one)
 
 static func make(sd: int):
 	var s = load("res://scripts/skiff.gd").new()
@@ -143,7 +144,7 @@ func aboard_all(ps: Array) -> bool:
 ## `drag` per tick.
 func fly(aim: Vector2, push: bool, g: float, drag: float) -> void:
 	thrusting = false
-	var up := pos.normalized()
+	var up := (pos - centre).normalized()      # (centre: the planet it flies over; out in space the nearest)
 	var right := Vector2(up.y, -up.x)          # the planet's "right" here (its "up" turned a quarter clockwise)
 	if not push and grounded and vel.length() < 0.5:
 		# resting on its keel: it stays put, settling level

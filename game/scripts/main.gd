@@ -427,7 +427,7 @@ func _process(delta: float) -> void:
 			_tick()
 	if state == "play" or state == "dead" or state == "forge":
 		tp = Time.get_ticks_usec()
-		if space.active and not space.live:
+		if (space.active and not space.live) or travelling:
 			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
 			lights.clear()
 		else:
@@ -512,6 +512,9 @@ func _take_gpu_results() -> void:
 	prof_add("picture upload", Time.get_ticks_usec() - tu)
 	overlay.queue_redraw()
 
+func day_len() -> float:
+	return DAY_LEN
+
 ## where the sun is, as seen from the planet (it turns once a day)
 func sun_angle() -> float:
 	return spawn_angle - 1.1 + time / DAY_LEN * TAU
@@ -531,7 +534,8 @@ func capture_planet() -> Dictionary:
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, 0))           # (no torch lights: their places are for the close view)
 	var frames := []
 	for k in mini(players.size(), gpu.MAXP):
-		frames.append(_grid_frame(players[k].pos))
+		if players[k].pos.length() < Defs.R_SPACE:
+			frames.append(_grid_frame(players[k].pos))
 	gpu.step([cam_c], frames, false, false, 0, true)
 	gpu.fresh = false                                  # (that picture isn't the view)
 	var img: Image = gpu.view_img.get_region(Rect2i((VW - side) / 2, (VH - side) / 2, side, side))
@@ -1217,9 +1221,17 @@ func unrolled() -> bool:
 func _view() -> Vector2:
 	return cam_c if view_c == Vector2.ZERO else view_c
 
+## the view's turn: "up" points away from the planet's centre, and out in space away from the
+## nearest planet's (space.view_ang, eased as that changes)
+func view_angle() -> float:
+	if space.active and not space.live:
+		return space.view_ang
+	var c := _view()
+	return atan2(c.y, c.x)
+
 func world_to_screen(p: Vector2) -> Vector2:
 	var c := _view()
-	var a := atan2(c.y, c.x)
+	var a := view_angle()
 	if unrolled():
 		var d := wrapf(atan2(p.y, p.x) - a, -PI, PI)
 		return Vector2(-d / ustep, c.length() - p.length()) / zoom + Vector2(VW, VH) * 0.5
@@ -1228,7 +1240,7 @@ func world_to_screen(p: Vector2) -> Vector2:
 
 func screen_to_world(px: Vector2) -> Vector2:
 	var c := _view()
-	var a := atan2(c.y, c.x)
+	var a := view_angle()
 	var o := (px - Vector2(VW, VH) * 0.5) * zoom
 	if unrolled():
 		var th := a - o.x * ustep
@@ -2690,7 +2702,8 @@ func _update_particles() -> void:
 
 func _update_wisp() -> void:
 	wisp_t += 0.05
-	var a := atan2(player.pos.y, player.pos.x)
+	var wc: Vector2 = space.centre if space.active else Vector2.ZERO
+	var a := (player.pos - wc).angle()
 	var target := player.pos + basis_r(a) * (-player.facing * 11.0) - basis_d(a) * (17.0 + sin(wisp_t * 2.0) * 3.0)
 	wisp = wisp.lerp(target, 0.08)
 	if randf() < 0.3:
@@ -3426,14 +3439,90 @@ func start_game(use_save: bool) -> void:
 	save_game()
 
 func _enter_planet(index: int) -> void:
+	_make_world(index, false)
+	_respawn()
+	if _loaded and planet_state.has("player"):
+		var pp: Array = planet_state["player"]
+		player.pos = Vector2(float(pp[0]), float(pp[1]))
+		player.grid_g = player.pos
+		player.grid_a = atan2(player.pos.y, player.pos.x)
+		_use_grid(player)
+		time = float(planet_state.get("time", time))
+	cam_c = player.pos
+	wisp = player.pos
+	# let fresh liquids settle around the spawn
+	_write_frame_params()
+	for k in 60:
+		gpu.step([player.pos], [], false, true)
+	_gpu_frame(false)
+	if not _loaded:
+		save_world(false)
+	ui.toast("%s: %s" % [planet["name"], planet["desc"]], Color(0.8, 0.95, 0.9), 6.0)
+
+## Flying through space toward another planet: it is made while you fly (`_make_world` spread over
+## frames; the GPU has nothing else to do out there), without moving you or the skiff you ride.
+## `travelling` is set meanwhile (nothing saves or draws from the GPU), `travel_progress` runs 0..1.
+## The planet you left must have been saved first (space.gd does). Await it.
+func arrive_planet(index: int) -> void:
+	travelling = true
+	travel_progress = 0.0
+	_phases.clear()
+	_phase_t = Time.get_ticks_usec()
+	await _make_world(index, true)
+	travelling = false
+	travel_progress = 1.0
+	if testing:
+		print("[travel] slowest steps (ms): ", _phases, "; making each shader (ms): ", gpu.create_ms)
+
+var _phases := {}
+var _phase_t := 0
+
+## (making a planet in the background: the longest stretch of work between two frames, per step)
+func _phase(nm: String) -> void:
+	var now := Time.get_ticks_usec()
+	_phases[nm] = maxi(int(_phases.get(nm, 0)), (now - _phase_t) / 1000)
+	_phase_t = now
+
+## (after a frame's wait: the next step's time starts here)
+func _phase_go() -> void:
+	_phase_t = Time.get_ticks_usec()
+
+## Waits (a frame at a time) for a world still being written in the background.
+func saves_done() -> void:
+	while _save_task >= 0 and not WorkerThreadPool.is_task_completed(_save_task):
+		await get_tree().process_frame
+	if _save_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_save_task)
+		_save_task = -1
+
+var travelling := false
+var travel_progress := 0.0
+var _loaded := false              # (the planet just made came from its save)
+
+## Makes planet `index` the one the GPU holds: its geometry (a planet of another size makes the GPU
+## world again: the shaders have the geometry built in), its surface, its saved world or a fresh one
+## with its structures settled, then chests, doors, foes. All at once from the title, or a step a
+## frame when `arriving` from space.
+func _make_world(index: int, arriving: bool) -> void:
+	var tree := get_tree()
 	planet = Defs.make_planet(index)
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
-		# a planet of another size: its shells are laid out anew, and the GPU world (buffers and
-		# shaders, which have the geometry built in) is made again to fit
 		Defs.set_geometry(float(planet["radius"]))
 		gpu.cleanup()
-		if not gpu.init():
+		var ok := false
+		if arriving:
+			_phase("free the old world")
+			ok = await gpu.init_async()
+			_phase_go()
+		else:
+			ok = gpu.init()
+		if not ok:
 			push_error(gpu.error_text)
+	gpu.fresh = false
+	travel_progress = 0.2
+	if arriving:
+		await saves_done()          # (the planet you left may still be being written)
+		_phase_go()
 	gpu.build_surface(planet)
 	# spawn in the middle of the first friendly biome
 	var bl: Array = planet["biomes"]
@@ -3461,13 +3550,43 @@ func _enter_planet(index: int) -> void:
 		planet_state = kept
 		print("[Wisp Forge] regenerating %s with the new structure generator" % planet["name"])
 	planet_state["gen"] = GEN_VERSION
+	_loaded = loaded
+	if arriving:
+		_phase("surface and load")
+		await tree.process_frame
+		_phase_go()
 	builds = Buildings.new()
-	builds.plan(planet, gpu.surface, spawn_angle, boss_a, not loaded)
+	if arriving:
+		# (planning touches no GPU and no nodes: it runs beside the game)
+		var task := WorkerThreadPool.add_task(builds.plan.bind(planet, gpu.surface, spawn_angle, boss_a, not loaded))
+		_phase("start planning")
+		while not WorkerThreadPool.is_task_completed(task):
+			await tree.process_frame
+			_phase_go()
+		WorkerThreadPool.wait_for_task_completion(task)
+	else:
+		builds.plan(planet, gpu.surface, spawn_angle, boss_a, not loaded)
+	travel_progress = 0.35
 	if not loaded:
-		gpu.generate(spawn_angle, boss_info, builds.sites)
+		var jobs: Array = gpu.generate_prepare(spawn_angle, boss_info, builds.sites)
+		for k in jobs.size():
+			gpu.generate_band(jobs[k])
+			if arriving and k % 2 == 1:
+				travel_progress = 0.35 + 0.4 * float(k) / float(jobs.size())
+				_phase("generate")
+				await tree.process_frame
+				_phase_go()
 		gpu.stamp(builds.structs, int(planet["seed"]))
 		# let the ruins fall into ruin: unsupported pieces drop and break before you arrive
-		gpu.settle(builds.settle, 0.0, 150)
+		if arriving:
+			for k in 75:
+				gpu.settle(builds.settle, 0.0, 2)
+				travel_progress = 0.75 + 0.2 * float(k) / 75.0
+				_phase("stamp and settle")
+				await tree.process_frame
+				_phase_go()
+		else:
+			gpu.settle(builds.settle, 0.0, 150)
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
 	_make_chests(loaded)
@@ -3475,16 +3594,20 @@ func _enter_planet(index: int) -> void:
 	if chunks == null:
 		chunks = Chunks.new(self)
 	chunks.clear()
-	# the skiff, where it was left on this planet
-	player.aboard = null
-	skiff = null
-	if loaded and planet_state.has("skiff") and items.has("skiff"):
-		var sk: Dictionary = planet_state["skiff"]
-		skiff = Skiff.make(int(sk.get("seed", items["skiff"])))
-		var sp: Array = sk["pos"]
-		skiff.pos = Vector2(float(sp[0]), float(sp[1]))
-		skiff.ang = float(sk.get("ang", 0.0))
-		skiff.facing = int(sk.get("facing", 1))
+	stamps.clear()
+	brushes.clear()
+	# the skiff, where it was left on this planet (one you arrive in comes with you)
+	var riding: bool = arriving and player.aboard != null
+	if not riding:
+		player.aboard = null
+		skiff = null
+		if loaded and planet_state.has("skiff") and items.has("skiff"):
+			var sk: Dictionary = planet_state["skiff"]
+			skiff = Skiff.make(int(sk.get("seed", items["skiff"])))
+			var sp: Array = sk["pos"]
+			skiff.pos = Vector2(float(sp[0]), float(sp[1]))
+			skiff.ang = float(sk.get("ang", 0.0))
+			skiff.facing = int(sk.get("facing", 1))
 	enemies.clear()
 	_guards_alive.clear()
 	projs.clear()
@@ -3492,24 +3615,10 @@ func _enter_planet(index: int) -> void:
 	var bd := Vector2(cos(boss_a), sin(boss_a))
 	if not planet_state.get("boss_dead", false):
 		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
-	_respawn()
-	if loaded and planet_state.has("player"):
-		var pp: Array = planet_state["player"]
-		player.pos = Vector2(float(pp[0]), float(pp[1]))
-		player.grid_g = player.pos
-		player.grid_a = atan2(player.pos.y, player.pos.x)
-		_use_grid(player)
+	if loaded:
 		time = float(planet_state.get("time", time))
-	cam_c = player.pos
-	wisp = player.pos
-	# let fresh liquids settle around the spawn
-	_write_frame_params()
-	for k in 60:
-		gpu.step([player.pos], [], false, true)
-	_gpu_frame(false)
-	if not loaded:
-		save_world(false)
-	ui.toast("%s: %s" % [planet["name"], planet["desc"]], Color(0.8, 0.95, 0.9), 6.0)
+	if arriving:
+		_phase("chests, doors, foes")
 
 # ================================================================= skiff ===
 ## The skiff on this planet: flown by whoever sits in its first seat (hold cast: toward the cursor),
@@ -3797,8 +3906,8 @@ func _apply_save(s: Dictionary) -> void:
 func _world_path(i: int) -> String:
 	return _save_dir().path_join("world_%d.wfw" % i)
 
-func save_world(blocking: bool) -> void:
-	if planet.is_empty() or gpu == null or gpu.rd == null:
+func save_world(blocking: bool, without_skiff := false) -> void:
+	if planet.is_empty() or gpu == null or gpu.rd == null or travelling:
 		return
 	if _save_task >= 0:
 		if not WorkerThreadPool.is_task_completed(_save_task):
@@ -3813,13 +3922,40 @@ func save_world(blocking: bool) -> void:
 		gpu.stamp(stamps, frame)
 		stamps.clear()
 	var raw: PackedByteArray = gpu.read_world()
+	var meta := _world_meta(without_skiff)
+	var path := _world_path(int(planet["index"]))
+	if blocking:
+		_write_world_file(path, raw, meta)
+	else:
+		_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, raw, meta))
+
+## save_world, with the world read back from the GPU a slice a frame (space travel: the GPU rests
+## out there, so the world can't change meanwhile) and written on another thread. Await it.
+func save_world_async(without_skiff := false) -> void:
+	if planet.is_empty() or gpu == null or gpu.rd == null or travelling:
+		return
+	await saves_done()
+	if chunks != null and not chunks.list.is_empty():
+		chunks.settle_all()
+	if not stamps.is_empty():
+		gpu.stamp(stamps, frame)
+		stamps.clear()
+	var meta := _world_meta(without_skiff)
+	var path := _world_path(int(planet["index"]))
+	var raw: PackedByteArray = await gpu.read_world_async()
+	_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, raw, meta))
+
+## the planet's own state as saved with its cells: where you are, the skiff, chests, doors, time
+func _world_meta(without_skiff: bool) -> String:
 	planet_state["player"] = [player.pos.x, player.pos.y]
 	if space.active:
 		# (saved while out in space: you, and the skiff, are kept just above where you'd come back down)
 		var back: Vector2 = space.safe_return()
 		planet_state["player"] = [back.x, back.y]
-	if skiff != null:
-		var sp: Vector2 = space.safe_return() if space.active else skiff.pos
+	if skiff != null and not without_skiff:
+		var sp: Vector2 = skiff.pos
+		if space.active and (player.aboard == skiff or skiff.pos.length() > Defs.R_SPACE - 9.5):
+			sp = space.safe_return()
 		planet_state["skiff"] = {"pos": [sp.x, sp.y], "ang": skiff.ang, "facing": skiff.facing, "seed": skiff.design_seed}
 	else:
 		planet_state.erase("skiff")
@@ -3832,12 +3968,7 @@ func save_world(blocking: bool) -> void:
 		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"]), d.get("cells", [])])
 	planet_state["doors"] = ds
 	planet_state["time"] = time
-	var meta := JSON.stringify(planet_state)
-	var path := _world_path(int(planet["index"]))
-	if blocking:
-		_write_world_file(path, raw, meta)
-	else:
-		_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, raw, meta))
+	return JSON.stringify(planet_state)
 
 func _write_world_file(path: String, raw: PackedByteArray, meta: String) -> void:
 	var comp := raw.compress(FileAccess.COMPRESSION_ZSTD)
@@ -3900,13 +4031,13 @@ func quit_game() -> void:
 
 # ================================================================== info ===
 func region_name() -> String:
+	if space.active:
+		return "Space"
 	var a := atan2(player.pos.y, player.pos.x)
 	var r := player.pos.length()
 	var sa: Vector4 = gpu.surf_at(a)
 	var sb: Vector4 = gpu.surf_b(a)
 	var b := _biome_at(a)
-	if space.active:
-		return "Space"
 	if r > Defs.R_TOP:
 		return "Orbit"
 	if r > Defs.R_TOP - 60.0:

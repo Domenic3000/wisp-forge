@@ -378,6 +378,13 @@ const BIOMES := {
 	"ocean": {"name": "Drowned Shelf", "under": "Abyssal Grottos", "off": 62.0, "amp": 18.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 6, "ug": 0, "flags": 0},
 }
 
+## Where the planets hang (world units, Verdance at the centre): space travel flies between them. Each
+## further round of five planets lies far off along x (a prototype layout).
+const SYSTEM := [Vector2(0, 0), Vector2(-52000, 18000), Vector2(41000, 47000), Vector2(66000, -24000), Vector2(-30000, -61000)]
+
+func planet_pos(i: int) -> Vector2:
+	return SYSTEM[i % SYSTEM.size()] + Vector2(float(i / SYSTEM.size()) * 400000.0, 0.0)
+
 ## Each planet has its own size: "radius" is its mean surface radius in cells (Verdance 1304).
 const PLANETS := [
 	{"name": "Verdance", "radius": 1304.0, "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},

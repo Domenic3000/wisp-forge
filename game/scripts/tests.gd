@@ -2254,6 +2254,67 @@ func run() -> void:
 		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 200.0 and sf_vmax < 9.0 and sf_land > 90 and sf_scale.min() > 0.99 and sf_scale.max() < 1.01,
 		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later (fastest through the air %.1f a tick), %.0f above the ground line, you still aboard %s; stepped out %s; drawn cells per pixel while climbing %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_vmax, sf_above, sf_with, sf_out, str(sf_scale)])
 
+	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
+	g.player.pos = sf_sk.pos
+	var tv_board: bool = g._skiff_interact(g.player) and g.player.aboard == sf_sk
+	var tv_up: Vector2 = sf_sk.pos.normalized()
+	sf_sk.pos = tv_up * (Defs.R_SPACE - 11.0)
+	sf_sk.vel = tv_up * 6.0
+	sf_sk.grounded = false
+	g.test_cast = true
+	var tv_in := -1
+	for tvk1 in 200:
+		g.test_aim = sf_sk.pos + sf_sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			tv_in = tvk1
+			break
+	# (most of the way there at once: the planet is made as you cover the rest)
+	var tv_to: Vector2 = Defs.planet_pos(1) - Defs.planet_pos(0)
+	sf_sk.pos = tv_to * 0.7
+	sf_sk.vel = tv_to.normalized() * 35.0
+	g.cam_c = sf_sk.pos
+	var tv_gap := 0
+	var tv_t0 := Time.get_ticks_usec()
+	var tv_held := false
+	var tv_shot := false
+	var tv_arrive := -1
+	var tv_back := -1
+	for tvk2 in 2400:
+		# (Cindrel's centre; nudged off zero, which would mean "follow the mouse")
+		g.test_aim = Defs.planet_pos(1) - Defs.planet_pos(g.space.home) + Vector2(0.5, 0.5)
+		await _frames(1)
+		var tv_now := Time.get_ticks_usec()
+		tv_gap = maxi(tv_gap, tv_now - tv_t0)
+		tv_t0 = tv_now
+		if g.travelling and sf_sk.vel.length() < 1.0:
+			tv_held = true
+		if tv_arrive < 0 and g.space.home == 1:
+			tv_arrive = tvk2
+		if not tv_shot and tv_arrive >= 0 and g.zoom < 12.0:
+			tv_shot = true
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("arrival.png"))
+		if tv_arrive >= 0 and not g.space.active:
+			tv_back = tvk2
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	var tv_land := -1
+	for tvk3 in 1800:
+		await _frames(1)
+		if sf_sk.grounded and sf_sk.vel.length() < 0.5:
+			tv_land = tvk3
+			break
+	await _frames(30)
+	var tv_la: float = atan2(sf_sk.pos.y, sf_sk.pos.x)
+	var tv_above: float = sf_sk.pos.length() - g.gpu.surf_at(tv_la).x
+	var tv_with: bool = g.player.aboard == sf_sk and g.player.pos.distance_to(sf_sk.pos) < 30.0
+	var tv_saved: bool = FileAccess.file_exists(g._world_path(0)) and FileAccess.file_exists(g._world_path(1))
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("new_planet.png"))
+	_ok("the skiff carries you to another planet, made while you fly, and you land on it",
+		tv_board and tv_in >= 0 and tv_arrive >= 0 and tv_back >= 0 and tv_land >= 0 and int(g.planet["index"]) == 1 and absf(Defs.RS0 - float(g.planet["radius"])) < 0.5 and tv_with and absf(tv_above) < 200.0 and tv_saved and tv_gap < 250000,
+		"aboard %s; out after %d ticks; %s made and moved over to after %d ticks (held off while it was made: %s; longest frame %.0f ms); in its orbit band %d ticks later, landed %d ticks after that, %.0f above its ground line (radius %.0f), you aboard %s; both worlds saved %s" % [tv_board, tv_in, g.planet["name"], tv_arrive, tv_held, tv_gap / 1000.0, tv_back - tv_arrive, tv_land, tv_above, Defs.RS0, tv_with, tv_saved])
+
 	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
 	var sp_t := Time.get_ticks_msec()
 	g._enter_planet(4)

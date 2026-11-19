@@ -176,6 +176,8 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	if m.rig == null:
 		m.rig = MageRig.new()
 	var a := atan2(m.pos.y, m.pos.x)
+	if game.space.active:
+		a = (m.pos - game.space.centre).angle()      # (out in space: upright over the nearest planet)
 	var fwd := float(m.facing)
 	# the staff points at the cursor (snappier while casting)
 	var d: Vector2 = aim_w - m.pos
@@ -188,7 +190,7 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 		_masks[key] = MageRig.body_mask(key)
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground)[0]
-	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - a, -PI, PI)
+	var rot := 0.0 if game.unrolled() else wrapf((game.view_angle() if game.space.active else atan2(game.cam_c.y, game.cam_c.x)) - a, -PI, PI)
 	# (out in space the view zooms far out: the mage stays big enough to see)
 	var zs: float = minf(game.zoom, 2.0) if game.space.active else game.zoom
 	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / zs

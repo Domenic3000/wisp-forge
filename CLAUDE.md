@@ -41,7 +41,22 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   nothing (`_process` skips `_gpu_frame`), `view_c` follows `cam_c`, and space.gd draws the stars, the sun, the
   other planets (procedural discs from their biomes, `_disc_image`) and the planet's picture (a Sprite2D masked to a
   disc, placed by the world->screen affine). Back below `R_SPACE - 10` moving inward: `exit()`, the zoom eases back
-  (`planet_tick`), a short cooldown. Space shares the planet's world coordinates (the planet at the origin).
+  (`planet_tick`), a short cooldown. Space shares the world coordinates of `space.home` (the planet the GPU holds, at
+  the origin); every planet's place is `Defs.planet_pos(i)` (`Defs.SYSTEM`, a round of five; the next round lies
+  400000 along x), and `bodies` are the round's planets relative to home. The nearest planet (`near`, `centre`)
+  pulls, sets the zoom, and turns the view (`view_ang`, eased; `main.view_angle()` uses it in space); the skiff's
+  `centre` is set to it so it levels over that planet.
+- Travel: once another planet is clearly nearer (`NEARER` of home's distance), `space.travel(i)` saves the old
+  world (`save_world_async(without_skiff)`: read back 8 MB a frame by `gpu.read_world_async`, written on a thread;
+  the skiff you ride goes with you), then awaits `main.arrive_planet(i)`: `_make_world(i, true)` makes the planet a
+  step a frame (`gpu.init_async` for another size: SPIR-V for every shader on a worker thread, then one made on the
+  device a frame; `builds.plan` on a WorkerThreadPool task; `gpu.generate_prepare`/`generate_band` two bands a
+  frame; settle 2 frames at a time; `travelling` blocks saves and GPU frames meanwhile, `travel_progress` 0..1). In
+  test mode `[travel]` prints the slowest step of each kind (`_phase`) and each shader's set-up time. Until it's ready no planet
+  can be approached closer than `HOLD` above its orbit band (`_hold`). Then `_reanchor` shifts players, skiff,
+  camera, wisp and particles so the new planet is at the origin, its clock is set so its sun stands where the sun
+  is (`sun_ang`), its picture is taken, and it is saved. `_enter_planet` (title, portals) runs the same
+  `_make_world` all at once.
 - Pixel bodies (`scripts/pixel_body.gd`, RefCounted): the general flying/drifting object made of cells (material
   + variant per cell in a w x h grid, body coords x along the nose, y down; `pos` = centre of mass, `ang` the +x
   axis's world angle, `facing` -1 mirrors). `rebuild` (mass, `com`, `outline`), `to_world`/`to_body`, `texture()`
