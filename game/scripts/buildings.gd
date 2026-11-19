@@ -50,6 +50,12 @@ class BP:
 	var w := 0
 	var h := 0
 	var c := PackedInt32Array()
+	# the anchor it goes in on (cell for cell in every shell, centred on the anchor's middle): its
+	# own columns unless parts that must line up deep down share one (a dungeon's gatehouse and halls)
+	var ax := -1
+	var aw := 0
+	func anchor() -> Vector2i:
+		return Vector2i(x0, w) if ax < 0 else Vector2i(ax, aw)
 	func _init(x: int, y: int, ww: int, hh: int) -> void:
 		x0 = x
 		y0 = y
@@ -615,7 +621,20 @@ func _finish(bp: BP, build: bool) -> void:
 	for k in cells:
 		if (bp.c[k] & 255) != 0:
 			kept.append(k)
-	structs.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c})
+	# (anchored on itself: it goes in cell for cell at any depth, and its doors, chests and guards
+	# are placed the same way, _bp_at)
+	var anc := bp.anchor()
+	structs.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c, "ax": posmod(anc.x, N0), "aw": anc.y})
+	# the rows it really writes (its box has untouched margins): the tests check they lie in the
+	# surface shell, so no seam ever runs through a structure
+	var rtop := bp.y0 + bp.h
+	var rbot := bp.y0 - 1
+	for k2 in bp.c.size():
+		var v2: int = bp.c[k2]
+		if (v2 & 255) != 255 or ((v2 >> 8) & 255) != 255:
+			var row2: int = bp.y0 + k2 / bp.w
+			rtop = mini(rtop, row2)
+			rbot = maxi(rbot, row2)
 	var solid := kept.size()
 	# props (background furniture): how many pixels, and how many ended up behind something solid
 	var decor := 0
@@ -630,19 +649,27 @@ func _finish(bp: BP, build: bool) -> void:
 	for q in bp.chests:
 		ch.append(Vector2i(posmod(bp.x0 + q.x, N0), bp.y0 + q.y))
 		# the chest object: its middle, standing on the floor row
-		var ang := float(posmod(bp.x0 + q.x, N0) + Defs.CHEST_W / 2) / N0 * TAU
 		var rr := Defs.R_TOP - float(bp.y0 + q.y) + Defs.CHEST_H * 0.5 + 0.05
-		chest_list.append({"pos": Vector2(cos(ang), sin(ang)) * rr, "ruined": bp.ruined})
+		chest_list.append({"pos": _bp_at(bp, float(q.x + Defs.CHEST_W / 2), bp.y0 + q.y, rr), "ruined": bp.ruined})
 	for d in bp.doors:
-		var da := (float(posmod(bp.x0 + int(d[0]), N0)) + float(d[2]) * 0.5) / N0 * TAU
 		var dr := Defs.R_TOP - float(bp.y0 + int(d[1])) - float(d[3]) * 0.5
-		door_list.append({"pos": Vector2(cos(da), sin(da)) * dr, "w": int(d[2]), "h": int(d[3]), "side": int(d[4]), "col": posmod(bp.x0 + int(d[0]), N0), "row": bp.y0 + int(d[1])})
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "unsound": unsound, "data": bp.c if KEEP_DATA else PackedInt32Array()})
-	var ci := bp.x0 + bp.w / 2
+		door_list.append({"pos": _bp_at(bp, float(d[0]) + float(d[2]) * 0.5, bp.y0 + int(d[1]) + int(d[3]) / 2, dr), "w": int(d[2]), "h": int(d[3]), "side": int(d[4]),
+			"col": posmod(bp.x0 + int(d[0]), N0), "row": bp.y0 + int(d[1]), "ax": posmod(anc.x, N0), "aw": anc.y})
+	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "unsound": unsound, "rows": [rtop, rbot], "ax": posmod(anc.x, N0), "aw": anc.y, "data": bp.c if KEEP_DATA else PackedInt32Array()})
 	var cj := bp.y0 + bp.h / 2
-	var a := (float(posmod(ci, N0)) + 0.5) / N0 * TAU
 	var r := Defs.R_TOP - (cj + 0.5)
-	settle.append([Vector2(cos(a), sin(a)) * r, maxf(bp.w, bp.h) * 0.5 + 26.0])
+	settle.append([_bp_at(bp, float(bp.w / 2) + 0.5, cj, r), maxf(bp.w, bp.h) * 0.5 + 26.0])
+
+## Where column i of blueprint bp (fractional: i + 0.5 is a cell's middle) is in row `row`, at
+## radius r: as the stamp puts it, cell for cell in that row's shell (Defs.stamp_x).
+func _bp_at(bp: BP, i: float, row: int, r: float) -> Vector2:
+	var anc := bp.anchor()
+	var ki := int(floor(i))
+	var n: int = Defs.SH_N[Defs.shell_of_row(row)]
+	# (column i of the blueprint is column x0 + i of the surface: k counts from the anchor)
+	var x := float(Defs.stamp_x(row, anc.x, anc.y, Defs.k_of(bp.x0 + ki, anc.x))) + (i - float(ki))
+	var a := x / float(n) * TAU
+	return Vector2(cos(a), sin(a)) * r
 
 # ------------------------------------------------------- chests and guards ---
 ## a 12 x 9 treasure chest standing on the floor row fl, left column i. A chest is a real object
@@ -663,11 +690,10 @@ func _guard(bp: BP, i: int, fl: int, type: String) -> void:
 	if type == "skeleton" and posmod(col * 7 + fl * 13, 3) == 0:
 		type = "archer"
 	var d: Dictionary = Defs.ENEMY[type]
-	var a := (float(col) + 0.5) / N0 * TAU
 	var r := Defs.R_TOP - float(bp.y0 + fl) + float(d["h"]) * 0.5 + 1.0
 	if type == "bat":
 		r += 6.0
-	guards.append({"pos": Vector2(cos(a), sin(a)) * r, "type": type})
+	guards.append({"pos": _bp_at(bp, float(i) + 0.5, bp.y0 + fl, r), "type": type})
 
 # -------------------------------------------------------- building pieces ---
 ## The first row (from the top) where column i of the blueprint is built solid, or h.
@@ -1742,11 +1768,14 @@ func _vault(x: int, build: bool) -> void:
 
 ## name of the structure at a world position, or ""
 func label_at(pos: Vector2) -> String:
-	var a := fposmod(atan2(pos.y, pos.x), TAU)
-	var col := int(a / TAU * N0)
 	var row := int(Defs.R_TOP - pos.length())
 	for l in labels:
-		if posmod(col - int(l["x0"]), N0) < int(l["w"]) and row >= int(l["ymin"]) and row <= int(l["ymax"]):
+		if row < int(l["ymin"]) or row > int(l["ymax"]):
+			continue
+		# (in the structure's own cells: it went in cell for cell, on its anchor, its own by default)
+		var lax: int = int(l.get("ax", l["x0"]))
+		var k: int = Defs.stamp_k(pos, lax, int(l.get("aw", l["w"]))).x - Defs.k_of(int(l["x0"]), lax)
+		if k >= 0 and k < int(l["w"]):
 			return l["name"]
 	return ""
 
@@ -1946,7 +1975,7 @@ func _dungeon(x: int, build: bool) -> bool:
 	var shot_rm: Dictionary = rooms[ce]
 	bp.meta["shot"] = Vector2i(posmod(dx0 + (int(shot_rm["i0"]) + int(shot_rm["i1"])) / 2, N0), by0 + int(shot_rm["fl"]))
 	var vr: Dictionary = rooms[vault]
-	labels.append({"x0": posmod(dx0 + int(vr["i0"]) - DW, N0), "w": int(vr["i1"]) - int(vr["i0"]) + 1 + 2 * DW,
+	labels.append({"x0": posmod(dx0 + int(vr["i0"]) - DW, N0), "w": int(vr["i1"]) - int(vr["i0"]) + 1 + 2 * DW, "ax": posmod(dx0, N0), "aw": dw,
 		"ymin": by0 + int(vr["top"]) - DW, "ymax": by0 + int(vr["fl"]) + DW, "name": "Sealed Reliquary"})
 	labels.append({"x0": posmod(dx0, N0), "w": dw, "ymin": by0 - 4, "ymax": by0 + bh, "name": name})
 	_finish(bp, build)
@@ -1955,6 +1984,8 @@ func _dungeon(x: int, build: bool) -> bool:
 	var gtw := gw + 2 * YARD + 4
 	var up2 := STOREY + _roof_h(gw, st) + 12
 	var gbp := BP.new(gx0, base - up2, gtw, up2 + (by0 - base) + 3)
+	gbp.ax = bp.x0                  # (its shaft lines up with the halls at any depth)
+	gbp.aw = bp.w
 	var lb := up2
 	var ox := YARD + 2
 	_yard(gbp, 0, gtw - 1, lb)

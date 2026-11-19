@@ -37,10 +37,12 @@ func _peak(sec: String) -> String:
 	var p = g.prof.get(sec)
 	return "%s %.1f ms" % [sec, (p[3] / 1000.0) if p != null else 0.0]
 
-func _cell_pos(col: int, row: int) -> Vector2:
-	var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
-	var r := Defs.R_TOP - (float(row) + 0.5)
-	return Vector2(cos(a), sin(a)) * r
+## a cell's middle; with a structure's anchor (its x0, w) as its stamp put it, cell for cell
+func _cell_pos(col: int, row: int, ax := -1, aw := 1) -> Vector2:
+	if ax < 0:
+		var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
+		return Vector2(cos(a), sin(a)) * (Defs.R_TOP - (float(row) + 0.5))
+	return Defs.stamp_pos(row, ax, aw, Defs.k_of(col, ax))
 
 func _go(p: Vector2) -> void:
 	g.player.pos = p
@@ -107,7 +109,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 		if row < 0 or row >= Defs.ROWS:
 			continue
 		var col := posmod(int(info["x0"]) + i, N)
-		var c := raw.decode_u32(Defs.raw_idx(row, col) * 4)
+		var c := raw.decode_u32(Defs.raw_idx(row, col, int(info["ax"]), int(info["aw"])) * 4)
 		var t := c & 255
 		if Defs.KIND[t] != Defs.K_SOLID:
 			continue
@@ -117,7 +119,7 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 		# of the planet until you dig nearby
 		var lf := (c >> 16) & 255
 		if (c & 0x40000000) == 0 and ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.ROWS and not (lf > 0 and lf < 128):
-			var cb := raw.decode_u32(Defs.raw_idx(row + 1, col) * 4)
+			var cb := raw.decode_u32(Defs.raw_idx(row + 1, col, int(info["ax"]), int(info["aw"])) * 4)
 			var tb := cb & 255
 			var kb: int = Defs.KIND[tb]
 			if tb == 0 or kb == Defs.K_GAS or kb == Defs.K_FIRE or kb == Defs.K_LIQUID:
@@ -133,8 +135,8 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 			continue
 		for i in w:
 			var col2 := posmod(int(info["x0"]) + i, N)
-			var t2 := raw.decode_u32(Defs.raw_idx(row2, col2) * 4) & 255
-			var bgm := raw.decode_u32(boff + Defs.raw_idx(row2, col2) * 4) & 255
+			var t2 := raw.decode_u32(Defs.raw_idx(row2, col2, int(info["ax"]), int(info["aw"])) * 4) & 255
+			var bgm := raw.decode_u32(boff + Defs.raw_idx(row2, col2, int(info["ax"]), int(info["aw"])) * 4) & 255
 			if bgm != 0:
 				bgn += 1
 				var bk := "bg " + Defs.NAMES[bgm]
@@ -211,6 +213,70 @@ func run() -> void:
 	var b = g.builds
 	_ok("planet generates", g.planet.size() > 0, "%d ms including structures and settling" % gen_ms)
 	_ok("structures are placed", b.infos.size() >= 15, "%d structures, %d labels" % [b.infos.size(), b.labels.size()])
+	# ---- a building is the same at any depth: it goes in cell for cell in every shell, centred on
+	# its anchor, so its width never changes and its sides stay straight across a seam ----
+	var an_rng := RandomNumberGenerator.new()
+	an_rng.seed = 77
+	var an_jog := {24: 0.0, 48: 0.0, 96: 0.0}       # the biggest step of a side at a seam, in cells
+	var an_where := ""
+	for an_s in Defs.NSH - 1:
+		var an_rs: float = Defs.R_TOP - float(Defs.SH_Y1[an_s])     # the seam's radius
+		if an_rs < 320.0:
+			break
+		var an_no: int = Defs.SH_N[an_s]
+		var an_ni: int = Defs.SH_N[an_s + 1]
+		for an_t in 6:
+			var an_ax := an_rng.randi_range(0, Defs.NS - 1)
+			for an_w in an_jog.keys():
+				var an_lo: int = Defs.stamp_left(an_no, an_ax, an_w)
+				var an_li: int = Defs.stamp_left(an_ni, an_ax, an_w)
+				var an_cell := TAU * an_rs / float(an_ni)
+				# the left and right sides' places along the seam, above it and below it
+				var an_dl := wrapf(float(an_lo) / an_no - float(an_li) / an_ni, -0.5, 0.5) * TAU * an_rs / an_cell
+				var an_dr := wrapf(float(an_lo + an_w) / an_no - float(an_li + an_w) / an_ni, -0.5, 0.5) * TAU * an_rs / an_cell
+				var an_m := maxf(absf(an_dl), absf(an_dr))
+				if an_m > float(an_jog[an_w]):
+					an_jog[an_w] = an_m
+					if an_w == 48:
+						an_where = "seam at row %d (%d / %d columns)" % [Defs.SH_Y1[an_s], an_no, an_ni]
+	# (the cells either side of a seam never line up, so a side can step up to a cell, plus how much
+	# narrower half the building's cells are below it: a ~2% seam)
+	_ok("a building's sides stay straight across every seam (within about a cell)", float(an_jog[24]) <= 1.3 and float(an_jog[48]) <= 1.6,
+		"a side steps at most %.2f cells for a building 24 wide, %.2f for 48 (%s), %.2f for 96" % [an_jog[24], an_jog[48], an_where, an_jog[96]])
+	# stamped deep, through several seams, it reads back exactly as it was written, cell for cell
+	var an_c := int(fposmod(g.spawn_angle + 1.3, TAU) / TAU * Defs.NS)
+	var an_y0: int = int(Defs.SH_Y1[Defs.SURF]) + 60
+	var an_w2 := 40
+	var an_h2 := 140
+	var an_bp := PackedInt32Array()
+	for an_j in an_h2:
+		for an_i in an_w2:
+			var an_mt := 0
+			if an_i < 3 or an_i >= an_w2 - 3 or an_j < 3 or an_j >= an_h2 - 3 or (an_i * 7 + an_j * 3) % 11 == 0:
+				an_mt = Defs.BRICK
+			an_bp.append(an_mt)
+	g.gpu.stamp([{"x0": an_c, "y0": an_y0, "w": an_w2, "h": an_h2, "data": an_bp, "ax": an_c, "aw": an_w2}], 5)
+	var an_rr: Dictionary = g.gpu.read_rect(an_c, an_y0, an_w2, an_h2, an_c, an_w2)
+	var an_fg: PackedInt32Array = an_rr["fg"]
+	var an_bad := 0
+	for an_k in an_w2 * an_h2:
+		if (an_fg[an_k] & 255) != an_bp[an_k]:
+			an_bad += 1
+	var an_seams := Defs.shell_of_row(an_y0 + an_h2 - 1) - Defs.shell_of_row(an_y0)
+	# and build mode's cells near you (anchored on your column) map to a place and back, at any depth
+	var an_keep: int = Defs.anchor_c
+	Defs.anchor_c = an_c
+	var an_rt := 0
+	for an_q in 600:
+		var an_col := an_c + an_rng.randi_range(-60, 60)
+		var an_row := an_rng.randi_range(-Defs.ORBIT_ROWS + 2, Defs.ROWS - 40)
+		var an_back: Vector2i = Build.cell_of(Build.cell_pos(an_col, an_row))
+		if an_back != Vector2i(posmod(an_col, Defs.NS), an_row):
+			an_rt += 1
+	Defs.anchor_c = an_keep
+	_ok("a building stamped deep is the same cell for cell (no column lost or doubled)", an_bad == 0 and an_seams >= 3 and an_rt == 0,
+		"%d x %d from row %d, through %d seams (shells of %d to %d columns): %d cells differ; %d of 600 cells near you don't map back to themselves" % [an_w2, an_h2, an_y0, an_seams,
+			Defs.SH_N[Defs.shell_of_row(an_y0)], Defs.SH_N[Defs.shell_of_row(an_y0 + an_h2 - 1)], an_bad, an_rt])
 	_ok("guards are planned", b.guards.size() >= 5, "%d guards" % b.guards.size())
 	var nchest := 0
 	for info in b.infos:
@@ -310,7 +376,7 @@ func run() -> void:
 		loose_total += int(sc["loose"])
 		if int(sc["loose"]) > 0:
 			var a0: Vector2i = sc["at"][0]
-			var nm: String = b.label_at(_cell_pos(int(info["x0"]) + a0.x, int(info["y0"]) + a0.y))
+			var nm: String = b.label_at(_cell_pos(int(info["x0"]) + a0.x, int(info["y0"]) + a0.y, int(info["ax"]), int(info["aw"])))
 			loose_where.append("%d in a %s structure %dx%d (%s) at local %s" % [sc["loose"], "ruined" if info["ruined"] else "intact", info["w"], info["h"], nm, str(sc["at"])])
 			for k in sc["mats"]:
 				loose_mats[k] = int(loose_mats.get(k, 0)) + int(sc["mats"][k])
@@ -377,7 +443,7 @@ func run() -> void:
 					continue
 				for ii in int(info["w"]):
 					var colv := posmod(int(info["x0"]) + ii, Nv)
-					var kv := Defs.raw_idx(rowv, colv) * 4
+					var kv := Defs.raw_idx(rowv, colv, int(info["ax"]), int(info["aw"])) * 4
 					var a0 := raw_v0.decode_u32(boffv + kv)
 					if (a0 & 255) == Defs.WOOD and (raw_v1.decode_u32(boffv + kv) & 255) == 0 and rowv > lowrow:
 						lowrow = rowv
@@ -490,7 +556,7 @@ func run() -> void:
 		var nd2 := 0
 		for jd in int(door_t["h"]):
 			for id2 in int(door_t["w"]):
-				var kd: int = Defs.raw_idx(int(door_t["row"]) + jd, posmod(int(door_t["col"]) + id2, Defs.NS)) * 4
+				var kd: int = Defs.raw_idx(int(door_t["row"]) + jd, posmod(int(door_t["col"]) + id2, Defs.NS), int(door_t.get("ax", door_t["col"])), int(door_t.get("aw", 1))) * 4
 				if (rawd.decode_u32(kd) & 255) == Defs.WOODDOOR:
 					nd2 += 1
 		var want: int = int(door_t["w"]) * int(door_t["h"])
@@ -498,7 +564,7 @@ func run() -> void:
 			"opened by walking: %s, closed again: %d of %d door cells (still open: %s; nearest foe: %s)" % [was_open, nd2, want, door_t["open"], foe_near.call()])
 		# a door shot through keeps its hole: open it and shut it again, the hole is still there
 		var count_door := func() -> int:
-			var rr: Dictionary = g.gpu.read_rect(int(door_t["col"]), int(door_t["row"]), int(door_t["w"]), int(door_t["h"]))
+			var rr: Dictionary = g.gpu.read_rect(int(door_t["col"]), int(door_t["row"]), int(door_t["w"]), int(door_t["h"]), int(door_t.get("ax", door_t["col"])), int(door_t.get("aw", 1)))
 			var nn := 0
 			for v in rr["fg"]:
 				if (v & 255) == Defs.WOODDOOR:
@@ -1752,40 +1818,50 @@ func run() -> void:
 		vw_wmin = minf(vw_wmin, vw_px)
 		vw_wmax = maxf(vw_wmax, vw_px)
 	for vw_k in Defs.NSH - 1:
-		vw_seam = maxf(vw_seam, float(Defs.SH_N[vw_k]) / float(Defs.SH_N[vw_k + 1]))
+		if Defs.R_TOP - float(Defs.SH_Y1[vw_k]) >= 320.0:     # (near the heart the steps grow)
+			vw_seam = maxf(vw_seam, float(Defs.SH_N[vw_k]) / float(Defs.SH_N[vw_k + 1]))
 	_ok("the view never visibly changes size going up or down (no seam squeezes it)",
-		vw_step < 1.01 and vw_48 < 1.12 and vw_seam < 1.09 and vw_wmin > 0.7 and vw_wmax < 1.3,
+		vw_step < 1.01 and vw_48 < 1.12 and vw_seam < 1.05 and vw_wmin > 0.7 and vw_wmax < 1.3,
 		"%d shells; biggest seam %.3f; a pixel covers %.2f - %.2f world units across, changing at most %.4f per 2 rows, %.3f per 48 rows" % [Defs.NSH, vw_seam, vw_wmin, vw_wmax, vw_step, vw_48])
 	# ---- deep down, sand and a loose block fall straight through a seam, none lost or doubled ----
 	var sm_s: int = mini(Defs.SURF + 4, Defs.NSH - 2)
 	var sm_seam: int = Defs.SH_Y1[sm_s]              # the first row of the shell below it
-	var sm_a: float = fposmod(g.spawn_angle + 0.35, TAU)
-	var sm_c: int = int(sm_a / TAU * Defs.NS)
 	var sm_y0: int = sm_seam - 34
 	var sm_w := 24
 	var sm_h := 64
+	# a spot in solid rock (a cave would let the sand pour out of the pocket)
+	var sm_a: float = fposmod(g.spawn_angle + 0.35, TAU)
+	for sm_try in 60:
+		var sm_ta: float = fposmod(g.spawn_angle + 0.35 + 0.05 * sm_try, TAU)
+		var sm_tc: int = int(sm_ta / TAU * Defs.NS)
+		var sm_probe: Dictionary = g.gpu.read_rect(sm_tc - 6, sm_y0 - 6, sm_w + 12, sm_h + 12, sm_tc - 6, sm_w + 12)
+		var sm_solid := true
+		for sm_v in sm_probe["fg"]:
+			if Defs.KIND[sm_v & 255] != Defs.K_SOLID:
+				sm_solid = false
+				break
+		if sm_solid:
+			sm_a = sm_ta
+			break
+	var sm_c: int = int(sm_a / TAU * Defs.NS)
 	var sm_data := PackedInt32Array()
 	for sm_j in sm_h:
 		for sm_i in sm_w:
 			var sm_m := 0                       # an open pocket around the seam (background cleared too)
 			if sm_j < 6 and sm_i >= 12 and sm_i < 22:
 				sm_m = Defs.SAND
-			elif sm_j < 4 and sm_i >= 3 and sm_i < 7:
+			elif sm_j >= 2 and sm_j < 6 and sm_i >= 3 and sm_i < 7:        # (clear of the ceiling)
 				sm_m = Defs.BRICK                # a loose built block (not anchored)
 			sm_data.append(sm_m | (0 << 8))
-	g.gpu.stamp([{"x0": sm_c, "y0": sm_y0, "w": sm_w, "h": sm_h, "data": sm_data}], 7)
+	g.gpu.stamp([{"x0": sm_c, "y0": sm_y0, "w": sm_w, "h": sm_h, "data": sm_data, "ax": sm_c, "aw": sm_w}], 7)
 	var sm_count := func(sm_raw: PackedByteArray, sm_mat: int, sm_above: bool) -> int:
 		var sm_n := 0
 		for sm_row in range(sm_y0, sm_y0 + sm_h):
 			if sm_above != (sm_row < sm_seam):
 				continue
-			var sm_sh: int = Defs.shell_of_row(sm_row)
-			var sm_nn: int = Defs.SH_N[sm_sh]
-			# the cells whose middles lie in the pocket's columns
-			var sm_xa := int(ceil(float(sm_c) * sm_nn / Defs.NS - 0.5))
-			var sm_xb := int(ceil(float(sm_c + sm_w) * sm_nn / Defs.NS - 0.5))
-			for sm_x in range(sm_xa, sm_xb):
-				var sm_k: int = int(Defs.SH_OFF[sm_sh]) + (sm_row - int(Defs.SH_Y0[sm_sh])) * sm_nn + posmod(sm_x, sm_nn)
+			# the pocket's cells (it went in cell for cell, anchored on itself)
+			for sm_i2 in sm_w:
+				var sm_k: int = Defs.raw_idx(sm_row, posmod(sm_c + sm_i2, Defs.NS), sm_c, sm_w)
 				var sm_t := sm_raw.decode_u32(sm_k * 4) & 255
 				if sm_t == sm_mat or (sm_mat == Defs.BRICK and sm_t == Defs.DEBRIS[Defs.BRICK]):
 					sm_n += 1
@@ -1800,6 +1876,13 @@ func run() -> void:
 	var sm_sand_dn: int = sm_count.call(sm_r1, Defs.SAND, false)
 	var sm_stone_up: int = sm_count.call(sm_r1, Defs.BRICK, true)
 	var sm_stone_dn: int = sm_count.call(sm_r1, Defs.BRICK, false)
+	# (a look at the seam and the shells around it, from inside the pocket)
+	var sm_back: Vector2 = g.player.pos
+	_go(Vector2(cos(sm_a), sin(sm_a)) * (sm_mid - 24.0))
+	await _frames(40)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("deep_seam.png"))
+	_go(sm_back)
+	await _frames(10)
 	_ok("deep down, sand and a loose block fall straight through a seam (none lost or doubled)",
 		sm_sand0 > 40 and sm_sand_up == 0 and sm_sand_dn == sm_sand0 and sm_stone0 >= 8 and sm_stone_up == 0 and sm_stone_dn > 0,
 		"seam at row %d (shells of %d and %d columns); sand %d -> %d above, %d below; brick %d above -> %d above, %d below (some may have broken into rubble)" % [sm_seam, Defs.SH_N[sm_s], Defs.SH_N[sm_s + 1], sm_sand0, sm_sand_up, sm_sand_dn, sm_stone0, sm_stone_up, sm_stone_dn])

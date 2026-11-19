@@ -81,13 +81,20 @@ const MAT_NAMES := {
 # above the atmosphere has negative rows (-ORBIT_ROWS .. -1). The rows are cut into shells, each with
 # its own number of columns, stored top to bottom. The surface shell (SURF, NS columns, square cells at
 # the mean surface) reaches SURF_HALF rows up and down so the ground and nearly every structure lie in
-# it. Above and below it the shells are thin and each has about a sixteenth more or fewer columns
-# than its neighbour, so a seam is a ~6% step: the view (one column of the camera's shell per pixel)
-# changes too little at a seam to be seen. Away from the surface shell the cells drift back to square.
+# it. Above and below it the shells are thin, with square cells, and each has at most ~2% more or
+# fewer columns than its neighbour: the view (one column of the camera's shell per pixel) changes
+# too little at a seam to be seen, and a building that straddles one stays straight to a pixel.
+#
+# Stamps (blueprints, laid out in surface columns) go into every shell cell for cell, centred on
+# their anchor (`stamp_x`): a building is the same, pixel for pixel, at any depth. Generated
+# structures anchor on themselves; things placed or picked up near you anchor on `anchor_c`, your
+# column (main sets it every tick), and so does `Build.cell_pos`/`cell_of`. In the surface shell
+# the mapping is just the surface column, whatever the anchor.
 const ATMO := 496.0          # the atmosphere's height above the mean surface
 const ORBIT_ROWS := 256      # the orbit band's height: room to build into space
 const R_IN := 80.0           # the planet's heart (not simulated)
 const SURF_HALF := 330.0     # the surface shell reaches this far above and below the mean surface
+const SEAM_STEP := 0.021     # the most a shell's columns differ from its neighbour's (away from the heart)
 var RS0 := 1304.0            # mean surface radius (cells are ~square here)
 var R_TOP := 1800.0          # top of the atmosphere: row 0
 var R_SPACE := 2056.0        # the orbit band's ceiling: nothing above is cells
@@ -98,6 +105,8 @@ var SH_Y0 := []              # each shell's first row (shells top to bottom; SH_
 var SH_Y1 := []              # one past each shell's last row
 var SH_N := []               # columns per shell
 var NS := 8192               # columns of the surface shell (the surface table, blueprints), typed for scripts
+var SURF_Y0 := 0             # the surface shell's rows (typed, for the quick paths)
+var SURF_Y1 := 0
 
 var KIND := PackedInt32Array()
 var DENS := PackedInt32Array()
@@ -230,23 +239,24 @@ func set_geometry(rs: float) -> void:
 	var top := _even(R_TOP - (rs + SURF_HALF))
 	var bot := _even(R_TOP - (rs - SURF_HALF))
 	var shells := [[top, bot, NS]]            # [first row, end row, columns]
-	# inward: a sixteenth fewer columns a shell; each shell ends where its cells have narrowed back
-	# to the width just above its seam (or a little less far, while they're narrower than square)
+	# inward: thin shells, each as many columns as make its cells square at its middle, but never more
+	# than SEAM_STEP fewer than the shell above (so a seam is a ~2% step, too little to see: where the
+	# surface shell's narrowed cells meet them, they drift back to square over several shells); near
+	# the heart the radius falls so fast that the step has to be bigger
 	var y := bot
 	var n := NS
 	while y < ROWS:
 		var r := R_TOP - float(y)
-		var wa := TAU * r / float(n)
-		var nb := maxi(_r16(float(n) * 15.0 / 16.0), 32)
+		var t := maxi(8, _even(r * SEAM_STEP * 0.75))
+		if y + t >= ROWS - 8:
+			t = ROWS - y
+		var cap := maxf(SEAM_STEP, 1.25 * float(t) / r)
+		var want := TAU * (r - float(t) * 0.5)
+		var nb := _r16(clampf(want, float(n) * (1.0 - cap), float(n) * 0.998))
 		if nb >= n:
 			nb = n - 16
-		var wt := TAU * r / float(nb)
-		var wbot := wt * pow(float(nb) / float(n), 0.6 if wa < 0.97 else 1.0)
-		var yb := maxi(_even(R_TOP - wbot * float(nb) / TAU), y + 8)
-		if yb >= ROWS - 8:
-			yb = ROWS
-		shells.append([y, yb, nb])
-		y = yb
+		shells.append([y, y + t, nb])
+		y += t
 		n = nb
 	# outward, the same up to the orbit band's ceiling
 	y = top
@@ -254,17 +264,16 @@ func set_geometry(rs: float) -> void:
 	var up := []
 	while y > -ORBIT_ROWS:
 		var r2 := R_TOP - float(y)
-		var wb := TAU * r2 / float(n)
-		var na := _r16(float(n) * 16.0 / 15.0)
+		var t2 := maxi(8, _even(r2 * SEAM_STEP * 0.75))
+		if y - t2 <= -ORBIT_ROWS + 8:
+			t2 = y + ORBIT_ROWS
+		var cap2 := maxf(SEAM_STEP, 1.25 * float(t2) / r2)
+		var want2 := TAU * (r2 + float(t2) * 0.5)
+		var na := _r16(clampf(want2, float(n) * 1.002, float(n) * (1.0 + cap2)))
 		if na <= n:
 			na = n + 16
-		var wl := TAU * r2 / float(na)
-		var wtop := wl * pow(float(na) / float(n), 0.6 if wb > 1.03 else 1.0)
-		var yt := mini(_even(R_TOP - wtop * float(na) / TAU), y - 8)
-		if yt <= -ORBIT_ROWS + 8:
-			yt = -ORBIT_ROWS
-		up.append([yt, y, na])
-		y = yt
+		up.append([y - t2, y, na])
+		y -= t2
 		n = na
 	up.reverse()
 	shells = up + shells
@@ -277,6 +286,8 @@ func set_geometry(rs: float) -> void:
 		SH_Y1.append(int(sh[1]))
 		SH_N.append(int(sh[2]))
 	NSH = SH_N.size()
+	SURF_Y0 = int(SH_Y0[SURF])
+	SURF_Y1 = int(SH_Y1[SURF])
 	SH_OFF = []
 	var off := 0
 	for k in NSH:
@@ -310,6 +321,42 @@ func shell_above(s: int) -> int:
 func shell_below(s: int) -> int:
 	return s + 1 if s + 1 < NSH else -1
 
+var anchor_c := 0             # the surface column stamps and cell lookups near you are centred on
+
+## A stamp's column k (counted from its anchor column `ax`, of an anchor `aw` wide) in row `row`:
+## the cell of that row's shell, one cell per blueprint column, centred on the anchor's middle
+## (GLSL stampX does the same). In the surface shell it is column ax + k.
+func stamp_x(row: int, ax: int, aw: int, k: int) -> int:
+	var n: int = SH_N[shell_of_row(row)]
+	return posmod(stamp_left(n, ax, aw) + k, n)
+
+## the stamp's left edge (k = 0) in a shell of n columns: the cell nearest half its width left of
+## the anchor's middle (GLSL stampLeft); column ax itself in the surface shell
+func stamp_left(n: int, ax: int, aw: int) -> int:
+	return ((2 * posmod(ax, NS) + aw) * n + (1 - aw) * NS + 2 * NS * aw) / (2 * NS) - aw
+
+## where that cell's middle is
+func stamp_pos(row: int, ax: int, aw: int, k: int) -> Vector2:
+	var n: int = SH_N[shell_of_row(row)]
+	var a := (float(posmod(stamp_left(n, ax, aw) + k, n)) + 0.5) / float(n) * TAU
+	return Vector2(cos(a), sin(a)) * (R_TOP - (float(row) + 0.5))
+
+## the cell holding world point p, as (stamp column k from the anchor, row)
+func stamp_k(p: Vector2, ax: int, aw: int) -> Vector2i:
+	var row := int(floor(R_TOP - p.length()))
+	var s := shell_of_row(row)
+	var n: int = SH_N[s]
+	var x := int(fposmod(atan2(p.y, p.x), TAU) / TAU * float(n))
+	var k := posmod(x - stamp_left(n, ax, aw), n)
+	if k > n / 2:
+		k -= n                                 # (the nearer way round)
+	return Vector2i(k, row)
+
+## a surface column's offset from an anchor, the short way round
+func k_of(col: int, ax: int) -> int:
+	var k := posmod(col - ax, NS)
+	return k - NS if k > NS / 2 else k
+
 ## the column in shell `to` (next to shell `from`) over column x of shell `from`: the cell whose
 ## middle is nearest to x's middle (GLSL colTo does the same)
 func col_to(from: int, to: int, x: int) -> int:
@@ -334,13 +381,15 @@ func shell_table() -> PackedByteArray:
 	out.append_array(t.to_byte_array())
 	return out
 
-## the index of a cell (row, surface-shell column) in the world buffer as read back (read_world;
-## the background layer follows the cells); 0 outside the planet's cells
-func raw_idx(row: int, col: int) -> int:
+## the index of a cell (row, surface column, placed as a stamp anchored at `ax` / `aw`: by default the
+## one near you) in the world buffer as read back (read_world; the background layer follows the
+## cells); 0 outside the planet's cells
+func raw_idx(row: int, col: int, ax := -1, aw := 1) -> int:
 	if row < -ORBIT_ROWS or row >= ROWS:
 		return 0
 	var s := shell_of_row(row)
-	return int(SH_OFF[s]) + (row - int(SH_Y0[s])) * int(SH_N[s]) + col_in(s, posmod(col, NS))
+	var a := anchor_c if ax < 0 else ax
+	return int(SH_OFF[s]) + (row - int(SH_Y0[s])) * int(SH_N[s]) + stamp_x(row, a, aw, k_of(col, a))
 
 ## a column of the surface shell (blueprints, the surface table) in shell s
 func col_in(s: int, c: int) -> int:

@@ -119,8 +119,7 @@ func _to_local(c: Chunk, ax: Array, w: Vector2) -> Vector2:
 
 ## where a shell-0 cell's centre is
 static func cell_pos(col: int, row: int) -> Vector2:
-	var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
-	return Vector2(cos(a), sin(a)) * (Defs.R_TOP - (float(row) + 0.5))
+	return Build.cell_pos(col, row)       # (anchored near you, as everything read and stamped here)
 
 ## On screen, a chunk's pixels are turned by this (canvas radians, clockwise): `ref` is the angle round
 ## the planet whose "up" is up on screen (the chunk's own place in the unrolled view, the camera's on

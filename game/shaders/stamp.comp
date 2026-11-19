@@ -6,7 +6,7 @@
 // background wall too), bit 18 = background is a built back wall,
 // bits 19-26 = colour variant, used when bit 27 is set (chests use it to know which part they are),
 // bits 28-31 = a furniture piece's kind (props.gd KINDS), kept in background bits 24-27.
-// pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, mode, 0)
+// pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, mode, anchor column)  pc.c.x = anchor width
 // mode 1 (raw, scripts/chunks.gd setting a fallen piece down): two words per cell, the front cell and
 // the background cell exactly as they go in the world (0xffffffff = leave it); each only lands where
 // that layer is empty (a front cell where nothing solid is, a background cell where there's none).
@@ -72,14 +72,12 @@ void main() {
 	int row = pc.a.y + j;
 	if (row < -ORBIT_ROWS || row >= ROWS) return;
 	int col = wrapc(pc.a.x + i, NS);
-	// a blueprint is laid out in surface columns; in a shell with other columns, each blueprint cell
-	// writes the cells whose middles fall in it (none, one or two)
+	// a blueprint is laid out in surface columns and goes in cell for cell in every shell, centred
+	// on its anchor (pc.b.w, pc.c.x wide): the same pixels at any depth
 	int s = shellOf(row);
-	int N = SH_N(s);
-	int xa = (2 * col * N + NS - 1) / (2 * NS);
-	int xb = (2 * (col + 1) * N + NS - 1) / (2 * NS);
-	for (int xq = xa; xq < xb; xq++) {
-		int ri = cellIdx(s, row, xq == N ? 0 : xq);
+	int aw = int(pc.c.x + 0.5);
+	{
+		int ri = cellIdx(s, row, stampX(s, pc.b.w, aw, kOf(pc.a.x, pc.b.w) + i));
 		if (pc.b.z == 1) {
 			uint fw = blue.d[pc.b.x + 2 * (j * w + i)], bw = blue.d[pc.b.x + 2 * (j * w + i) + 1];
 			if (fw != 0xffffffffu) {
@@ -87,7 +85,7 @@ void main() {
 				if (!(kc == K_SOLID || kc == K_POWDER)) world.cells[ri] = fw;
 			}
 			if (bw != 0xffffffffu && (aux.a[ri] & 255u) == 0u) aux.a[ri] = bw;
-			continue;
+			return;
 		}
 		put(ri, i, j, w, col, row);
 	}

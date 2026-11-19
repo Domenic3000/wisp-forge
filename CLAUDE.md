@@ -20,10 +20,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `ATMO`, row 0) to `R_IN`; the orbit band above the atmosphere has NEGATIVE rows (-`ORBIT_ROWS`..-1) up to `R_SPACE`.
   Shells are stored top to bottom (`SH_Y0`/`SH_Y1`/`SH_N`/`SH_OFF`; every `SH_Y0` even). The surface shell (`SURF`,
   `NS` columns = square cells at the mean surface, a multiple of 64) reaches `SURF_HALF` (330) rows up and down, so
-  the ground and nearly every structure lie in it. Above and below it the shells are thin and each has about a
-  sixteenth more or fewer columns than its neighbour (multiples of 16; seams at most ~8%), so the view never
-  visibly changes size at a seam (the user saw a 2x squeeze at the old halving seams); away from the surface shell
-  the cells drift back to square (Verdance: 48 shells, 13 M cells). Neighbours across a seam: `colTo(from, to, x)`
+  the ground lies in it. Above and below it the shells are thin (`SEAM_STEP` 0.021: each has about 2% more or
+  fewer columns than its neighbour, multiples of 16; under 3.2% above radius 320, larger only near the heart), and
+  every shell's cells are square at its middle, so the view never visibly changes size at a seam (the user saw a
+  2x squeeze at the old halving seams). Verdance: 110 shells, 13 M cells. Neighbours across a seam: `colTo(from, to, x)`
   (the cell whose middle is nearest; GLSL and `Defs.col_to`), `stepC`/`nbr`, `shAbove`/`shBelow`; a surface column
   in shell s: `colIn` / `Defs.col_in`; a cell of the read-back world: `Defs.raw_idx(row, surface col)`. `shellOf` /
   `shell_of_row` binary-search the shells. Use `floor` for rows (they go negative). In scripts use `Defs.NS` (typed)
@@ -35,14 +35,23 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Simulation passes are one dispatch per window (not per shell): rows `pc.a.y..pc.a.z`, the window's start angle and
   span in `pc.d.x`/`pc.d.y`; each thread works out its shell from its row (`winCount`/`winX0`). `move` never pairs
   rows across a seam; `boundary` moves powder, liquid and gas across every seam in the window (each inner cell owns
-  the 1-2 outer cells over it); `topple` runs a thread per column per shell and drops a block across a seam by
+  the 1-2 outer cells over it; straight down, or diagonally into the inner cell beside, so piles have no step at a
+  seam; every inner write is an `atomicCompSwap`, outer cells are written only by their owner); `topple` runs a thread per column per shell and drops a block across a seam by
   `atomicCompSwap` on the cell below. The unrolled view's scale (`main.unroll_step`) is the row-weighted average of
   the shells' column steps within `UNROLL_EASE` rows: exact inside a shell, smooth across seams.
 - A planet of another size re-creates the GPU world (`gpu.cleanup()` + `init()`) in `_make_world`. buildings.gd takes
   `N0` from `Defs.NS`. Depths that scale with size: `magmaR` (make_planet), the core radius (surface.comp).
-- Stamps and `read_rect` work at any row: a blueprint is laid out in surface columns; in another shell each of its
-  cells writes the cells whose middles fall in it (stamp.comp), and rectread reads the cell under each surface
-  column's middle.
+- Stamps and `read_rect` go in CELL FOR CELL at any depth (the user wants buildings built down or underground to keep
+  exactly their width and shape): a blueprint is laid out in surface columns, and in every shell column k of it
+  (counted from its anchor) is the cell `stampLeft(n, ax, aw) + k`, centred on the anchor's middle (GLSL `stampX`/
+  `kOf`, `Defs.stamp_x`/`stamp_pos`/`stamp_k`/`k_of`; the identity in the surface shell). A side can step about a
+  cell at a seam, never more for an ordinary building. The anchor: a generated structure's own (x0, w; `BP.ax/aw`
+  when parts must line up, a dungeon's gatehouse uses its halls'; saved in structs, infos, doors, labels);
+  anything else is anchored near you, `Defs.anchor_c` (your surface column, moved only right after the stamps are
+  flushed in `_gpu_frame`, or at a tick with none waiting), the default of `gpu.stamp` ("ax"/"aw" keys),
+  `gpu.read_rect(..., ax, aw)`, `Defs.raw_idx(row, col, ax, aw)` and `Build.cell_pos`/`cell_of` (build mode, chunks,
+  furniture). Anything that keeps cells for later keeps its anchor: doors (`_door_rec`, saved), home (`"ax"`), build
+  mode's drag start is kept as a world point.
 - Vacuum (react.comp, row < 0): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
   holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
 - Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).

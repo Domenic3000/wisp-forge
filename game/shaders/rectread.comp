@@ -1,6 +1,6 @@
 // Copies a rectangle of cells, in surface-shell columns, (front and background) into a small buffer, so the CPU reads
 // back just that (gpu_world.gd read_rect) instead of whole rows of the planet.
-// pc.a = (x0, y0, w, h): out.d[j * w + i] = front cell, out.d[w * h + j * w + i] = background cell
+// pc.a = (x0, y0, w, h), pc.b = (anchor column, anchor width): out.d[j * w + i] = front cell, out.d[w * h + j * w + i] = background cell
 // (0 outside the planet's cells)
 #include "common"
 #include "world"
@@ -15,10 +15,9 @@ void main() {
 	int row = pc.a.y + j;
 	uint o = uint(j * w + i), ob = uint(w * h) + o;
 	if (row < -ORBIT_ROWS || row >= ROWS) { outb.d[o] = 0u; outb.d[ob] = 0u; return; }
-	int col = wrapc(pc.a.x + i, NS);
-	// (a shell with other columns than the surface's: the cell under this surface column's middle)
+	// (the cells as a stamp anchored at pc.b.x, pc.b.y wide puts them: cell for cell in any shell)
 	int s = shellOf(row);
-	int ri = cellIdx(s, row, colIn(s, col));
+	int ri = cellIdx(s, row, stampX(s, pc.b.x, pc.b.y, kOf(pc.a.x, pc.b.x) + i));
 	outb.d[o] = world.cells[ri];
 	outb.d[ob] = aux.a[ri];
 }

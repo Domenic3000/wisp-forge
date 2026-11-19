@@ -66,9 +66,23 @@ int shAbove(int s) { return s - 1; }
 int shBelow(int s) { return s + 1 < NSH ? s + 1 : -1; }
 // the column of shell `to` (a neighbour of shell `from`) whose middle is nearest column x's
 int colTo(int from, int to, int x) { return ((2 * x + 1) * SH_N(to)) / (2 * SH_N(from)); }
-// a surface-shell column (blueprints, the surface table) in shell s
+// a surface-shell column (the surface table, sites) in shell s, by angle
 int colIn(int s, int c) { return ((2 * c + 1) * SH_N(s)) / (2 * NS); }
 int wrapc(int x, int n) { x = x % n; return x < 0 ? x + n : x; }
+// A stamp's column k (counted from its anchor column ax, of an anchor aw wide) in shell s: one cell
+// per blueprint column in every shell, centred on the anchor's middle (Defs.stamp_x), so a building
+// is the same pixel for pixel at any depth. In the surface shell it is column ax + k.
+int stampLeft(int n, int ax, int aw) {
+	// (its left edge: the cell nearest half its width left of the anchor's middle, which lies at
+	// (2 ax + aw) n / 2 NS cells; the 2 NS aw keeps the division on positive numbers)
+	return ((2 * ax + aw) * n + (1 - aw) * NS + 2 * NS * aw) / (2 * NS) - aw;
+}
+int stampX(int s, int ax, int aw, int k) {
+	int n = SH_N(s);
+	return wrapc(stampLeft(n, ax, aw) + k, n);
+}
+// a surface column's offset from an anchor, the short way round
+int kOf(int col, int ax) { int k = wrapc(col - ax, NS); return k > NS / 2 ? k - NS : k; }
 int cellIdx(int s, int y, int x) { return SH_OFF(s) + (y - SH_Y0(s)) * SH_N(s) + x; }
 // neighbour coordinates (shell, row, column) across shells: dir 0 up (outward), 1 down, 2 left,
 // 3 right; ivec3(-1) if none

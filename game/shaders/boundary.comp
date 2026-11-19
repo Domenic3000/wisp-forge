@@ -1,5 +1,5 @@
 // Moves material across the seams between neighbouring shells (the move pass never pairs rows
-// across one). Each thread owns one inner cell m (the top row of the shell below a seam) and the
+// across one): straight down, and diagonally where straight down is taken. Each thread owns one inner cell m (the top row of the shell below a seam) and the
 // outer cells over it: the ones whose middles map into m (colTo), one or two since the outer shell
 // has at most about an eighth more columns. One dispatch covers every seam in the window.
 // pc.a = (first outer shell, window y0, window y1, -)  pc.b = (-, frame, 0, 0)  pc.d = window angles
@@ -29,27 +29,46 @@ void main() {
 	uint in_ = world.cells[ii];
 	uint ti = in_ & 255u;
 	int first = int(rnd3(uint(ii), uint(pc.b.y), 9u) * float(n));
-	// something that falls or flows over it drops in (in a random order among those over it)
+	// Every write to an inner cell is a compare-and-swap: a neighbour's thread may slide something
+	// into this one diagonally at the same moment, and only one of them may land (nothing is lost
+	// or doubled). The outer cells are only ever written by their owner, after its swap landed.
+	// Something that falls or flows over it drops in (in a random order among those over it)...
 	for (int q = 0; q < n; q++) {
 		int io = cellIdx(s, yo, xa + (first + q) % n);
 		uint o = world.cells[io];
 		uint to = o & 255u;
 		if ((KIND[to] == K_POWDER || KIND[to] == K_LIQUID) && canDisp(to, ti)) {
-			world.cells[io] = in_;
-			world.cells[ii] = o;
+			if (atomicCompSwap(world.cells[ii], in_, o) == in_) world.cells[io] = in_;
 			return;
 		}
 	}
-	// gas under an open cell rises through
+	// ...gas under an open cell rises through...
 	if (KIND[ti] == K_GAS) {
 		for (int q = 0; q < n; q++) {
 			int io = cellIdx(s, yo, xa + (first + q) % n);
 			uint o = world.cells[io];
 			if ((o & 255u) == 0u) {
-				world.cells[io] = in_;
-				world.cells[ii] = o;
+				if (atomicCompSwap(world.cells[ii], in_, o) == in_) world.cells[io] = in_;
 				return;
 			}
+		}
+	}
+	// ...and powder or liquid that can't drop straight in slides down past it, into the inner cell
+	// beside it (as it slides diagonally inside a shell), so a pile has no step where a seam crosses it
+	int dir = rnd3(uint(ii), uint(pc.b.y), 23u) < 0.5 ? -1 : 1;
+	for (int q = 0; q < n; q++) {
+		int io = cellIdx(s, yo, xa + (first + q) % n);
+		uint o = world.cells[io];
+		uint to = o & 255u;
+		uint ko = KIND[to];
+		if (ko != K_POWDER && ko != K_LIQUID) continue;
+		for (int e = 0; e < 2; e++) {
+			int d = e == 0 ? dir : -dir;
+			int ij = cellIdx(si, yi, wrapc(m + d, Ni));
+			uint t = world.cells[ij];
+			if (!canDisp(to, t & 255u)) continue;
+			if (atomicCompSwap(world.cells[ij], t, o) == t) world.cells[io] = t;
+			return;
 		}
 	}
 }

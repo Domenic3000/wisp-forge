@@ -345,7 +345,10 @@ func stamp(structs: Array, seed: int) -> void:
 	for k in structs.size():
 		var st: Dictionary = structs[k]
 		var mode := 1 if st.get("raw", false) else 0      # raw: two words a cell (scripts/chunks.gd)
-		_dispatch_set(cl, "stamp", uset, [st["x0"], st["y0"], st["w"], st["h"], offs[k], seed + k, mode, 0], groups(st["w"], 16), groups(st["h"], 16))
+		# (its anchor: a generated structure's own; anything else is placed near you)
+		var ax: int = posmod(int(st.get("ax", Defs.anchor_c)), Defs.NS)
+		var aw: int = int(st.get("aw", 1))
+		_dispatch_set(cl, "stamp", uset, [st["x0"], st["y0"], st["w"], st["h"], offs[k], seed + k, mode, ax], groups(st["w"], 16), groups(st["h"], 16), [float(aw)])
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()
@@ -373,8 +376,8 @@ func settle(centers: Array, half: float, frames: int) -> void:
 		rd.submit()
 		rd.sync()
 
-func _dispatch_set(cl: int, shader_name: String, uset: RID, ints: Array, gx: int, gy: int) -> void:
-	var pcb := _pc(ints, [])
+func _dispatch_set(cl: int, shader_name: String, uset: RID, ints: Array, gx: int, gy: int, floats := []) -> void:
+	var pcb := _pc(ints, floats)
 	rd.compute_list_bind_compute_pipeline(cl, shaders[shader_name]["pipeline"])
 	rd.compute_list_bind_uniform_set(cl, uset, 0)
 	rd.compute_list_set_push_constant(cl, pcb, pcb.size())
@@ -644,7 +647,7 @@ func light_at(px: Vector2) -> Color:
 ## A w x h block of shell-0 cells (column c0.., row r0..; columns wrap around the planet), both
 ## layers: {"fg": PackedInt32Array, "bg": PackedInt32Array}, row by row. For a one-off look (picking
 ## up a piece of furniture, checking a bed): it waits for the GPU.
-func read_rect(c0: int, r0: int, w: int, h: int) -> Dictionary:
+func read_rect(c0: int, r0: int, w: int, h: int, ax := -1, aw := 1) -> Dictionary:
 	# a small compute pass copies just the rectangle (both layers) into a buffer of its own; reading
 	# that back is far cheaper than whole rows of the planet
 	flush()
@@ -652,7 +655,9 @@ func read_rect(c0: int, r0: int, w: int, h: int) -> Dictionary:
 	var buf := rd.storage_buffer_create(w * h * 8)
 	var uset := _mkset("rectread", [[0, world_buf], [8, aux_buf], [9, buf]])
 	var cl := rd.compute_list_begin()
-	_dispatch_set(cl, "rectread", uset, [posmod(c0, Defs.NS), r0, w, h], groups(w, 16), groups(h, 16))
+	# (the cells as a stamp anchored at ax, aw wide puts them; by default the anchor near you)
+	var rax: int = posmod(Defs.anchor_c if ax < 0 else ax, Defs.NS)
+	_dispatch_set(cl, "rectread", uset, [posmod(c0, Defs.NS), r0, w, h, rax, aw], groups(w, 16), groups(h, 16))
 	rd.compute_list_end()
 	rd.submit()
 	rd.sync()

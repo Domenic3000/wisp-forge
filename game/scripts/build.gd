@@ -237,15 +237,22 @@ static func design(piece: Dictionary, seed: int) -> Dictionary:
 	return Props.make(String(piece["prop"]), rng, piece.get("arg", null))
 
 # ---------------------------------------------------------------- cells --
-## world position of a cell's centre (shell 0: column, row)
+## World position of a cell's centre (surface column, row). Columns here are as a stamp anchored
+## near you (Defs.anchor_c) puts them: cell for cell in any shell, so what you build, pick up or
+## look at nearby is the same at any depth (in the surface shell, simply the surface column).
 static func cell_pos(col: int, row: int) -> Vector2:
-	var a := (float(posmod(col, Defs.NS)) + 0.5) / Defs.NS * TAU
-	var r := Defs.R_TOP - (float(row) + 0.5)
-	return Vector2(cos(a), sin(a)) * r
+	if row >= Defs.SURF_Y0 and row < Defs.SURF_Y1:
+		# (the surface shell: simply the surface column, whatever the anchor; most lookups are here)
+		var a := (float(posmod(col, Defs.NS)) + 0.5) / float(Defs.NS) * TAU
+		return Vector2(cos(a), sin(a)) * (Defs.R_TOP - (float(row) + 0.5))
+	return Defs.stamp_pos(row, Defs.anchor_c, 1, Defs.k_of(col, Defs.anchor_c))
 
 static func cell_of(p: Vector2) -> Vector2i:
-	var a := fposmod(atan2(p.y, p.x), TAU)
-	return Vector2i(int(a / TAU * Defs.NS), int(floor(Defs.R_TOP - p.length())))
+	var row := int(floor(Defs.R_TOP - p.length()))
+	if row >= Defs.SURF_Y0 and row < Defs.SURF_Y1:
+		return Vector2i(int(fposmod(atan2(p.y, p.x), TAU) / TAU * float(Defs.NS)) % Defs.NS, row)
+	var kr: Vector2i = Defs.stamp_k(p, Defs.anchor_c, 1)
+	return Vector2i(posmod(Defs.anchor_c + kr.x, Defs.NS), kr.y)
 
 ## The cells a prop would fill with its bottom row on `bottom` and its middle at column `col`:
 ## [[col, row, char], ...] (columns increase to the left on screen, as in the generator).

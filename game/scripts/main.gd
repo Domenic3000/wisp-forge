@@ -134,7 +134,7 @@ var build_idx := [0, 0, 0, 0, 0, 0, 0]  # the chosen piece in each category (one
 var build_shape := 2           # how back walls and blocks are laid (Build.SHAPES: brush, line, rectangle, frame)
 var build_thick := 2           # how thick a line or frame is
 var build_drag := false        # dragging out a shape...
-var build_drag_from := Vector2i.ZERO   # ...from this cell
+var build_drag_from := Vector2.ZERO    # ...from this point (a cell's middle; cells are looked up near you)
 var build_seed := 1           # the furniture design shown (R rolls a new one)
 var build_flip := false       # T mirrors it
 var build_click := false      # a fresh left click (furniture, doors and platforms go down one per click)
@@ -464,6 +464,9 @@ func _grid_frame(p: Vector2) -> Array:
 	var sa := roundf(a / TAU * n) / n * TAU
 	return [Vector2(cos(sa), sin(sa)) * roundf(r), sa]
 
+func _anchor_col(p: Vector2) -> int:
+	return int(fposmod(atan2(p.y, p.x), TAU) / TAU * float(Defs.NS)) % Defs.NS
+
 func _gpu_frame(paused: bool, sim_steps := 1) -> void:
 	_write_frame_params()
 	# simulate around every mage (the local one around the camera) and build each one's grid
@@ -482,6 +485,9 @@ func _gpu_frame(paused: bool, sim_steps := 1) -> void:
 		# what was built this frame goes into the world first
 		gpu.stamp(stamps, frame)
 		stamps.clear()
+	# what's stamped, read and looked up near you from now till the next frame is centred on your
+	# column (cell for cell at any depth, Build.cell_pos); it only moves once the stamps are in
+	Defs.anchor_c = _anchor_col(player.pos if player != null else cam_c)
 	gpu.step(centers, frames, brushes.size() > 0 and not paused, false, sim_steps if not paused else 1, false)
 	perf_us += Time.get_ticks_usec() - t0
 	perf_n += 1
@@ -730,6 +736,9 @@ func _make_doors(loaded: bool) -> void:
 				for v in e[9]:
 					dc.append(int(v))
 				doors[doors.size() - 1]["cells"] = dc
+			if e.size() > 11:
+				doors[doors.size() - 1]["ax"] = int(e[10])
+				doors[doors.size() - 1]["aw"] = int(e[11])
 	else:
 		for e in builds.door_list:
 			var d: Dictionary = e.duplicate()
@@ -749,6 +758,21 @@ func _door_near(p: Vector2, reach: float) -> Dictionary:
 	return best
 
 ## is anyone standing in a door's doorway (closing it would wall them in)?
+## A door record: its doorway is w x h cells from (col, row), laid out cell for cell as a stamp
+## anchored at (ax, aw) puts them (a generated building's own anchor, or the one near you for one
+## you set), so a door deep down is the same size as one at the surface. pos is its middle.
+func _door_rec(col: int, row: int, w: int, h: int, side: int, ax: int, aw: int) -> Dictionary:
+	var c := posmod(col, Defs.NS)
+	var rm := row + h / 2
+	var a0: Vector2 = Defs.stamp_pos(rm, ax, aw, Defs.k_of(c, ax))
+	var a1: Vector2 = Defs.stamp_pos(rm, ax, aw, Defs.k_of(c + w - 1, ax))
+	var mid := (a0 + a1).normalized() * (Defs.R_TOP - float(row) - float(h) * 0.5)
+	return {"pos": mid, "w": w, "h": h, "side": side, "col": c, "row": row, "ax": posmod(ax, Defs.NS), "aw": aw, "open": false, "swing": side}
+
+## a door's anchor (doors from before anchors were kept lie in the surface shell, where any will do)
+func _door_ax(d: Dictionary) -> int:
+	return int(d.get("ax", d["col"]))
+
 func _door_blocked(d: Dictionary) -> bool:
 	var dp: Vector2 = d["pos"]
 	var a := atan2(dp.y, dp.x)
@@ -799,7 +823,7 @@ func _set_door(d: Dictionary, open: bool, opener := Vector2.ZERO) -> void:
 		for k in dc.size():
 			if int(dc[k]) >= 0:
 				data[k] = Defs.WOODDOOR | 0xff00 | 0x10000 | 0x20000 | 0x8000000 | ((int(dc[k]) & 255) << 19)
-		stamps.append({"x0": posmod(int(d["col"]), Defs.NS), "y0": int(d["row"]), "w": w, "h": int(d["h"]), "data": data})
+		stamps.append({"x0": posmod(int(d["col"]), Defs.NS), "y0": int(d["row"]), "w": w, "h": int(d["h"]), "data": data, "ax": _door_ax(d), "aw": int(d.get("aw", 1))})
 	audio.play("door_open" if open else "door_close", d["pos"])
 
 ## A door's parts, cell by cell across its doorway (w x h, row by row): the part each cell is (which
@@ -807,7 +831,7 @@ func _set_door(d: Dictionary, open: bool, opener := Vector2.ZERO) -> void:
 func _read_door_cells(d: Dictionary) -> void:
 	var w := int(d["w"])
 	var h := int(d["h"])
-	var rr: Dictionary = gpu.read_rect(int(d["col"]), int(d["row"]), w, h)
+	var rr: Dictionary = gpu.read_rect(int(d["col"]), int(d["row"]), w, h, _door_ax(d), int(d.get("aw", 1)))
 	var fgs: PackedInt32Array = rr["fg"]
 	var dc: Array = []
 	for k in w * h:
@@ -943,11 +967,11 @@ func _door_cells(d: Dictionary) -> int:
 	var n := 0
 	var col0: int = d["col"]
 	var row0: int = d["row"]
+	var dax := _door_ax(d)
+	var daw := int(d.get("aw", 1))
 	for j in int(d["h"]):
 		for i in int(d["w"]):
-			var a := (float(posmod(col0 + i, Defs.NS)) + 0.5) / Defs.NS * TAU
-			var r := Defs.R_TOP - (float(row0 + j) + 0.5)
-			if type_at(Vector2(cos(a), sin(a)) * r) == Defs.WOODDOOR:
+			if type_at(Defs.stamp_pos(row0 + j, dax, daw, Defs.k_of(col0 + i, dax))) == Defs.WOODDOOR:
 				n += 1
 	return n
 
@@ -1492,6 +1516,8 @@ func _read_local_input(m: Mage) -> void:
 func _tick() -> void:
 	frame += 1
 	time += 1.0
+	if stamps.is_empty() and player != null:
+		Defs.anchor_c = _anchor_col(player.pos)      # (nothing waiting to go in under the old one)
 	_read_local_input(player)
 	var aim: Vector2 = player.input.aim
 	if space.active:
@@ -2068,7 +2094,8 @@ func _try_home(m: Mage, reach: int) -> bool:
 		ui.toast("This bed needs %s to be a home" % why, Color(1, 0.7, 0.55), 2.5)
 		return true
 	var mid := Build.cell_pos((int(bed["c0"]) + int(bed["c1"])) / 2, int(bed["r1"]) - 9)
-	planet_state["home"] = {"pos": [mid.x, mid.y], "bed": [bed["c0"], bed["r0"], bed["c1"], bed["r1"]], "n": bed["n"]}
+	# (the bed's cells as read now: anchored near you, so keep that anchor to find them again)
+	planet_state["home"] = {"pos": [mid.x, mid.y], "bed": [bed["c0"], bed["r0"], bed["c1"], bed["r1"]], "n": bed["n"], "ax": Defs.anchor_c}
 	audio.play("forge", mid, 0.5)
 	for k in 16:
 		_particle(mid + Vector2(randf() - 0.5, randf() - 0.5) * 16.0, Vector2(randf() - 0.5, -0.3 - randf() * 0.5), 30 + randi() % 20, Color(0.75, 0.85, 1.0), true, -0.01)
@@ -2081,7 +2108,7 @@ func _home_pos() -> Variant:
 		return null
 	var hm: Dictionary = planet_state["home"]
 	var bx: Array = hm["bed"]
-	var rr: Dictionary = gpu.read_rect(int(bx[0]), int(bx[1]), int(bx[2]) - int(bx[0]) + 1, int(bx[3]) - int(bx[1]) + 1)
+	var rr: Dictionary = gpu.read_rect(int(bx[0]), int(bx[1]), int(bx[2]) - int(bx[0]) + 1, int(bx[3]) - int(bx[1]) + 1, int(hm.get("ax", int(bx[0]))))
 	var left := 0
 	for b in rr["bg"]:
 		if (b & 255) == Defs.DECOR and ((b >> 24) & 15) == Build.Props.BED:
@@ -3116,12 +3143,10 @@ func _update_build(m: Mage) -> void:
 				dheld += 1
 		if dheld == 0:
 			ok = false
-		var da := (float(posmod(c0, Defs.NS)) + Build.DOOR_W * 0.5) / Defs.NS * TAU
-		var dr := Defs.R_TOP - float(r0) - Build.DOOR_H * 0.5
 		var mc := Build.cell_of(m.pos)
 		var side := 1 if posmod(mc.x - c0, Defs.NS) < Defs.NS / 2 else -1
-		var rec := {"pos": Vector2(cos(da), sin(da)) * dr, "w": Build.DOOR_W, "h": Build.DOOR_H, "side": side,
-			"col": posmod(c0, Defs.NS), "row": r0, "open": true}
+		var rec := _door_rec(c0, r0, Build.DOOR_W, Build.DOOR_H, side, Defs.anchor_c, 1)
+		rec["open"] = true
 		if _door_blocked(rec):
 			ok = false
 		place = {"door": rec}
@@ -3171,13 +3196,10 @@ func _update_build(m: Mage) -> void:
 		_set_door(rec2, false)
 	if place.has("structure"):
 		var sbp = place["structure"]["bp"]
-		stamps.append({"x0": posmod(sbp.x0, Defs.NS), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c})
+		# (anchored near you, as it was planned and previewed: Build.cell_pos)
+		stamps.append({"x0": posmod(sbp.x0, Defs.NS), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c, "ax": Defs.anchor_c, "aw": 1})
 		for dd in sbp.doors:
-			var dcol := posmod(sbp.x0 + int(dd[0]), Defs.NS)
-			var dang := (float(dcol) + float(dd[2]) * 0.5) / Defs.NS * TAU
-			var drr := Defs.R_TOP - float(sbp.y0 + int(dd[1])) - float(dd[3]) * 0.5
-			doors.append({"pos": Vector2(cos(dang), sin(dang)) * drr, "w": int(dd[2]), "h": int(dd[3]), "side": int(dd[4]),
-				"col": dcol, "row": sbp.y0 + int(dd[1]), "open": false, "swing": int(dd[4])})
+			doors.append(_door_rec(sbp.x0 + int(dd[0]), sbp.y0 + int(dd[1]), int(dd[2]), int(dd[3]), int(dd[4]), Defs.anchor_c, 1))
 		_struct_key = ""          # it's there now: work out the next one afresh
 	audio.play("place", p, 0.9)
 	for k in 8:
@@ -3204,9 +3226,9 @@ func _update_shape(m: Mage, piece: Dictionary) -> void:
 		return
 	if build_click and not build_drag:
 		build_drag = true
-		build_drag_from = cell
+		build_drag_from = Build.cell_pos(cell.x, cell.y)
 	build_click = false
-	var from := build_drag_from if build_drag else cell
+	var from := Build.cell_of(build_drag_from) if build_drag else cell
 	var cells: Array = Build.shape_cells(from, cell, shape, build_thick)
 	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
 	var good := []
@@ -3803,7 +3825,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 30            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 31            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -3979,7 +4001,7 @@ func _world_meta(without_skiff: bool) -> String:
 	planet_state["chests"] = cs
 	var ds := []
 	for d in doors:
-		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"]), d.get("cells", [])])
+		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"]), d.get("cells", []), _door_ax(d), int(d.get("aw", 1))])
 	planet_state["doors"] = ds
 	planet_state["time"] = time
 	return JSON.stringify(planet_state)
