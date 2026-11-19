@@ -90,6 +90,22 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   built; the hull comes away by `carve`). The `outline` it collides by is only cells touching the outside, so
   building inside never changes how it collides; `keel` is its lowest outline point. `save_cells`/`load_cells`
   pack all five layers (saved in `planet_state["skiff"]["cells"]`). `back_texture()` is drawn behind the riders.
+- Asteroids (`scripts/asteroid.gd`, extends pixel_body.gd; `Asteroid.make(seed, radius, kind)`): a lumpy outline
+  (harmonics + grain, sometimes stretched), craters bitten from the edge, matter by depth and noise per `KINDS`
+  (stony: gravel crust, stone, copper veins, coal, prism crystal deep; icy: snow, ice, frost veins; metallic:
+  deepstone, copper, wisp ore deep, so a better staff is needed). Its own light `rebuild` (mass and centre only,
+  no room or outline), `take(k)` clears a cell and its pixel (the picture `img` is kept, updated in place),
+  `settle_mass` rebuilds keeping every cell where it was, `split_off(idx)` makes a piece a rock of its own,
+  `solid_at`, `save`/`from_save` (base64 cells). space.gd keeps home's `rocks` (`_ensure_rocks`: three clusters
+  of 2-4 over the orbit band from the planet's seed, or loaded from `planet_state["asteroids"]`, written by
+  `_world_meta` via `rocks_state`; `_reanchor` drops them, they were saved with the old home). Out there:
+  `mine` (hold dig: cells within `dig_r` of the reach point, `HARD <= tier`, the brush's rate, into `inv`, dust
+  streams to you), `_update_rocks` (drift, spin, rebuild a few frames after digging, `_split` once you stop:
+  pieces drift apart, scraps under `ROCK_SCRAP` crumble), `_rock_push` (the mage moved in 2-cell steps near
+  rock and pushed back out along the rock's radius), the skiff's own `advance(collide)` against `_rock_solid`.
+  The camera frames the nearest rock (`_follow`; `live` stays false up there, judged by height over the
+  planet), `_draw_rocks` makes a Sprite2D per rock with the `LIT` shader (a lumpy sphere lit by `sun_ang`,
+  self-lit ores bright: their alpha is 250), and a marker points to the nearest. Test mode: `test_dig`.
 - The Wisp Skiff (`scripts/skiff.gd`, extends pixel_body.gd; `Skiff.make(seed)`): grown from parts (`_hull`, `_trim`,
   `_engine`, `_fin`, then `_canopy`: a timber frame and glass shell around an open cabin with a glass back pane, the
   body's room), two seats on the cabin floor (`seat_cells`, `riders`, pilot first). `steer(input)`: the movement keys

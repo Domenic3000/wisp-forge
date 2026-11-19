@@ -127,6 +127,7 @@ var zoom := 1.0
 var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1)
 var test_aim := Vector2.ZERO # test mode: where the local mage points (zero: the mouse)
 var test_cast := false       # test mode: hold the left button
+var test_dig := false        # test mode: hold the right button
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
@@ -1244,6 +1245,10 @@ func unroll_step(r: float) -> float:
 	return exp(sum / (b - a))
 
 func unrolled() -> bool:
+	# (out in space, with the planet shown as its picture, the view is always flat: close by an
+	# asteroid it zooms right in, and nothing there needs the planet's curve unrolled)
+	if space != null and space.active and not space.live:
+		return false
 	return zoom < 2.5
 
 func _view() -> Vector2:
@@ -1510,7 +1515,7 @@ func _read_local_input(m: Mage) -> void:
 	inp.cast = (can_act and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or test_cast
 	var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0
 	var shift := Input.is_key_pressed(KEY_SHIFT)
-	inp.dig = can_act and rmb and not shift
+	inp.dig = (can_act and rmb and not shift) or test_dig
 	inp.decon = can_act and rmb and shift
 
 func _tick() -> void:
@@ -3999,6 +4004,9 @@ func _world_meta(without_skiff: bool) -> String:
 	for c in chests:
 		cs.append([c.pos.x, c.pos.y, c.opened])
 	planet_state["chests"] = cs
+	var ast = space.rocks_state(int(planet["index"]))
+	if ast != null:
+		planet_state["asteroids"] = ast
 	var ds := []
 	for d in doors:
 		ds.append([d["pos"].x, d["pos"].y, d["w"], d["h"], d["side"], d["col"], d["row"], d["open"], d.get("swing", d["side"]), d.get("cells", []), _door_ax(d), int(d.get("aw", 1))])

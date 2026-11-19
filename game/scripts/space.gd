@@ -12,10 +12,45 @@
 ## come closer than HOLD above its orbit band. Then everything is moved over so that it is at the
 ## origin (`_reanchor`), and it becomes home: drop into its orbit band to land.
 ##
+## Asteroids (asteroid.gd, pixel bodies of rock) hang in a few clusters above each planet's orbit
+## band (`_ensure_rocks`: grown from the planet's seed the first time, then saved with its world in
+## planet_state["asteroids"]). Near one the camera comes in close; hold dig on it to mine it (`mine`,
+## the staff's reach and hardness as on the ground); a rock cut through drifts apart into its pieces
+## (`_split`), scraps crumble to dust. The mage and the skiff bump against them (`_rock_push`,
+## `_rock_solid`). A marker points to the nearest one.
+##
 ## The mage flies by the staff jet (hold cast: a push toward where you aim, paid in mana) inside a
 ## wisp bubble (no breath needed out here), or the skiff carries the party. The nearest planet pulls,
 ## fading with distance; the view turns (`view_ang`, eased) to keep it below you.
 extends Node2D
+
+const Asteroid := preload("res://scripts/asteroid.gd")
+const ROCK_SCRAP := 10          # a piece smaller than this (cells) crumbles to dust
+const ROCK_DRAG := 0.9995
+## lit by the sun: a lumpy sphere's shading (the direction from its middle, bent by its edges),
+## and ores that glow by themselves (alpha a hair under 1) left bright
+const LIT := "shader_type canvas_item;
+uniform vec2 sun = vec2(1.0, 0.0);
+uniform vec2 ctr = vec2(0.0);
+uniform float rad = 20.0;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	if (c.a < 0.5) discard;
+	vec2 px = TEXTURE_PIXEL_SIZE;
+	vec2 g = vec2(0.0);
+	for (int k = 1; k <= 3; k++) {
+		float f = float(k);
+		g.x += texture(TEXTURE, UV + vec2(px.x * f, 0.0)).a - texture(TEXTURE, UV - vec2(px.x * f, 0.0)).a;
+		g.y += texture(TEXTURE, UV + vec2(0.0, px.y * f)).a - texture(TEXTURE, UV - vec2(0.0, px.y * f)).a;
+	}
+	vec2 p = (UV / px - ctr) / rad;
+	vec2 nxy = p * 0.75 - g * 0.2;
+	vec3 n = normalize(vec3(nxy, sqrt(max(0.08, 1.0 - min(dot(nxy, nxy), 0.92)))));
+	float d = max(dot(n, normalize(vec3(sun, 0.5))), 0.0);
+	float lit = 0.14 + 0.98 * d;
+	if (c.a < 0.995) lit = max(lit, 1.0);
+	COLOR = vec4(c.rgb * lit, 1.0);
+}"
 
 const SWAP_ZOOM := 3.0          # zoomed out this far, a cell is smaller than a pixel: the picture takes over
 const JET := 0.075              # the staff jet's push, per tick
@@ -52,11 +87,18 @@ var centre := Vector2.ZERO      # (its centre)
 var view_ang := 0.0             # the view's turn out here (main.world_to_screen uses it)
 var sun_ang := 0.0              # where the sun is (it turns once a day, as on the planet)
 var _bodies_for := -1
+var rocks := []                 # the asteroids near home (asteroid.gd), in its coordinates
+var _rocks_for := -1            # (the planet they belong to)
+var _rock_sprites := []
+var _lit: Shader
+var _mining := 0                # (frames since you last dug at a rock)
 var _mask: Shader
 
 func _ready() -> void:
 	_mask = Shader.new()
 	_mask.code = PLANET_MASK
+	_lit = Shader.new()
+	_lit.code = LIT
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 90210
 	for k in 420:
@@ -141,6 +183,8 @@ func tick() -> void:
 	sun_ang += TAU / game.day_len()
 	var focus: Vector2 = sk.pos if m.aboard != null else m.pos
 	_find_near(focus)
+	_ensure_rocks()
+	_update_rocks()
 	if sk != null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
 		# the skiff: flown by its pilot (keys, or hold cast toward the cursor), or drifting if nobody's
 		# aboard (one left down on the planet waits there)
@@ -149,7 +193,8 @@ func tick() -> void:
 		var want: Vector2 = sk.steer(pl.input) if pl != null else Vector2.ZERO
 		sk.fly(want, pl != null, pull(sk.pos), true, 0.0, 0.9995)
 		sk.pos = _hold(sk.pos, sk)
-		sk.advance(Callable())
+		# (it bumps against asteroids: the skiff's own collision, against their cells)
+		sk.advance(Callable(self, "_rock_solid") if not _rocks_near(sk.pos, 120.0).is_empty() else Callable())
 		for rider in sk.riders:
 			if rider != null:
 				game._ride(rider)
@@ -183,9 +228,21 @@ func tick() -> void:
 	vel *= DRAG
 	if vel.length() > MAX_SPEED:
 		vel = vel.normalized() * MAX_SPEED
-	var held := _hold(m.pos + vel, null)
-	vel = held - m.pos
-	m.pos = held
+	var goal := _hold(m.pos + vel, null)
+	var dv: Vector2 = goal - m.pos
+	vel = dv
+	var close := _rocks_near(m.pos, dv.length() + 30.0)
+	if close.is_empty():
+		m.pos = goal
+	else:
+		# near rock: move in small steps so the jet never carries you through one
+		var ns := clampi(int(ceil(dv.length() / 2.0)), 1, 40)
+		for k in ns:
+			m.pos += dv / float(ns)
+			if _rock_push(m, close):
+				break
+	if m.input.dig and not m.dead:
+		mine(m)
 	m.vx = vel.dot(game.basis_r(a))
 	m.vy = vel.dot(game.basis_d(a))
 	m.on_ground = false
@@ -194,6 +251,8 @@ func tick() -> void:
 	m.breath = minf(m.max_breath, m.breath + 4.0)       # (inside the wisp bubble)
 	if m.iframes > 0:
 		m.iframes -= 1
+	if m.dig_blocked > 0:
+		m.dig_blocked -= 1
 	_follow(m)
 	_maybe_travel(m.pos)
 	if _landing(m.pos, vel):
@@ -276,6 +335,8 @@ func _reanchor(d: Vector2) -> void:
 	for p in game.parts:
 		p["pos"] += d
 	centre += d
+	rocks.clear()                 # (the old home's: saved with it; the new home's are made next)
+	_rocks_for = -1
 
 ## the nearest planet's pull out here (per tick, toward its centre): as at the top of its orbit
 ## band, fading with the square of the distance
@@ -287,10 +348,17 @@ func pull(p: Vector2) -> float:
 ## side stays well on screen (a quarter of the view's height below you), and turning to keep it below
 func _follow(m) -> void:
 	var h: float = (m.pos - centre).length() - float(near.get("top", Defs.R_TOP))
-	var zt := clampf(h / (0.25 * float(game.VH)), SWAP_ZOOM * 0.98, 160.0)
+	var zh := h / (0.25 * float(game.VH))
+	var zt := clampf(zh, SWAP_ZOOM * 0.98, 160.0)
+	# near an asteroid the view comes in close, so it fills a good part of the screen
+	var rk = nearest_rock(m.pos)
+	if rk != null:
+		var dr: float = (m.pos - rk.pos).length() - rk.reach()
+		zt = minf(zt, clampf((maxf(dr, 0.0) + rk.reach() * 2.4) / (0.5 * float(game.VH)), 1.0, 160.0))
 	game.zoom = lerpf(game.zoom, zt, 0.035)
 	game.cam_c = game.cam_c.lerp(m.pos, 0.2)
-	live = game.zoom < SWAP_ZOOM and not game.travelling and int(near.get("index", home)) == home
+	# (the live planet only while you're down near it; up by a rock, it's still its picture)
+	live = game.zoom < SWAP_ZOOM and zh < SWAP_ZOOM and not game.travelling and int(near.get("index", home)) == home
 	var cc: Vector2 = game.cam_c
 	var va := (cc - centre).angle()
 	if live:
@@ -381,10 +449,14 @@ func _draw() -> void:
 	for si in sprites:
 		if not shown.has(si):
 			sprites[si].visible = false
+	_draw_rocks(xf)
 	# where the planets are when they're off screen: a marker at the edge, pointing the way
 	for b2 in bodies:
 		var hc := Color(0.6, 1.0, 0.7) if int(b2["index"]) == home else Color(0.85, 0.85, 1.0)
 		_marker(xf, b2["pos"], b2["top"], String(b2["name"]), hc)
+	var nr = nearest_rock(game.player.pos, 20000.0)
+	if nr != null:
+		_marker(xf, nr.pos, nr.reach(), "Asteroid", Color(0.95, 0.82, 0.62))
 	# you, in your wisp bubble (drawn by the overlay; the bubble here, under the sprite)
 	if game.player.aboard == null:
 		var ms: Vector2 = xf * game.player.pos
@@ -492,3 +564,220 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 			c.a = 1.0
 			img.set_pixel(x, y, c)
 	return img
+
+# ------------------------------------------------------------- asteroids ---
+
+## The asteroids of home: loaded with its world, or grown from its seed the first time (a few
+## clusters over its orbit band, each of its own kind: stony, icy, metallic).
+func _ensure_rocks() -> void:
+	var idx := int(game.planet.get("index", -1))
+	if idx < 0 or idx == _rocks_for or idx != home:
+		return
+	_rocks_for = idx
+	rocks.clear()
+	var saved = game.planet_state.get("asteroids", null)
+	if typeof(saved) == TYPE_ARRAY:
+		for d in saved:
+			var a = Asteroid.from_save(d)
+			if a != null:
+				rocks.append(a)
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(game.planet.get("seed", idx)) ^ 0xA57E
+	var ncl := 3
+	var a0 := rng.randf() * TAU
+	for c in ncl:
+		var ca := a0 + float(c) * TAU / float(ncl) + rng.randf_range(-0.3, 0.3)
+		var cpos := Vector2(cos(ca), sin(ca)) * (Defs.R_SPACE + rng.randf_range(700.0, 1900.0))
+		var ckind: String = Asteroid.KINDS[c % Asteroid.KINDS.size()]
+		for k in rng.randi_range(2, 4):
+			var kind: String = ckind if k == 0 or rng.randf() < 0.65 else "stony"
+			var r := rng.randf_range(12.0, 34.0) if k > 0 else rng.randf_range(26.0, 38.0)
+			var a2 = Asteroid.make(rng.randi(), r, kind)
+			a2.pos = cpos + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 240.0 * float(mini(k, 1))
+			a2.vel = Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 0.01
+			# (not on top of one already there)
+			for o in rocks:
+				var gap: Vector2 = a2.pos - o.pos
+				if gap.length() < a2.reach() + o.reach():
+					a2.pos = o.pos + gap.normalized() * (a2.reach() + o.reach() + 10.0)
+			rocks.append(a2)
+
+## for saving with the world: home's asteroids, or null if they aren't the ones for `index`
+func rocks_state(index: int) -> Variant:
+	if _rocks_for != index:
+		return null
+	var out := []
+	for a in rocks:
+		out.append(a.save())
+	return out
+
+## They drift and turn; what you dug at is rebuilt (a few frames at a time) and split if it came
+## apart. Pieces that drift far off are gone.
+func _update_rocks() -> void:
+	_mining += 1
+	for k in range(rocks.size() - 1, -1, -1):
+		var a = rocks[k]
+		a.pos += a.vel
+		a.ang = wrapf(a.ang + a.omega, -PI, PI)
+		a.vel *= ROCK_DRAG
+		if a.dust > 0 and (game.frame % 6 == 0 or _mining > 2):
+			a.settle_mass()
+			# (splitting is a flood over its cells: only once you stop digging, or now and then)
+			if _mining > 8 or game.frame % 45 == 0:
+				_split(a)
+		if a.mass < 1.0 or a.pos.length() > Defs.R_SPACE + 12000.0:
+			rocks.remove_at(k)
+
+## A rock cut through: its smaller pieces drift off as rocks of their own, scraps crumble to dust.
+func _split(a) -> void:
+	var pcs: Array = a.pieces()
+	if pcs.size() <= 1 and (pcs.is_empty() or pcs[0].size() >= ROCK_SCRAP):
+		return
+	for k in range(pcs.size()):
+		var piece: PackedInt32Array = pcs[k]
+		if k == 0 and piece.size() >= ROCK_SCRAP:
+			continue                       # (the biggest stays this rock)
+		if piece.size() < ROCK_SCRAP:
+			for ci in piece:
+				var col := Color.hex((Defs.PAL[int(a.cells[ci]) * 4 + (int(a.vars[ci]) & 3)] << 8) | 0xff)
+				game._particle(a.cell_world(ci % a.w, ci / a.w), a.vel + Vector2(randf() - 0.5, randf() - 0.5) * 0.4, 40 + randi() % 40, col, false, 0.0)
+				a.take(ci)
+			continue
+		var b = a.split_off(piece)
+		var away: Vector2 = (b.pos - a.pos).normalized()
+		b.vel += away * 0.04
+		a.vel -= away * 0.04 * b.mass / maxf(a.mass, 1.0)
+		rocks.append(b)
+		game.audio.play("creak", b.pos, 0.6)
+	a.settle_mass()
+
+## Dig at the rock under the cursor (within the staff's reach): its cells come into the satchel at
+## the pace and by the hardness rules of digging on a planet; dust streams to you.
+func mine(m) -> void:
+	var p: Vector2 = game._reach(m, m.input.aim)
+	var r: float = m.dig_r
+	var hard := false
+	var got := 0
+	for a in _rocks_near(p, r + 2.0):
+		var b: Vector2 = a.to_body(p) + a.com
+		for j in range(maxi(0, int(b.y - r - 1.0)), mini(a.h, int(b.y + r + 2.0))):
+			for i in range(maxi(0, int(b.x - r - 1.0)), mini(a.w, int(b.x + r + 2.0))):
+				var ck: int = j * a.w + i
+				var t: int = a.cells[ck]
+				if t == 0 or Vector2(i + 0.5, j + 0.5).distance_to(b) > r:
+					continue
+				if Defs.HARD[t] > m.tier:
+					hard = true
+					continue
+				if randf() > 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2):
+					continue
+				a.take(ck)
+				m.inv[t] += 1
+				got += 1
+				if randf() < 0.5:
+					game.parts.append({"pos": a.cell_world(i, j), "vel": Vector2(randf() - 0.5, randf() - 0.5), "life": 60,
+						"col": Defs.COLOR[t], "self": true, "grav": 0.0, "home": true})
+	if got > 0:
+		_mining = 0
+		game.audio.play("dig", p, 0.7)
+	if hard:
+		m.dig_blocked = 30
+
+## the asteroids within `pad` of their reach of p
+func _rocks_near(p: Vector2, pad: float) -> Array:
+	var out := []
+	for a in rocks:
+		var lim: float = a.reach() + pad
+		if (a.pos - p).length_squared() < lim * lim:
+			out.append(a)
+	return out
+
+## the nearest asteroid to p (by its edge), within `within`; null if none
+func nearest_rock(p: Vector2, within := 900.0) -> Variant:
+	var best = null
+	var bd := within
+	for a in rocks:
+		var d: float = (a.pos - p).length() - a.reach()
+		if d < bd:
+			bd = d
+			best = a
+	return best
+
+## is world point p inside an asteroid's cell? (the skiff collides by this)
+func _rock_solid(p: Vector2) -> bool:
+	for a in _rocks_near(p, 2.0):
+		if a.solid_at(p):
+			return true
+	return false
+
+## The mage inside a rock: pushed back out the way it faces you, keeping the rock's own drift and
+## losing the speed you had into it (and some along it). True if it touched.
+func _rock_push(m, close: Array) -> bool:
+	var ua: float = (m.pos - centre).angle()
+	var rr: Vector2 = game.basis_r(ua)
+	var dd: Vector2 = game.basis_d(ua)
+	var hw: float = float(m.w) * 0.5
+	var hh: float = float(m.h) * 0.5
+	var pts := [Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(-hw, hh), Vector2(hw, hh), Vector2(-hw, 0.0), Vector2(hw, 0.0),
+		Vector2(0.0, -hh), Vector2(0.0, hh), Vector2.ZERO]
+	var touched := false
+	for a in close:
+		var inside := false
+		for q in pts:
+			if a.solid_at(m.pos + rr * q.x + dd * q.y):
+				inside = true
+				break
+		if not inside:
+			continue
+		touched = true
+		var n: Vector2 = (m.pos - a.pos).normalized()
+		for step in 60:
+			m.pos += n * 0.5
+			var still := false
+			for q2 in pts:
+				if a.solid_at(m.pos + rr * q2.x + dd * q2.y):
+					still = true
+					break
+			if not still:
+				break
+		var rel: Vector2 = vel - a.vel
+		if rel.dot(n) < 0.0:
+			rel -= n * rel.dot(n)
+		vel = a.vel + rel * 0.8
+	return touched
+
+## each rock as a sprite of its cells, turned with it, lit by the sun
+func _draw_rocks(xf: Transform2D) -> void:
+	while _rock_sprites.size() < rocks.size():
+		var spr := Sprite2D.new()
+		spr.centered = false
+		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		var mat := ShaderMaterial.new()
+		mat.shader = _lit
+		spr.material = mat
+		add_child(spr)
+		_rock_sprites.append(spr)
+	var sun := Vector2(cos(sun_ang), sin(sun_ang))
+	var vw := float(game.VW)
+	var vh := float(game.VH)
+	for k in _rock_sprites.size():
+		var spr2: Sprite2D = _rock_sprites[k]
+		if k >= rocks.size():
+			spr2.visible = false
+			continue
+		var a = rocks[k]
+		var sp: Vector2 = xf * a.pos
+		var rp: float = a.reach() / game.zoom + 2.0
+		if sp.x < -rp or sp.y < -rp or sp.x > vw + rp or sp.y > vh + rp:
+			spr2.visible = false
+			continue
+		spr2.visible = true
+		spr2.texture = a.texture()
+		var ax: Vector2 = a.axis_x()
+		var ay: Vector2 = a.axis_y()
+		spr2.transform = xf * Transform2D(ax, ay, a.pos) * Transform2D(Vector2.RIGHT, Vector2.DOWN, -a.com)
+		var sm := spr2.material as ShaderMaterial
+		sm.set_shader_parameter("sun", Vector2(sun.dot(ax), sun.dot(ay)).normalized())
+		sm.set_shader_parameter("ctr", a.com)
+		sm.set_shader_parameter("rad", a.rad * 1.2)

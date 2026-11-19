@@ -2337,6 +2337,109 @@ func run() -> void:
 		sx_in >= 0 and sx_pic and sx_off >= 0 and sx_gf1 == sx_gf0 and sx_far > 800.0 and sx_back >= 0 and g.gpu.frame > sx_gf2 + 60 and absf(g.zoom - float(g.zoom_levels[g.zoom_i])) < 0.05 and sx_r < Defs.R_SPACE,
 		"out after %d ticks of levitating (picture taken: %s); the picture took over after %d ticks of the jet (GPU frames while it showed: %d); %.0f past the orbit band at zoom %.1f; back in the band after %d ticks; then the planet ran again (%d GPU frames in 150 ticks), zoom %.2f, you at radius %.0f" % [sx_in, sx_pic, sx_off, sx_gf1 - sx_gf0, sx_far, sx_zoom, sx_back, g.gpu.frame - sx_gf2, g.zoom, sx_r])
 
+	# ---- an asteroid: out by one, the view comes in close, you mine it, bump it, cut it in two ----
+	g.player.dead = false
+	g.test_god = true
+	_go(sx_up * (Defs.R_SPACE - 40.0))
+	g.test_jump = true
+	for as_k in 240:
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_jump = false
+	g.space._ensure_rocks()
+	var as_n0: int = g.space.rocks.size()
+	var as_kinds := {}
+	for as_a in g.space.rocks:
+		as_kinds[as_a.kind] = int(as_kinds.get(as_a.kind, 0)) + 1
+	var as_r = null                          # (the biggest stony one)
+	for as_a2 in g.space.rocks:
+		if as_a2.kind == "stony" and (as_r == null or as_a2.mass > as_r.mass):
+			as_r = as_a2
+	if as_r == null:
+		as_r = g.space.rocks[0]
+	as_r.omega = 0.0                          # (held still, so the spot you dig at stays put)
+	as_r.vel = Vector2.ZERO
+	# its surface on the side facing the planet, and you a little off it
+	var as_dir: Vector2 = (-as_r.pos).normalized()
+	var as_s: Vector2 = as_r.pos
+	for as_st in 400:
+		if not as_r.solid_at(as_s) and as_st > 3:
+			break
+		as_s += as_dir * 0.5
+	g.player.pos = as_s + as_dir * 14.0
+	g.cam_c = g.player.pos
+	g.space.vel = Vector2.ZERO
+	for as_k2 in 150:
+		g.space.vel = Vector2.ZERO
+		await _frames(1)
+	var as_zoom: float = g.zoom
+	var as_live: bool = g.space.live
+	# mine toward its middle
+	var as_inv0 := 0
+	for as_v in g.player.inv:
+		as_inv0 += int(as_v)
+	var as_c0: int = as_r.count()
+	g.test_dig = true
+	for as_k3 in 180:
+		g.test_aim = as_s - as_dir * (3.0 + float(as_k3) / 180.0 * 18.0)
+		g.space.vel = Vector2.ZERO
+		await _frames(1)
+	g.test_dig = false
+	g.test_aim = Vector2.ZERO
+	await _frames(12)
+	var as_inv1 := 0
+	for as_v2 in g.player.inv:
+		as_inv1 += int(as_v2)
+	var as_c1: int = as_r.count()
+	await _frames(2)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("asteroid.png"))
+	# fly into it: you never end up inside it
+	var as_in := 0
+	for as_k4 in 60:
+		g.space.vel = (as_r.pos - g.player.pos).normalized() * 3.0
+		await _frames(1)
+		if as_r.solid_at(g.player.pos):
+			as_in += 1
+	g.space.vel = Vector2.ZERO
+	# cut it through the middle (a band three cells wide across its grid): it drifts apart in two
+	var as_cnt0: int = g.space.rocks.size()
+	var as_mid: int = as_r.h / 2
+	for as_j in range(as_mid - 1, as_mid + 2):
+		for as_i in as_r.w:
+			if as_r.cells[as_j * as_r.w + as_i] != 0:
+				as_r.take(as_j * as_r.w + as_i)
+	await _frames(20)
+	var as_cnt1: int = g.space.rocks.size()
+	var as_d0 := 0.0
+	var as_other = null
+	for as_a3 in g.space.rocks:
+		if as_a3 != as_r and (as_other == null or (as_a3.pos - as_r.pos).length() < (as_other.pos - as_r.pos).length()):
+			as_other = as_a3
+	if as_other != null:
+		as_d0 = (as_other.pos - as_r.pos).length()
+	await _frames(120)
+	var as_d1: float = 0.0 if as_other == null else (as_other.pos - as_r.pos).length()
+	var as_saved = g.space.rocks_state(int(g.planet["index"]))
+	var as_nsave: int = (as_saved as Array).size() if as_saved != null else -1
+	# and back down
+	g.player.pos = sx_up * (Defs.R_SPACE - 4.0)
+	g.cam_c = g.player.pos
+	var as_back := -1
+	for as_k5 in 200:
+		g.space.vel = -sx_up * 3.0
+		await _frames(1)
+		if not g.space.active:
+			as_back = as_k5
+			break
+	await _frames(60)
+	_ok("an asteroid: the view comes in close, you mine it, bump it and cut it in two",
+		as_n0 >= 6 and as_kinds.size() >= 2 and as_zoom < 1.6 and not as_live and as_inv1 - as_inv0 >= 20 and as_c0 - as_c1 >= as_inv1 - as_inv0
+			and as_in == 0 and as_cnt1 > as_cnt0 and as_d1 > as_d0 + 1.0 and as_nsave == g.space.rocks.size() and as_back >= 0,
+		"%d rocks (%s); zoom by it %.2f (live planet %s); mined %d cells into the satchel (%d -> %d cells); inside it %d of 60 frames flying at it; cut through: %d -> %d rocks, the pieces %.1f -> %.1f apart; %d saved; back down after %d ticks" % [as_n0, str(as_kinds), as_zoom, as_live, as_inv1 - as_inv0, as_c0, as_c1, as_in, as_cnt0, as_cnt1, as_d0, as_d1, as_nsave, as_back])
+	g.test_god = true
+
 	# ---- the Wisp Skiff: forged, called, boarded, flown up into space and back, landed, left ----
 	g.player.dead = false
 	g.test_god = true

@@ -44,9 +44,17 @@ func setup(width: int, height: int) -> void:
 	cells.fill(0)
 	vars.resize(w * h)
 	vars.fill(0)
-	for a in [made, bg, bgv, room, outside]:
-		a.resize(w * h)
-		a.fill(0)
+	# (one by one: packed arrays taken out of an Array in a loop would be copies)
+	made.resize(w * h)
+	made.fill(0)
+	bg.resize(w * h)
+	bg.fill(0)
+	bgv.resize(w * h)
+	bgv.fill(0)
+	room.resize(w * h)
+	room.fill(0)
+	outside.resize(w * h)
+	outside.fill(0)
 
 func at(i: int, j: int) -> int:
 	if i < 0 or j < 0 or i >= w or j >= h:
