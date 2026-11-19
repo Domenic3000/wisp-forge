@@ -56,6 +56,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   seat (`_ride`: no casting or digging aboard, its air to breathe). main `_update_skiff` flies it on the planet;
   flown out of the top of the orbit band it takes everyone into space (`space.try_enter` needs the whole party
   aboard), and space.gd flies it out there. Saved per planet in `planet_state["skiff"]`; overlay `_draw_skiff`.
+  Drawn by `_skiff_xf`: turned with the ship but one body cell to one pixel (never a map taken straight from the
+  world: the close view's columns widen with height and would stretch it); its riders are drawn inside that
+  transform (`_draw_mage(..., place)`), so they sit and turn with it. Air drag 0.97 a tick below `R_TOP` (none above);
+  coming back from space it sheds its speed to 8 a tick, and glows coming down fast through the air.
 
 ## Cell format
 - Main buffer (binding 0), uint per cell:

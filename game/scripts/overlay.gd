@@ -171,7 +171,7 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 ## A mage: the frame, plus the parts mage_rig.gd simulates (the scarf behind him; the hat's tip,
 ## the beard's end and the staff in front), all in the sprite's own pixels and transform.
 ## The rig keeps moving while he blinks invisible after a hit, so nothing jumps when he reappears.
-func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
+func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array = []) -> void:
 	var key := _mage_frame(m)
 	if m.rig == null:
 		m.rig = MageRig.new()
@@ -192,6 +192,11 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 	# (out in space the view zooms far out: the mage stays big enough to see)
 	var zs: float = minf(game.zoom, 2.0) if game.space.active else game.zoom
 	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / zs
+	if not place.is_empty():
+		# (seated in the skiff: placed and turned with it)
+		sp = place[0]
+		rot = place[1]
+		sc = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) * float(place[2])
 	draw_set_transform(sp, rot, sc)
 	var mod := _lit(game.world_to_screen(m.pos))
 	mod = mod.lerp(Color(0.86, 0.88, 0.95), clampf(m.fog, 0.0, 1.0) * 0.55)   # misted over inside a cloud
@@ -202,32 +207,45 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 	MageRig.draw_pixels(self, m.rig.front_pixels(gem), origin, 1.0, mod, _masks[key])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-## The skiff: its cells' picture placed by the world -> screen map at its centre (so it turns and
-## mirrors with it). Out in space, where the view zooms far out, it's drawn bigger (like the mage)
-## and placed so the pilot's seat sits where the pilot is drawn.
+## The skiff's body -> screen map: turned with its own frame, one body cell to one pixel at the
+## view's zoom, like every sprite. (In the close view the terrain's columns are drawn a pixel each,
+## and they widen with height, so a map taken straight from the world would stretch the ship as it
+## climbs.) Out in space, where the view zooms far out, it's drawn bigger, like the mage.
+func _skiff_xf(sk) -> Transform2D:
+	var p: Vector2 = game.world_to_screen(sk.pos)
+	var ex: Vector2 = game.world_to_screen(sk.pos + sk.axis_x()) - p
+	var ey: Vector2 = game.world_to_screen(sk.pos + sk.axis_y()) - p
+	var zs: float = minf(float(game.zoom), 2.0) if game.space.active else float(game.zoom)
+	var xn := ex.normalized()
+	var yn := Vector2(-xn.y, xn.x)
+	if yn.dot(ey) < 0.0:
+		yn = -yn                     # (the same way round as the world's own axes: mirrored when it is)
+	return Transform2D(xn / zs, yn / zs, p)
+
+## The skiff, with its riders seated in it (drawn first: the hull hides their legs, the canopy
+## is glass), turning and mirroring with it.
 func _draw_skiff() -> void:
 	var sk = game.skiff
 	if sk == null:
 		return
 	if game.space.active and sk.pos.length() < Defs.R_SPACE - 9.5 and sk.pilot() == null:
 		return                       # (left on the planet below: not drawn out in space)
-	var tx: ImageTexture = sk.texture()
-	var p: Vector2 = game.world_to_screen(sk.pos)
-	var ex: Vector2 = game.world_to_screen(sk.pos + sk.axis_x()) - p
-	var ey: Vector2 = game.world_to_screen(sk.pos + sk.axis_y()) - p
-	if game.space.active and not game.space.live:
-		var sc: float = float(game.zoom) / minf(float(game.zoom), 2.0)
-		ex *= sc
-		ey *= sc
-		if game.player.aboard == sk:
-			# (the seat under the pilot's feet, where the overlay draws his feet)
-			var pm = game.player
-			var bs: Vector2 = sk.to_body(pm.pos) + Vector2(0.0, pm.h * 0.5)
-			p = _feet(pm.pos, pm.h, pm.on_ground)[0] - ex * bs.x - ey * bs.y
+	var xf := _skiff_xf(sk)
+	var p := xf.origin
 	if p.x < -200 or p.y < -200 or p.x > game.VW + 200 or p.y > game.VH + 200:
 		return
-	draw_set_transform_matrix(Transform2D(ex, ey, p))
-	draw_texture(tx, -sk.com, _lit(p))
+	var rot := wrapf(xf.y.angle() - PI * 0.5, -PI, PI)
+	for k in sk.riders.size():
+		var m = sk.riders[k]
+		if m == null or m.dead:
+			continue
+		var sc_cell: Vector2i = sk.seat_cells[k]
+		var feet: Vector2 = xf * (Vector2(sc_cell.x + 0.5, sc_cell.y + 1.0) - sk.com)
+		var gem: Color = Defs.SPELLS[game.known[game.sel]]["color"] if m == game.player else Color("#46e6f0")
+		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px) if m == game.player else m.input.aim
+		_draw_mage(m, aim, gem, true, [feet, rot, xf.y.length()])
+	draw_set_transform_matrix(xf)
+	draw_texture(sk.texture(), -sk.com, _lit(p))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 
 ## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the
@@ -236,7 +254,8 @@ func _draw_in_space() -> void:
 	for p in game.parts:
 		_px(p["pos"], p["col"])
 	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
-	_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
+	if game.player.aboard == null:
+		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
 	_draw_skiff()
 	if game.ui.mouse_over_ui():
 		return
@@ -342,9 +361,9 @@ func _draw_all() -> void:
 	_draw_build_preview()
 	# the mages, with their simulated hats, beards, scarves and staves
 	for m in game.players:
-		if m != game.player and not m.dead:
+		if m != game.player and not m.dead and m.aboard == null:
 			_draw_mage(m, m.input.aim, Color("#46e6f0"), true)
-	if not game.dead:
+	if not game.dead and game.player.aboard == null:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)

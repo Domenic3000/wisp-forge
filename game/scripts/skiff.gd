@@ -34,7 +34,7 @@ func _design() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = design_seed
 	var length := 52 + rng.randi_range(0, 8)
-	var deck := 20 + rng.randi_range(0, 2)          # the deck's row; the canopy rises above it
+	var deck := 27 + rng.randi_range(0, 2)          # the deck's row; the canopy rises above it (room for a hat)
 	var depth := 9 + rng.randi_range(0, 3)          # hull depth below the deck
 	setup(length + 4, deck + depth + 2)
 	var cx := int(length * (0.5 + rng.randf_range(0.0, 0.06)))   # the cockpit's middle
@@ -44,7 +44,7 @@ func _design() -> void:
 	_canopy(cx, deck, crx, deck - 1, rng)
 	_engine(deck, depth)
 	_fin(deck, rng)
-	seat_cells = [Vector2i(cx + 6, deck - 1), Vector2i(cx - 7, deck - 1)]
+	seat_cells = [Vector2i(cx + 4, deck - 1), Vector2i(cx - 6, deck - 1)]
 	riders = []
 	riders.resize(SEATS)
 	rebuild()

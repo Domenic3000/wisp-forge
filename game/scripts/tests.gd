@@ -2207,9 +2207,18 @@ func run() -> void:
 	var sf_r0: float = sf_sk.pos.length()
 	g.test_cast = true
 	var sf_up := -1
+	var sf_shot := false
+	var sf_scale := []
 	for sfk2 in 1500:
-		g.test_aim = sf_sk.pos * 1.5
+		# (a little to one side at first, so it climbs at a slant)
+		g.test_aim = sf_sk.pos * 1.5 + g.basis_r(atan2(sf_sk.pos.y, sf_sk.pos.x)) * (300.0 if sfk2 < 120 else 0.0)
 		await _frames(1)
+		if not sf_shot and sf_sk.pos.length() > sf_r0 + 120.0:
+			sf_shot = true
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("skiff_climb.png"))
+		# drawn one cell to a pixel at every height (the ground's columns widen with height; the ship mustn't)
+		if sfk2 % 40 == 0 and not g.space.active:
+			sf_scale.append(snappedf(g.overlay._skiff_xf(sf_sk).x.length() * g.zoom, 0.01))
 		if g.space.active:
 			sf_up = sfk2
 			break
@@ -2227,8 +2236,11 @@ func run() -> void:
 	g.test_cast = false
 	g.test_aim = Vector2.ZERO
 	var sf_land := -1
+	var sf_vmax := 0.0
 	for sfk4 in 1800:
 		await _frames(1)
+		if sf_sk.pos.length() < Defs.R_TOP:
+			sf_vmax = maxf(sf_vmax, sf_sk.vel.length())
 		if sf_sk.grounded and sf_sk.vel.length() < 0.5:
 			sf_land = sfk4
 			break
@@ -2239,8 +2251,8 @@ func run() -> void:
 	var sf_out: bool = g._skiff_interact(g.player) and g.player.aboard == null
 	await _frames(30)
 	_ok("the Wisp Skiff: forged, called, boarded, flown into space and back, landed and left",
-		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 60.0,
-		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later, %.0f above the ground line, you still aboard %s; stepped out %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_above, sf_with, sf_out])
+		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 200.0 and sf_vmax < 9.0 and sf_land > 90 and sf_scale.min() > 0.99 and sf_scale.max() < 1.01,
+		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later (fastest through the air %.1f a tick), %.0f above the ground line, you still aboard %s; stepped out %s; drawn cells per pixel while climbing %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_vmax, sf_above, sf_with, sf_out, str(sf_scale)])
 
 	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
 	var sp_t := Time.get_ticks_msec()

@@ -97,6 +97,9 @@ func exit() -> void:
 	var sk = game.skiff
 	if m.aboard != null:
 		sk.pos = sk.pos.normalized() * minf(sk.pos.length(), Defs.R_SPACE - 12.0)
+		# (coming back in, the skiff sheds its space speed: it drops into the sky, not through it)
+		if sk.vel.length() > 8.0:
+			sk.vel = sk.vel.normalized() * 8.0
 		game._ride(m)
 	else:
 		var a := atan2(m.pos.y, m.pos.x)
