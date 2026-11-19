@@ -32,6 +32,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Vacuum (react.comp, `s == ORB`): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
   holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
 - Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).
+- Space (`scripts/space.gd`, a Node2D under the overlay): levitating into the top of the orbit band
+  (`R_SPACE - 9.5`) calls `space.try_enter()` (a party can't leave yet: more than one player blocks it). It takes the
+  planet's picture (`main.capture_planet`: one render with the camera at the centre, zoomed so the band fits,
+  turned to the view's angle), and from then `_tick` hands over to `space.tick()`: the staff jet (hold cast, push
+  toward the aim, mana), the planet's pull fading with distance, a wisp bubble (no breath), the camera zooming out
+  with distance. While `zoom < SWAP_ZOOM` the live planet is still rendered (`live`); beyond it the GPU does
+  nothing (`_process` skips `_gpu_frame`), `view_c` follows `cam_c`, and space.gd draws the stars, the sun, the
+  other planets (procedural discs from their biomes, `_disc_image`) and the planet's picture (a Sprite2D masked to a
+  disc, placed by the world->screen affine). Back below `R_SPACE - 10` moving inward: `exit()`, the zoom eases back
+  (`planet_tick`), a short cooldown. Space shares the planet's world coordinates (the planet at the origin).
 
 ## Cell format
 - Main buffer (binding 0), uint per cell:

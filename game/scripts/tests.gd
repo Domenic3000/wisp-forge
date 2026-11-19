@@ -2103,6 +2103,59 @@ func run() -> void:
 	var bb: PackedByteArray = g.gpu.read_world()
 	_ok("saving and loading the world round-trips", loaded and _sha(a) == _sha(bb), "%.1f MB raw" % (a.size() / 1048576.0))
 
+	# ---- space: up out of the orbit band, the planet shown as its picture, the staff jet, and back ----
+	var sx_ang: float = atan2(g.player.pos.y, g.player.pos.x)
+	var sx_up := Vector2(cos(sx_ang), sin(sx_ang))
+	g.player.dead = false
+	g.test_god = true
+	g.time = fposmod(sx_ang - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
+	_go(sx_up * (Defs.R_SPACE - 40.0))
+	g.test_jump = true
+	var sx_in := -1
+	for sxk in 240:
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if g.space.active:
+			sx_in = sxk
+			break
+	g.test_jump = false
+	var sx_pic: bool = not g.space.pictures.get(int(g.planet["index"]), {}).is_empty()
+	# jet outward: the view zooms out, the picture takes over and the GPU rests
+	g.test_cast = true
+	var sx_gf0: int = g.gpu.frame
+	var sx_off := -1
+	for sxk2 in 260:
+		g.test_aim = g.player.pos * 2.0
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if not g.space.live and sx_off < 0:
+			sx_off = sxk2
+			sx_gf0 = g.gpu.frame
+	g.test_cast = false
+	var sx_far: float = g.player.pos.length() - Defs.R_SPACE
+	var sx_gf1: int = g.gpu.frame
+	var sx_zoom: float = g.zoom
+	await _frames(3)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("space.png"))
+	# and back: aim at the planet until you're in the orbit band again
+	g.test_cast = true
+	var sx_back := -1
+	for sxk3 in 1800:
+		g.test_aim = g.player.pos * 0.5
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if not g.space.active:
+			sx_back = sxk3
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	var sx_gf2: int = g.gpu.frame
+	await _frames(150)
+	var sx_r: float = g.player.pos.length()
+	_ok("you fly out into space and back down without a loading screen",
+		sx_in >= 0 and sx_pic and sx_off >= 0 and sx_gf1 == sx_gf0 and sx_far > 800.0 and sx_back >= 0 and g.gpu.frame > sx_gf2 + 60 and absf(g.zoom - float(g.zoom_levels[g.zoom_i])) < 0.05 and sx_r < Defs.R_SPACE,
+		"out after %d ticks of levitating (picture taken: %s); the picture took over after %d ticks of the jet (GPU frames while it showed: %d); %.0f past the orbit band at zoom %.1f; back in the band after %d ticks; then the planet ran again (%d GPU frames in 150 ticks), zoom %.2f, you at radius %.0f" % [sx_in, sx_pic, sx_off, sx_gf1 - sx_gf0, sx_far, sx_zoom, sx_back, g.gpu.frame - sx_gf2, g.zoom, sx_r])
+
 	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
 	var sp_t := Time.get_ticks_msec()
 	g._enter_planet(4)

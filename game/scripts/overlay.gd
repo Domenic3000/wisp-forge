@@ -131,6 +131,8 @@ func _foe_frame(e) -> String:
 	return key
 
 func _lit(sp: Vector2) -> Color:
+	if game.space.active and not game.space.live:
+		return Color(1, 1, 1)               # (out in space: full sun, and no light grid to read)
 	var c: Color = game.gpu.light_at(sp)
 	return Color(clampf(c.r, 0.12, 1.0), clampf(c.g, 0.12, 1.0), clampf(c.b, 0.12, 1.0))
 
@@ -187,7 +189,9 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground)[0]
 	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - a, -PI, PI)
-	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / float(game.zoom)
+	# (out in space the view zooms far out: the mage stays big enough to see)
+	var zs: float = minf(game.zoom, 2.0) if game.space.active else game.zoom
+	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / zs
 	draw_set_transform(sp, rot, sc)
 	var mod := _lit(game.world_to_screen(m.pos))
 	mod = mod.lerp(Color(0.86, 0.88, 0.95), clampf(m.fog, 0.0, 1.0) * 0.55)   # misted over inside a cloud
@@ -197,6 +201,23 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool) -> void:
 	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
 	MageRig.draw_pixels(self, m.rig.front_pixels(gem), origin, 1.0, mod, _masks[key])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the
+## light streaming from the staff, and the reticle.
+func _draw_in_space() -> void:
+	for p in game.parts:
+		_px(p["pos"], p["col"])
+	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
+	_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
+	if game.ui.mouse_over_ui():
+		return
+	var m: Vector2 = (get_viewport().get_mouse_position() / game.scale_px).floor()
+	var rc := Color(0.7, 0.9, 1.0, 0.7)
+	for k in range(2, 5):
+		draw_rect(Rect2(m + Vector2(k, 0), Vector2.ONE), rc)
+		draw_rect(Rect2(m - Vector2(k, 0), Vector2.ONE), rc)
+		draw_rect(Rect2(m + Vector2(0, k), Vector2.ONE), rc)
+		draw_rect(Rect2(m - Vector2(0, k), Vector2.ONE), rc)
 
 func _px(wpos: Vector2, col: Color) -> void:
 	var sp: Vector2 = game.world_to_screen(wpos)
@@ -211,6 +232,9 @@ func _draw() -> void:
 
 func _draw_all() -> void:
 	var z: float = game.zoom
+	if game.space.active and not game.space.live:
+		_draw_in_space()
+		return
 	# treasure chests (whole objects)
 	for c in game.chests:
 		var csp: Vector2 = game.world_to_screen(c.pos)

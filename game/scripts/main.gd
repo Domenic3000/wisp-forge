@@ -7,6 +7,7 @@ extends Node2D
 const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
+const Space := preload("res://scripts/space.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
@@ -91,6 +92,7 @@ class Enemy extends Body:
 var gpu
 var ui
 var overlay
+var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
 var view_tex: ImageTexture
 var view_rect: TextureRect
 var pix: Node2D
@@ -329,6 +331,9 @@ func _ready() -> void:
 	view_rect = TextureRect.new()
 	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pix.add_child(view_rect)
+	space = Space.new()
+	space.game = self
+	pix.add_child(space)
 	overlay = Overlay.new()
 	overlay.game = self
 	overlay.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -419,7 +424,11 @@ func _process(delta: float) -> void:
 			_tick()
 	if state == "play" or state == "dead" or state == "forge":
 		tp = Time.get_ticks_usec()
-		_gpu_frame(state == "forge", steps)
+		if space.active and not space.live:
+			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
+			lights.clear()
+		else:
+			_gpu_frame(state == "forge", steps)
 		prof_add("GPU submit", Time.get_ticks_usec() - tp)
 		tp = Time.get_ticks_usec()
 		ui.update_hud(self)
@@ -499,6 +508,32 @@ func _take_gpu_results() -> void:
 		view_tex.update(gpu.view_img)
 	prof_add("picture upload", Time.get_ticks_usec() - tu)
 	overlay.queue_redraw()
+
+## where the sun is, as seen from the planet (it turns once a day)
+func sun_angle() -> float:
+	return spawn_angle - 1.1 + time / DAY_LEN * TAU
+
+## The planet as you leave it, seen whole: one render with the camera at its centre, zoomed out so
+## the top of the orbit band fits the picture's height, turned as the view is now (so where the
+## space view takes over from the live planet, the two line up). space.gd shows it out in space.
+func capture_planet() -> Dictionary:
+	gpu.flush()
+	if gpu.fresh:
+		_take_gpu_results()
+	var side := mini(VW, VH)
+	var zc := maxf(Space.SWAP_ZOOM, 2.0 * Defs.R_SPACE * 1.03 / float(side))
+	var ang := atan2(cam_c.y, cam_c.x)
+	_write_frame_params()
+	gpu.setp(1, Vector4(0.0, 0.0, ang, zc))
+	gpu.setp(2, Vector4(VW, VH, gpu.LS, 0))           # (no torch lights: their places are for the close view)
+	var frames := []
+	for k in mini(players.size(), gpu.MAXP):
+		frames.append(_grid_frame(players[k].pos))
+	gpu.step([cam_c], frames, false, false, 0, true)
+	gpu.fresh = false                                  # (that picture isn't the view)
+	var img: Image = gpu.view_img.get_region(Rect2i((VW - side) / 2, (VH - side) / 2, side, side))
+	img.generate_mipmaps()
+	return {"tex": ImageTexture.create_from_image(img), "zoom": zc, "angle": ang, "edge": (Defs.R_TOP + 60.0) / zc / float(side)}
 
 func _write_frame_params() -> void:
 	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
@@ -1438,6 +1473,14 @@ func _tick() -> void:
 	time += 1.0
 	_read_local_input(player)
 	var aim: Vector2 = player.input.aim
+	if space.active:
+		# out in space only the mage moves; the planet below waits as it was
+		space.tick()
+		_update_particles()
+		_update_wisp()
+		shake *= 0.88
+		hurt_flash *= 0.9
+		return
 	var tm := Time.get_ticks_usec()
 	for m in players:
 		if m.cast_cd > 0:
@@ -1483,6 +1526,7 @@ func _tick() -> void:
 	_check_chest_hint()
 	_update_wisp()
 	_cloud_wisps()
+	space.planet_tick()
 	_update_camera(aim)
 	shake *= 0.88
 	hurt_flash *= 0.9
@@ -1569,6 +1613,11 @@ func _update_player(m: Mage) -> void:
 	var was_air := m.air_time
 	var a0 := p.anim
 	move_body(p)
+	# risen to the top of the orbit band, still climbing: out into space
+	if m == player and m.floating and p.pos.length() >= Defs.R_SPACE - 9.5:
+		space.try_enter()
+		if space.active:
+			return
 	if p.on_ground:
 		p.anim += absf(p.vx) * 0.13
 		if int(p.anim * 0.5) != int(a0 * 0.5):
@@ -3682,6 +3731,8 @@ func region_name() -> String:
 	var sa: Vector4 = gpu.surf_at(a)
 	var sb: Vector4 = gpu.surf_b(a)
 	var b := _biome_at(a)
+	if space.active:
+		return "Space"
 	if r > Defs.R_TOP:
 		return "Orbit"
 	if r > Defs.R_TOP - 60.0:
