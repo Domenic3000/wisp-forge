@@ -1,7 +1,7 @@
 // Margolus-block movement: each thread owns a 2x2 block, so no two threads touch
 // the same cell. Offsets cycle every pass so particles keep moving.
 // Block rows: a b (outer / up)   c d (inner / down, toward the core)
-// pc.a = (shell, yBase, yLimit, x0)  pc.b = (count, frame, ox, oy)  pc.c.x = flowOnly
+// pc.a = (-, yBase (even), yLimit, -)  pc.b = (-, frame, ox, oy)  pc.c.x = flowOnly  pc.d = window angles
 #include "common"
 #include "world"
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -25,13 +25,14 @@ float moveP(uint a, uint b) { // slowdown when sinking through liquid / viscous 
 }
 
 void main() {
-	int s = pc.a.x;
 	int bx = int(gl_GlobalInvocationID.x), by = int(gl_GlobalInvocationID.y);
-	if (bx * 2 >= pc.b.x) return;
 	int y = pc.a.y + by * 2 + pc.b.w;
-	if (y < SH_Y0[s] || y + 1 >= pc.a.z) return;
-	int N = SH_N[s];
-	int x = wrapc(pc.a.w + bx * 2 + pc.b.z, N);
+	if (y + 1 >= pc.a.z) return;
+	int s = shellOf(y);
+	if (y + 1 >= SH_Y1(s)) return;          // (a block never straddles a seam: the boundary pass works there)
+	if (bx * 2 >= winCount(s)) return;
+	int N = SH_N(s);
+	int x = wrapc(winX0(s) + bx * 2 + pc.b.z, N);
 	int x2 = x + 1 == N ? 0 : x + 1;
 	int ia = cellIdx(s, y, x), ib = cellIdx(s, y, x2), ic = cellIdx(s, y + 1, x), id = cellIdx(s, y + 1, x2);
 	uint a = world.cells[ia], b = world.cells[ib], c = world.cells[ic], d = world.cells[id];

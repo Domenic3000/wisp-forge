@@ -3,7 +3,8 @@
 // Before a loose piece drops it creaks for a moment (life 128+), so you can get out from under it.
 // Life 1-127 counts how far a block has fallen; after a long drop, rock and wood break into
 // rubble (DEBRIS) when they land.
-// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, creakFrames, 0)
+// pc.a = (first shell in the window, y0, y1, -)  pc.b = (-, frame, creakFrames, 0)  pc.d = window angles
+// Dispatched (widest shell's columns) x (shells in the window).
 #include "common"
 #include "world"
 layout(local_size_x = 64) in;
@@ -14,32 +15,47 @@ bool loose(uint c) {
 }
 
 void main() {
-	int s = pc.a.x;
+	// one thread per column of one shell in the window (gl_GlobalInvocationID.y picks the shell)
+	int s = pc.a.x + int(gl_GlobalInvocationID.y);
+	if (s >= NSH) return;
+	int yStart = max(pc.a.y, SH_Y0(s));
+	int yEnd = min(pc.a.z, SH_Y1(s)) - 1;
+	if (yEnd < yStart) return;
 	int k = int(gl_GlobalInvocationID.x);
-	if (k >= pc.b.x) return;
-	int x = wrapc(pc.a.w + k, SH_N[s]);
-	int yEnd = min(pc.a.z, SH_Y1[s]) - 1;
+	if (k >= winCount(s)) return;
+	int x = wrapc(winX0(s) + k, SH_N(s));
 	uint fr = uint(pc.b.y);
 	uint creakN = uint(pc.b.z);          // frames a loose piece creaks before it drops (0 = at once)
 	bool runFree = false;                // the loose run below this cell has open space under it
-	for (int y = yEnd; y >= pc.a.y; y--) {
+	for (int y = yEnd; y >= yStart; y--) {
 		int i = cellIdx(s, y, x);
 		uint c = world.cells[i];
 		if (!loose(c)) { runFree = false; continue; }
 		uint t = c & 255u;
 		uint life = (c >> 16) & 255u;   // 0 still, 1-127 falling (distance), 128+ creaking
 		bool canMove = false;
+		bool seam = false;               // the cell below is across a seam, in the next shell
 		int ib = -1;
 		uint cb = 0u;
-		if (y < SH_Y1[s] - 1) {
+		if (y < SH_Y1(s) - 1) {
 			ib = cellIdx(s, y + 1, x);
 			cb = world.cells[ib];
 			uint kb = KIND[cb & 255u];
 			canMove = (cb & 255u) == 0u || kb == K_GAS || kb == K_FIRE || kb == K_LIQUID;
+		} else if (shBelow(s) >= 0) {
+			// across the seam another thread owns the cell below: claim it atomically, only if it still
+			// holds what was read (two blocks never land in one cell)
+			int b = shBelow(s);
+			ib = cellIdx(b, y + 1, colTo(s, b, x));
+			cb = world.cells[ib];
+			seam = true;
+			uint kb2 = KIND[cb & 255u];
+			canMove = (cb & 255u) == 0u || kb2 == K_GAS || kb2 == K_FIRE || kb2 == K_LIQUID;
 		}
-		// a loose block resting on a loose block shares that block's fate
+		// a loose block resting on a loose block shares that block's fate (across a seam the block
+		// below is another thread's: it rests until there's room)
 		bool belowLoose = ib >= 0 && loose(cb);
-		runFree = canMove || (belowLoose && runFree);
+		runFree = canMove || (belowLoose && runFree && !seam);
 		if (!runFree) {
 			// resting on something it can't fall through: if it was falling, it has landed
 			if (life > 0u && life < 128u) {
@@ -60,7 +76,13 @@ void main() {
 		if (life >= 128u && life < 128u + creakN) { world.cells[i] = (c & 0xff00ffffu) | ((life + 1u) << 16); continue; }
 		if (!canMove) continue;          // the block under it in the run moves first, next pass
 		uint nl = life >= 128u ? 1u : min(life + 1u, 127u);
-		world.cells[ib] = (c & 0xff00ffffu) | (nl << 16);
+		uint moved = (c & 0xff00ffffu) | (nl << 16);
+		if (seam) {
+			if (atomicCompSwap(world.cells[ib], cb, moved) == cb) world.cells[i] = cb;
+			else runFree = false;
+			continue;
+		}
+		world.cells[ib] = moved;
 		world.cells[i] = cb;
 	}
 }

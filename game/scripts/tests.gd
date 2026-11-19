@@ -16,6 +16,9 @@ var _last_us := 0
 
 func _ok(name: String, cond: bool, detail := "") -> void:
 	lines.append(("PASS  " if cond else "FAIL  ") + name + ("   [" + detail + "]" if detail != "" else ""))
+	# (straight to the log as well, with the time: a run that runs out of time still shows how far
+	# it got and how long each part took)
+	print("[test %.0fs] " % (Time.get_ticks_msec() / 1000.0), lines[lines.size() - 1].left(400))
 	if cond:
 		passed += 1
 	else:
@@ -55,7 +58,7 @@ func _plants(raw: PackedByteArray, toff: int, c0: int, gr: int) -> int:
 	var n := 0
 	for j in range(maxi(0, gr - 112), gr + 10):
 		for i in 120:
-			var bm := raw.decode_u32(toff + (j * N + posmod(c0 + i, N)) * 4) & 255
+			var bm := raw.decode_u32(toff + Defs.raw_idx(j, posmod(c0 + i, N)) * 4) & 255
 			if bm == Defs.LEAF or bm == Defs.WOOD or bm == Defs.CACTUS or bm == Defs.COAL or bm == Defs.SNOW \
 					or bm == Defs.CAP or bm == Defs.STALK or bm == Defs.DRYGRASS:
 				n += 1
@@ -68,7 +71,7 @@ func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
 	for j in range(maxi(0, gr - 40), gr + 40):
 		for i in 150:
 			var col := posmod(c0 + i, N)
-			var t := raw.decode_u32((j * N + col) * 4) & 255
+			var t := raw.decode_u32(Defs.raw_idx(j, col) * 4) & 255
 			if Defs.KIND[t] == Defs.K_POWDER:
 				out[j * N + col] = true
 	return out
@@ -101,10 +104,10 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 		var j: int = k / w
 		var i: int = k % w
 		var row: int = int(info["y0"]) + j
-		if row < 0 or row >= Defs.SH_Y0[1]:
+		if row < 0 or row >= Defs.ROWS:
 			continue
 		var col := posmod(int(info["x0"]) + i, N)
-		var c := raw.decode_u32((row * N + col) * 4)
+		var c := raw.decode_u32(Defs.raw_idx(row, col) * 4)
 		var t := c & 255
 		if Defs.KIND[t] != Defs.K_SOLID:
 			continue
@@ -113,8 +116,8 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 		# unsupported AND over open space (so it should have fallen); anchored cells are part
 		# of the planet until you dig nearby
 		var lf := (c >> 16) & 255
-		if (c & 0x40000000) == 0 and ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.SH_Y0[1] and not (lf > 0 and lf < 128):
-			var cb := raw.decode_u32(((row + 1) * N + col) * 4)
+		if (c & 0x40000000) == 0 and ((c >> 24) & 63) > Defs.SPAN[t] and row + 1 < Defs.ROWS and not (lf > 0 and lf < 128):
+			var cb := raw.decode_u32(Defs.raw_idx(row + 1, col) * 4)
 			var tb := cb & 255
 			var kb: int = Defs.KIND[tb]
 			if tb == 0 or kb == Defs.K_GAS or kb == Defs.K_FIRE or kb == Defs.K_LIQUID:
@@ -126,12 +129,12 @@ func _scan(raw: PackedByteArray, info: Dictionary) -> Dictionary:
 				below[key] = int(below.get(key, 0)) + 1
 	for j in int(info["h"]):
 		var row2: int = int(info["y0"]) + j
-		if row2 < 0 or row2 >= Defs.SH_Y0[1]:
+		if row2 < 0 or row2 >= Defs.ROWS:
 			continue
 		for i in w:
 			var col2 := posmod(int(info["x0"]) + i, N)
-			var t2 := raw.decode_u32((row2 * N + col2) * 4) & 255
-			var bgm := raw.decode_u32(boff + (row2 * N + col2) * 4) & 255
+			var t2 := raw.decode_u32(Defs.raw_idx(row2, col2) * 4) & 255
+			var bgm := raw.decode_u32(boff + Defs.raw_idx(row2, col2) * 4) & 255
 			if bgm != 0:
 				bgn += 1
 				var bk := "bg " + Defs.NAMES[bgm]
@@ -281,9 +284,9 @@ func run() -> void:
 					cimg.set_pixel(xx2, yy2, _cell_col(cv & 255, (cv >> 8) & 255, src[yy2 * vw + xx2]))
 					var row3: int = vy0 + yy2
 					var col3 := posmod(vx0 + xx2, Defs.NS)
-					if row3 < 0 or row3 >= Defs.SH_Y0[1]:
+					if row3 < 0 or row3 >= Defs.ROWS:
 						continue
-					var kw: int = (row3 * int(Defs.NS) + col3) * 4
+					var kw: int = Defs.raw_idx(row3, col3) * 4
 					wimg.set_pixel(xx2, yy2, _cell_col(rawv.decode_u32(kw) & 255, rawv.decode_u32(boffv2 + kw) & 255, -1))
 			cimg.resize(vw * 2, vh * 2, Image.INTERPOLATE_NEAREST)
 			wimg.resize(vw * 2, vh * 2, Image.INTERPOLATE_NEAREST)
@@ -327,6 +330,10 @@ func run() -> void:
 		lines.append("      worst: " + worst_built)
 	_ok("every planned chest is in the world", g.chests.size() == b.chest_list.size() and g.chests.size() > 0, "%d chests, %d planned" % [g.chests.size(), b.chest_list.size()])
 	_ok("nothing is left hanging after settling", loose_total == 0, "%d unsupported blocks over open space" % loose_total)
+	# (where a frame's time goes, early on: a slow run still shows it)
+	g.prof_reset()
+	await _frames(90)
+	print("[perf] early: ", g.prof_text(14, "; "))
 	if loose_total > 0:
 		lines.append("      where: " + "; ".join(loose_where))
 		lines.append("      materials: " + str(loose_mats))
@@ -366,17 +373,17 @@ func run() -> void:
 			var lowrow := -1
 			for jj in int(info["h"]):
 				var rowv: int = int(info["y0"]) + jj
-				if rowv < 0 or rowv >= Defs.SH_Y0[1]:
+				if rowv < 0 or rowv >= Defs.ROWS:
 					continue
 				for ii in int(info["w"]):
 					var colv := posmod(int(info["x0"]) + ii, Nv)
-					var kv := (rowv * Nv + colv) * 4
+					var kv := Defs.raw_idx(rowv, colv) * 4
 					var a0 := raw_v0.decode_u32(boffv + kv)
 					if (a0 & 255) == Defs.WOOD and (raw_v1.decode_u32(boffv + kv) & 255) == 0 and rowv > lowrow:
 						lowrow = rowv
 						var colm := []
 						for dr in range(-1, 10):
-							colm.append(str(raw_v0.decode_u32(((rowv + dr) * Nv + colv) * 4) & 255))
+							colm.append(str(raw_v0.decode_u32(Defs.raw_idx(rowv + dr, colv) * 4) & 255))
 						var nsites := []
 						for st2 in b.sites:
 							if absf(float(colv) - st2.x) < 300 or absf(float(colv) - st2.y) < 300:
@@ -483,7 +490,7 @@ func run() -> void:
 		var nd2 := 0
 		for jd in int(door_t["h"]):
 			for id2 in int(door_t["w"]):
-				var kd: int = ((int(door_t["row"]) + jd) * int(Defs.NS) + posmod(int(door_t["col"]) + id2, Defs.NS)) * 4
+				var kd: int = Defs.raw_idx(int(door_t["row"]) + jd, posmod(int(door_t["col"]) + id2, Defs.NS)) * 4
 				if (rawd.decode_u32(kd) & 255) == Defs.WOODDOOR:
 					nd2 += 1
 		var want: int = int(door_t["w"]) * int(door_t["h"])
@@ -586,7 +593,7 @@ func run() -> void:
 			for di in range(-8, 20):
 				var col2 := posmod(chest.x + di, Defs.NS)
 				var row2 := chest.y - dj
-				var k2 := (row2 * Defs.NS + col2) * 4
+				var k2 := Defs.raw_idx(row2, col2) * 4
 				if (raw2.decode_u32(k2) & 255) == 0 and (raw2.decode_u32(boff + k2) & 0x4000) != 0:
 					wall = Vector2i(col2, row2)
 					break
@@ -598,7 +605,7 @@ func run() -> void:
 				g.brushes.append([wp, 2.5, 1, 0, 4, 0, 0, 0])
 				await _frames(1)
 			var r3: PackedByteArray = g.gpu.read_world()
-			var kk := (wall.y * Defs.NS + wall.x) * 4
+			var kk := Defs.raw_idx(wall.y, wall.x) * 4
 			var still_wall := (r3.decode_u32(boff + kk) & 0x4000) != 0
 			for f in 30:
 				g.brushes.append([wp, 2.5, 8, 0, 4, 0, 0, 0])
@@ -707,7 +714,7 @@ func run() -> void:
 		var grm: int = b.ground_row(cm)
 		var has := false
 		for j in range(grm - 2, grm + 18):
-			if (raw_m.decode_u32((j * N_m + cm) * 4) & 255) == Defs.MUD:
+			if (raw_m.decode_u32(Defs.raw_idx(j, cm) * 4) & 255) == Defs.MUD:
 				has = true
 				mud_deep = maxi(mud_deep, j - grm)
 		if has:
@@ -824,7 +831,7 @@ func run() -> void:
 			var nw := 0
 			var idc := 0
 			for j in range(grc - 40, grc):
-				var a := rw.decode_u32(toff + (j * N0 + col) * 4)
+				var a := rw.decode_u32(toff + Defs.raw_idx(j, col) * 4)
 				if (a & 255) == Defs.WOOD and (a & 0x80000000) != 0:
 					nw += 1
 					idc = a >> 16
@@ -838,7 +845,7 @@ func run() -> void:
 				var n := 0
 				for j in range(grt - 110, grt - 9):
 					for i in range(-40, 41):
-						if (raw.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4) >> 16) == tid:
+						if (raw.decode_u32(toff + Defs.raw_idx(j, posmod(tcol + i, N0)) * 4) >> 16) == tid:
 							n += 1
 				return n
 			_go(_cell_pos(tcol - 30, grt - 10))
@@ -848,7 +855,7 @@ func run() -> void:
 				var nfg := 0
 				for j in range(grt - 10, grt - 3):
 					for i in range(-5, 6):
-						var kk := (j * N0 + posmod(tcol + i, N0)) * 4
+						var kk := Defs.raw_idx(j, posmod(tcol + i, N0)) * 4
 						if (raw.decode_u32(toff + kk) & 255) == Defs.WOOD:
 							nwz += 1
 						if (raw.decode_u32(kk) & 255) != 0:
@@ -856,7 +863,7 @@ func run() -> void:
 				# support of the tree's wood well above the cut
 				var sup := []
 				for j in [grt - 14, grt - 20, grt - 30]:
-					var a2 := raw.decode_u32(toff + (j * N0 + tcol) * 4)
+					var a2 := raw.decode_u32(toff + Defs.raw_idx(j, tcol) * 4)
 					sup.append("%d:%d" % [a2 & 255, (a2 >> 8) & 63])
 				# the best-held cell of that tree above the cut, and what is around it
 				var best := 99
@@ -864,7 +871,7 @@ func run() -> void:
 				for j in range(grt - 110, grt - 9):
 					for i in range(-40, 41):
 						var cc := posmod(tcol + i, N0)
-						var a3 := raw.decode_u32(toff + (j * N0 + cc) * 4)
+						var a3 := raw.decode_u32(toff + Defs.raw_idx(j, cc) * 4)
 						if (a3 >> 16) != tid:
 							continue
 						var sv := (a3 >> 8) & 63
@@ -872,7 +879,7 @@ func run() -> void:
 							best = sv
 							var nb := []
 							for o in [[0, -1], [0, 1], [-1, 0], [1, 0]]:
-								nb.append(str(raw.decode_u32(((j + o[1]) * N0 + posmod(cc + o[0], N0)) * 4) & 255))
+								nb.append(str(raw.decode_u32(Defs.raw_idx(j + o[1], posmod(cc + o[0], N0)) * 4) & 255))
 							where = "S%d mat %d at %d,%d fg %s" % [sv, a3 & 255, i, grt - j, "/".join(nb)]
 				return "wood in cut %d, front cells %d, sup %s, best %s" % [nwz, nfg, ",".join(sup), where]
 			var before_n: int = count_tree.call(g.gpu.read_world())
@@ -883,7 +890,7 @@ func run() -> void:
 				var n := 0
 				for j in range(grt - 150, grt + 6):
 					for i in range(-170, 171):
-						var kw := (j * N0 + posmod(tcol + i, N0)) * 4
+						var kw := Defs.raw_idx(j, posmod(tcol + i, N0)) * 4
 						if (raw.decode_u32(toff + kw) & 255) == Defs.WOOD or (raw.decode_u32(kw) & 255) == Defs.WOOD:
 							n += 1
 				return n
@@ -891,7 +898,7 @@ func run() -> void:
 			var rw0: PackedByteArray = g.gpu.read_world()
 			for j in range(grt - 110, grt - 9):
 				for i in range(-40, 41):
-					var a5 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
+					var a5 := rw0.decode_u32(toff + Defs.raw_idx(j, posmod(tcol + i, N0)) * 4)
 					if (a5 >> 16) == tid and (a5 & 255) == Defs.WOOD:
 						own_wood += 1
 			var wood0: int = wood_round.call(rw0)
@@ -901,7 +908,7 @@ func run() -> void:
 				var leaves := 0
 				for j in range(grt - 150, grt + 6):
 					for i in range(-170, 171):
-						var kbits := (j * N0 + posmod(tcol + i, N0)) * 4
+						var kbits := Defs.raw_idx(j, posmod(tcol + i, N0)) * 4
 						var tfg := raw.decode_u32(kbits) & 255
 						if tfg == Defs.TIMBER or tfg == Defs.LITTER:
 							specks += 1
@@ -912,14 +919,14 @@ func run() -> void:
 			var own_leaves := 0
 			for j in range(grt - 110, grt - 9):
 				for i in range(-40, 41):
-					var a6 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
+					var a6 := rw0.decode_u32(toff + Defs.raw_idx(j, posmod(tcol + i, N0)) * 4)
 					if (a6 >> 16) == tid and (a6 & 255) == Defs.LEAF:
 						own_leaves += 1
 			# its roots: its own wood below the ground line, in the background behind the earth
 			var own_roots := 0
 			for j in range(grt, grt + 19):
 				for i in range(-40, 41):
-					var a7 := rw0.decode_u32(toff + (j * N0 + posmod(tcol + i, N0)) * 4)
+					var a7 := rw0.decode_u32(toff + Defs.raw_idx(j, posmod(tcol + i, N0)) * 4)
 					if (a7 >> 16) == tid and (a7 & 255) == Defs.ROOT:
 						own_roots += 1
 			# and across the land around: no trunk ends in the air above a slope (a flat, bare bottom):
@@ -932,15 +939,15 @@ func run() -> void:
 				var foot := -1
 				var lid := 0
 				for j in range(grb - 8, grb + 3):
-					var abf := rw0.decode_u32(toff + (j * N0 + cb) * 4)
+					var abf := rw0.decode_u32(toff + Defs.raw_idx(j, cb) * 4)
 					if ((abf & 255) == Defs.WOOD or (abf & 255) == Defs.ROOT) and (abf >> 30) == 2:
 						foot = j
 						lid = abf >> 16
 				if foot < 0:
 					continue
 				feet += 1
-				var below_f := rw0.decode_u32((foot + 1) * N0 * 4 + cb * 4) & 255
-				var below_b := rw0.decode_u32(toff + ((foot + 1) * N0 + cb) * 4)
+				var below_f := rw0.decode_u32(Defs.raw_idx(foot + 1, cb) * 4) & 255
+				var below_b := rw0.decode_u32(toff + Defs.raw_idx(foot + 1, cb) * 4)
 				if below_f == 0 and (below_b >> 16) != lid:
 					bare += 1
 			_ok("trees have roots, and trunks reach the ground on slopes", own_roots > 8 and feet > 20 and bare * 20 < feet,
@@ -1117,7 +1124,7 @@ func run() -> void:
 	var cqf: Vector2i = Build.cell_of(wall_at)
 	for djf in range(-34, 70):
 		for dif in range(-16, 17):
-			var kf: int = ((cqf.y + djf) * int(Defs.NS) + posmod(cqf.x + dif, Defs.NS)) * 4
+			var kf: int = Defs.raw_idx(cqf.y + djf, posmod(cqf.x + dif, Defs.NS)) * 4
 			var af: int = rawf.decode_u32(Defs.total_cells() * 4 + kf)
 			if (af & 255) == Defs.PLANK and (af & 0x4000) != 0:
 				wall_first += 1
@@ -1164,7 +1171,7 @@ func run() -> void:
 		var boff3: int = Defs.total_cells() * 4
 		for tj in int(tstamp["h"]):
 			for ti in int(tstamp["w"]):
-				var kt: int = ((int(tstamp["y0"]) + tj) * int(Defs.NS) + posmod(int(tstamp["x0"]) + ti, Defs.NS)) * 4
+				var kt: int = Defs.raw_idx(int(tstamp["y0"]) + tj, posmod(int(tstamp["x0"]) + ti, Defs.NS)) * 4
 				if (raw.decode_u32(boff3 + kt) & 255) == Defs.DECOR:
 					n += 1
 		return n
@@ -1177,7 +1184,7 @@ func run() -> void:
 	if not tstamp.is_empty():
 		for tj2 in int(tstamp["h"]):
 			for ti2 in int(tstamp["w"]):
-				var kt2: int = ((int(tstamp["y0"]) + tj2) * int(Defs.NS) + posmod(int(tstamp["x0"]) + ti2, Defs.NS)) * 4
+				var kt2: int = Defs.raw_idx(int(tstamp["y0"]) + tj2, posmod(int(tstamp["x0"]) + ti2, Defs.NS)) * 4
 				var fn: String = Defs.NAMES[rawt.decode_u32(kt2) & 255]
 				var bn2: String = "bg " + Defs.NAMES[rawt.decode_u32(Defs.total_cells() * 4 + kt2) & 255]
 				box_mats[fn] = int(box_mats.get(fn, 0)) + 1
@@ -1253,7 +1260,7 @@ func run() -> void:
 		var cq: Vector2i = Build.cell_of(bq[0])
 		for dj in range(-34, 70):
 			for di in range(-16, 17):
-				var kb: int = ((cq.y + dj) * int(Defs.NS) + posmod(cq.x + di, Defs.NS)) * 4
+				var kb: int = Defs.raw_idx(cq.y + dj, posmod(cq.x + di, Defs.NS)) * 4
 				var fb: int = rawb.decode_u32(kb) & 255
 				var ab: int = rawb.decode_u32(boffb + kb)
 				if bq[1] == 0 and (ab & 255) == Defs.PLANK and (ab & 0x4000) != 0:
@@ -1265,7 +1272,7 @@ func run() -> void:
 		var nd3: Dictionary = g.doors[doors_mid - 1]
 		for dj3 in int(nd3["h"]):
 			for di3 in int(nd3["w"]):
-				var kd3: int = ((int(nd3["row"]) + dj3) * int(Defs.NS) + posmod(int(nd3["col"]) + di3, Defs.NS)) * 4
+				var kd3: int = Defs.raw_idx(int(nd3["row"]) + dj3, posmod(int(nd3["col"]) + di3, Defs.NS)) * 4
 				if (rawb.decode_u32(kd3) & 255) == Defs.WOODDOOR:
 					n_door += 1
 	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s" % [house_ok, house_doors, g.build_last])
@@ -1628,7 +1635,7 @@ func run() -> void:
 	# ---- a skeleton opens a door to get at you (a slime can't) ----
 	var door_f := {}
 	for dd in g.doors:
-		if not bool(dd["open"]) and not dd.has("cells") and int(dd["row"]) < Defs.SH_Y0[1]:
+		if not bool(dd["open"]) and not dd.has("cells") and int(dd["row"]) < Defs.ROWS:
 			door_f = dd
 			break
 	if door_f.is_empty():
@@ -1722,6 +1729,80 @@ func run() -> void:
 		widths.append("%d: %.2f" % [int(rr), cell_w])
 		view_ok = view_ok and cell_w > 0.45 and cell_w < 1.6
 	_ok("the view isn't stretched deep down", view_ok, "world units per pixel across at radius " + ", ".join(widths))
+	# ---- the view's scale never jumps: what a pixel covers changes smoothly, a seam never squeezes it
+	var vw_step := 1.0           # the biggest change between rows 2 apart (world units per pixel across)
+	var vw_48 := 1.0             # ... and over 48 rows (about a quarter of the screen)
+	var vw_seam := 1.0           # the biggest ratio of columns across a seam
+	var vw_wmin := 9.0
+	var vw_wmax := 0.0
+	var vw_prev := -1.0
+	var vw_hist := []
+	for vw_row in range(-Defs.ORBIT_ROWS, Defs.ROWS, 2):
+		var vw_r := Defs.R_TOP - float(vw_row)
+		if vw_r < 320.0:
+			break                 # (near the heart the planet's own curve changes the scale fast)
+		var vw_px: float = g.unroll_step(vw_r) * vw_r
+		if vw_prev > 0.0:
+			vw_step = maxf(vw_step, maxf(vw_px / vw_prev, vw_prev / vw_px))
+		vw_hist.append(vw_px)
+		if vw_hist.size() > 24:
+			var vw_old: float = vw_hist[vw_hist.size() - 25]
+			vw_48 = maxf(vw_48, maxf(vw_px / vw_old, vw_old / vw_px))
+		vw_prev = vw_px
+		vw_wmin = minf(vw_wmin, vw_px)
+		vw_wmax = maxf(vw_wmax, vw_px)
+	for vw_k in Defs.NSH - 1:
+		vw_seam = maxf(vw_seam, float(Defs.SH_N[vw_k]) / float(Defs.SH_N[vw_k + 1]))
+	_ok("the view never visibly changes size going up or down (no seam squeezes it)",
+		vw_step < 1.01 and vw_48 < 1.12 and vw_seam < 1.09 and vw_wmin > 0.7 and vw_wmax < 1.3,
+		"%d shells; biggest seam %.3f; a pixel covers %.2f - %.2f world units across, changing at most %.4f per 2 rows, %.3f per 48 rows" % [Defs.NSH, vw_seam, vw_wmin, vw_wmax, vw_step, vw_48])
+	# ---- deep down, sand and a loose block fall straight through a seam, none lost or doubled ----
+	var sm_s: int = mini(Defs.SURF + 4, Defs.NSH - 2)
+	var sm_seam: int = Defs.SH_Y1[sm_s]              # the first row of the shell below it
+	var sm_a: float = fposmod(g.spawn_angle + 0.35, TAU)
+	var sm_c: int = int(sm_a / TAU * Defs.NS)
+	var sm_y0: int = sm_seam - 34
+	var sm_w := 24
+	var sm_h := 64
+	var sm_data := PackedInt32Array()
+	for sm_j in sm_h:
+		for sm_i in sm_w:
+			var sm_m := 0                       # an open pocket around the seam (background cleared too)
+			if sm_j < 6 and sm_i >= 12 and sm_i < 22:
+				sm_m = Defs.SAND
+			elif sm_j < 4 and sm_i >= 3 and sm_i < 7:
+				sm_m = Defs.BRICK                # a loose built block (not anchored)
+			sm_data.append(sm_m | (0 << 8))
+	g.gpu.stamp([{"x0": sm_c, "y0": sm_y0, "w": sm_w, "h": sm_h, "data": sm_data}], 7)
+	var sm_count := func(sm_raw: PackedByteArray, sm_mat: int, sm_above: bool) -> int:
+		var sm_n := 0
+		for sm_row in range(sm_y0, sm_y0 + sm_h):
+			if sm_above != (sm_row < sm_seam):
+				continue
+			var sm_sh: int = Defs.shell_of_row(sm_row)
+			var sm_nn: int = Defs.SH_N[sm_sh]
+			# the cells whose middles lie in the pocket's columns
+			var sm_xa := int(ceil(float(sm_c) * sm_nn / Defs.NS - 0.5))
+			var sm_xb := int(ceil(float(sm_c + sm_w) * sm_nn / Defs.NS - 0.5))
+			for sm_x in range(sm_xa, sm_xb):
+				var sm_k: int = int(Defs.SH_OFF[sm_sh]) + (sm_row - int(Defs.SH_Y0[sm_sh])) * sm_nn + posmod(sm_x, sm_nn)
+				var sm_t := sm_raw.decode_u32(sm_k * 4) & 255
+				if sm_t == sm_mat or (sm_mat == Defs.BRICK and sm_t == Defs.DEBRIS[Defs.BRICK]):
+					sm_n += 1
+		return sm_n
+	var sm_r0: PackedByteArray = g.gpu.read_world()
+	var sm_sand0: int = sm_count.call(sm_r0, Defs.SAND, true) + sm_count.call(sm_r0, Defs.SAND, false)
+	var sm_stone0: int = sm_count.call(sm_r0, Defs.BRICK, true)
+	var sm_mid: float = Defs.R_TOP - float(sm_seam)
+	g.gpu.settle([[Vector2(cos(sm_a), sin(sm_a)) * sm_mid, 90.0]], 0.0, 400)
+	var sm_r1: PackedByteArray = g.gpu.read_world()
+	var sm_sand_up: int = sm_count.call(sm_r1, Defs.SAND, true)
+	var sm_sand_dn: int = sm_count.call(sm_r1, Defs.SAND, false)
+	var sm_stone_up: int = sm_count.call(sm_r1, Defs.BRICK, true)
+	var sm_stone_dn: int = sm_count.call(sm_r1, Defs.BRICK, false)
+	_ok("deep down, sand and a loose block fall straight through a seam (none lost or doubled)",
+		sm_sand0 > 40 and sm_sand_up == 0 and sm_sand_dn == sm_sand0 and sm_stone0 >= 8 and sm_stone_up == 0 and sm_stone_dn > 0,
+		"seam at row %d (shells of %d and %d columns); sand %d -> %d above, %d below; brick %d above -> %d above, %d below (some may have broken into rubble)" % [sm_seam, Defs.SH_N[sm_s], Defs.SH_N[sm_s + 1], sm_sand0, sm_sand_up, sm_sand_dn, sm_stone0, sm_stone_up, sm_stone_dn])
 
 	# ---- one-way platforms: land on one, drop through it (down + jump), jump up through it ----
 	var pcol := int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 40
@@ -2101,7 +2182,7 @@ func run() -> void:
 			ob_fires2 += 1
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("orbit.png"))
 	_ok("the orbit band above the air takes building", ob_stone == 72 and ob_raw.size() == Defs.total_cells() * 8,
-		"ledge %d of 72 stone cells at row %d (radius %.0f, the air ends at %.0f); %d shells, the band %d columns" % [ob_stone, ob_c.y, Defs.R_TOP - ob_c.y, Defs.R_TOP, Defs.NSH, Defs.SH_N[Defs.ORB]])
+		"ledge %d of 72 stone cells at row %d (radius %.0f, the air ends at %.0f); %d shells, the top one %d columns" % [ob_stone, ob_c.y, Defs.R_TOP - ob_c.y, Defs.R_TOP, Defs.NSH, Defs.SH_N[0]])
 	_ok("vacuum: water freezes, fire goes out, sand falls out of the band, you hold your breath",
 		int(ob_m.get("Ice", 0)) > 0 and int(ob_m.get("Water", 0)) == 0 and ob_fires2 == 0 and ob_sand_up == 0 and ob_sand_air > 0 and ob_b1 < ob_b0,
 		"above the ledge %s; fire %d -> %d; sand left up there %d, fallen into the air %d; breath %.0f -> %.0f (%s)" % [str(ob_m), ob_fires, ob_fires2, ob_sand_up, ob_sand_air, ob_b0, ob_b1, ob_st])

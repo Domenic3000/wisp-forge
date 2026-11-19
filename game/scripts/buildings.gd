@@ -1843,7 +1843,7 @@ func _dungeon(x: int, build: bool) -> bool:
 	var base := _median_ground(gc - gw / 2 - 2, gw + 4) - 1
 	var by0 := base + rng.randi_range(80, 130)
 	var bh := 6 + nr * DSH + 4
-	if by0 + bh > Defs.SH_Y0[1] - 20:
+	if by0 + bh > Defs.ROWS - 20:
 		return false
 	for i in range(0, dw, 6):
 		if ground_row(dx0 + i) > by0 - 30:

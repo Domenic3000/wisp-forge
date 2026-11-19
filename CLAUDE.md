@@ -15,21 +15,35 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - `game/scripts/main.gd`: game loop, physics, spells, enemies, chests, guards, saving.
 
 ## Planet geometry (per planet)
-- `Defs.set_geometry(radius)` lays out the shells for a planet's mean surface radius (`PLANETS[i]["radius"]`,
-  Verdance 1304): shell 0 from the top of the atmosphere (`R_TOP` = radius + `ATMO`, row 0) down to half the
-  radius with square cells at the surface (`NS` = `SH_N[0]` columns, a multiple of 64), each shell inward half the
-  columns down to `R_IN`, and the orbit band (`ORB`, stored last) above the atmosphere: `ORBIT_ROWS` rows with
-  NEGATIVE row numbers (-256..-1) and twice the surface's columns, up to `R_SPACE`. Every row from 0 down keeps its
-  old meaning. Shell ends are `SH_Y1[s]` (never `SH_Y0[s + 1]`); neighbours across shells go through
-  `shAbove`/`shBelow` (GLSL) and `shell_above`/`shell_below`/`shell_of_row`/`row_at` (Defs). Use `floor` for rows
-  (they go negative). In scripts use `Defs.NS` (typed) rather than `Defs.SH_N[0]`: the geometry values are vars, so
-  `:=` can't infer from their array elements.
-- A planet of another size re-creates the GPU world (`gpu.cleanup()` + `init()`, shaders have the geometry built in)
-  in `_enter_planet`. buildings.gd takes `N0` from `Defs.NS`. Depths that scale with size: `magmaR` (make_planet),
-  the core radius (surface.comp).
-- Stamps and `read_rect` work in the orbit band too: a blueprint is laid out in surface columns, and up there each
-  of its cells covers two (stamp.comp `put`; rectread reads the first of the two).
-- Vacuum (react.comp, `s == ORB`): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
+- `Defs.set_geometry(radius)` lays out the shells ("rings") for a planet's mean surface radius
+  (`PLANETS[i]["radius"]`, Verdance 1304). Rows count down from the top of the atmosphere (`R_TOP` = radius +
+  `ATMO`, row 0) to `R_IN`; the orbit band above the atmosphere has NEGATIVE rows (-`ORBIT_ROWS`..-1) up to `R_SPACE`.
+  Shells are stored top to bottom (`SH_Y0`/`SH_Y1`/`SH_N`/`SH_OFF`; every `SH_Y0` even). The surface shell (`SURF`,
+  `NS` columns = square cells at the mean surface, a multiple of 64) reaches `SURF_HALF` (330) rows up and down, so
+  the ground and nearly every structure lie in it. Above and below it the shells are thin and each has about a
+  sixteenth more or fewer columns than its neighbour (multiples of 16; seams at most ~8%), so the view never
+  visibly changes size at a seam (the user saw a 2x squeeze at the old halving seams); away from the surface shell
+  the cells drift back to square (Verdance: 48 shells, 13 M cells). Neighbours across a seam: `colTo(from, to, x)`
+  (the cell whose middle is nearest; GLSL and `Defs.col_to`), `stepC`/`nbr`, `shAbove`/`shBelow`; a surface column
+  in shell s: `colIn` / `Defs.col_in`; a cell of the read-back world: `Defs.raw_idx(row, surface col)`. `shellOf` /
+  `shell_of_row` binary-search the shells. Use `floor` for rows (they go negative). In scripts use `Defs.NS` (typed)
+  for surface columns.
+- The geometry and shell table are a buffer, not compiled in: `Defs.shell_table()` (binding 10 in every uniform
+  set, added by `gpu._mkset`; common.comp `SHL`, macros `R_TOP`, `RS0`, `R_SPACE`, `ROWS`, `NSH`, `SURF`, `NS`,
+  `SH_Y0(s)` etc.). Constant arrays indexed per cell made NVIDIA copy them for every cell (simulation 38 ms a frame);
+  and with nothing planet-specific in the SPIR-V, a planet of another size reuses the driver's cached pipelines.
+- Simulation passes are one dispatch per window (not per shell): rows `pc.a.y..pc.a.z`, the window's start angle and
+  span in `pc.d.x`/`pc.d.y`; each thread works out its shell from its row (`winCount`/`winX0`). `move` never pairs
+  rows across a seam; `boundary` moves powder, liquid and gas across every seam in the window (each inner cell owns
+  the 1-2 outer cells over it); `topple` runs a thread per column per shell and drops a block across a seam by
+  `atomicCompSwap` on the cell below. The unrolled view's scale (`main.unroll_step`) is the row-weighted average of
+  the shells' column steps within `UNROLL_EASE` rows: exact inside a shell, smooth across seams.
+- A planet of another size re-creates the GPU world (`gpu.cleanup()` + `init()`) in `_make_world`. buildings.gd takes
+  `N0` from `Defs.NS`. Depths that scale with size: `magmaR` (make_planet), the core radius (surface.comp).
+- Stamps and `read_rect` work at any row: a blueprint is laid out in surface columns; in another shell each of its
+  cells writes the cells whose middles fall in it (stamp.comp), and rectread reads the cell under each surface
+  column's middle.
+- Vacuum (react.comp, row < 0): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
   holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
 - Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).
 - Space (`scripts/space.gd`, a Node2D under the overlay): levitating into the top of the orbit band

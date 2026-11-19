@@ -8,7 +8,7 @@
 // wall has depth: it carries the blocks in front of it (+1), rests on the wall below it (free),
 // and leans on its neighbours (+1). That is what holds up the wall above a doorway.
 // Every loop of support costs at least +1, so a piece that is cut free counts up until it falls.
-// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+// pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame, 0, 0)
 #include "common"
 #include "world"
 #include "bglayer"
@@ -26,10 +26,11 @@ bool solidC(uint c) { return KIND[c & 255u] == K_SOLID; }
 uint restOn(int s, int y, int x, uint t) {
 	for (int k = 0; k < 48; k++) {
 		int yy = y + 1;
-		if (yy >= SH_Y1[s]) {
+		if (yy >= SH_Y1(s)) {
 			int b = shBelow(s);
 			if (b < 0) return 0u;                  // resting on the planet's heart
-			s = b; x /= 2;
+			x = colTo(s, b, x);
+			s = b;
 		}
 		y = yy;
 		uint cb = world.cells[cellIdx(s, y, x)];
@@ -55,11 +56,12 @@ uint wallS(int i) {
 }
 
 void main() {
-	int s = pc.a.x;
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	if (y >= pc.a.z) return;
+	int s = shellOf(y);
 	int k = int(gl_GlobalInvocationID.x);
-	if (y >= pc.a.z || k >= pc.b.x) return;
-	int x = wrapc(pc.a.w + k, SH_N[s]);
+	if (k >= winCount(s)) return;
+	int x = wrapc(winX0(s) + k, SH_N(s));
 	int i = cellIdx(s, y, x);
 	uint c = world.cells[i];
 	uint t = c & 255u;

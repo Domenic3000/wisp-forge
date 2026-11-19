@@ -1,5 +1,5 @@
 // Writes one generated structure (house, tower, castle, ruin, catacomb...) into the planet.
-// The blueprint is a w x h grid in shell 0, column x0.., row y0.. (row grows toward the core).
+// The blueprint is a w x h grid in surface-shell columns x0.., rows y0.. (row grows toward the core).
 // Each blueprint cell: bits 0-7 foreground (255 = keep what is there), bits 8-15 background
 // (255 = keep), bit 16 = fill only where there is no solid ground yet, bit 17 = anchored
 // (generated structures are part of the planet until you dig near them; this anchors the
@@ -70,13 +70,16 @@ void main() {
 	int w = pc.a.z, h = pc.a.w;
 	if (i >= w || j >= h) return;
 	int row = pc.a.y + j;
-	if (row < -ORBIT_ROWS || row >= SH_Y0[1]) return;
-	int col = wrapc(pc.a.x + i, SH_N[0]);
-	// a blueprint is laid out in surface columns; in the orbit band (twice the columns) each of its
-	// cells covers two
-	int reps = row < 0 ? 2 : 1;
-	for (int q = 0; q < reps; q++) {
-		int ri = row < 0 ? cellIdx(ORB, row, col * 2 + q) : cellIdx(0, row, col);
+	if (row < -ORBIT_ROWS || row >= ROWS) return;
+	int col = wrapc(pc.a.x + i, NS);
+	// a blueprint is laid out in surface columns; in a shell with other columns, each blueprint cell
+	// writes the cells whose middles fall in it (none, one or two)
+	int s = shellOf(row);
+	int N = SH_N(s);
+	int xa = (2 * col * N + NS - 1) / (2 * NS);
+	int xb = (2 * (col + 1) * N + NS - 1) / (2 * NS);
+	for (int xq = xa; xq < xb; xq++) {
+		int ri = cellIdx(s, row, xq == N ? 0 : xq);
 		if (pc.b.z == 1) {
 			uint fw = blue.d[pc.b.x + 2 * (j * w + i)], bw = blue.d[pc.b.x + 2 * (j * w + i) + 1];
 			if (fw != 0xffffffffu) {

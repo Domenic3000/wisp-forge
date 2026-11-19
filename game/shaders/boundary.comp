@@ -1,30 +1,55 @@
-// Moves material across the seam between shell s (outer) and the shell just inside it (half as many
-// columns). Thread m owns outer cells 2m, 2m+1 and inner cell m.
-// pc.a = (outerShell, innerX0, count, 0)  pc.b = (frame, 0, 0, 0)
+// Moves material across the seams between neighbouring shells (the move pass never pairs rows
+// across one). Each thread owns one inner cell m (the top row of the shell below a seam) and the
+// outer cells over it: the ones whose middles map into m (colTo), one or two since the outer shell
+// has at most about an eighth more columns. One dispatch covers every seam in the window.
+// pc.a = (first outer shell, window y0, window y1, -)  pc.b = (-, frame, 0, 0)  pc.d = window angles
+// Dispatched (widest inner shell's columns) x (seams).
 #include "common"
 #include "world"
 layout(local_size_x = 64) in;
 
+// the first outer column (in shell s, No columns) over inner column m (Ni columns)
+int firstOver(int m, int No, int Ni) { return (2 * m * No + Ni - 1) / (2 * Ni); }
+
 void main() {
-	int s = pc.a.x;
-	int k = int(gl_GlobalInvocationID.x);
-	if (k >= pc.a.z) return;
+	int s = pc.a.x + int(gl_GlobalInvocationID.y);
 	int si = shBelow(s);
-	if (si < 0) return;
-	int Ni = SH_N[si];
-	int m = wrapc(pc.a.y + k, Ni);
-	int yo = SH_Y1[s] - 1, yi = SH_Y0[si];
-	int io0 = cellIdx(s, yo, 2 * m), io1 = cellIdx(s, yo, 2 * m + 1), ii = cellIdx(si, yi, m);
-	uint o0 = world.cells[io0], o1 = world.cells[io1], in_ = world.cells[ii];
-	float r = rnd3(uint(ii), uint(pc.b.x), 9u);
-	bool first0 = r < 0.5;
-	uint t0 = o0 & 255u, t1 = o1 & 255u, ti = in_ & 255u;
-	bool f0 = (KIND[t0] == K_POWDER || KIND[t0] == K_LIQUID) && canDisp(t0, ti);
-	bool f1 = (KIND[t1] == K_POWDER || KIND[t1] == K_LIQUID) && canDisp(t1, ti);
-	if (f0 && (first0 || !f1)) { world.cells[io0] = in_; world.cells[ii] = o0; return; }
-	if (f1) { world.cells[io1] = in_; world.cells[ii] = o1; return; }
+	if (s >= NSH || si < 0) return;
+	int yo = SH_Y1(s) - 1, yi = SH_Y0(si);
+	if (yo < pc.a.y || yi >= pc.a.z) return;          // (this seam isn't in the window)
+	int k = int(gl_GlobalInvocationID.x);
+	if (k >= winCount(si)) return;
+	int Ni = SH_N(si), No = SH_N(s);
+	int m = wrapc(winX0(si) + k, Ni);
+	int xa = firstOver(m, No, Ni);
+	int xb = m + 1 == Ni ? No : firstOver(m + 1, No, Ni);
+	int n = min(xb - xa, 3);
+	if (n <= 0) return;
+	int ii = cellIdx(si, yi, m);
+	uint in_ = world.cells[ii];
+	uint ti = in_ & 255u;
+	int first = int(rnd3(uint(ii), uint(pc.b.y), 9u) * float(n));
+	// something that falls or flows over it drops in (in a random order among those over it)
+	for (int q = 0; q < n; q++) {
+		int io = cellIdx(s, yo, xa + (first + q) % n);
+		uint o = world.cells[io];
+		uint to = o & 255u;
+		if ((KIND[to] == K_POWDER || KIND[to] == K_LIQUID) && canDisp(to, ti)) {
+			world.cells[io] = in_;
+			world.cells[ii] = o;
+			return;
+		}
+	}
+	// gas under an open cell rises through
 	if (KIND[ti] == K_GAS) {
-		if (t0 == 0u && (first0 || t1 != 0u)) { world.cells[io0] = in_; world.cells[ii] = o0; return; }
-		if (t1 == 0u) { world.cells[io1] = in_; world.cells[ii] = o1; }
+		for (int q = 0; q < n; q++) {
+			int io = cellIdx(s, yo, xa + (first + q) % n);
+			uint o = world.cells[io];
+			if ((o & 255u) == 0u) {
+				world.cells[io] = in_;
+				world.cells[ii] = o;
+				return;
+			}
+		}
 	}
 }

@@ -3,26 +3,12 @@
 // leaves); reaching sideways, hanging or leaning diagonally costs 1, so a tall tree stands
 // while a cut-off piece counts up and drops. Runs six times per frame so a cut tree
 // comes down quickly.
-// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame * passes + pass, 0, 0)
+// pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame * passes + pass, 0, 0)
 #include "common"
 #include "world"
 #include "bglayer"
 layout(local_size_x = 16, local_size_y = 16) in;
 
-// neighbour coordinates across shells: dir 0 up, 1 down, 2 left, 3 right
-ivec3 stepC(int s, int y, int x, int dir) {
-	int n = SH_N[s];
-	if (dir == 2) return ivec3(s, y, x == 0 ? n - 1 : x - 1);
-	if (dir == 3) return ivec3(s, y, x == n - 1 ? 0 : x + 1);
-	if (dir == 0) {
-		int yy = y - 1;
-		if (yy < SH_Y0[s]) { int a = shAbove(s); return a < 0 ? ivec3(-1) : ivec3(a, yy, x * 2); }
-		return ivec3(s, yy, x);
-	}
-	int yy = y + 1;
-	if (yy >= SH_Y1[s]) { int b = shBelow(s); return b < 0 ? ivec3(-1) : ivec3(b, yy, x / 2); }
-	return ivec3(s, yy, x);
-}
 uint cellC(ivec3 q) { return q.x < 0 ? 0u : world.cells[cellIdx(q.x, q.y, q.z)]; }
 // which plant a background cell belongs to (bit 31 + bits 16-30, set by the generator; 0 = none).
 // Plants only hold each other up within one plant, so cutting a trunk drops that whole tree even
@@ -36,11 +22,12 @@ uint supAt(ivec3 q, uint id) {
 }
 
 void main() {
-	int s = pc.a.x;
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	if (y >= pc.a.z) return;
+	int s = shellOf(y);
 	int k = int(gl_GlobalInvocationID.x);
-	if (y >= pc.a.z || k >= pc.b.x) return;
-	int x = wrapc(pc.a.w + k, SH_N[s]);
+	if (k >= winCount(s)) return;
+	int x = wrapc(winX0(s) + k, SH_N(s));
 	int i = cellIdx(s, y, x);
 	uint ab = aux.a[i];
 	uint bgm = ab & 255u;

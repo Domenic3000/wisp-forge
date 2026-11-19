@@ -194,9 +194,9 @@ func _read_around(p: Vector2, size: Vector2i, up_frac: float) -> Array:
 	var h := size.y
 	var c0 := cc.x - w / 2
 	var r0 := cc.y - int(h * up_frac)
-	r0 = clampi(r0, 0, Defs.SH_Y0[1] - 1)
-	h = mini(h, Defs.SH_Y0[1] - r0)
-	if h < 8 or cc.y >= Defs.SH_Y0[1]:
+	r0 = clampi(r0, 0, Defs.ROWS - 1)
+	h = mini(h, Defs.ROWS - r0)
+	if h < 8 or cc.y >= Defs.ROWS:
 		return []
 	var rr: Dictionary = g.gpu.read_rect(c0, r0, w, h)
 	return [c0, r0, w, h, rr["fg"], rr["bg"]]
@@ -668,7 +668,7 @@ func _clear(R: Array, tf: Array, tb: Array, tb2: Array) -> void:
 
 ## one cell set into the world (raw: only where that layer is empty); -1 leaves a layer alone
 func _put(col: int, row: int, f: int, b: int) -> void:
-	if row < 0 or row >= Defs.SH_Y0[1]:
+	if row < 0 or row >= Defs.ROWS:
 		return
 	var d := PackedInt32Array([f, b])
 	g.stamps.append({"x0": posmod(col, Defs.NS), "y0": row, "w": 1, "h": 1, "data": d, "raw": true})
@@ -977,7 +977,7 @@ func _settle(c: Chunk) -> void:
 	cmin -= Vector2i(1, 1)
 	cmax += Vector2i(1, 1)
 	cmin.y = maxi(cmin.y, 0)
-	cmax.y = mini(cmax.y, Defs.SH_Y0[1] - 1)
+	cmax.y = mini(cmax.y, Defs.ROWS - 1)
 	var w2 := cmax.x - cmin.x + 1
 	var h2 := cmax.y - cmin.y + 1
 	if w2 <= 0 or h2 <= 0:

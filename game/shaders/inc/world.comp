@@ -8,17 +8,8 @@ uint cellTypeAt(vec2 p) {
 }
 // neighbour index: dir 0 = up (outward), 1 = down (inward), 2 = left, 3 = right. -1 if none.
 int nbr(int s, int y, int x, int dir) {
-	int n = SH_N[s];
-	if (dir == 2) return cellIdx(s, y, x == 0 ? n - 1 : x - 1);
-	if (dir == 3) return cellIdx(s, y, x == n - 1 ? 0 : x + 1);
-	if (dir == 0) {
-		int yy = y - 1;
-		if (yy < SH_Y0[s]) { int a = shAbove(s); return a < 0 ? -1 : cellIdx(a, yy, x * 2); }
-		return cellIdx(s, yy, x);
-	}
-	int yy = y + 1;
-	if (yy >= SH_Y1[s]) { int b = shBelow(s); return b < 0 ? -1 : cellIdx(b, yy, x / 2); }
-	return cellIdx(s, yy, x);
+	ivec3 q = stepC(s, y, x, dir);
+	return q.x < 0 ? -1 : cellIdx(q.x, q.y, q.z);
 }
 uint cellAt(vec2 p) {
 	int i = idxAt(p);

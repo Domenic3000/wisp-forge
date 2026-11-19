@@ -1,5 +1,5 @@
 // Per-cell reactions: fire, burning, lava/water, melting, gas lifetimes, rain spawning.
-// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, rainRow, rainMat); rain rate = P.p[3].x
+// pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame, rainRow, rainMat); rain rate = P.p[3].x
 #include "common"
 #include "world"
 #include "params"
@@ -10,29 +10,16 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 void setc(int i, uint c, uint t, uint life) { world.cells[i] = withFG(c, t, life); }
 
-// neighbour coordinates across shells: dir 0 up, 1 down, 2 left, 3 right
-ivec3 stepC(int s, int y, int x, int dir) {
-	int n = SH_N[s];
-	if (dir == 2) return ivec3(s, y, x == 0 ? n - 1 : x - 1);
-	if (dir == 3) return ivec3(s, y, x == n - 1 ? 0 : x + 1);
-	if (dir == 0) {
-		int yy = y - 1;
-		if (yy < SH_Y0[s]) { int a = shAbove(s); return a < 0 ? ivec3(-1) : ivec3(a, yy, x * 2); }
-		return ivec3(s, yy, x);
-	}
-	int yy = y + 1;
-	if (yy >= SH_Y1[s]) { int b = shBelow(s); return b < 0 ? ivec3(-1) : ivec3(b, yy, x / 2); }
-	return ivec3(s, yy, x);
-}
 uint cellC(ivec3 q) { return q.x < 0 ? 0u : world.cells[cellIdx(q.x, q.y, q.z)]; }
 float dayAt(int s, int y, int x) { return clamp(dot(normalize(cellCenter(s, y, x)), sunDir()) * 1.6 + 0.15, 0.0, 1.0); }
 int idxC(ivec3 q) { return q.x < 0 ? -1 : cellIdx(q.x, q.y, q.z); }
 void main() {
-	int s = pc.a.x;
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	if (y >= pc.a.z) return;
+	int s = shellOf(y);
 	int k = int(gl_GlobalInvocationID.x);
-	if (y >= pc.a.z || k >= pc.b.x) return;
-	int x = wrapc(pc.a.w + k, SH_N[s]);
+	if (k >= winCount(s)) return;
+	int x = wrapc(winX0(s) + k, SH_N(s));
 	int i = cellIdx(s, y, x);
 	uint c = world.cells[i];
 	uint t = c & 255u;
@@ -41,7 +28,7 @@ void main() {
 
 	// vacuum, above the air (the orbit band): nothing burns, gases boil off into space, water and
 	// mud freeze solid, lava sets
-	if (s == ORB && t != 0u) {
+	if (y < 0 && t != 0u) {
 		uint kt = KIND[t];
 		if (t == M_FIRE || kt == K_GAS) { world.cells[i] = 0u; return; }
 		if (R < 0.12) {
@@ -71,7 +58,7 @@ void main() {
 			}
 		}
 		// background plants and wooden walls catch fire from burning neighbours, then are gone
-		if (bgm != 0u && FUEL[bgm] > 0u && s != ORB) {
+		if (bgm != 0u && FUEL[bgm] > 0u && y >= 0) {
 			int nu0 = nbr(s, y, x, 0), nd0 = nbr(s, y, x, 1), nl0 = nbr(s, y, x, 2), nr0 = nbr(s, y, x, 3);
 			uint a0 = tAt(nu0), a1 = tAt(nd0), a2 = tAt(nl0), a3 = tAt(nr0);
 			bool hot = a0 == M_FIRE || a1 == M_FIRE || a2 == M_FIRE || a3 == M_FIRE;

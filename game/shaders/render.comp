@@ -31,13 +31,13 @@ vec3 lightAt(vec2 px, int LW, int LH, float LS) {
 
 vec3 ramp(uint t, int l) { return palColor(t, uint(clamp(l, 0, 3))); }
 
-// stable world-cell coordinates for texture patterns (shell-0 column units, row)
+// stable world-cell coordinates for texture patterns (the cell's column in surface-shell units, row)
 ivec2 cellCoord(vec2 p) {
 	float r = length(p);
 	int y = clamp(int(floor(R_TOP - r)), -ORBIT_ROWS, ROWS - 1);
 	int s = shellOf(y);
-	int x = min(int(angleOf(p) / TAU * float(SH_N[s])), SH_N[s] - 1);
-	return ivec2(s == ORB ? x : x << s, y);
+	int x = min(int(angleOf(p) / TAU * float(SH_N(s))), SH_N(s) - 1);
+	return ivec2((x * NS) / SH_N(s), y);
 }
 
 bool solidC(uint c) { return isBlock(c & 255u); }

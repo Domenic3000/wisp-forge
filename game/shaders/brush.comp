@@ -2,7 +2,7 @@
 // Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR).
 // counts[t] = cells collected per material; counts[50] = blocked by hardness; counts[51] = placed;
 // counts[54] = chest cells opened (mode 7). Mode 9 opens or closes a door; mode 10 paints back walls (build mode). Each player has their own 64 counters: owner = mode >> 4.
-// pc.a = (shell, y0, y1, x0)  pc.b = (count, frame, 0, 0)
+// pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame, 0, 0)
 #include "common"
 #include "world"
 #include "params"
@@ -11,11 +11,12 @@ layout(std430, set = 0, binding = 3) restrict buffer Counts { uint n[]; } counts
 layout(local_size_x = 16, local_size_y = 16) in;
 
 void main() {
-	int s = pc.a.x;
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
+	if (y >= pc.a.z) return;
+	int s = shellOf(y);
 	int k = int(gl_GlobalInvocationID.x);
-	if (y >= pc.a.z || k >= pc.b.x) return;
-	int x = wrapc(pc.a.w + k, SH_N[s]);
+	if (k >= winCount(s)) return;
+	int x = wrapc(winX0(s) + k, SH_N(s));
 	int i = cellIdx(s, y, x);
 	vec2 p = cellCenter(s, y, x);
 	int nb = int(P.p[6].x);

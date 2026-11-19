@@ -1193,27 +1193,31 @@ func basis_d(a: float) -> Vector2:
 ## the angle (one pixel = one surface column), y the height, so buildings stand straight anywhere
 ## on screen. Zoomed out to the map, the planet is drawn round.
 ## The unrolled view draws one column of the camera's own shell per pixel, so the cells around
-## you are always one pixel wide (deep down the shells have fewer, wider columns: drawing surface
-## columns there stretched every cell and made you seem to run faster and faster toward the core).
-## Near a shell boundary the scale eases from one shell's to the next over 48 rows.
+## you are always one pixel wide. Shells next to each other differ by only a sixteenth or so in
+## columns (Defs.set_geometry), and across a seam the scale is the average over the shells within
+## UNROLL_EASE rows of the camera (weighted by how many of those rows each has), so it changes
+## smoothly and by too little to see; inside a shell, away from its seams, it is exactly its own.
+const UNROLL_EASE := 24.0
 func unroll_step(r: float) -> float:
 	var row := Defs.R_TOP - r
-	var s: int = Defs.shell_of_row(int(floor(row)))
-	var st := TAU / float(Defs.SH_N[s])
-	# blend toward the neighbouring shell near its boundary
-	var sb: int = Defs.shell_below(s)
-	if sb >= 0:
-		var dn: float = float(Defs.SH_Y1[s]) - row
-		if dn < 24.0:
-			var t := smoothstep(24.0, -24.0, dn)
-			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[sb])), t))
-	var sa: int = Defs.shell_above(s)
-	if sa >= 0:
-		var up: float = row - float(Defs.SH_Y0[s])
-		if up < 24.0:
-			var t2 := smoothstep(24.0, -24.0, up)
-			st = exp(lerpf(log(st), log(TAU / float(Defs.SH_N[sa])), t2))
-	return st
+	var a := row - UNROLL_EASE
+	var b := row + UNROLL_EASE
+	var s: int = Defs.shell_of_row(int(floor(a)))
+	var sum := 0.0
+	var at := a
+	while at < b:
+		var end := b
+		if s < Defs.NSH - 1:
+			end = minf(b, float(Defs.SH_Y1[s]))
+		if end > at:
+			sum += (end - at) * log(TAU / float(Defs.SH_N[s]))
+			at = end
+		if s >= Defs.NSH - 1:
+			break
+		s += 1
+	if at < b:
+		sum += (b - at) * log(TAU / float(Defs.SH_N[Defs.NSH - 1]))
+	return exp(sum / (b - a))
 
 func unrolled() -> bool:
 	return zoom < 2.5
@@ -3030,7 +3034,7 @@ func _update_build(m: Mage) -> void:
 	var p := _reach(m, m.input.aim)
 	var cell := Build.cell_of(p)
 	var kind: String = piece["kind"]
-	if cell.y < -Defs.ORBIT_ROWS or cell.y >= Defs.SH_Y0[1] - 40:
+	if cell.y < -Defs.ORBIT_ROWS or cell.y >= Defs.ROWS - 40:
 		return
 	var cost: Dictionary = Build.payable(piece, m.inv)
 	var cells := []      # [world pos, colour]
@@ -3568,6 +3572,7 @@ func _make_world(index: int, arriving: bool) -> void:
 		builds.plan(planet, gpu.surface, spawn_angle, boss_a, not loaded)
 	travel_progress = 0.35
 	if not loaded:
+		var tg0 := Time.get_ticks_usec()
 		var jobs: Array = gpu.generate_prepare(spawn_angle, boss_info, builds.sites)
 		for k in jobs.size():
 			gpu.generate_band(jobs[k])
@@ -3586,7 +3591,10 @@ func _make_world(index: int, arriving: bool) -> void:
 				await tree.process_frame
 				_phase_go()
 		else:
+			var tg1 := Time.get_ticks_usec()
 			gpu.settle(builds.settle, 0.0, 150)
+			if testing:
+				print("[gen] cells and stamping %d ms, settling %d ms (%d areas)" % [(tg1 - tg0) / 1000, (Time.get_ticks_usec() - tg1) / 1000, builds.settle.size()])
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
 	_make_chests(loaded)
@@ -3795,7 +3803,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 29            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 30            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

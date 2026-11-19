@@ -17,6 +17,20 @@ uint withFG(uint c, uint t, uint life) { return t | (c & 0xff00u) | (life << 16)
 // what excavating a material puts in the satchel
 uint collectAs(uint t) { return (t == M_TIMBER || t == M_ROOT) ? M_WOOD : (t == M_LITTER ? M_LEAF : ((t == M_OPENCHEST || t == M_DECOR || t == M_WOODDOOR) ? M_PLANK : t)); }
 layout(push_constant, std430) uniform PC { ivec4 a; ivec4 b; vec4 c; vec4 d; } pc;
+// the planet's geometry and shell table (Defs.shell_table): per shell (first row, end row, columns,
+// offset in the world). Not compiled in, so the shaders are the same for every planet.
+layout(std430, set = 0, binding = 10) restrict readonly buffer Shells { vec4 geo[2]; ivec4 sh[]; } SHL;
+#define R_TOP (SHL.geo[0].x)
+#define RS0 (SHL.geo[0].y)
+#define R_SPACE (SHL.geo[0].z)
+#define ROWS (int(SHL.geo[0].w))
+#define NSH (int(SHL.geo[1].x))
+#define SURF (int(SHL.geo[1].y))
+#define NS (int(SHL.geo[1].z))
+#define SH_Y0(s) (SHL.sh[s].x)
+#define SH_Y1(s) (SHL.sh[s].y)
+#define SH_N(s) (SHL.sh[s].z)
+#define SH_OFF(s) (SHL.sh[s].w)
 
 uint hashu(uint x) {
 	x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
@@ -38,21 +52,53 @@ float fbm(vec2 p, int s, int oct) {
 	return sum / norm;
 }
 
-// shells: 0 the surface (and the atmosphere above it) down to half the surface radius, each further
-// in with half the columns, and ORB, the orbit band above the atmosphere (negative rows, twice the
-// surface's columns)
+// shells: rings of rows, stored top (orbit band, negative rows) to bottom (the heart), each with its
+// own number of columns (SH_N); neighbouring shells differ by about a sixteenth (Defs.set_geometry).
 int shellOf(int y) {
-	if (y < 0) return ORB;
-	for (int s = 1; s < ORB; s++) if (y < SH_Y0[s]) return s - 1;
-	return ORB - 1;
+	int lo = 0, hi = NSH - 1;
+	while (lo < hi) {
+		int mid = (lo + hi + 1) >> 1;
+		if (y >= SH_Y0(mid)) lo = mid; else hi = mid - 1;
+	}
+	return lo;
 }
-int shAbove(int s) { return s == 0 ? ORB : (s == ORB ? -1 : s - 1); }
-int shBelow(int s) { return s == ORB ? 0 : (s + 1 < ORB ? s + 1 : -1); }
+int shAbove(int s) { return s - 1; }
+int shBelow(int s) { return s + 1 < NSH ? s + 1 : -1; }
+// the column of shell `to` (a neighbour of shell `from`) whose middle is nearest column x's
+int colTo(int from, int to, int x) { return ((2 * x + 1) * SH_N(to)) / (2 * SH_N(from)); }
+// a surface-shell column (blueprints, the surface table) in shell s
+int colIn(int s, int c) { return ((2 * c + 1) * SH_N(s)) / (2 * NS); }
 int wrapc(int x, int n) { x = x % n; return x < 0 ? x + n : x; }
-int cellIdx(int s, int y, int x) { return SH_OFF[s] + (y - SH_Y0[s]) * SH_N[s] + x; }
+int cellIdx(int s, int y, int x) { return SH_OFF(s) + (y - SH_Y0(s)) * SH_N(s) + x; }
+// neighbour coordinates (shell, row, column) across shells: dir 0 up (outward), 1 down, 2 left,
+// 3 right; ivec3(-1) if none
+ivec3 stepC(int s, int y, int x, int dir) {
+	int n = SH_N(s);
+	if (dir == 2) return ivec3(s, y, x == 0 ? n - 1 : x - 1);
+	if (dir == 3) return ivec3(s, y, x == n - 1 ? 0 : x + 1);
+	if (dir == 0) {
+		int yy = y - 1;
+		if (yy < SH_Y0(s)) { int a = shAbove(s); return a < 0 ? ivec3(-1) : ivec3(a, yy, colTo(s, a, x)); }
+		return ivec3(s, yy, x);
+	}
+	int yy = y + 1;
+	if (yy >= SH_Y1(s)) { int b = shBelow(s); return b < 0 ? ivec3(-1) : ivec3(b, yy, colTo(s, b, x)); }
+	return ivec3(s, yy, x);
+}
+// The simulated window: rows pc.a.y .. pc.a.z, and in each shell the columns from the window's
+// start angle (pc.d.x, radians) across its span (pc.d.y; TAU or more: the whole ring). A pass
+// dispatches the widest shell's count; each thread works out its own shell from its row.
+int winCount(int s) {
+	int n = SH_N(s);
+	if (pc.d.y >= TAU) return n;
+	int c = int(ceil(pc.d.y / TAU * float(n))) + 2;
+	c += c & 1;
+	return min(c, n);
+}
+int winX0(int s) { return pc.d.y >= TAU ? 0 : int(floor(pc.d.x / TAU * float(SH_N(s)))); }
 vec2 cellCenter(int s, int y, int x) {
 	float r = R_TOP - (float(y) + 0.5);
-	float th = (float(x) + 0.5) / float(SH_N[s]) * TAU;
+	float th = (float(x) + 0.5) / float(SH_N(s)) * TAU;
 	return vec2(cos(th), sin(th)) * r;
 }
 float angleOf(vec2 p) { float t = atan(p.y, p.x); return t < 0.0 ? t + TAU : t; }
@@ -62,7 +108,7 @@ int idxAt(vec2 p) {
 	if (r >= R_SPACE || r < R_IN) return -1;
 	int y = min(int(floor(R_TOP - r)), ROWS - 1);
 	int s = shellOf(y);
-	int x = min(int(angleOf(p) / TAU * float(SH_N[s])), SH_N[s] - 1);
+	int x = min(int(angleOf(p) / TAU * float(SH_N(s))), SH_N(s) - 1);
 	return cellIdx(s, y, x);
 }
 vec3 palColor(uint t, uint v) {

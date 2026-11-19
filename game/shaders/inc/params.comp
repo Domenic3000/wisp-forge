@@ -10,7 +10,7 @@ vec2 camD() { float a = P.p[1].z; return vec2(-cos(a), -sin(a)); }
 vec2 screenToWorld(vec2 px) {
 	vec2 o = (px - P.p[2].xy * 0.5) * P.p[1].w;
 	if (P.p[1].w < 2.5) {
-		float ustep = P.p[122].z > 0.0 ? P.p[122].z : TAU / float(SH_N[0]);   // one column of the camera's shell per pixel
+		float ustep = P.p[122].z > 0.0 ? P.p[122].z : TAU / float(NS);   // one column of the camera's shell per pixel
 		float th = P.p[1].z - o.x * ustep;
 		float r = length(P.p[1].xy) - o.y;
 		return vec2(cos(th), sin(th)) * r;

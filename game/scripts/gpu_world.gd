@@ -44,6 +44,7 @@ const MAX_SITES := 160
 var params_buf: RID
 var surf_buf: RID
 var counts_buf: RID
+var shells_buf: RID     # the shell table (Defs.shell_table), binding 10 in every set
 var grid_buf: RID
 var light_a: RID
 var light_b: RID
@@ -124,6 +125,8 @@ func _alloc() -> bool:
 	params_buf = rd.storage_buffer_create(NPARAM * 16)
 	surf_buf = rd.storage_buffer_create(Defs.NS * 32)
 	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
+	var tbl: PackedByteArray = Defs.shell_table()
+	shells_buf = rd.storage_buffer_create(tbl.size(), tbl)
 	return true
 
 func _load_text(path: String) -> String:
@@ -183,6 +186,7 @@ func _mkset(nm: String, pairs: Array) -> RID:
 	var us: Array[RDUniform] = []
 	for pr in pairs:
 		us.append(_u(pr[0], pr[1]))
+	us.append(_u(10, shells_buf))            # (every shader has the shell table: common.comp)
 	return rd.uniform_set_create(us, shaders[nm]["shader"], 0)
 
 func _make_static_sets() -> void:
@@ -306,7 +310,7 @@ func generate_prepare(spawn_angle: float, boss: Vector4, sites: Array) -> Array:
 	for s in Defs.NSH:
 		var y0: int = Defs.SH_Y0[s]
 		var y1: int = Defs.SH_Y1[s]
-		var band := 48 if s == 0 else 96
+		var band := 48 if s == Defs.SURF else 96
 		var y := y0
 		while y < y1:
 			var ye := mini(y + band, y1)
@@ -401,25 +405,36 @@ func _window(center: Vector2, half := -1.0) -> Array:
 		half = sqrt(float(VW * VW + VH * VH)) * 0.5 + 56.0
 	var y0 := clampi(Defs.row_at(rc + half), -Defs.ORBIT_ROWS, Defs.ROWS)
 	var y1 := clampi(Defs.row_at(rc - half) + 1, -Defs.ORBIT_ROWS, Defs.ROWS)
+	if y0 >= y1:
+		return []
 	var rmin := maxf(rc - half, Defs.R_IN)
 	var dth := half / rmin
 	var thc := atan2(center.y, center.x)
-	var out := []
-	for s in Defs.NSH:
-		var sy0 := maxi(y0, Defs.SH_Y0[s])
-		var sy1 := mini(y1, Defs.SH_Y1[s])
-		if sy0 >= sy1:
-			continue
-		var n: int = Defs.SH_N[s]
-		var x0 := 0
-		var count := n
-		if dth * 2.0 < TAU:
-			x0 = int(floor((thc - dth) / TAU * n))
-			count = int(ceil(2.0 * dth / TAU * n)) + 2
-			count += count % 2
-			count = mini(count, n)
-		out.append({"s": s, "y0": sy0, "y1": sy1, "x0": x0, "count": count})
-	return out
+	var span := TAU if dth * 2.0 >= TAU else 2.0 * dth
+	var s0 := Defs.shell_of_row(y0)
+	var s1 := Defs.shell_of_row(y1 - 1)
+	# (each pass is one dispatch over the window, as wide as its widest shell, the top one; the
+	# shaders work out their own shell per row: common.comp winCount / winX0)
+	return [{"y0": y0, "y1": y1, "th0": thc - dth, "span": span, "s0": s0, "s1": s1,
+		"maxc": win_count(s0, span) + 4}]
+
+## a window's columns in shell s (as common.comp winCount)
+static func win_count(s: int, span: float) -> int:
+	var n: int = Defs.SH_N[s]
+	if span >= TAU:
+		return n
+	var c := int(ceil(span / TAU * float(n))) + 2
+	c += c & 1
+	return mini(c, n)
+
+## the push-constant floats for a pass over window w (`c`: the pass's own, then the window's angles)
+static func _wf(w: Dictionary, c := []) -> Array:
+	var f := []
+	for k in 4:
+		f.append(float(c[k]) if k < c.size() else 0.0)
+	f.append(float(w["th0"]))
+	f.append(float(w["span"]))
+	return f
 
 ## Simulated areas around every player. Players close together share one area (so no cell is
 ## ever simulated twice in a frame); players far apart each get their own.
@@ -467,7 +482,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 	var cl := rd.compute_list_begin()
 	if with_brushes:
 		for w in win:
-			_dispatch(cl, "brush", "brush", [w.s, w.y0, w.y1, w.x0, w.count, frame + 1], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+			_dispatch(cl, "brush", "brush", [0, w.y0, w.y1, 0, 0, frame + 1], _wf(w), groups(w.maxc, 16), groups(w.y1 - w.y0, 16))
 	var rain_row := clampi(int(Defs.R_TOP - params[121 * 4 + 2]), 0, Defs.ROWS - 1)
 	var rain_mat := int(params[3 * 4 + 1])
 	for k in sim_steps:
@@ -575,36 +590,34 @@ const CREAK_FRAMES := 48    # a loose piece creaks this long (0.8 s) before it d
 
 func _sim_passes(cl: int, win: Array, rain_row: int, rain_mat: int, creak: int) -> void:
 	for w in win:
-		_dispatch(cl, "react", "react", [w.s, w.y0, w.y1, w.x0, w.count, frame, rain_row, rain_mat], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+		_dispatch(cl, "react", "react", [0, w.y0, w.y1, 0, 0, frame, rain_row, rain_mat], _wf(w), groups(w.maxc, 16), groups(w.y1 - w.y0, 16))
 	# background plants: several passes, so a cut tree knows it is cut within a few frames
 	for it in plant_iters:
 		for w in win:
-			_dispatch(cl, "plants", "plants", [w.s, w.y0, w.y1, w.x0, w.count, frame * plant_iters + it], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+			_dispatch(cl, "plants", "plants", [0, w.y0, w.y1, 0, 0, frame * plant_iters + it], _wf(w), groups(w.maxc, 16), groups(w.y1 - w.y0, 16))
 	for it in support_iters:
 		for w in win:
-			_dispatch(cl, "support", "support", [w.s, w.y0, w.y1, w.x0, w.count, frame], [], groups(w.count, 16), groups(w.y1 - w.y0, 16))
+			_dispatch(cl, "support", "support", [0, w.y0, w.y1, 0, 0, frame], _wf(w), groups(w.maxc, 16), groups(w.y1 - w.y0, 16))
 	for it in topple_iters:
 		for w in win:
-			_dispatch(cl, "topple", "topple", [w.s, w.y0, w.y1, w.x0, w.count, frame * 2 + it, creak * topple_iters], [], groups(w.count, 64), 1)
+			# (a thread per column of each shell in the window: shells along y)
+			_dispatch(cl, "topple", "topple", [w.s0, w.y0, w.y1, 0, 0, frame * 2 + it, creak * topple_iters], _wf(w), groups(w.maxc, 64), int(w.s1) - int(w.s0) + 1)
 	var offs := [[0, 0], [1, 1], [1, 0], [0, 1]]
 	for pass_i in 2 + flow_passes:
 		var full := pass_i < 2
 		var o: Array = offs[(frame * 2 + pass_i) % 4]
 		for w in win:
-			var s: int = w.s
-			var ybase: int = Defs.SH_Y0[s] + ((w.y0 - Defs.SH_Y0[s]) / 2) * 2
-			var ylim: int = mini(w.y1 + 1, Defs.SH_Y1[s])
+			# 2 x 2 blocks from an even row (every shell starts on an even row, so no block straddles
+			# a seam unless it's offset onto it, and then the shader skips it)
+			var ybase: int = int(floor(float(w.y0) / 2.0)) * 2
+			var ylim: int = mini(w.y1 + 1, Defs.ROWS)
 			var brows: int = (ylim - ybase) / 2 + 1
-			_dispatch(cl, "move", "move", [s, ybase, ylim, w.x0, w.count, frame * 8 + pass_i, o[0], o[1]], [0.0 if full else 1.0], groups(w.count / 2 + 1, 16), groups(brows, 16))
+			_dispatch(cl, "move", "move", [0, ybase, ylim, 0, 0, frame * 8 + pass_i, o[0], o[1]], _wf(w, [0.0 if full else 1.0]), groups(w.maxc / 2 + 1, 16), groups(brows, 16))
 		if full:
 			for w in win:
-				var s2: int = w.s
-				if Defs.shell_below(s2) < 0:
-					continue
-				var seam: int = Defs.SH_Y1[s2]
-				if w.y0 <= seam - 1 and w.y1 >= seam:
-					var c2: int = w.count / 2 + 2
-					_dispatch(cl, "boundary", "boundary", [s2, int(floor(w.x0 / 2.0)), c2, 0, frame * 8 + pass_i], [], groups(c2, 64), 1)
+				# every seam in the window (the shells s0 .. s1 - 1 over them)
+				if int(w.s1) > int(w.s0):
+					_dispatch(cl, "boundary", "boundary", [w.s0, w.y0, w.y1, 0, 0, frame * 8 + pass_i], _wf(w), groups(w.maxc, 64), int(w.s1) - int(w.s0))
 
 func grid_type(slot: int, i: int, j: int) -> int:
 	var k := grid_off + slot * GS * GS + j * GS + i
@@ -686,7 +699,7 @@ func cleanup() -> void:
 	for nm in shaders:
 		rd.free_rid(shaders[nm]["pipeline"])
 		rd.free_rid(shaders[nm]["shader"])
-	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf]:
+	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf, shells_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
 	rd.free()
@@ -695,7 +708,7 @@ func cleanup() -> void:
 	sets = {}
 	shaders = {}
 	world_buf = RID(); aux_buf = RID(); sites_buf = RID(); params_buf = RID(); surf_buf = RID(); counts_buf = RID()
-	grid_buf = RID(); light_a = RID(); light_b = RID(); view_buf = RID(); rb_buf = RID()
+	grid_buf = RID(); light_a = RID(); light_b = RID(); view_buf = RID(); rb_buf = RID(); shells_buf = RID()
 	grid = PackedByteArray()
 	grid_off = 0
 	light_off = 0

@@ -76,24 +76,28 @@ const MAT_NAMES := {
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT",
 }
 
-# ---- planet geometry: polar shells of cells, set per planet by set_geometry(radius) ----
-# Shell 0 runs from the top of the atmosphere (row 0, radius R_TOP) down to half the surface radius,
-# with the surface's square cells; each shell further in has half the columns, down to the heart. The
-# orbit band (shell ORB, stored last) sits above the atmosphere with twice the surface's columns; its
-# rows are negative (-ORBIT_ROWS .. -1), so every row from 0 down means what it always has.
+# ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
+# Rows count down from the top of the atmosphere (row 0, radius R_TOP) to the heart; the orbit band
+# above the atmosphere has negative rows (-ORBIT_ROWS .. -1). The rows are cut into shells, each with
+# its own number of columns, stored top to bottom. The surface shell (SURF, NS columns, square cells at
+# the mean surface) reaches SURF_HALF rows up and down so the ground and nearly every structure lie in
+# it. Above and below it the shells are thin and each has about a sixteenth more or fewer columns
+# than its neighbour, so a seam is a ~6% step: the view (one column of the camera's shell per pixel)
+# changes too little at a seam to be seen. Away from the surface shell the cells drift back to square.
 const ATMO := 496.0          # the atmosphere's height above the mean surface
 const ORBIT_ROWS := 256      # the orbit band's height: room to build into space
 const R_IN := 80.0           # the planet's heart (not simulated)
+const SURF_HALF := 330.0     # the surface shell reaches this far above and below the mean surface
 var RS0 := 1304.0            # mean surface radius (cells are ~square here)
 var R_TOP := 1800.0          # top of the atmosphere: row 0
 var R_SPACE := 2056.0        # the orbit band's ceiling: nothing above is cells
 var ROWS := 1720             # rows from the top of the atmosphere to the heart
-var NSH := 5                 # shells, the orbit band included
-var ORB := 4                 # the orbit band's shell
-var SH_Y0 := []              # each shell's first row
+var NSH := 5                 # shells
+var SURF := 0                # the surface shell
+var SH_Y0 := []              # each shell's first row (shells top to bottom; SH_Y0 always even)
 var SH_Y1 := []              # one past each shell's last row
 var SH_N := []               # columns per shell
-var NS := 8192               # columns of the surface shell (SH_N[0]), typed for scripts
+var NS := 8192               # columns of the surface shell (the surface table, blueprints), typed for scripts
 
 var KIND := PackedInt32Array()
 var DENS := PackedInt32Array()
@@ -222,49 +226,125 @@ func set_geometry(rs: float) -> void:
 	R_TOP = rs + ATMO
 	R_SPACE = R_TOP + ORBIT_ROWS
 	ROWS = int(R_TOP - R_IN)
-	var ns := int(round(TAU * rs / 64.0)) * 64
-	NS = ns
-	var tops := [R_TOP]                # each inner shell's top radius
-	var rb := rs * 0.5
-	while rb > R_IN * 1.4:
-		tops.append(rb)
-		rb *= 0.5
+	NS = int(round(TAU * rs / 64.0)) * 64
+	var top := _even(R_TOP - (rs + SURF_HALF))
+	var bot := _even(R_TOP - (rs - SURF_HALF))
+	var shells := [[top, bot, NS]]            # [first row, end row, columns]
+	# inward: a sixteenth fewer columns a shell; each shell ends where its cells have narrowed back
+	# to the width just above its seam (or a little less far, while they're narrower than square)
+	var y := bot
+	var n := NS
+	while y < ROWS:
+		var r := R_TOP - float(y)
+		var wa := TAU * r / float(n)
+		var nb := maxi(_r16(float(n) * 15.0 / 16.0), 32)
+		if nb >= n:
+			nb = n - 16
+		var wt := TAU * r / float(nb)
+		var wbot := wt * pow(float(nb) / float(n), 0.6 if wa < 0.97 else 1.0)
+		var yb := maxi(_even(R_TOP - wbot * float(nb) / TAU), y + 8)
+		if yb >= ROWS - 8:
+			yb = ROWS
+		shells.append([y, yb, nb])
+		y = yb
+		n = nb
+	# outward, the same up to the orbit band's ceiling
+	y = top
+	n = NS
+	var up := []
+	while y > -ORBIT_ROWS:
+		var r2 := R_TOP - float(y)
+		var wb := TAU * r2 / float(n)
+		var na := _r16(float(n) * 16.0 / 15.0)
+		if na <= n:
+			na = n + 16
+		var wl := TAU * r2 / float(na)
+		var wtop := wl * pow(float(na) / float(n), 0.6 if wb > 1.03 else 1.0)
+		var yt := mini(_even(R_TOP - wtop * float(na) / TAU), y - 8)
+		if yt <= -ORBIT_ROWS + 8:
+			yt = -ORBIT_ROWS
+		up.append([yt, y, na])
+		y = yt
+		n = na
+	up.reverse()
+	shells = up + shells
+	SURF = up.size()
 	SH_Y0 = []
 	SH_Y1 = []
 	SH_N = []
-	for k in tops.size():
-		SH_Y0.append(int(round(R_TOP - float(tops[k]))))
-		SH_N.append(ns >> k)
-	for k in tops.size():
-		SH_Y1.append(int(SH_Y0[k + 1]) if k + 1 < tops.size() else ROWS)
-	SH_Y0.append(-ORBIT_ROWS)
-	SH_Y1.append(0)
-	SH_N.append(ns * 2)
+	for sh in shells:
+		SH_Y0.append(int(sh[0]))
+		SH_Y1.append(int(sh[1]))
+		SH_N.append(int(sh[2]))
 	NSH = SH_N.size()
-	ORB = NSH - 1
 	SH_OFF = []
 	var off := 0
-	for s in NSH:
+	for k in NSH:
 		SH_OFF.append(off)
-		off += (int(SH_Y1[s]) - int(SH_Y0[s])) * int(SH_N[s])
+		off += (int(SH_Y1[k]) - int(SH_Y0[k])) * int(SH_N[k])
 	SH_OFF.append(off)
 
-## the shell holding a row (rows above the atmosphere are the orbit band's)
+func _even(v: float) -> int:
+	return int(round(v * 0.5)) * 2
+
+func _r16(v: float) -> int:
+	return int(round(v / 16.0)) * 16
+
+## the shell holding a row (rows outside the planet's cells: the nearest shell)
 func shell_of_row(row: int) -> int:
-	if row < 0:
-		return ORB
-	for s in range(1, ORB):
-		if row < int(SH_Y0[s]):
-			return s - 1
-	return ORB - 1
+	var lo := 0
+	var hi := NSH - 1
+	while lo < hi:
+		var mid := (lo + hi + 1) / 2
+		if row >= int(SH_Y0[mid]):
+			lo = mid
+		else:
+			hi = mid - 1
+	return lo
 
-## the shell just outward of shell s (twice its columns), or -1 at the orbit band's ceiling
+## the shell just outward of shell s, or -1 at the orbit band's ceiling
 func shell_above(s: int) -> int:
-	return ORB if s == 0 else (-1 if s == ORB else s - 1)
+	return s - 1
 
-## the shell just inward of shell s (half its columns), or -1 at the heart
+## the shell just inward of shell s, or -1 at the heart
 func shell_below(s: int) -> int:
-	return 0 if s == ORB else (s + 1 if s + 1 < ORB else -1)
+	return s + 1 if s + 1 < NSH else -1
+
+## the column in shell `to` (next to shell `from`) over column x of shell `from`: the cell whose
+## middle is nearest to x's middle (GLSL colTo does the same)
+func col_to(from: int, to: int, x: int) -> int:
+	return ((2 * x + 1) * int(SH_N[to])) / (2 * int(SH_N[from]))
+
+## The shell table the shaders read (binding 10, common.comp SH_Y0(s) etc.): the planet's geometry,
+## then (first row, end row, columns, offset) per shell, and one more entry whose offset is the total. A buffer, not constant
+## arrays in the shaders: with ~50 shells, indexing constant arrays per cell made the GPU copy them
+## for every cell (the simulation ran ten times slower).
+func shell_table() -> PackedByteArray:
+	# first the planet's geometry, two vec4 (common.comp R_TOP, RS0, R_SPACE, ROWS; NSH, SURF, NS)
+	var head := PackedFloat32Array([R_TOP, RS0, R_SPACE, float(ROWS), float(NSH), float(SURF), float(NS), 0.0])
+	var t := PackedInt32Array()
+	for k in NSH:
+		t.append(int(SH_Y0[k]))
+		t.append(int(SH_Y1[k]))
+		t.append(int(SH_N[k]))
+		t.append(int(SH_OFF[k]))
+	for v in [ROWS, ROWS, 0, int(SH_OFF[NSH])]:
+		t.append(v)
+	var out := head.to_byte_array()
+	out.append_array(t.to_byte_array())
+	return out
+
+## the index of a cell (row, surface-shell column) in the world buffer as read back (read_world;
+## the background layer follows the cells); 0 outside the planet's cells
+func raw_idx(row: int, col: int) -> int:
+	if row < -ORBIT_ROWS or row >= ROWS:
+		return 0
+	var s := shell_of_row(row)
+	return int(SH_OFF[s]) + (row - int(SH_Y0[s])) * int(SH_N[s]) + col_in(s, posmod(col, NS))
+
+## a column of the surface shell (blueprints, the surface table) in shell s
+func col_in(s: int, c: int) -> int:
+	return ((2 * c + 1) * int(SH_N[s])) / (2 * NS)
 
 ## the row of a cell at radius r (negative in the orbit band)
 func row_at(r: float) -> int:
@@ -299,20 +379,17 @@ func total_cells() -> int:
 ## GLSL constants injected in front of every compute shader.
 func glsl_prefix() -> String:
 	var s := "#version 450\n#define NM %d\n#define TAU 6.28318530718\n" % NM
-	s += "#define R_TOP %.1f\n#define R_IN %.1f\n#define RS0 %.1f\n#define ROWS %d\n" % [R_TOP, R_IN, RS0, ROWS]
-	s += "#define R_SPACE %.1f\n#define NSH %d\n#define ORB %d\n#define ORBIT_ROWS %d\n" % [R_SPACE, NSH, ORB, ORBIT_ROWS]
+	# (the planet's own geometry, R_TOP, NS, the shells..., is in the shell table, not here: the
+	# shaders are then the same for every planet and a planet of another size needs no new compile)
+	s += "#define R_IN %.1f\n#define ORBIT_ROWS %d\n" % [R_IN, ORBIT_ROWS]
 	s += "#define K_EMPTY 0u\n#define K_SOLID 1u\n#define K_POWDER 2u\n#define K_LIQUID 3u\n#define K_GAS 4u\n#define K_FIRE 5u\n"
 	for id in MAT_NAMES:
 		s += "#define M_%s %du\n" % [MAT_NAMES[id], id]
-	s += "const int SH_Y0[NSH] = int[NSH](%s);\n" % _join_i(SH_Y0)
-	s += "const int SH_Y1[NSH] = int[NSH](%s);\n" % _join_i(SH_Y1)
 	var dp := []
 	for k in 64:
 		var c := Color.html(Props.PALETTE[k % Props.PALETTE.size()])
 		dp.append("vec3(%.4f, %.4f, %.4f)" % [c.r, c.g, c.b])
 	s += "const vec3 DECOR_PAL[64] = vec3[64](%s);\n" % ", ".join(dp)
-	s += "const int SH_N[NSH] = int[NSH](%s);\n" % _join_i(SH_N)
-	s += "const int SH_OFF[NSH + 1] = int[NSH + 1](%s);\n" % _join_i(SH_OFF)
 	s += "const uint KIND[NM] = uint[NM](%s);\n" % _join_u(KIND)
 	s += "const uint DENS[NM] = uint[NM](%s);\n" % _join_u(DENS)
 	s += "const uint HARD[NM] = uint[NM](%s);\n" % _join_u(HARD)

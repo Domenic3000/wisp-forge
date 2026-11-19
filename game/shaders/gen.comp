@@ -5,7 +5,7 @@
 #include "params"
 #include "surf_ro"
 #include "bglayer"
-// building sites (shell-0 column ranges) where no trees grow: s[0].x = count, s[1 + k] = (x0, x1, 0, 0)
+// building sites (surface-shell column ranges) where no trees grow: s[0].x = count, s[1 + k] = (x0, x1, 0, 0)
 layout(std430, set = 0, binding = 9) restrict readonly buffer Sites { vec4 s[]; } sites;
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -13,8 +13,8 @@ int SEED;
 
 bool onSite(float th, float margin) {
 	int n = int(sites.s[0].x);
-	float col = th / TAU * float(SH_N[0]);
-	float N0 = float(SH_N[0]);
+	float col = th / TAU * float(NS);
+	float N0 = float(NS);
 	for (int k = 0; k < n; k++) {
 		vec4 q = sites.s[1 + k];
 		float d0 = col - q.x; d0 -= N0 * floor(d0 / N0);   // columns past the site start, 0..N0
@@ -29,8 +29,8 @@ vec4 biomeB(int b) { return P.p[9 + 2 * b]; }   // subMat, topD, subD, ug + flor
 // how many surface columns from the nearest building site (0 inside one)
 float siteDist(float th) {
 	int n = int(sites.s[0].x);
-	float col = th / TAU * float(SH_N[0]);
-	float N0 = float(SH_N[0]);
+	float col = th / TAU * float(NS);
+	float N0 = float(NS);
 	float best = 1e6;
 	for (int k = 0; k < n; k++) {
 		vec4 q = sites.s[1 + k];
@@ -586,8 +586,8 @@ void main() {
 	int s = pc.a.x;
 	int x = int(gl_GlobalInvocationID.x);
 	int y = pc.a.y + int(gl_GlobalInvocationID.y);
-	if (x >= SH_N[s] || y >= pc.a.z || y >= SH_Y1[s]) return;
-	if (s == ORB) {                                  // the orbit band starts empty
+	if (x >= SH_N(s) || y >= pc.a.z || y >= SH_Y1(s)) return;
+	if (y < 0) {                                     // the orbit band starts empty
 		int oi = cellIdx(s, y, x);
 		world.cells[oi] = 0u;
 		aux.a[oi] = 0u;
