@@ -454,6 +454,22 @@ func run() -> void:
 		var was_open: bool = door_t["open"]
 		var dp: Vector2 = door_t["pos"]
 		var dang := atan2(dp.y, dp.x)
+		# (the cottage's guards and any foe wandering by are cleared away first: a foe standing in the
+		# doorway rightly keeps it from shutting, and a skeleton walking into it opens it again)
+		for fe in g.enemies.duplicate():
+			if fe.pos.distance_to(dp) < 300.0:
+				g._kill_enemy(fe)
+		var foe_near := func() -> String:
+			var nf_best := "none"
+			var nf_bd := 1e9
+			for fe2 in g.enemies:
+				if fe2.dead:
+					continue
+				var dd2: float = fe2.pos.distance_to(dp)
+				if dd2 < nf_bd:
+					nf_bd = dd2
+					nf_best = "%s %.0f cells off" % [fe2.type, dd2]
+			return nf_best
 		# stand inside, clear of the doorway, and look at the open door (saves/shots/door.png)
 		var inside: Vector2 = -g.basis_r(dang) * float(door_t["side"])
 		_go(dp + inside * 14.0 - dp.normalized() * 5.0)
@@ -471,7 +487,7 @@ func run() -> void:
 					nd2 += 1
 		var want: int = int(door_t["w"]) * int(door_t["h"])
 		_ok("a door opens when you walk into it, and closes again", was_open and not bool(door_t["open"]) and nd2 == want,
-			"opened by walking: %s, closed again: %d of %d door cells" % [was_open, nd2, want])
+			"opened by walking: %s, closed again: %d of %d door cells (still open: %s; nearest foe: %s)" % [was_open, nd2, want, door_t["open"], foe_near.call()])
 		# a door shot through keeps its hole: open it and shut it again, the hole is still there
 		var count_door := func() -> int:
 			var rr: Dictionary = g.gpu.read_rect(int(door_t["col"]), int(door_t["row"]), int(door_t["w"]), int(door_t["h"]))
@@ -496,7 +512,7 @@ func run() -> void:
 		await _frames(10)
 		var n_shut: int = count_door.call()
 		_ok("a damaged door keeps its damage when opened and shut", n_shot < want and n_shot > want / 2 and gone_open == want - n_shot and n_shut == n_shot and g.doors.has(door_t),
-			"%d of %d cells left after the shot; open: %d parts missing from its panel; shut again: %d cells" % [n_shot, want, gone_open, n_shut])
+			"%d of %d cells left after the shot; open: %d parts missing from its panel; shut again: %d cells (still open: %s; nearest foe: %s)" % [n_shot, want, gone_open, n_shut, door_t["open"], foe_near.call()])
 		# fire reaching an open door's panel burns it where it reaches
 		g._set_door(door_t, true, g.player.pos)
 		await _frames(5)
