@@ -213,6 +213,31 @@ func run() -> void:
 	g.ui.show_hud()
 	g.state = "play"
 	var b = g.builds
+	# (saves/test_only.txt naming a section runs just that one, to try a change quickly)
+	# (an empty file runs everything)
+	var only_f: String = g._real_save_dir().path_join("test_only.txt")
+	var only := FileAccess.get_file_as_string(only_f).strip_edges() if FileAccess.file_exists(only_f) else ""
+	if only != "":
+		only_now = only
+		if only == "climb":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_climb()
+		elif only == "guardians":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_guardians()
+		lines.append("")
+		lines.append("%d passed, %d failed, %.1f s (only %s)" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0, only])
+		var only_txt := "\n".join(lines)
+		print(only_txt)
+		var only_rf := FileAccess.open(g._real_save_dir().path_join("test_report.txt"), FileAccess.WRITE)
+		if only_rf:
+			only_rf.store_string(only_txt + "\n")
+			only_rf.close()
+		g._delete_worlds()
+		g.get_tree().quit(0 if failed == 0 else 1)
+		return
 	_ok("planet generates", g.planet.size() > 0, "%d ms including structures and settling" % gen_ms)
 	_ok("structures are placed", b.infos.size() >= 15, "%d structures, %d labels" % [b.infos.size(), b.labels.size()])
 	# ---- a building is the same at any depth: it goes in cell for cell in every shell, centred on
@@ -2294,73 +2319,7 @@ func run() -> void:
 	g.player.breath = g.player.max_breath
 	g.chunks.clear()
 
-	# ---- the biome guardians: each waits in its lair, wakes, fights with its moves, falls, gives its relic ----
-	var gd_items0: Dictionary = g.items.duplicate()
-	var gd_hp0: float = g.max_hp
-	var gd_god0: bool = g.test_god
-	var gd_back: Vector2 = g.player.pos
-	g.test_god = true
-	g.test_calm = false
-	var gd_rows := []
-	var gd_ok := 0
-	var gd_lairs: Array = g.builds.lair_list
-	for gd_l in gd_lairs:
-		var gd_bio: String = gd_l["biome"]
-		var gd_e = null
-		for gd_en in g.enemies:
-			if gd_en.boss and gd_en.d.has("def") and gd_en.d["biome"] == gd_bio and not gd_en.dead:
-				gd_e = gd_en
-		if gd_e == null:
-			gd_rows.append("%s: no guardian" % gd_bio)
-			continue
-		var gd_at: Vector2 = gd_l["pos"]
-		var gd_side: Vector2 = g.basis_r(atan2(gd_at.y, gd_at.x))
-		_go(gd_at + gd_side * 50.0 + gd_at.normalized() * 12.0)
-		g.player.dead = false
-		# how it moves while it fights: how high it gets, how far it strays, how much it gets around
-		var gd_up := 0.0
-		var gd_out := 0.0
-		var gd_walk := 0.0
-		var gd_last: Vector2 = gd_e.pos
-		var gd_home: Vector2 = gd_e.home
-		var gd_br: Vector2 = g.basis_r(atan2(gd_home.y, gd_home.x))
-		for gd_f in 240:
-			await _frames(1)
-			if gd_f == 150:
-				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("boss_%s.png" % gd_bio))
-			if gd_e.dead:
-				break
-			var gd_o: Vector2 = gd_e.pos - gd_home
-			gd_up = maxf(gd_up, gd_o.dot(gd_home.normalized()))
-			gd_out = maxf(gd_out, absf(gd_o.dot(gd_br)) - gd_e.tether)
-			gd_walk += gd_e.pos.distance_to(gd_last)
-			gd_last = gd_e.pos
-		var gd_moves: int = gd_e.moves_done
-		var gd_awake: bool = gd_e.awake
-		var gd_rel: String = gd_e.d["def"]["relic"]
-		g._hurt_enemy(gd_e, 99999.0, 0.0, 0.0)
-		await _frames(2)
-		var gd_got: bool = g.items.has(gd_rel)
-		var gd_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(gd_bio)
-		# (it stays on screen: never more than about 80 cells up; in its lair; and on the move)
-		var gd_flies: bool = gd_e.d["def"]["go"] == "fly" or gd_e.d["def"]["go"] == "slither"
-		if gd_awake and gd_moves >= 1 and gd_got and gd_dead and gd_up < (95.0 if gd_flies else 70.0) and gd_out < 14.0 and gd_walk > 40.0:
-			gd_ok += 1
-		gd_rows.append("%s%s: awake %s, %d moves, relic %s, highest %.0f, past its lair %.0f, moved %.0f" % [gd_bio, " (underground)" if gd_l.get("deep", false) else "", gd_awake, gd_moves, gd_got,
-			gd_up, gd_out, gd_walk])
-	# (the relics are given back, so the checks after this aren't changed by them)
-	for gd_r in Defs.RELICS:
-		if not gd_items0.has(gd_r):
-			g.items.erase(gd_r)
-	g.max_hp = gd_hp0
-	g.hp = minf(g.hp, gd_hp0)
-	g.test_god = gd_god0
-	g.test_calm = true
-	g.boss_clouds.clear()
-	_go(gd_back)                   # (back where the checks after this one expect you)
-	await _frames(60)
-	_ok("each biome has a guardian in its lair that wakes, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
-		"%d lairs; %s; no room: %s" % [gd_lairs.size(), "; ".join(gd_rows), str(g.builds.lair_why)])
+	await _test_guardians()
 
 	# ---- the wild creatures: every biome (and each depth underground) has its own; they notice you,
 	# come after you with their moves, stay on screen and keep moving ----
@@ -2428,6 +2387,8 @@ func run() -> void:
 	await _frames(30)
 	_ok("every biome and depth has creatures that come after you, attack, stay on screen and keep moving",
 		cr_none.is_empty() and cr_bad.is_empty(), "%d creatures; places without any: %s; %s" % [cr_ids.size(), str(cr_none), "; ".join(cr_rows)])
+
+	await _test_climb()
 
 	# ---- save and load give back the same world ----
 	# (pieces still tumbling are set down first: saving would set them down anyway)
@@ -2788,6 +2749,176 @@ func run() -> void:
 		f.close()
 	g._delete_worlds()
 	g.get_tree().quit(0 if failed == 0 else 1)
+
+## the biome guardians (its own function so it can run alone: see `only`)
+var only_now := ""
+func _test_guardians() -> void:
+	# ---- the biome guardians: each waits in its lair, wakes, fights with its moves, falls, gives its relic ----
+	var gd_items0: Dictionary = g.items.duplicate()
+	var gd_hp0: float = g.max_hp
+	var gd_god0: bool = g.test_god
+	var gd_back: Vector2 = g.player.pos
+	g.test_god = true
+	g.test_calm = false
+	var gd_rows := []
+	var gd_ok := 0
+	var gd_lairs: Array = g.builds.lair_list
+	for gd_l in gd_lairs:
+		var gd_bio: String = gd_l["biome"]
+		var gd_e = null
+		for gd_en in g.enemies:
+			if gd_en.boss and gd_en.d.has("def") and gd_en.d["biome"] == gd_bio and not gd_en.dead:
+				gd_e = gd_en
+		if gd_e == null:
+			gd_rows.append("%s: no guardian" % gd_bio)
+			continue
+		var gd_at: Vector2 = gd_l["pos"]
+		var gd_side: Vector2 = g.basis_r(atan2(gd_at.y, gd_at.x))
+		_go(gd_at + gd_side * 50.0 + gd_at.normalized() * 12.0)
+		g.player.dead = false
+		# how it moves while it fights: how high it gets, how far it strays, how much it gets around
+		var gd_up := 0.0
+		var gd_out := 0.0
+		var gd_walk := 0.0
+		var gd_last: Vector2 = gd_e.pos
+		var gd_home: Vector2 = gd_e.home
+		var gd_br: Vector2 = g.basis_r(atan2(gd_home.y, gd_home.x))
+		for gd_f in 240:
+			await _frames(1)
+			if gd_f == 150:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("boss_%s.png" % gd_bio))
+			if gd_e.dead:
+				break
+			var gd_o: Vector2 = gd_e.pos - gd_home
+			gd_up = maxf(gd_up, gd_o.dot(gd_home.normalized()))
+			gd_out = maxf(gd_out, absf(gd_o.dot(gd_br)) - gd_e.tether)
+			gd_walk += gd_e.pos.distance_to(gd_last)
+			gd_last = gd_e.pos
+			if gd_f % 15 == 0 and only_now == "guardians":
+				var gd_lg: Vector2 = g.to_grid(gd_e.pos)
+				print("[guardian] %s f%d along %.1f up %.1f vx %.2f vy %.2f %s%s act '%s' move '%s' cd %d pace %.0f wall %s under: %s" % [gd_bio, gd_f, gd_o.dot(gd_br), gd_o.dot(gd_home.normalized()),
+					gd_e.vx, gd_e.vy, "ground" if gd_e.on_ground else "air", " platform" if gd_e.on_platform else "", gd_e.act, gd_e.move, gd_e.act_cd, gd_e.pace,
+					gd_e.hit_wall, str([g.gtype(int(gd_lg.x), int(gd_lg.y + gd_e.h * 0.5)), g.gtype(int(gd_lg.x), int(gd_lg.y + gd_e.h * 0.5) + 1), Defs.NAMES[g.gtype(int(gd_lg.x), int(gd_lg.y + gd_e.h * 0.5))]])])
+		var gd_moves: int = gd_e.moves_done
+		var gd_awake: bool = gd_e.awake
+		var gd_rel: String = gd_e.d["def"]["relic"]
+		g._hurt_enemy(gd_e, 99999.0, 0.0, 0.0)
+		await _frames(2)
+		var gd_got: bool = g.items.has(gd_rel)
+		var gd_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(gd_bio)
+		# (it stays on screen: never more than about 80 cells up; in its lair; and on the move)
+		var gd_flies: bool = gd_e.d["def"]["go"] == "fly" or gd_e.d["def"]["go"] == "slither"
+		if gd_awake and gd_moves >= 1 and gd_got and gd_dead and gd_up < (95.0 if gd_flies else 70.0) and gd_out < 14.0 and gd_walk > 40.0:
+			gd_ok += 1
+		gd_rows.append("%s%s: awake %s, %d moves, relic %s, highest %.0f, past its lair %.0f, moved %.0f" % [gd_bio, " (underground)" if gd_l.get("deep", false) else "", gd_awake, gd_moves, gd_got,
+			gd_up, gd_out, gd_walk])
+	# (the relics are given back, so the checks after this aren't changed by them)
+	for gd_r in Defs.RELICS:
+		if not gd_items0.has(gd_r):
+			g.items.erase(gd_r)
+	g.max_hp = gd_hp0
+	g.hp = minf(g.hp, gd_hp0)
+	g.test_god = gd_god0
+	g.test_calm = true
+	g.boss_clouds.clear()
+	_go(gd_back)                   # (back where the checks after this one expect you)
+	await _frames(60)
+	_ok("each biome has a guardian in its lair that wakes, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
+		"%d lairs; %s; no room: %s" % [gd_lairs.size(), "; ".join(gd_rows), str(g.builds.lair_why)])
+
+## foes follow you to another level (its own function so it can run alone: see `only`)
+func _test_climb() -> void:
+	# ---- foes follow you to another level: up through a one-way platform and on up a stone ledge
+	# beside it, and back down through the platform (skeleton, slime and a wild creature), on a
+	# course set up in open air: a floor, a platform 22 cells up, a ledge 22 above that ----
+	var cl_god0: bool = g.test_god
+	g.test_god = true
+	var cl_orig: Vector2 = g.player.pos
+	var cl_a := atan2(cl_orig.y, cl_orig.x) + 0.15
+	var cl_up := Vector2(cos(cl_a), sin(cl_a))
+	var cl_c: Vector2i = Build.cell_of(cl_up * (g.gpu.surf_at(cl_a).x + 200.0))
+	var CLW := 130
+	var CLH := 56
+	var cl_d := PackedInt32Array()
+	cl_d.resize(CLW * CLH)
+	cl_d.fill(0xFFFF)
+	var cl_clear := PackedInt32Array()
+	cl_clear.resize(CLW * CLH)
+	cl_clear.fill(0xFFFF)
+	for cl_j in CLH:
+		for cl_i in CLW:
+			var cl_m := -1
+			if cl_j >= 52:
+				cl_m = Defs.STONE                                   # the floor
+			elif cl_i < 3 or cl_i >= CLW - 3:
+				cl_m = Defs.STONE                                   # walls at its ends, too high to jump
+			elif cl_j >= 30 and cl_j <= 31 and cl_i >= 44 and cl_i < 74:
+				cl_m = Defs.SCAFFOLD                                # the platform
+			elif cl_j >= 8 and cl_j <= 11 and cl_i >= 74:
+				cl_m = Defs.STONE                                   # the ledge
+			if cl_m >= 0:
+				cl_d[cl_j * CLW + cl_i] = cl_m | 0xFF00 | 0x20000
+				cl_clear[cl_j * CLW + cl_i] = Defs.AIR | 0xFF00
+	g.stamps.append({"x0": cl_c.x, "y0": cl_c.y, "w": CLW, "h": CLH, "data": cl_d, "ax": cl_c.x, "aw": CLW})
+	var cl_floor_r: float = Defs.R_TOP - float(cl_c.y + 52)
+	var cl_at := func(ci: int, cj: int) -> Vector2:
+		return _cell_pos(cl_c.x + ci, cl_c.y + cj, cl_c.x, CLW)
+	var cl_feet := func(ce) -> float:
+		return ce.pos.length() - float(ce.h) * 0.5 - cl_floor_r
+	var cl_o0: Vector2 = cl_at.call(0, 52)
+	var cl_side: Vector2 = g.basis_r(atan2(cl_o0.y, cl_o0.x))
+	var cl_col := func(p: Vector2) -> float:
+		return (p - cl_o0).dot(cl_side)
+	var cl_state := func(ce) -> String:
+		return "at column %.0f, %s%s%s, act '%s', climb %s %d (cd %d) from col %.0f h %.0f to col %.0f h %.0f" % [
+			cl_col.call(ce.pos), "ground" if ce.on_ground else "air", " platform" if ce.on_platform else "",
+			" sees" if ce.see else "", ce.act, "up" if ce.climb_up else "down", ce.climb_t, ce.climb_cd,
+			cl_col.call(ce.climb_from), ce.climb_from.length() - cl_floor_r, cl_col.call(ce.climb_to), ce.climb_to.length() - cl_floor_r] + " [" + String(ce.climb_why) + "]"
+	var cl_lines := []
+	var cl_good := true
+	for cl_way in ["up", "down"]:
+		_go(cl_at.call(110, -2) if cl_way == "up" else cl_at.call(58, 42))
+		await _frames(20)
+		var cl_foes := []
+		var cl_starts: Array = [["skeleton", 14, 38], ["slime", 30, 40], ["c_crawler", 22, 40]] if cl_way == "up" \
+			else [["skeleton", 108, -6], ["slime", 120, -4], ["c_crawler", 96, -4]]
+		for cl_s in cl_starts:
+			var cl_e = g.spawn_enemy(String(cl_s[0]), cl_at.call(int(cl_s[1]), int(cl_s[2])))
+			cl_e.alert_t = 9999
+			cl_e.seen_pos = g.player.pos
+			cl_foes.append([cl_s[0], cl_e, -1])
+		for cl_f in 900:
+			await _frames(1)
+			var cl_all := true
+			for cl_row in cl_foes:
+				var cl_e2 = cl_row[1]
+				if cl_f % 30 == 0:
+					cl_e2.alert_t = 9999
+					cl_e2.seen_pos = g.player.pos
+				var cl_h: float = cl_feet.call(cl_e2)
+				if int(cl_row[2]) < 0 and cl_f % 15 == 0 and cl_f < 600:
+					print("[climb] %s %s f%d h %.1f vy %.2f vx %.2f %s" % [cl_way, cl_row[0], cl_f, cl_h, cl_e2.vy, cl_e2.vx, cl_state.call(cl_e2)])
+				if int(cl_row[2]) < 0 and ((cl_way == "up" and cl_h > 40.0) or (cl_way == "down" and cl_h < 4.0)):
+					cl_row[2] = cl_f
+				if int(cl_row[2]) < 0:
+					cl_all = false
+			if cl_all:
+				break
+		for cl_row2 in cl_foes:
+			var cl_e3 = cl_row2[1]
+			var cl_fine: bool = int(cl_row2[2]) >= 0
+			cl_lines.append("%s %s: %s (now %.0f cells up%s)" % [cl_way, cl_row2[0],
+				("in %.1f s" % (float(cl_row2[2]) / 60.0)) if cl_fine else "(!) never", cl_feet.call(cl_e3),
+				"" if cl_fine else ", " + String(cl_state.call(cl_e3))])
+			if not cl_fine:
+				cl_good = false
+			cl_e3.dead = true
+		await _frames(2)
+	g.stamps.append({"x0": cl_c.x, "y0": cl_c.y, "w": CLW, "h": CLH, "data": cl_clear, "ax": cl_c.x, "aw": CLW})
+	g.test_god = cl_god0
+	_go(cl_orig)
+	await _frames(20)
+	_ok("foes follow you up through a platform and onto a ledge, and down through the platform", cl_good, "; ".join(cl_lines))
 
 func _sha(d: PackedByteArray) -> String:
 	var h := HashingContext.new()

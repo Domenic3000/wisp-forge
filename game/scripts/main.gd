@@ -107,6 +107,14 @@ class Enemy extends Body:
 	var pace := 0.0            # where round you it's heading (cells along the ground from you)
 	var pace_t := 0
 	var smash_f := -100        # (the frame it last smashed through something)
+	# getting to another level (foe_ai.gd `climb`): a jump up onto a platform or ledge, or a drop
+	var climb_t := 0           # frames left for the plan (0: none)
+	var climb_cd := 0          # frames before it looks for another
+	var climb_up := true       # up (or down)
+	var climb_air := false     # it has jumped
+	var climb_to := Vector2.ZERO     # where it means to stand (world)
+	var climb_from := Vector2.ZERO   # where it jumps or drops from (world)
+	var climb_why := ""        # (why its last look about found no way up: for the tests)
 
 var gpu
 var ui
@@ -424,9 +432,9 @@ func _exit_tree() -> void:
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 420000:
-		# a test run that hasn't finished in 7 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 7 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 540000:
+		# a test run that hasn't finished in 9 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 9 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:
@@ -2570,7 +2578,19 @@ func _update_enemies() -> void:
 			"slime", "mimic":
 				# hops after you once it knows you're there; close by, a crouch and a leap aimed at you
 				var busy := FoeAI.leap(self, e, tgt, dx, dy, g)
-				if not busy and e.on_ground:
+				var cjv := 5.4 if e.type == "slime" else 4.6
+				var cdir2 := 0.0 if busy or gl == Vector2.ZERO else FoeAI.climb(self, e, gl, cjv, g, 5.0)
+				if cdir2 != 0.0:
+					# on its way to another level: little hops to the take-off point (climb jumps from there)
+					if e.on_ground and e.vy >= 0.0:
+						e.vx *= 0.75
+						e.t -= 1
+						var cgap := FoeAI.climb_gap(self, e)
+						if e.t <= 0 and absf(cgap) > 4.0:
+							e.vy = -2.4
+							e.vx = clampf(cgap / (4.8 / maxf(g, 0.01)), -2.3, 2.3)
+							e.t = 18
+				elif not busy and e.on_ground:
 					e.vx *= 0.75 if e.type == "slime" else 0.7
 					e.t -= 1
 					if e.t <= 0 and gl != Vector2.ZERO:
@@ -2602,21 +2622,31 @@ func _update_enemies() -> void:
 				var busy2 := FoeAI.melee(self, e, tgt, dx, dy) if ai.has("melee") else FoeAI.ranged(self, e, tgt, dist)
 				if not busy2:
 					if gl != Vector2.ZERO:
-						var want := gl.x
-						var keep: Array = ai.get("keep", [])
-						if not keep.is_empty() and e.see:
-							if dist < float(keep[0]):
-								want = -gl.x                  # too close: back off
-							elif dist < float(keep[1]):
-								want = 0.0                    # a good range: hold here
-						if want == 0.0:
-							if e.on_ground:
-								e.vx *= 0.8
+						# you're on another level: up onto the platform or ledge, or down through the floor
+						# (an archer that can see you would rather shoot)
+						var cdir := FoeAI.climb(self, e, gl, 3.9, g, 2.5, ai.has("melee") or not e.see)
+						if cdir != 0.0:
+							if e.on_ground and e.vy >= 0.0:
+								e.vx += (cdir * 0.85 * slow_f - e.vx) * 0.25
 						else:
-							var spd := 0.85 if ai.has("melee") else 0.75
-							var kd := _walker_nav(e, want, maxf(gl.length(), 40.0) if want != gl.x else gl.length(), spd, 3.9, g)
-							if e.on_ground:
-								e.vx += (kd * spd * slow_f - e.vx) * 0.2
+							var want := gl.x
+							var keep: Array = ai.get("keep", [])
+							if not keep.is_empty() and e.see:
+								if dist < float(keep[0]):
+									want = -gl.x                  # too close: back off
+								elif dist < float(keep[1]):
+									want = 0.0                    # a good range: hold here
+							if want == 0.0:
+								if e.on_ground:
+									e.vx *= 0.8
+							else:
+								var spd := 0.85 if ai.has("melee") else 0.75
+								var kd := _walker_nav(e, want, maxf(gl.length(), 40.0) if want != gl.x else gl.length(), spd, 3.9, g)
+								if e.on_ground:
+									if gl.y < -14.0 and FoeAI.edge_ahead(self, e, kd):
+										e.vx *= 0.5          # you're above it: it won't step off its level
+									else:
+										e.vx += (kd * spd * slow_f - e.vx) * 0.2
 					elif e.on_ground:
 						e.vx *= 0.8
 				e.vy += g * 0.3 if e.in_liquid else g

@@ -145,6 +145,22 @@ static func _in_lair(e, off: float) -> float:
 
 static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd: float, go: String) -> void:
 	e.t += 1.0
+	# a wild creature follows you to another level: up onto a platform or ledge, down through a floor
+	# (a guardian keeps to its lair's floor)
+	if not e.boss and (go == "walk" or go == "hop"):
+		var cdir: float = FoeAI.climb(g, e, Vector2(dx, dy), sqrt(2.0 * gacc * 46.0), gacc, 2.5 if go == "walk" else 5.0)
+		if cdir != 0.0:
+			e.facing = -1 if cdir < 0.0 else 1
+			if e.on_ground and e.vy >= 0.0:
+				if go == "walk":
+					e.vx += (cdir * spd - e.vx) * 0.2
+				else:
+					e.vx *= 0.7
+					var cgap: float = FoeAI.climb_gap(g, e)
+					if int(e.t) % 20 == 0 and absf(cgap) > 4.0:
+						e.vy = -2.4
+						e.vx = clampf(cgap / (4.8 / maxf(gacc, 0.01)), -spd * 2.2, spd * 2.2)
+			return
 	var po := _off(g, e, tgt.pos)
 	var bo := _off(g, e, e.pos)
 	# where it wants to be: round you, never still for long (a new side every second or two),
@@ -171,10 +187,14 @@ static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: floa
 			e.facing = -1 if dx < 0 else 1
 			if absf(d) > 4.0:
 				var dirx := signf(d)
-				e.vx += (dirx * spd - e.vx) * (0.14 if footed else 0.04)
-				_clear_way(g, e, dirx, gacc)
+				if not e.boss and dy < -14.0 and footed and FoeAI.edge_ahead(g, e, dirx):
+					e.vx *= 0.6                  # you're above it: a creature won't step off its level
+				else:
+					e.vx += (dirx * spd - e.vx) * (0.14 if footed else 0.04)
+					_clear_way(g, e, dirx, gacc)
 			elif footed:
 				e.vx *= 0.8
+				e.pace_t = mini(e.pace_t, 20)      # there: another side soon, not standing about
 		"hop":
 			e.facing = -1 if dx < 0 else 1
 			if footed:
@@ -315,7 +335,8 @@ static func _begin(g, e, tgt, dx: float, dy: float, dist: float) -> void:
 static func _suits(e, k: String, dx: float, dy: float, dist: float) -> bool:
 	match k:
 		"charge":
-			return e.on_ground and absf(dy) < 30.0 and absf(dx) > (30.0 if e.boss else 12.0) and absf(dx) < 190.0
+			# (along the ground: a creature only charges you on its own level, not off a ledge)
+			return e.on_ground and absf(dy) < (30.0 if e.boss else 12.0) and absf(dx) > (30.0 if e.boss else 12.0) and absf(dx) < 190.0
 		"slam":
 			return e.on_ground and dist < 170.0
 		"spit":
@@ -473,6 +494,10 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				e.vx = -dirx * 1.5
 				FoeAI.start(e, "recover", 70)
 				return
+			if e.hit_wall and wh > 0 and (e.on_ground or absf(e.vy) < 0.25):
+				# something low in the way (a step of the shrine, a stub of a pillar): over it, still
+				# charging (it used to stand pushing against it until the charge ran out)
+				e.vy = -sqrt(2.0 * gacc * (float(wh) + 3.0))
 			if e.act_t <= 0 or (dx * dirx < -60.0) or (e.tether > 0.0 and _off(g, e, e.pos) * dirx > e.tether + 6.0):
 				FoeAI.start(e, "recover", 26)
 		"slam":

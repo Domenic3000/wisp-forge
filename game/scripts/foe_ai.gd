@@ -285,3 +285,252 @@ static func tell(e) -> float:
 		return 0.0
 	var k := 1.0 - float(e.act_t) / maxf(float(e.act_len), 1.0)
 	return clampf(0.35 + 0.65 * k, 0.0, 1.0) * (1.0 if (e.act_t / 3) % 2 == 0 else 0.75)
+
+# ------------------------------------------------------------ other levels ---
+## Getting to you when you're on another level, for every foe that walks or hops: UP onto a
+## platform or a ledge above (it stands under a one-way platform and jumps up through it; beside
+## a solid ledge it jumps straight up and moves over once its feet clear the top), or DOWN
+## (through the platform it stands on, or off an edge or through a gap in the floor). A plan is
+## found by looking about (`_plan_up`, `_plan_down`, at most every half second) and kept for a few
+## seconds in `e.climb_*`; each frame this takes it to the take-off point and jumps or drops
+## there. Returns the way it should head (-1 or 1), or 0 with no such plan (it walks on as
+## usual). gl: where it's going, from it (grid cells, y down); jump_v: its strongest jump; tol:
+## how near the take-off point counts (hoppers land less exactly); may_plan: false keeps it from
+## starting a new plan (an archer that can see you shoots instead).
+static func climb(g, e, gl: Vector2, jump_v: float, gacc: float, tol := 2.5, may_plan := true) -> float:
+	if e.climb_cd > 0:
+		e.climb_cd -= 1
+	var l: Vector2 = g.to_grid(e.pos)
+	var feet: float = l.y + e.h * 0.5
+	if e.climb_t > 0:
+		e.climb_t -= 1
+		if e.climb_t == 0:
+			e.climb_cd = 90                     # (it took too long: try something else for a while)
+			return 0.0
+		var to: Vector2 = g.to_grid(e.climb_to)
+		var from: Vector2 = g.to_grid(e.climb_from)
+		if e.climb_up:
+			if e.on_ground and feet < to.y + 3.0:
+				return _climb_end(e, 1)             # up there (or higher still): look again at once
+			if e.on_ground and e.climb_air:
+				return _climb_end(e, 90)            # came back down without making it
+			if e.on_ground:
+				if absf(l.x - from.x) <= tol:
+					# the take-off: (nearly) straight up, just high enough to clear the top
+					e.vy = -minf(jump_v, sqrt(2.0 * gacc * (feet - to.y + 8.0)))
+					e.vx = clampf((to.x - l.x) * 0.02, -0.3, 0.3)
+					e.climb_air = true
+					return signf(to.x - l.x)
+				return signf(from.x - l.x)
+			# in the air: once its feet are over the top, over onto it
+			if feet < to.y - 1.0:
+				e.vx = clampf((to.x - l.x) * 0.2, -1.8, 1.8)
+			return signf(to.x - l.x) if absf(to.x - l.x) > 0.5 else float(e.facing)
+		# going down
+		if feet > from.y + 6.0:
+			return _climb_end(e, 30)                # down
+		if e.on_ground and absf(l.x - from.x) <= tol:
+			if e.on_platform:
+				e.drop_t = 14                       # through the platform
+			return signf(to.x - l.x) if absf(to.x - l.x) > 0.5 else float(e.facing)
+		return signf(from.x - l.x) if absf(from.x - l.x) > 0.5 else float(e.facing)
+	if not may_plan or e.climb_cd > 0 or not e.on_ground or gl == Vector2.ZERO:
+		return 0.0
+	e.climb_cd = 30                                 # (looking about isn't free: not every frame)
+	var made := false
+	if gl.y < -14.0 and (absf(gl.x) < 90.0 or e.hit_wall):
+		made = _plan_up(g, e, l, feet, gl, jump_v, gacc)
+	elif gl.y > 16.0 and absf(gl.x) < 56.0:
+		made = _plan_down(g, e, l, feet, gl)
+	if not made:
+		return 0.0
+	e.climb_t = 240
+	e.climb_air = false
+	var f2: Vector2 = g.to_grid(e.climb_from)
+	return signf(f2.x - l.x) if absf(f2.x - l.x) > 0.5 else float(e.facing)
+
+static func _climb_end(e, cd: int) -> float:
+	e.climb_t = 0
+	e.climb_cd = cd
+	e.climb_air = false
+	return 0.0
+
+## the horizontal way (cells) from it to its take-off point (0 with no plan): a hopper hops there
+static func climb_gap(g, e) -> float:
+	if e.climb_t <= 0:
+		return 0.0
+	return (g.to_grid(e.climb_from) - g.to_grid(e.pos)).x
+
+## can it stand on cell (x, y)? (solid ground, or a one-way platform)
+static func _standable(g, x: int, y: int) -> bool:
+	return g.gtype(x, y) == Defs.SCAFFOLD or g.gsolid(x, y)
+
+## the same, a row either way (the collision grid is flat: level ground curves away in it, by a
+## row every ten or fifteen cells far from the middle)
+static func _standable3(g, x: int, y: int) -> bool:
+	return _standable(g, x, y) or _standable(g, x, y + 1) or _standable(g, x, y - 1)
+
+## would a step or two more that way take it off an edge (no ground a few rows down; a wall
+## ahead doesn't count, walking deals with those)? A foe whose goal is above stays on its level.
+static func edge_ahead(g, e, dir: float) -> bool:
+	var l: Vector2 = g.to_grid(e.pos)
+	var feet: float = l.y + e.h * 0.5
+	var x := int(floor(l.x + dir * (e.w * 0.5 + 2.0)))
+	if g.gsolid(x, int(floor(feet)) - 2):
+		return false
+	return _ground(g, x, feet, int(e.step_h) + 1, 6) == INF
+
+## Somewhere above to jump up to, nearer the height of its goal: each column within CLIMB_LOOK
+## cells is searched upward (as high as it can jump) for tops (something to stand on with open
+## space over it); the best few are checked properly: room to stand there, and a take-off point
+## on its own level from which a straight jump up has a clear way (right under it for a one-way
+## platform; beside the edge nearest it for a solid ledge), with room at the top to move over.
+const CLIMB_LOOK := 54
+static func _plan_up(g, e, l: Vector2, feet: float, gl: Vector2, jump_v: float, gacc: float) -> bool:
+	var reach := minf(jump_v * jump_v / (2.0 * maxf(gacc, 0.001)) - 6.0, 64.0)
+	if reach < 8.0:
+		return false
+	var fx := int(floor(l.x))
+	var fy := int(floor(feet))           # (the row under its feet)
+	var gx := l.x + gl.x
+	var gy := feet + gl.y
+	var tops := []
+	for k in range(-CLIMB_LOOK, CLIMB_LOOK + 1, 3):
+		var cx := fx + k
+		var stand_y := fy
+		var open := 0
+		for ry in range(fy - 1, fy - int(reach) - 5, -1):
+			if _standable(g, cx, ry):
+				stand_y = ry
+				open = 0
+			else:
+				open += 1
+				if open == 4 and stand_y == ry + 4 and stand_y <= fy - 5:
+					tops.append([absf(float(stand_y) - gy) + 0.35 * absf(float(cx) - gx) + 0.15 * absf(float(k)), cx, stand_y])
+	tops.sort_custom(func(p, q): return p[0] < q[0])
+	e.climb_why = "%d tops (reach %.0f):" % [tops.size(), reach]
+	for n in mini(tops.size(), 5):
+		var cx2: int = tops[n][1]
+		var top: int = tops[n][2]
+		e.climb_why += " %d,%d" % [cx2 - fx, top - fy]
+		if feet - float(top) + 6.0 > reach + 6.0:
+			e.climb_why += "R"
+			continue
+		if g.box_solid(float(cx2) - e.w * 0.5, float(top) - e.h, e.w, e.h):
+			e.climb_why += "B"
+			continue                          # no room to stand there
+		var ledge: bool = g.gsolid(cx2, top)
+		var takeoffs := []
+		if not ledge:
+			takeoffs.append([float(cx2), float(cx2)])       # right under a platform: up through it
+		# beside the edge of it nearest the foe (or the other one)
+		var s0 := signf(l.x - float(cx2)) if absf(l.x - float(cx2)) > 0.5 else 1.0
+		for s in [s0, -s0]:
+			var ex := cx2
+			var steps := 0
+			while steps < 40 and _standable3(g, ex + int(s), top):
+				ex += int(s)
+				steps += 1
+			if steps >= 40:
+				continue
+			var tx: float = float(ex) + s * (e.w * 0.5 + 2.0)
+			var land: float = float(ex) - s * (e.w * 0.5 + 2.0)
+			takeoffs.append([tx, land])
+		for tk in takeoffs:
+			var tx2: float = tk[0]
+			var land2: float = tk[1]
+			if not _footing(g, e, land2, top):
+				e.climb_why += "F"
+				continue
+			if _can_jump(g, e, l, feet, tx2, land2, top):
+				e.climb_up = true
+				e.climb_to = g.from_grid(Vector2(land2, float(top)))
+				e.climb_from = g.from_grid(Vector2(tx2, feet))
+				return true
+	return false
+
+## enough to stand on at `x` on row `top` (most of its width: not the top of a thin post; a row
+## either way, since the collision grid is flat and the planet's level ground curves away in it)
+static func _footing(g, e, x: float, top: int) -> bool:
+	var x0 := int(floor(x - e.w * 0.5))
+	var x1 := int(floor(x + e.w * 0.5 - 0.001))
+	var n := 0
+	for xx in range(x0, x1 + 1):
+		if _standable3(g, xx, top):
+			n += 1
+	return float(n) >= (x1 - x0 + 1) * 0.6
+
+## the top of the ground in column x near height y (grid rows, y down): the first cell it could
+## stand on with open space over it, from `up` rows above y to `down` rows below; INF if none
+static func _ground(g, x: int, y: float, up: int, down: int) -> float:
+	var y0 := int(floor(y)) - up
+	for yy in range(y0, int(floor(y)) + down + 1):
+		if _standable(g, x, yy) and not _standable(g, x, yy - 1):
+			return float(yy)
+	return INF
+
+## Walking along its own level from where it is to column tx, following the ground (it curves away
+## in the flat collision grid, and has its own steps and slopes): the height of the ground at tx,
+## or INF where the way has a gap or something it can't step over.
+static func _walk_to(g, e, l: Vector2, feet: float, tx: float) -> float:
+	var s := signf(tx - l.x)
+	var f := feet
+	var span := absf(tx - l.x)
+	var n := int(ceil(span / 2.0))
+	for i in range(1, n + 1):
+		var x: float = l.x + s * minf(float(i) * 2.0, span)
+		var gnd := _ground(g, int(floor(x)), f, int(e.step_h) + 1, 3)
+		if gnd == INF:
+			return INF
+		if g.box_solid(x - e.w * 0.5, gnd - e.h - 0.5, e.w, e.h - 1.0):
+			return INF
+		f = gnd
+	return f
+
+## from take-off point tx (reached along its own level) straight up past `top`, then across to `land`
+static func _can_jump(g, e, l: Vector2, feet: float, tx: float, land: float, top: int) -> bool:
+	var ft := _walk_to(g, e, l, feet, tx)
+	if ft == INF:
+		e.climb_why += "p"
+		return false
+	var apex: float = float(top) - e.h - 3.0
+	if g.box_solid(tx - e.w * 0.5, apex, e.w, ft - apex - 1.0):
+		e.climb_why += "v"
+		return false
+	if g.box_solid(minf(tx, land) - e.w * 0.5, apex, absf(land - tx) + e.w, e.h):
+		e.climb_why += "a"
+		return false
+	return true
+
+## Somewhere to get down: standing on a platform it drops right here; otherwise it follows its
+## floor either way (toward its goal first) to a gap or an edge wide enough to fall through (or a
+## platform to drop through), with room below.
+static func _plan_down(g, e, l: Vector2, feet: float, gl: Vector2) -> bool:
+	if e.on_platform:
+		e.climb_up = false
+		e.climb_from = g.from_grid(Vector2(l.x, feet))       # (its feet: "down" is measured from them)
+		e.climb_to = g.from_grid(Vector2(l.x, feet + e.h))
+		return true
+	var s0 := signf(gl.x) if absf(gl.x) > 0.5 else 1.0
+	for s in [s0, -s0]:
+		var f := feet
+		var gap := 0.0
+		for i in range(1, int(CLIMB_LOOK / 2.0) + 1):
+			var x: float = l.x + s * float(i) * 2.0
+			var gnd := _ground(g, int(floor(x)), f, int(e.step_h) + 1, 3)
+			if gnd == INF or g.gtype(int(floor(x)), int(gnd)) == Defs.SCAFFOLD:
+				gap += 2.0
+				if gap >= e.w + 2.0:
+					var cx: float = x - s * (e.w * 0.5 + 1.0)
+					if g.box_solid(cx - e.w * 0.5, f + 1.0, e.w, e.h):
+						break                             # no room to fall into
+					e.climb_up = false
+					e.climb_from = g.from_grid(Vector2(cx, f))
+					e.climb_to = g.from_grid(Vector2(cx, f + e.h))
+					return true
+				continue
+			gap = 0.0
+			if g.box_solid(x - e.w * 0.5, gnd - e.h - 0.5, e.w, e.h - 1.0):
+				break                                     # a wall: not this way
+			f = gnd
+	return false

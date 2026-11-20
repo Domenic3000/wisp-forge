@@ -233,7 +233,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 7 minutes, so a broken run never leaves the game open. tests.gd is loaded at run
+- Test mode quits by itself after 9 minutes (a full run takes about 6.5), so a broken run never leaves the game open. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -269,6 +269,21 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   drop), `swoop` (bats), `blink` (imps). Every wind-up is a tell: overlay.gd tints the foe (`FoeAI.tell`).
   Foes with `ai.doors` open doors by walking into them (`move_body` -> `_door_bump`, `door_t` stops them turning
   back). Archers are a third of structure guards (picked by position in `_guard`); the dead walk at night.
+  Other levels (`FoeAI.climb`, used by skeletons/archers, slimes/mimics and wild walking/hopping creatures, never
+  guardians): when its goal is well above or below and not far to the side, a foe looks about (`_plan_up`: tops within
+  `CLIMB_LOOK` columns and its jump; `_plan_down`: the platform it stands on, or a gap/edge wide enough) at most every
+  half second, keeps the plan in `Enemy.climb_*` (world points: `climb_from` take-off at its FEET, `climb_to` landing),
+  walks (hoppers hop, `climb_gap`) to the take-off and jumps straight up just high enough (up through a one-way
+  platform, or beside a solid ledge, moving over once its feet clear the top) or drops (`drop_t`); on landing it
+  looks again at once. With you above, walkers won't step off their level (`edge_ahead`). An archer that sees you
+  shoots instead; a creature only charges on its own level. The collision grid is FLAT around the mage, so level
+  ground curves away in it (a row every 10-15 cells far out): never assume a floor is on one row; follow it
+  (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
+  Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
+- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb" or "guardians") runs just that
+  section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
+  everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
+  `_test_guardians`) called from `run()` in its usual place.
 - Biome guardians (one boss per biome; Vulkhar the Ember Golem stays the planet's deep boss): `Defs.BOSSES` (per
   biome: name, title, lair name, colour, `body` (plan + features), stats, `go`, `moves`/`rage` (dicts of move ->
   settings; a trailing digit is the same move with other settings), `relic`, `loot`, lair materials `wall`, `floor`,
@@ -282,7 +297,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   breach), enraged below half health. A guardian stays in its lair: `Enemy.tether` (cells along the ground from
   its home, from the lair's "tether") and `ceil` (how high fliers go) bound where it heads (`_in_lair`,
   `_lair_point`), a charge stops at the edge, a slam lands inside; walkers keep moving round you (`pace`, a new side
-  every second or two), hop what's under `CLIMB` and smash through taller things (`_clear_way`), steer whenever
+  every second or two), hop what's under `CLIMB` and smash through taller things (`_clear_way`; a charge bounds
+  over a low step instead of grinding against it), steer whenever
   resting on something (a chest isn't "ground"), and hop free after 1.5 s without progress; fliers steer round
   obstacles with main's `_flier_steer`. Leaps are worked out from the planet's pull to rise `SLAM_H`/`HOP_H`/
   `BREACH_H` cells, and gravity always applies to walkers (it used to be off for a slam: they flew off screen). New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
