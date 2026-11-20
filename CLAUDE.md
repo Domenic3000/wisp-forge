@@ -244,7 +244,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 9 minutes (a full run takes about 7), so a broken run never leaves the game open. tests.gd is loaded at run
+- Test mode quits by itself after 10 minutes (a full run takes about 8), so a broken run never leaves the game open. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -291,7 +291,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ground curves away in it (a row every 10-15 cells far out): never assume a floor is on one row; follow it
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
-- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "guardians" or "wardens") runs just that
+- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "guardians", "wardens" or "biomes") runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -325,7 +325,14 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   except during the guardians' own test, so other checks aren't disturbed by a boss nearby. Beaten: `_guardian_falls`
   (relic into `items`, loot, `planet_state["bosses_dead"]`). Relic effects live where they matter: ironbark in
   `hurt`, coil in `_update_player`'s speed, pearl in the breath check, rimefang in the spark's impact, roc in
-  levitation, lionheart +40 max health once, sunidol in `_hurt_enemy`, lantern a light in `_tick`.
+  levitation, lionheart +40 max health once, sunidol in `_hurt_enemy`, lantern a light in `_tick`, cinderheart in the
+  player's hazards (no fire or deep-heat damage, lava x0.3), tidefin in `_update_player`'s swimming.
+  The other planets' biomes: ashland (Kragmor, the Cinder Beast: Cindrel, Sere) and ocean (Thalassor, the Tide Wyrm:
+  Thalassa). A boss with "wet" gets a drowned arena (`_lair` levels it on the seabed and clears it to WATER below
+  `water_row`, air above; `_lair_deep` can't work there); "swim" (a boss or creature) keeps to the water
+  (`BossAI._swim_hold`: out of it, it can't rise). Swimmers spawn in water (`_try_spawn`'s open-cell path with the
+  liquid test reversed). Test: `_test_far_biomes` ("biomes": enters Cindrel and Thalassa, `_test_guardians(["ashland"])`
+  etc., the sanctum under water, the swimmers in the sea).
 - Wild creatures (`Defs.CREATURES`, foe type "c_<id>", `Defs.creature_enemy` / `creatures_of(where)`): two or so per
   biome and per depth underground ("cave1" upper caves, "cave2" middle, "cave3" the deep), grown by boss_art.gd's
   body plans (beast with tusks/horns too) and moved by boss_ai.gd's moves, with `e.boss` false: foe_ai.gd `think`

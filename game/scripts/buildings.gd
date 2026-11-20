@@ -208,6 +208,11 @@ func ground_row(col: int) -> int:
 	var x := posmod(col, N0)
 	return int(floor(Defs.R_TOP - surf[x * 8] - 0.5)) + 1
 
+## the row of the water's surface over column col (where there's none, the ground's)
+func water_row(col: int) -> int:
+	var x := posmod(col, N0)
+	return int(floor(Defs.R_TOP - surf[x * 8 + 5] - 0.5)) + 1
+
 func wet(col: int) -> bool:
 	var x := posmod(col, N0)
 	return surf[x * 8 + 5] > surf[x * 8] + 0.5
@@ -1882,8 +1887,13 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 	if gr.y - gr.x > slope:
 		_why["steep"] = int(_why.get("steep", 0)) + 1
 		return false
-	if _any_wet(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP):
+	# (a sea guardian's lair is an arena on the seabed, under the water: "wet")
+	var drowned: bool = bd.get("wet", false)
+	if not drowned and _any_wet(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP):
 		_why["wet"] = int(_why.get("wet", 0)) + 1
+		return false
+	if drowned and not wet(x):
+		_why["dry"] = int(_why.get("dry", 0)) + 1
 		return false
 	var floor_row := _median_ground(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP)
 	var top := floor_row - LAIR_UP
@@ -1904,7 +1914,15 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 		var target := int(round(lerpf(float(fl), float(g), t)))
 		tops[i] = target
 		var clear_from := int(round(lerpf(0.0, float(mini(target, g)) - 4.0, t)))
-		bp.rect(i, maxi(0, clear_from), i, target - 1, 0)
+		if drowned:
+			# under the sea it is cleared to water, and to air only above the water's surface
+			var sea := clampi(water_row(x0 + i) - top, maxi(0, clear_from), target)
+			if sea > maxi(0, clear_from):
+				bp.rect(i, maxi(0, clear_from), i, sea - 1, 0)
+			if target > sea:
+				bp.rect(i, sea, i, target - 1, Defs.WATER)
+		else:
+			bp.rect(i, maxi(0, clear_from), i, target - 1, 0)
 		bp.rect_bg(i, maxi(0, clear_from), i, target - 1, 0, false)
 		var gm := _ground_mats(x0 + i)
 		for j in range(target, mini(bp.h, maxi(target + 1, g + 2))):

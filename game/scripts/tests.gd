@@ -232,6 +232,8 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_wardens()
+		elif only == "biomes":
+			await _test_far_biomes()
 		lines.append("")
 		lines.append("%d passed, %d failed, %.1f s (only %s)" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0, only])
 		var only_txt := "\n".join(lines)
@@ -2342,7 +2344,10 @@ func run() -> void:
 	for cr_w in cr_places:
 		if Defs.creatures_of(cr_w).is_empty():
 			cr_none.append(cr_w)
-	var cr_ids: Array = Defs.CREATURES.keys()
+	var cr_ids := []
+	for cr_k0 in Defs.CREATURES:
+		if not Defs.CREATURES[cr_k0].get("swim", false):
+			cr_ids.append(cr_k0)            # (swimmers are tried in the sea: _test_far_biomes)
 	# (on the ground: the test before this one leaves you up in the orbit band)
 	var cr_orig: Vector2 = g.player.pos
 	var cr_a0 := atan2(g.player.pos.y, g.player.pos.x)
@@ -2745,6 +2750,8 @@ func run() -> void:
 		"%s: radius %.0f, %d surface columns, %d shells (%.1f M cells); generated in %d ms; you stand %.1f from the surface; %d structures" % [g.planet["name"], Defs.RS0, Defs.NS, Defs.NSH, Defs.total_cells() / 1000000.0, sp_ms, sp_off, g.builds.infos.size()])
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("small_planet.png"))
 
+	await _test_far_biomes()
+
 	lines.append("")
 	lines.append("%d passed, %d failed, %.1f s" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0])
 	var txt := "\n".join(lines)
@@ -2755,6 +2762,98 @@ func run() -> void:
 		f.close()
 	g._delete_worlds()
 	g.get_tree().quit(0 if failed == 0 else 1)
+
+## The other planets' own biomes: Cindrel's ashlands (Kragmor in his caldera) and Thalassa's drowned
+## shelves (Thalassor in a sanctum on the seabed, under the water), and the sea's swimmers, which
+## come after you through the water and keep to it.
+func _test_far_biomes() -> void:
+	var fb_god0: bool = g.test_god
+	g.test_god = true
+	# (on foot, and the far planets made fresh: the skiff's journey left you aboard, and Cindrel saved
+	# with the skiff in it, which would carry you back to your seat whenever the test moved you)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+	g.player.aboard = null
+	g._delete_worlds()
+	g._enter_planet(1)
+	g.ui.title.visible = false
+	await _frames(60)
+	await _test_guardians(["ashland"])
+	g._enter_planet(2)
+	g.ui.title.visible = false
+	await _frames(60)
+	# the sanctum is under the water
+	var fb_wet := "no lair"
+	for fb_l in g.builds.lair_list:
+		if fb_l["biome"] == "ocean":
+			var fb_p: Vector2 = fb_l["pos"]
+			_go(fb_p + fb_p.normalized() * 30.0)
+			await _frames(20)
+			fb_wet = "water over its floor: %s" % (Defs.KIND[g.type_at(fb_p + fb_p.normalized() * 12.0)] == Defs.K_LIQUID)
+	await _test_guardians(["ocean"])
+	# the swimmers: somewhere the sea is deep near you, each comes after you and keeps to the water
+	g.test_god = true
+	var fb_c0 := int(floor(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS))
+	var fb_col := -1
+	for fb_k in range(0, 3000, 8):
+		for fb_sgn in [1, -1]:
+			var fb_c: int = fb_c0 + fb_sgn * fb_k
+			if fb_col < 0:
+				# (a stretch of open sea at least 30 deep, 60 across: not the slope of an island)
+				var fb_deep := true
+				for fb_q in range(-30, 31, 6):
+					if g.builds.ground_row(fb_c + fb_q) - g.builds.water_row(fb_c + fb_q) < 30:
+						fb_deep = false
+						break
+				if fb_deep:
+					fb_col = fb_c
+	var fb_rows := []
+	var fb_good := fb_col >= 0 and fb_wet.ends_with("true")
+	if fb_col >= 0:
+		var fb_wr: int = g.builds.water_row(fb_col)
+		_go(_cell_pos(fb_col + 20, fb_wr + 16))
+		await _frames(20)
+		var fb_ids := []
+		for fb_id in Defs.CREATURES:
+			if Defs.CREATURES[fb_id].get("swim", false):
+				fb_ids.append(fb_id)
+		var fb_foes := []
+		for fb_n in fb_ids.size():
+			var fb_e = g.spawn_enemy("c_" + String(fb_ids[fb_n]), _cell_pos(fb_col - 6 - fb_n * 14, fb_wr + 20))
+			fb_e.alert_t = 9999
+			fb_e.seen_pos = g.player.pos
+			fb_foes.append([fb_ids[fb_n], fb_e, 0, 0.0, 9999.0, fb_e.pos, {}])
+		for fb_f in 300:
+			await _frames(1)
+			if fb_f == 200:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("swimmers.png"))
+			for fb_r in fb_foes:
+				var fb_e2 = fb_r[1]
+				if fb_e2.dead:
+					continue
+				if fb_f % 30 == 0:
+					fb_e2.alert_t = 9999
+					fb_e2.seen_pos = g.player.pos
+				var fb_t: int = g.type_at(fb_e2.pos)
+				if Defs.KIND[fb_t] == Defs.K_LIQUID:
+					fb_r[2] = int(fb_r[2]) + 1
+				else:
+					var fb_out: Dictionary = fb_r[6]
+					fb_out[Defs.NAMES[fb_t]] = int(fb_out.get(Defs.NAMES[fb_t], 0)) + 1
+				fb_r[3] = float(fb_r[3]) + fb_e2.pos.distance_to(Vector2(fb_r[5]))
+				fb_r[4] = minf(float(fb_r[4]), fb_e2.pos.distance_to(g.player.pos))
+				fb_r[5] = fb_e2.pos
+		for fb_r2 in fb_foes:
+			var fb_e3 = fb_r2[1]
+			var fb_in: float = float(fb_r2[2]) / 300.0
+			var fb_fine: bool = fb_in > 0.85 and float(fb_r2[3]) > 6.0 and (fb_e3.moves_done >= 1 or float(fb_r2[4]) < 30.0)
+			if not fb_fine:
+				fb_good = false
+			fb_rows.append("%s%s: in the water %.0f%% (else %s), %d moves, moved %.0f, nearest %.0f" % ["" if fb_fine else "(!) ", fb_r2[0], fb_in * 100.0, str(fb_r2[6]), fb_e3.moves_done, fb_r2[3], fb_r2[4]])
+			fb_e3.dead = true
+	g.test_god = fb_god0
+	_ok("Thalassa: the sanctum lies under the sea, and its swimmers come after you and keep to the water", fb_good and fb_rows.size() >= 2,
+		"%s; sea found %s; %s" % [fb_wet, fb_col >= 0, "; ".join(fb_rows)])
 
 ## the dungeon wardens: each waits in the hall before its reliquary (asleep until you come into the
 ## hall), fights with its moves, and its fall breaks the runestone ward on the reliquary's door
@@ -2839,7 +2938,7 @@ func _test_wardens() -> void:
 
 ## the biome guardians (its own function so it can run alone: see `only`)
 var only_now := ""
-func _test_guardians() -> void:
+func _test_guardians(only_biomes := []) -> void:
 	# ---- the biome guardians: each waits in its lair, wakes, fights with its moves, falls, gives its relic ----
 	var gd_items0: Dictionary = g.items.duplicate()
 	var gd_hp0: float = g.max_hp
@@ -2849,7 +2948,10 @@ func _test_guardians() -> void:
 	g.test_calm = false
 	var gd_rows := []
 	var gd_ok := 0
-	var gd_lairs: Array = g.builds.lair_list
+	var gd_lairs: Array = []
+	for gd_l0 in g.builds.lair_list:
+		if only_biomes.is_empty() or only_biomes.has(gd_l0["biome"]):
+			gd_lairs.append(gd_l0)
 	for gd_l in gd_lairs:
 		var gd_bio: String = gd_l["biome"]
 		var gd_e = null
@@ -2910,8 +3012,13 @@ func _test_guardians() -> void:
 	g.boss_clouds.clear()
 	_go(gd_back)                   # (back where the checks after this one expect you)
 	await _frames(60)
-	_ok("each biome has a guardian in its lair that wakes, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
-		"%d lairs; %s; no room: %s" % [gd_lairs.size(), "; ".join(gd_rows), str(g.builds.lair_why)])
+	if only_biomes.is_empty():
+		_ok("each biome has a guardian in its lair that wakes, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
+			"%d lairs; %s; no room: %s" % [gd_lairs.size(), "; ".join(gd_rows), str(g.builds.lair_why)])
+	else:
+		_ok("%s: the %s guardian waits in its lair, wakes, fights and gives up its relic" % [g.planet["name"], " and ".join(only_biomes)],
+			gd_lairs.size() == only_biomes.size() and gd_ok == gd_lairs.size(),
+			"%s; no room: %s" % ["; ".join(gd_rows), str(g.builds.lair_why)])
 
 ## foes follow you to another level (its own function so it can run alone: see `only`)
 func _test_climb() -> void:

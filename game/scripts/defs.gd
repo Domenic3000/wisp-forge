@@ -567,6 +567,7 @@ const PROJ := {
 	"rock": {"speed": 3.0, "g": 0.09, "life": 220, "dmg": 16.0, "light": 0.0, "col": Color(0.55, 0.52, 0.5), "splat": GRAVEL},
 	"sandball": {"speed": 3.4, "g": 0.07, "life": 160, "dmg": 9.0, "light": 0.0, "col": Color(0.93, 0.8, 0.5), "splat": SAND},
 	"spore": {"speed": 1.6, "g": 0.0, "life": 260, "dmg": 9.0, "light": 16.0, "col": Color(0.8, 0.5, 1.0), "home": 0.03},
+	"surge": {"speed": 3.2, "g": 0.03, "life": 180, "dmg": 11.0, "light": 10.0, "col": Color(0.4, 0.8, 1.0), "splat": WATER},
 }
 
 # ---------------------------------------------------------------- recipes ---
@@ -1535,6 +1536,21 @@ const BOSSES := {
 		"moves": {"cloud": {}, "erupt": {"mat": MYCELIUM, "col": Color(0.6, 0.4, 0.8)}, "spit": {"proj": "spore", "n": 3, "spread": 0.5}},
 		"rage": {"cloud2": {}},
 		"relic": "lantern", "loot": {SHROOM: 20, MYCELIUM: 30, CRYSTAL: 6}, "wall": MASONRY, "floor": MYCELIUM, "trim": MYCELIUM, "glow": SHROOM},
+	# the other planets' biomes (Cindrel and Sere's ashlands, Thalassa's drowned shelves)
+	"ashland": {"name": "Kragmor", "title": "the Cinder Beast", "lair": "Kragmor's Caldera", "col": Color(1.0, 0.5, 0.2),
+		"body": {"plan": "beast", "len": 40, "tall": 17, "leg": 15, "head": 11, "neck": 6, "base": "#3a2420", "belly": "#7a3a22",
+			"accent": "#ff7a2a", "dark": "#160a08", "eye": "#ffd23a", "skin": "scales", "spikes": 8, "horns": true, "tail": "long"},
+		"w": 30.0, "h": 30.0, "hp": 640.0, "dmg": 16.0, "go": "walk", "speed": 1.05,
+		"moves": {"charge": {}, "erupt": {"mat": MAGMAROCK, "col": Color(1.0, 0.45, 0.1)}, "spit": {"proj": "efire", "n": 3, "spread": 0.2}},
+		"rage": {"rain": {"proj": "efire", "n": 6}},
+		"relic": "cinderheart", "loot": {EMBER: 12, OBSIDIAN: 20, MAGMAROCK: 30}, "wall": OBSIDIAN, "floor": MAGMAROCK, "trim": EMBER, "glow": EMBER},
+	# ("wet": its lair is an arena on the seabed, full of water; "swim": it keeps to the water)
+	"ocean": {"name": "Thalassor", "title": "the Tide Wyrm", "lair": "The Drowned Sanctum", "col": Color(0.35, 0.85, 1.0),
+		"body": {"plan": "serpent", "segs": 13, "rad": 7.5, "base": "#1f5a7a", "belly": "#9ae0e8", "accent": "#3affd8", "dark": "#0c2a3a", "eye": "#e8ff7a", "teeth": true},
+		"w": 16.0, "h": 14.0, "hp": 620.0, "dmg": 14.0, "go": "slither", "speed": 2.2, "fly": true, "swim": true, "wet": true,
+		"moves": {"dive": {}, "spit": {"proj": "surge", "n": 4, "spread": 0.2}, "summon": {"type": "c_reefeel", "n": 2, "max": 3}},
+		"rage": {"gust": {}, "spit2": {"proj": "surge", "n": 6, "spread": 0.16}},
+		"relic": "tidefin", "loot": {SAND: 30, CRYSTAL: 10, WATER: 40}, "wall": MASONRY, "floor": SANDSTONE, "trim": CRYSTAL, "glow": CRYSTAL},
 }
 
 ## The relics the guardians keep (items[id]; main.gd applies them where they matter).
@@ -1542,6 +1558,8 @@ const RELICS := {
 	"ironbark": {"name": "Ironbark Shell", "desc": "You take a quarter less damage."},
 	"coil": {"name": "Serpent's Coil", "desc": "You move a fifth faster."},
 	"pearl": {"name": "Mire Pearl", "desc": "You breathe under water."},
+	"cinderheart": {"name": "Cinderheart", "desc": "Fire can't burn you, and lava hurts far less."},
+	"tidefin": {"name": "Tidefin", "desc": "You swim as fast as you walk."},
 	"rimefang": {"name": "Rimefang's Tooth", "desc": "Your Spark Bolts chill what they hit."},
 	"roc": {"name": "Roc Feather", "desc": "Levitating costs half the mana."},
 	"lionheart": {"name": "Lionheart", "desc": "+40 max health."},
@@ -1624,6 +1642,28 @@ const CREATURES := {
 		"body": {"plan": "beast", "len": 22, "tall": 10, "leg": 9, "head": 8, "neck": 3, "base": "#4a1a14", "belly": "#8a3a1a", "accent": "#ff8a2a",
 			"dark": "#1a0a08", "eye": "#ffd23a", "skin": "scales", "spikes": 5, "tail": "long", "ears": true},
 		"moves": {"charge": {"v": 4.0}, "spit": {"proj": "efire", "n": 2, "spread": 0.2}}, "drops": [[EMBER, 3, 1.0], [OBSIDIAN, 2, 0.4]]},
+	# the ashlands (Cindrel, Sere)
+	"cinderwing": {"name": "Cinderwing", "where": ["ashland"], "w": 11.0, "h": 8.0, "hp": 22.0, "dmg": 7.0, "go": "fly", "speed": 1.8,
+		"body": {"plan": "bird", "len": 12, "span": 16, "base": "#3a2e2a", "belly": "#8a4a2a", "accent": "#ff8a2a", "dark": "#140c0a", "eye": "#ffd23a", "skin": "fur"},
+		"moves": {"dive": {"v": 4.0}}, "drops": [[ASH, 3, 0.6], [EMBER, 1, 0.2]]},
+	"scorchhound": {"name": "Scorch Hound", "where": ["ashland"], "pack": 2, "w": 16.0, "h": 12.0, "hp": 32.0, "dmg": 9.0, "go": "walk", "speed": 1.5,
+		"body": {"plan": "beast", "len": 19, "tall": 9, "leg": 8, "head": 7, "neck": 2, "base": "#4a2a22", "belly": "#8a4a2a", "accent": "#ff7a2a",
+			"dark": "#1a0c08", "eye": "#ffd23a", "skin": "scales", "spikes": 4, "tail": "long", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[ASH, 3, 0.5], [OBSIDIAN, 1, 0.3]]},
+	"lavatoad": {"name": "Lava Toad", "where": ["ashland"], "w": 14.0, "h": 10.0, "hp": 36.0, "dmg": 8.0, "go": "hop", "speed": 0.9,
+		"body": {"plan": "toad", "len": 15, "tall": 10, "base": "#5a2a1a", "belly": "#c8602a", "accent": "#ffb03a", "dark": "#1e0c08", "eye": "#ffe14a", "skin": "warts"},
+		"moves": {"slam": {}, "spit": {"proj": "efire", "n": 2, "spread": 0.2}}, "drops": [[MAGMAROCK, 3, 0.6], [EMBER, 1, 0.3]]},
+	# the drowned shelves (Thalassa): "swim" ones keep to the water
+	"reefeel": {"name": "Reef Eel", "where": ["ocean"], "swim": true, "w": 7.0, "h": 6.0, "hp": 26.0, "dmg": 8.0, "go": "slither", "speed": 1.9,
+		"body": {"plan": "serpent", "segs": 8, "rad": 2.8, "base": "#2a6a6a", "belly": "#c8e870", "accent": "#ffd23a", "dark": "#0e2a2a", "eye": "#ff6a3a"},
+		"moves": {"dive": {"v": 3.6}}, "drops": [[SAND, 2, 0.5], [CRYSTAL, 1, 0.15]]},
+	"driftjelly": {"name": "Drift Jelly", "where": ["ocean"], "swim": true, "w": 11.0, "h": 11.0, "hp": 18.0, "dmg": 6.0, "go": "fly", "speed": 0.5,
+		"col": Color(1.0, 0.5, 0.85),
+		"body": {"plan": "fungus", "len": 12, "tall": 12, "base": "#8ac8ff", "belly": "#e8f4ff", "accent": "#ff7ad8", "dark": "#2a4a8a", "eye": "#ffffff", "skin": "spots"},
+		"moves": {"cloud": {"r": 10.0, "t": 160}}, "drops": [[WATER, 3, 0.6], [CRYSTAL, 1, 0.2]]},
+	"stormgull": {"name": "Storm Gull", "where": ["ocean"], "w": 10.0, "h": 8.0, "hp": 18.0, "dmg": 6.0, "go": "fly", "speed": 1.9,
+		"body": {"plan": "bird", "len": 11, "span": 16, "base": "#e8eef0", "belly": "#ffffff", "accent": "#ffb03a", "dark": "#5a6670", "eye": "#1a1a1a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.8}}, "drops": [[SAND, 2, 0.4]]},
 }
 
 ## the creatures that live in a place ("forest", "cave2"...)

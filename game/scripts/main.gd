@@ -432,9 +432,9 @@ func _exit_tree() -> void:
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 540000:
-		# a test run that hasn't finished in 9 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 9 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 600000:
+		# a test run that hasn't finished in 10 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 10 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:
@@ -1670,7 +1670,9 @@ func _update_player(m: Mage) -> void:
 	var face := (aim - p.pos).dot(R)
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
-	var speed := (0.9 if p.in_liquid else 1.5) * (1.2 if m.items.has("coil") else 1.0)
+	var fin: bool = m.items.has("tidefin")       # (Thalassor's relic: you swim as fast as you walk)
+	var speed := (1.5 if fin else 0.9) if p.in_liquid else 1.5
+	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
 	var jump: bool = m.input.jump
 	if p.on_ground:
@@ -1708,11 +1710,11 @@ func _update_player(m: Mage) -> void:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
 	if p.in_liquid:
 		if jump:
-			p.vy -= 0.26
+			p.vy -= 0.4 if fin else 0.26
 		p.vy += g * 0.3
 		var visc := mid_t == Defs.MUD
-		p.vx *= 0.7 if visc else 0.9
-		p.vy *= 0.75 if visc else 0.9
+		p.vx *= 0.7 if visc else (0.96 if fin else 0.9)
+		p.vy *= 0.75 if visc else (0.94 if fin else 0.9)
 	else:
 		p.vy += g
 	p.vy = minf(p.vy, 6.0)
@@ -1736,12 +1738,14 @@ func _update_player(m: Mage) -> void:
 	var by := l.y - p.h * 0.5
 	var lava := box_count(bx, by, p.w, p.h, Defs.LAVA)
 	var fire := box_count(bx, by, p.w, p.h, Defs.FIRE)
+	# (Kragmor's relic, the Cinderheart: fire can't burn you, lava hurts far less, the deep heat none)
+	var cinder: bool = m.items.has("cinderheart")
 	if lava > 0:
-		hurt(m, (0.08 if m.heat_ward else 0.55) * mini(lava, 6), Vector2.ZERO, false)
-	if fire > 0:
+		hurt(m, (0.08 if m.heat_ward else 0.55) * (0.3 if cinder else 1.0) * mini(lava, 6), Vector2.ZERO, false)
+	if fire > 0 and not cinder:
 		hurt(m, (0.02 if m.heat_ward else 0.08) * mini(fire, 6), Vector2.ZERO, false)
 	var sa: Vector4 = gpu.surf_at(a)
-	if p.pos.length() < sa.w + 20.0 and not m.heat_ward:
+	if p.pos.length() < sa.w + 20.0 and not m.heat_ward and not cinder:
 		hurt(m, 0.05, Vector2.ZERO, false)
 	# under water, or above the air: holding your breath
 	if (Defs.KIND[head_t] == Defs.K_LIQUID and not m.items.has("pearl")) or p.pos.length() > Defs.R_TOP + 4.0:
@@ -2861,13 +2865,14 @@ func _try_spawn() -> void:
 	var d: Dictionary = Defs.enemy_def(type)
 	var pack: int = int(d["def"].get("pack", 1)) if d.has("def") else 1
 	var go: String = d["def"]["go"] if d.has("def") else ""
+	var swim: bool = d["def"].get("swim", false) if d.has("def") else false
 	# Foes come in from out of sight, never popping up (or dropping in) on screen. How far the
 	# view reaches from the mage, in world cells (a screen pixel is ustep * r cells across):
 	var reach_x := VW * 0.5 * zoom * maxf(1.0, ustep * r) + float(d["w"]) + 10.0
 	var reach_y := VH * 0.5 * zoom + float(d["h"]) + 10.0
 	var cv := _view()
 	var ca := atan2(cv.y, cv.x)
-	if (not d["fly"] or go == "burrow" or go == "slither") and r > sa.x - 14.0:
+	if (not d["fly"] or go == "burrow" or go == "slither") and r > sa.x - 14.0 and not swim:
 		# on the ground just past the edge of the view (it waits, still, until you come near)
 		for tries in 6:
 			var side := -1.0 if randf() < 0.5 else 1.0
@@ -2894,9 +2899,10 @@ func _try_spawn() -> void:
 		var ly := HALF + (randf() * 2.0 - 1.0) * (HALF - 14.0)
 		if absf(lx - l0.x) < reach_x and absf(ly - l0.y) < reach_y:
 			continue                          # it would appear on screen
-		if not box_solid(lx - d["w"] * 0.5, ly - d["h"] * 0.5, d["w"], d["h"]) and Defs.KIND[gtype(int(lx), int(ly))] != Defs.K_LIQUID:
+		# (a swimmer comes in through the water, everything else through open air)
+		if not box_solid(lx - d["w"] * 0.5, ly - d["h"] * 0.5, d["w"], d["h"]) and (Defs.KIND[gtype(int(lx), int(ly))] == Defs.K_LIQUID) == swim:
 			var sp := from_grid(Vector2(lx, ly))
-			if r > sa.x - 14.0 and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
+			if r > sa.x - 14.0 and not swim and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
 				continue                      # (a bird of the surface comes in through the air, not a cave)
 			spawn_enemy(type, sp)
 			# bats often hunt in pairs

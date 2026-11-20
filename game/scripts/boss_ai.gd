@@ -41,6 +41,7 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 		if tgt.dead or not (e.see or e.alert_t > 0 or (go == "burrow" and dist < 120.0)):
 			if e.act == "":
 				_wander(g, e, gacc, go, float(bd["speed"]) * slow_f)
+				_swim_hold(g, e, bd, gacc)
 				return
 	elif not e.awake:
 		if dist < WAKE and not tgt.dead and not g.test_calm and (not e.d.get("warden", false) or _in_hall(g, e, tgt)):
@@ -72,6 +73,7 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 		_trail(e)
 	if go != "fly" and go != "slither" and go != "burrow":
 		e.vy += gacc
+	_swim_hold(g, e, bd, gacc)
 
 static func wake(g, e) -> void:
 	var bd: Dictionary = e.d["def"]
@@ -80,6 +82,13 @@ static func wake(g, e) -> void:
 	g.ui.toast("%s, %s, awakens!" % [String(bd["name"]).to_upper(), String(bd["title"]).to_upper()], bd["col"], 4.0)
 	g.audio.play("roar", e.pos, 1.2)
 	g.shake = maxf(g.shake, 10.0)
+
+## A swimmer ("swim" in its definition) keeps to the water: out of it, it can't rise and falls back in.
+static func _swim_hold(g, e, bd: Dictionary, gacc: float) -> void:
+	if not bd.get("swim", false) or e.under:
+		return
+	if Defs.KIND[g.type_at(e.pos)] != Defs.K_LIQUID:
+		e.vy = maxf(e.vy, 0.0) + gacc         # (even mid-dive: it only skims the surface)
 
 ## A creature with nothing to hunt: it ambles about near where it lives (walkers and hoppers to and
 ## fro, fliers circling, burrowers under the ground).
@@ -216,6 +225,8 @@ static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: floa
 			var sway := sin(e.t * (0.013 if go == "slither" else 0.01))
 			var sc := 1.0 if e.boss else 0.45      # (a small creature keeps closer)
 			var hover := (36.0 if go == "slither" else 58.0) * sc
+			if e.d["def"].get("swim", false):
+				hover = -6.0                         # (a swimmer keeps level with you or below: in the water)
 			var want: Vector2 = tgt.pos + up * hover + g.basis_r(atan2(tgt.pos.y, tgt.pos.x)) * sway * (95.0 if go == "slither" else 70.0) * sc
 			_steer(g, e, _lair_point(g, e, want), spd, 0.08)
 		"burrow":

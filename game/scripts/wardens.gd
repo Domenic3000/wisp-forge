@@ -26,6 +26,7 @@ const BIOME := {
 	"forest": ["#6ac84a", "venom"], "jungle": ["#3ad86a", "venom"], "marsh": ["#9a7a3a", "mudball"],
 	"tundra": ["#8fe8ff", "ice"], "mountain": ["#c8b89a", "rock"], "savanna": ["#e8b03a", "sandball"],
 	"desert": ["#f0c060", "sandball"], "grove": ["#c07aff", "spore"], "ashland": ["#ff7a2a", "efire"],
+	"ocean": ["#3ac8e8", "surge"],
 }
 
 static func make(seed: int, biome: String, dungeon: String) -> Dictionary:
