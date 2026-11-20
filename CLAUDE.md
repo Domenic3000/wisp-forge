@@ -75,8 +75,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   planet out of sight): sprites upright on whole pixels. `main.unrolled()` = close view AND the "unrolled" setting:
   the old strips (screenToWorld branch on P.p[122].w bit 1; `unroll_step`). P.p[122].w bit 2: past `R_SPACE` the
   picture is clear (out in space and on the map), so what's under it shows (space.gd's stars, the clear colour).
-  Cells high in or deep under the thick surface shell (SURF, +-330 rows) are up to 17% wide or narrow, so there a
-  column is now and then a pixel wider or narrower (the price of no stretching).
+  The picture is drawn a CELL a pixel (bit 4, `cellPicToWorld`: picture row j = cell row y0 + j in its own shell's
+  columns counted from the one under the camera; `main._cell_rows` fills P.p[ROWT + j] = (N, that column, how far
+  into it the angle is) in doubles, once) and the view's shader (`main.VIEW_SHADER` on `view_rect`, uniforms set
+  by `_show_pic` from the picture actually on screen) finds for every SCREEN pixel its world point, its cell and
+  that cell's picture pixel: cells keep their true shape (6 or 7 screen pixels for 6.6), none drawn twice or
+  dropped. (Sampling the world a unit a pixel did that wherever cells aren't exactly a unit wide: the surface
+  shell's are up to 17% off at +-330 rows, and the doubled columns showed as bands that stayed put as you
+  walked; the user saw them.) The picture is the screen plus a margin (`gpu.PW/PH/PMX/PMY`, P.p[123]); light,
+  readback and chunk colours index it by `main.world_to_pic` / `screen_to_pic`. Below radius 900 (the curve
+  bends the corners past the margin), on the map and in the unrolled setting it is drawn as before ("mode" 0).
 - The map (M, `main.open_map`; state "map", the game waits): "planet" renders the planet zoomed out (`map_zooms()`:
   4, 10 and one that fits the whole planet with its band; turned to `map_ang`: A/D or a drag; W/S or the wheel
   zoom), `scripts/map_view.gd` draws the markers (you, the party, home, the skiff) and, on Tab, "system": the round

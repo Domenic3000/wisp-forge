@@ -603,8 +603,8 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 		return pal
 	# (where the cell is on screen: one step from the block's corner, worked out once per block)
 	if R.size() < 7:
-		var s0: Vector2 = g.world_to_screen(cell_pos(int(R[0]), int(R[1])))
-		R.append([s0, g.world_to_screen(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_screen(cell_pos(int(R[0]), int(R[1]) + 1)) - s0])
+		var s0: Vector2 = g.world_to_pic(cell_pos(int(R[0]), int(R[1])))
+		R.append([s0, g.world_to_pic(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_pic(cell_pos(int(R[0]), int(R[1]) + 1)) - s0])
 		R.append({})                                    # light by light cell (each covers several pixels)
 	var lin: Array = R[6]
 	var sp: Vector2 = ((lin[0] as Vector2) + (lin[1] as Vector2) * float(k % w) + (lin[2] as Vector2) * float(k / w)).floor()

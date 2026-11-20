@@ -241,7 +241,7 @@ func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Co
 func _lit(sp: Vector2) -> Color:
 	if game.space.active and not game.space.live:
 		return Color(1, 1, 1)               # (out in space: full sun, and no light grid to read)
-	var c: Color = game.gpu.light_at(sp)
+	var c: Color = game.gpu.light_at(game.screen_to_pic(sp))
 	return Color(clampf(c.r, 0.12, 1.0), clampf(c.g, 0.12, 1.0), clampf(c.b, 0.12, 1.0))
 
 ## Where a body's feet are drawn on screen. Sprites hang from the feet, not the centre: a body

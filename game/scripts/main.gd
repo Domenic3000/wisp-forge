@@ -145,6 +145,53 @@ var space                 # above the orbit band: the space view and the staff-j
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
 var view_rect: TextureRect
+## The view's shader: lays the GPU's picture onto the screen. In the close view the picture is drawn a
+## cell a pixel (each row in its own shell's columns, lined up under the camera: shaders/inc/params.comp
+## cellPicToWorld); here every screen pixel finds its world point, the cell there, and that cell's pixel,
+## so the cells keep their true shape and size on screen (6 or 7 screen pixels where the picture's pixel
+## is 6.6) and none is ever drawn twice or dropped. Otherwise ("mode" 0: the map, the unrolled setting,
+## deep near the heart) it shows the screen's part of the picture as it is.
+const VIEW_SHADER := "shader_type canvas_item;
+uniform sampler2D rows : filter_nearest;
+uniform vec2 cam;
+uniform float cam_a;
+uniform float row_a;
+uniform float zoom = 1.0;
+uniform vec2 vsize = vec2(320.0, 180.0);
+uniform vec4 pic = vec4(320.0, 180.0, 0.0, 0.0);
+uniform float y0;
+uniform float r_top;
+uniform int mode = 0;
+uniform float alpha = 1.0;
+void fragment() {
+	vec2 sp = UV * vsize;
+	vec4 c = vec4(0.0);
+	if (mode == 0) {
+		c = texelFetch(TEXTURE, ivec2(floor(sp + pic.zw)), 0);
+	} else {
+		vec2 o = (sp - vsize * 0.5) * zoom + vec2(0.0007, 0.0011);
+		vec2 R = vec2(sin(cam_a), -cos(cam_a));
+		vec2 D = vec2(-cos(cam_a), -sin(cam_a));
+		vec2 w = cam + R * o.x + D * o.y;
+		float j = floor(r_top - length(w)) - y0;
+		if (j >= 0.0 && j < pic.y) {
+			vec4 rw = texelFetch(rows, ivec2(int(j), 0), 0);
+			vec2 u = vec2(cos(row_a), sin(row_a));
+			float dth = atan(u.x * w.y - u.y * w.x, dot(u, w));
+			float i = floor(pic.x * 0.5) - 1.0 - floor(rw.y + dth / 6.283185307 * rw.x);
+			if (i >= 0.0 && i < pic.x) {
+				c = texelFetch(TEXTURE, ivec2(int(i), int(j)), 0);
+			}
+		}
+	}
+	COLOR = vec4(c.rgb, c.a * alpha);
+}"
+var view_mat: ShaderMaterial
+var _rows := PackedFloat32Array()      # this frame's cell picture rows (N, frac), for the view's shader
+var _rows_tex: ImageTexture
+var _pic_next := {}                    # the picture being drawn now (mode, rows, row angle, top row)
+var _pic_sub := {}                     # the one submitted to the GPU
+var pic := {"mode": 0}                 # the one on screen (from the last GPU frame)
 var map_view: Node2D
 var pix: Node2D
 
@@ -391,6 +438,13 @@ func _ready() -> void:
 	pix.add_child(space)
 	view_rect = TextureRect.new()
 	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	view_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	view_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	var vsh := Shader.new()
+	vsh.code = VIEW_SHADER
+	view_mat = ShaderMaterial.new()
+	view_mat.shader = vsh
+	view_rect.material = view_mat
 	pix.add_child(view_rect)
 	overlay = Overlay.new()
 	overlay.game = self
@@ -546,6 +600,7 @@ func _gpu_frame(paused: bool, sim_steps := 1) -> void:
 	var t0 := Time.get_ticks_usec()
 	_sub_view_c = view_c_next
 	_sub_ustep = ustep_next
+	_pic_sub = _pic_next
 	if not stamps.is_empty():
 		# what was built this frame goes into the world first
 		gpu.stamp(stamps, frame)
@@ -579,14 +634,15 @@ func _take_gpu_results() -> void:
 	if _map_shown > 0:
 		_map_shown -= 1
 		if _map_shown == 0:
-			view_rect.self_modulate.a = 1.0
+			view_mat.set_shader_parameter("alpha", 1.0)
 	var tu := Time.get_ticks_usec()
-	if view_tex == null or view_tex.get_width() != gpu.VW or view_tex.get_height() != gpu.VH:
+	if view_tex == null or view_tex.get_width() != gpu.PW or view_tex.get_height() != gpu.PH:
 		view_tex = ImageTexture.create_from_image(gpu.view_img)
 		view_rect.texture = view_tex
-		view_rect.size = Vector2(gpu.VW, gpu.VH)
 	else:
 		view_tex.update(gpu.view_img)
+	view_rect.size = Vector2(gpu.VW, gpu.VH)
+	_show_pic(_pic_sub)
 	prof_add("picture upload", Time.get_ticks_usec() - tu)
 	overlay.queue_redraw()
 
@@ -610,6 +666,7 @@ func capture_planet() -> Dictionary:
 	_write_frame_params()
 	gpu.setp(1, Vector4(0.0, 0.0, ang, zc))
 	gpu.setp(122, Vector4(_p122.x, _p122.y, _p122.z, 0.0))   # (the whole planet, round)
+	gpu.setp(123, Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, 0))           # (no torch lights: their places are for the close view)
 	var frames := []
 	for k in mini(players.size(), gpu.MAXP):
@@ -617,11 +674,76 @@ func capture_planet() -> Dictionary:
 			frames.append(_grid_frame(players[k].pos))
 	gpu.step([cam_c], frames, false, false, 0, true)
 	gpu.fresh = false                                  # (that picture isn't the view)
-	var img: Image = gpu.view_img.get_region(Rect2i((VW - side) / 2, (VH - side) / 2, side, side))
+	var img: Image = gpu.view_img.get_region(Rect2i((VW - side) / 2 + gpu.PMX, (VH - side) / 2 + gpu.PMY, side, side))
 	img.generate_mipmaps()
 	return {"tex": ImageTexture.create_from_image(img), "zoom": zc, "angle": ang, "edge": (Defs.R_TOP + 60.0) / zc / float(side)}
 
 var _p122 := Vector4.ZERO
+
+## The cell picture's rows for a camera at c: picture row j is cell row y0 + j, in its shell's own columns,
+## counted from the one under the camera's angle (main.gd and both shaders agree on these exactly: the
+## column and how far into it the angle is are worked out here, in doubles, once).
+func _cell_rows(c: Vector2) -> void:
+	var ph: int = gpu.PH
+	var y0 := int(floor(Defs.R_TOP - c.length())) - ph / 2
+	var ca := fposmod(atan2(c.y, c.x), TAU)
+	_rows.resize(ph * 2)
+	var s_prev := -999
+	var n := 1.0
+	var xa := 0.0
+	var fr := 0.0
+	for j in ph:
+		var s: int = Defs.shell_of_row(y0 + j)
+		if s != s_prev:
+			s_prev = s
+			n = float(Defs.SH_N[s])
+			var u := ca / TAU * n
+			xa = floor(u)
+			fr = u - xa
+		gpu.setp(gpu.ROWT + j, Vector4(n, xa, fr, 0.0))
+		_rows[j * 2] = n
+		_rows[j * 2 + 1] = fr
+	gpu.setp(124, Vector4(ca, y0, 0.0, 0.0))
+	_pic_next = {"mode": 1, "rows": _rows.duplicate(), "a": ca, "y0": y0, "zoom": zoom}
+
+## Hands the view's shader the picture now on screen: how it was drawn, and from where.
+func _show_pic(p: Dictionary) -> void:
+	pic = p if not p.is_empty() else {"mode": 0}
+	var mode: int = int(pic.get("mode", 0))
+	view_mat.set_shader_parameter("mode", mode)
+	view_mat.set_shader_parameter("vsize", Vector2(gpu.VW, gpu.VH))
+	view_mat.set_shader_parameter("pic", Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
+	if mode != 1:
+		return
+	var rows: PackedFloat32Array = pic["rows"]
+	var img := Image.create_from_data(rows.size() / 2, 1, false, Image.FORMAT_RGF, rows.to_byte_array())
+	if _rows_tex == null or _rows_tex.get_width() != img.get_width():
+		_rows_tex = ImageTexture.create_from_image(img)
+		view_mat.set_shader_parameter("rows", _rows_tex)
+	else:
+		_rows_tex.update(img)
+	view_mat.set_shader_parameter("cam", view_c)
+	view_mat.set_shader_parameter("cam_a", atan2(view_c.y, view_c.x))
+	view_mat.set_shader_parameter("row_a", float(pic["a"]))
+	view_mat.set_shader_parameter("zoom", float(pic["zoom"]))
+	view_mat.set_shader_parameter("y0", float(pic["y0"]))
+	view_mat.set_shader_parameter("r_top", Defs.R_TOP)
+
+## Where a world point is in the GPU's picture (its pixels: for the light, and colours read back from it).
+func world_to_pic(p: Vector2) -> Vector2:
+	if int(pic.get("mode", 0)) != 1:
+		return world_to_screen(p) + Vector2(gpu.PMX, gpu.PMY)
+	var rows: PackedFloat32Array = pic["rows"]
+	var jf := Defs.R_TOP - p.length() - float(pic["y0"])
+	var j := clampi(int(floor(jf)), 0, rows.size() / 2 - 1)
+	var u := Vector2(cos(float(pic["a"])), sin(float(pic["a"])))
+	var dth := atan2(u.x * p.y - u.y * p.x, u.dot(p))
+	var dd: float = rows[j * 2 + 1] + dth / TAU * rows[j * 2]
+	return Vector2(floorf(gpu.PW * 0.5) - dd, jf)
+
+## a point on screen (in the picture's pixel units, as world_to_screen gives) in the GPU's picture
+func screen_to_pic(sp: Vector2) -> Vector2:
+	return world_to_pic(screen_to_world(sp))
 
 func _write_frame_params() -> void:
 	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
@@ -643,6 +765,13 @@ func _write_frame_params() -> void:
 		var cstep: float = TAU / float(Defs.SH_N[cs])
 		var ca0 := roundf(atan2(c.y, c.x) / cstep) * cstep
 		c = Vector2(cos(ca0), sin(ca0)) * cr0
+	# drawn a cell a pixel and laid on the screen by the view's shader (see VIEW_SHADER), except deep
+	# near the heart, where the planet's curve bends the screen's corners past the picture's margin
+	var cellpic: bool = close_view() and not unrolled() and c.length() > 900.0 and gpu.PH <= gpu.ROWMAX
+	if cellpic:
+		_cell_rows(c)
+	else:
+		_pic_next = {"mode": 0}
 	view_c_next = c
 	if view_c == Vector2.ZERO:
 		view_c = c
@@ -663,7 +792,8 @@ func _write_frame_params() -> void:
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
 	# (w, flags: 1 the close view drawn in strips (see screenToWorld), 2 out in space: clear past the
 	# orbit band, where space.gd draws the stars under the picture)
-	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0)
+	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0) | (4 if cellpic else 0)
+	gpu.setp(123, Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
 	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
 	gpu.setp(122, _p122)
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
@@ -3754,7 +3884,7 @@ func close_map() -> void:
 	view_c = Vector2.ZERO
 	view_rect.visible = bool(_map_back.get("view", true))
 	# (the picture still to come was drawn for the map: hidden until one from the play camera)
-	view_rect.self_modulate.a = 0.0
+	view_mat.set_shader_parameter("alpha", 0.0)
 	_map_shown = 2
 	space.visible = space.active
 	ui.hide_map()

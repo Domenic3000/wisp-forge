@@ -1953,6 +1953,34 @@ func run() -> void:
 		wv_same = wv_same and absf(wv_px - 1.0) < 0.002
 	_ok("the close view is the world as it is: nothing stretches going up or down, the camera sits on a cell's corner",
 		not wv_unrolled and wv_corner and wv_same, "unrolled %s; camera at radius %.2f, column %.3f; a world unit across on screen at %s" % [wv_unrolled, wv_r, wv_k, ", ".join(wv_sizes)])
+	# ---- ... and its picture is drawn a cell a pixel, each cell once: the cell at a point on screen is the
+	# one the picture holds where the view's shader looks for it (so no column is drawn twice, or dropped,
+	# which showed as bands that stayed put as you walked) ----
+	var cp_ok := int(g.pic.get("mode", 0)) == 1
+	var cp_bad := []
+	if cp_ok:
+		var cp_rows: PackedFloat32Array = g.pic["rows"]
+		for cp_k in 25:
+			var cp_sp := Vector2(float(g.VW) * (0.06 + 0.22 * float(cp_k % 5)), float(g.VH) * (0.06 + 0.22 * float(cp_k / 5)))
+			var cp_w0: Vector2 = g.screen_to_world(cp_sp)
+			var cp_row := int(floor(Defs.R_TOP - cp_w0.length()))
+			var cp_n: int = Defs.SH_N[Defs.shell_of_row(cp_row)]
+			var cp_col := int(floor(fposmod(atan2(cp_w0.y, cp_w0.x), TAU) / TAU * cp_n))
+			# (the middle of that cell)
+			var cp_a := (float(cp_col) + 0.5) / float(cp_n) * TAU
+			var cp_w := Vector2(cos(cp_a), sin(cp_a)) * (Defs.R_TOP - float(cp_row) - 0.5)
+			var cp_p: Vector2 = g.world_to_pic(cp_w)
+			var cp_i := int(floor(cp_p.x))
+			var cp_j := int(floor(cp_p.y))
+			if cp_j < 0 or cp_j >= g.gpu.PH or cp_i < 0 or cp_i >= g.gpu.PW:
+				cp_bad.append("%d off the picture (%d, %d)" % [cp_k, cp_i, cp_j])
+				continue
+			var cp_xa := int(floor(float(g.pic["a"]) / TAU * float(int(cp_rows[cp_j * 2]))))
+			var cp_x := posmod(cp_xa + int(floor(g.gpu.PW * 0.5)) - 1 - cp_i, int(cp_rows[cp_j * 2]))
+			if int(g.pic["y0"]) + cp_j != cp_row or cp_x != cp_col:
+				cp_bad.append("%d: cell %d,%d drawn as %d,%d" % [cp_k, cp_col, cp_row, cp_x, int(g.pic["y0"]) + cp_j])
+	_ok("the close view's picture holds each cell once, where the view's shader looks for it", cp_ok and cp_bad.is_empty(),
+		"cell picture %s (%d x %d, margin %d, %d); %s" % [cp_ok, g.gpu.PW, g.gpu.PH, g.gpu.PMX, g.gpu.PMY, "all 25 points agree" if cp_bad.is_empty() else "; ".join(cp_bad)])
 	# ---- the unrolled view (the other setting) keeps the cells around you one pixel wide at any depth ----
 	var widths := []
 	var view_ok := true

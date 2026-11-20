@@ -34,7 +34,9 @@ var light_off := 0           # grid is the whole buffer, the grids start at grid
 var topple_iters := 2    # falling-block passes per frame
 var blur_passes := 2     # light blur passes
 var sun_step := 2.0      # sunlight march step (cells)
-const NPARAM := 128      # vec4 slots in the params buffer
+const NPARAM := 1152     # vec4 slots in the params buffer (from ROWT: the cell picture's rows)
+const ROWT := 128        # P.p[ROWT + j]: picture row j of the cell picture (its shell's columns N, the column
+const ROWMAX := 1024     # under the camera, and how far into it the camera's angle is): main._cell_rows
 
 var rd: RenderingDevice
 var error_text := ""
@@ -58,6 +60,13 @@ var VW := 480
 var VH := 270
 var LW := 121
 var LH := 69
+# the picture is the screen (VW x VH) with a margin round it (PMX, PMY): the close view draws it a cell a
+# pixel and the view's shader lays it onto the screen in true world shape, which reaches past the screen's
+# own rectangle (cells narrower than a world unit deep down, the planet's curve at the corners)
+var PW := 121
+var PH := 69
+var PMX := 0
+var PMY := 0
 
 var params := PackedFloat32Array()
 var surface := PackedFloat32Array()   # 8 floats per shell-0 column
@@ -212,8 +221,12 @@ func resize(w: int, h: int) -> void:
 	flush()
 	VW = w
 	VH = h
-	LW = int(ceil(float(VW) / LS)) + 1
-	LH = int(ceil(float(VH) / LS)) + 1
+	PMX = int(ceil(VW * 0.11)) + 4
+	PMY = 24
+	PW = VW + 2 * PMX
+	PH = VH + 2 * PMY
+	LW = int(ceil(float(PW) / LS)) + 1
+	LH = int(ceil(float(PH) / LS)) + 1
 	GS = clampi(int(ceil((maxi(w, h) + 96) / 4.0)) * 4, 384, 1024)
 	NG = GS / 4
 	NGP = int(ceil(NG / 4.0)) * 4
@@ -230,9 +243,9 @@ func resize(w: int, h: int) -> void:
 	sets["navmap"] = _mkset("navmap", [[7, grid_buf], [11, nav_buf]])
 	light_a = rd.storage_buffer_create(LW * LH * 16)
 	light_b = rd.storage_buffer_create(LW * LH * 16)
-	view_buf = rd.storage_buffer_create(VW * VH * 4)
+	view_buf = rd.storage_buffer_create(PW * PH * 4)
 	# read back in one go: the counters, the light, the picture, the nav maps, then the grids
-	nav_off = 64 * MAXP * 4 + LW * LH * 16 + VW * VH * 4
+	nav_off = 64 * MAXP * 4 + LW * LH * 16 + PW * PH * 4
 	rb_off = [0, 64 * MAXP * 4, 64 * MAXP * 4 + LW * LH * 16, nav_off + NG * NGP * MAXP]
 	rb_buf = rd.storage_buffer_create(rb_off[3] + GS * GS * MAXP)
 	sets["light"] = _mkset("light", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [8, aux_buf]])
@@ -549,7 +562,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		rd.compute_list_end()
 		rd.capture_timestamp("light")
 		cl = rd.compute_list_begin()
-		_dispatch(cl, "render", "render", [VW, VH, LW, LH], [], groups(VW, 16), groups(VH, 16))
+		_dispatch(cl, "render", "render", [PW, PH, LW, LH], [], groups(PW, 16), groups(PH, 16))
 	rd.compute_list_end()
 	rd.capture_timestamp("picture")
 	if not sim_only:
@@ -557,7 +570,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		_rb_slots = clampi(grid_frames.size(), 1, MAXP)
 		rd.buffer_copy(counts_buf, rb_buf, 0, rb_off[0], 64 * MAXP * 4)
 		rd.buffer_copy(light_a, rb_buf, 0, rb_off[1], LW * LH * 16)
-		rd.buffer_copy(view_buf, rb_buf, 0, rb_off[2], VW * VH * 4)
+		rd.buffer_copy(view_buf, rb_buf, 0, rb_off[2], PW * PH * 4)
 		rd.buffer_copy(nav_buf, rb_buf, 0, nav_off, NG * NGP * _rb_slots)
 		rd.buffer_copy(grid_buf, rb_buf, 0, rb_off[3], GS * GS * _rb_slots)
 	rd.submit()
@@ -588,13 +601,13 @@ func flush() -> void:
 	read_parts["read: one copy"] = Time.get_ticks_usec() - tq
 	tq = Time.get_ticks_usec()
 	counts = all.slice(rb_off[0], rb_off[1]).to_int32_array()
-	var vb := all.slice(rb_off[2], rb_off[2] + VW * VH * 4)
+	var vb := all.slice(rb_off[2], rb_off[2] + PW * PH * 4)
 	grid = all
 	grid_off = rb_off[3]
 	light_off = rb_off[1]
 	read_parts["read: unpack"] = Time.get_ticks_usec() - tq
 	tq = Time.get_ticks_usec()
-	view_img = Image.create_from_data(VW, VH, false, Image.FORMAT_RGBA8, vb)
+	view_img = Image.create_from_data(PW, PH, false, Image.FORMAT_RGBA8, vb)
 	read_parts["read: picture to image"] = Time.get_ticks_usec() - tq
 	fresh = true
 	read_us = Time.get_ticks_usec() - t0
@@ -677,6 +690,7 @@ func grid_bg(slot: int, i: int, j: int) -> int:
 		return -1
 	return grid[k] >> 6
 
+## the light at a pixel of the picture (main.world_to_pic, screen_to_pic)
 func light_at(px: Vector2) -> Color:
 	var i := clampi(int(px.x / LS), 0, LW - 1)
 	var j := clampi(int(px.y / LS), 0, LH - 1)
