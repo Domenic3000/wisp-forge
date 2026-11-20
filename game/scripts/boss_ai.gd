@@ -44,7 +44,8 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 				_swim_hold(g, e, bd, gacc)
 				return
 	elif not e.awake:
-		if dist < WAKE and not tgt.dead and not g.test_calm and (not e.d.get("warden", false) or _in_hall(g, e, tgt)):
+		var in_arena: bool = e.arena > 0.0 and absf(_off(g, e, tgt.pos)) < e.arena and absf((tgt.pos - e.home).dot(e.home.normalized())) < e.ceil
+		if (dist < WAKE or in_arena) and not tgt.dead and not g.test_calm and (not e.d.get("warden", false) or _in_hall(g, e, tgt)):
 			wake(g, e)
 		else:
 			_rest(g, e, gacc)
@@ -61,6 +62,18 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 		g.audio.play("roar", e.pos, 1.0)
 		g.shake = maxf(g.shake, 8.0)
 	var spd: float = float(bd["speed"]) * (1.25 if e.raged else 1.0) * slow_f
+	# out of its reach a while (in a building, behind a wall) and close: a guardian that charges
+	# smashes its way in, a hole as big as itself, in one go
+	if e.boss and not e.d.get("warden", false) and e.act == "" and go == "walk" and e.unreach_t > 150 and dist < 110.0 and absf(dy) < 40.0 and e.on_ground:
+		var cm := _move_of_kind(e, "charge")
+		if cm != "":
+			e.move = cm
+			e.breach = true
+			e.breach_hits = 0
+			e.unreach_t = 0
+			e.hit_done = false
+			e.spot = tgt.pos
+			FoeAI.start(e, "windup", 40)
 	if e.act != "":
 		_run(g, e, tgt, dx, dy, dist, gacc, spd)
 	else:
@@ -154,12 +167,70 @@ static func _in_hall(g, e, tgt) -> bool:
 	var up: float = (tgt.pos - e.home).dot(e.home.normalized())
 	return absf(_off(g, e, tgt.pos)) < e.tether + 16.0 and up > -float(e.h) and up < e.ceil + 12.0
 
+## Getting about by the nav graph (nav.gd), walkers and hoppers: to a spot round you (its `pace`,
+## a new side every second or two), kept inside its lair and leash (`tether`). It never stands
+## pushing at a wall: with no way to you it waits as near as it can get (and `unreach_t` counts, for
+## the breach in `tick` and the moves `_suits` leaves out). False with no graph yet.
+static func _nav_around(g, e, tgt, dx: float, gacc: float, spd: float, go: String) -> bool:
+	var po := _off(g, e, tgt.pos)
+	if e.pace_t <= 0:
+		e.pace_t = 60 + randi() % 80
+		e.pace = (26.0 + randf() * 44.0) * float(e.d["def"].get("pace", 1.0 if e.boss else 0.5)) * (1.0 if randf() < 0.5 else -1.0)
+	var along := _in_lair(e, po + e.pace) - po
+	var ta := atan2(tgt.pos.y, tgt.pos.x)
+	var tfeet: Vector2 = tgt.pos + g.basis_d(ta) * (tgt.h * 0.5)
+	var gfeet: Vector2 = tfeet + g.basis_r(ta) * along
+	var jv := sqrt(2.0 * gacc * ((CLIMB + 6.0) if e.boss else 46.0))
+	if not e.boss and not e.reach_ok:
+		# a creature that can't get to you from here doesn't stand frozen: it roams the ground it has
+		var ea := atan2(e.pos.y, e.pos.x)
+		gfeet = e.pos + g.basis_d(ea) * (e.h * 0.5) + g.basis_r(ea) * e.roam
+	var nd: float = FoeAI.nav_walk(g, e, gfeet, jv, gacc, 4.0 if go == "walk" else 7.0)
+	if is_nan(nd):
+		return false
+	e.pace_t -= 1
+	e.facing = -1 if dx < 0 else 1
+	# (can it get to you at all? looked at every third of a second)
+	if (g.frame + e.look_t) % 20 == 0:
+		e.reach_ok = FoeAI.can_reach(g, e, tfeet, jv, gacc)
+		if not e.reach_ok and (absf(e.roam) < 1.0 or nd == 0.0):
+			e.roam = randf_range(24.0, 60.0) * (1.0 if randf() < 0.5 else -1.0)
+	e.unreach_t = 0 if e.reach_ok else e.unreach_t + 1
+	if e.nav_air or not (e.on_ground or absf(e.vy) < 0.25):
+		return true
+	if go == "walk":
+		if nd != 0.0:
+			e.vx += (nd * spd - e.vx) * 0.14
+		else:
+			e.vx *= 0.8
+			e.pace_t = mini(e.pace_t, 20)      # there (or as near as it gets): another side soon
+	else:
+		e.vx *= 0.7
+		if nd != 0.0 and int(e.t) % (55 if e.boss else 24) == 0:
+			var vy0 := sqrt(2.0 * gacc * HOP_H * (1.0 if e.boss else 0.6))
+			var air := 2.0 * vy0 / maxf(gacc, 0.01)
+			e.vx = nd * clampf((absf(e.nav_dx) + 4.0) / air, 0.4, spd * 2.2)
+			e.vy = -vy0
+		elif nd == 0.0:
+			e.pace_t = mini(e.pace_t, 20)
+	return true
+
+## the first of its moves of kind k ("" if it has none)
+static func _move_of_kind(e, k: String) -> String:
+	for mv in _moves(e):
+		if kind_of(mv) == k:
+			return mv
+	return ""
+
 ## a place along the ground, kept within its lair (`tether` cells either side of the middle)
 static func _in_lair(e, off: float) -> float:
 	return clampf(off, -e.tether, e.tether) if e.tether > 0.0 else off
 
 static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd: float, go: String) -> void:
 	e.t += 1.0
+	# walkers and hoppers find their way by the nav graph (the old ways below until it's built)
+	if (go == "walk" or go == "hop") and _nav_around(g, e, tgt, dx, gacc, spd, go):
+		return
 	# a wild creature follows you to another level: up onto a platform or ledge, down through a floor
 	# (a guardian keeps to its lair's floor)
 	if not e.boss and (go == "walk" or go == "hop"):
@@ -259,14 +330,11 @@ static func _clear_way(g, e, dirx: float, gacc: float) -> void:
 	var need: int = g._wall_height(e, dirx, CLIMB)
 	if need >= 0:
 		e.vy = -sqrt(2.0 * gacc * (float(need) + 4.0))
-	elif not e.boss:
-		e.pace = -e.pace                # (a creature can't break walls: it turns back)
+	else:
+		# too tall to hop: it turns back (a guardian used to chip at it, which only made a hole to
+		# shoot it through; it breaks in with a breach now, `tick`)
+		e.pace = -e.pace
 		e.pace_t = 60
-	elif g.frame - e.smash_f > 40:
-		e.smash_f = g.frame
-		var a := atan2(e.pos.y, e.pos.x)
-		g._explode(e.pos + g.basis_r(a) * dirx * (e.w * 0.5 + 4.0), 8.0, 1, 0, 0.0)
-		g.shake = maxf(g.shake, 5.0)
 
 ## fliers: ease toward a point, steering round anything solid in the way
 static func _steer(g, e, want: Vector2, spd: float, acc: float) -> void:
@@ -352,10 +420,12 @@ static func _begin(g, e, tgt, dx: float, dy: float, dist: float) -> void:
 static func _suits(e, k: String, dx: float, dy: float, dist: float) -> bool:
 	match k:
 		"charge":
+			if e.unreach_t > 60:
+				return false             # (you're out of its reach: no running at a wall)
 			# (along the ground: a creature only charges you on its own level, not off a ledge)
 			return e.on_ground and absf(dy) < (30.0 if e.boss else 12.0) and absf(dx) > (30.0 if e.boss else 12.0) and absf(dx) < 190.0
 		"slam":
-			return e.on_ground and dist < 170.0
+			return e.on_ground and dist < 170.0 and e.unreach_t <= 60
 		"spit":
 			return dist > 30.0 and dist < 240.0
 		"dive":
@@ -410,6 +480,7 @@ static func _run(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd:
 			if e.act_t <= 0:
 				e.act = ""
 				e.move = ""
+				e.breach = false
 				e.act_cd = int((50.0 if e.raged else 80.0) * (0.6 + randf() * 0.6)) if e.boss else int(e.d["def"].get("cd", 120)) + randi() % 60
 
 ## the moment the wind-up ends
@@ -508,7 +579,23 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				g.hurt(tgt, float(e.d["dmg"]) * 1.5, Vector2(dirx * 5.0, -3.0), true)
 			# into a wall: it breaks the wall and is stunned for a moment
 			var wh: int = g._wall_height(e, dirx, 8.0)
-			if e.act_t < (70 if e.boss else 40) and (wh < 0 or wh > 5):
+			if e.breach and (wh < 0 or wh > 5):
+				# a breach: a hole as big as itself through whatever's in the way (brick and stone,
+				# not warded stone or obsidian), then on through it; twice and still blocked, it gives up
+				e.vx = dirx * 0.5
+				if g.frame - e.smash_f > 16:
+					if e.breach_hits >= 2:
+						e.breach = false
+						FoeAI.start(e, "recover", 50)
+						return
+					e.smash_f = g.frame
+					e.breach_hits += 1
+					var fr: Vector2 = e.pos + g.basis_r(a) * dirx * (e.w * 0.5 + 2.0)
+					g._explode(fr, maxf(e.w, e.h) * 0.6 + 3.0, 2, 0, 0.0)
+					g.shake = maxf(g.shake, 12.0)
+					e.act_t = maxi(e.act_t, 30)
+				return
+			if e.act_t < (70 if e.boss else 40) and (wh < 0 or wh > 5) and g.frame - e.smash_f > 16:
 				if e.boss:
 					var front: Vector2 = e.pos + g.basis_r(a) * dirx * (e.w * 0.5 + 3.0)
 					g._explode(front, 8.0, 1, 0, 0.0)

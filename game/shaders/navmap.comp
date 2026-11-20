@@ -1,0 +1,47 @@
+// A coarse map of each player's collision grid, for the foes' pathfinding (scripts/nav.gd): one byte
+// per 4 x 4 block of grid cells. bit 0: something in it blocks (solid or powder, not a chest or a
+// platform or a door); bit 1: a one-way platform; bit 2: mostly liquid; bit 3: all of it blocks (doors
+// too); bit 4: a door (a foe that opens doors walks through it, any other is stopped).
+// Runs right after grid.comp, reading the grid as it wrote it (4 cells to a word, bits 0-5 the material).
+// pc.a = (GS, slot, NG, NGP): NG blocks a side, NGP bytes to a row (a multiple of 4).
+#include "common"
+layout(std430, set = 0, binding = 7) restrict readonly buffer Grid { uint g[]; } grid;
+layout(std430, set = 0, binding = 11) restrict writeonly buffer Nav { uint n[]; } nav;
+layout(local_size_x = 16, local_size_y = 16) in;
+
+uint block(int GS, int slot, int cx, int cy) {
+	int rowU = GS / 4;                     // words to a grid row
+	int base = slot * GS * rowU;
+	int solid = 0, plat = 0, liq = 0, door = 0;
+	for (int yy = 0; yy < 4; yy++) {
+		uint w = grid.g[base + (cy * 4 + yy) * rowU + cx];
+		for (int q = 0; q < 4; q++) {
+			uint t = (w >> (8u * uint(q))) & 63u;
+			uint k = KIND[t];
+			if (t == M_SCAFFOLD) plat++;
+			else if (t == M_WOODDOOR) door++;
+			else if (t != M_TREASURE && (k == K_SOLID || k == K_POWDER)) solid++;
+			else if (k == K_LIQUID) liq++;
+		}
+	}
+	uint b = 0u;
+	if (solid > 0) b |= 1u;
+	if (plat > 0) b |= 2u;
+	if (liq >= 8) b |= 4u;
+	if (solid + door == 16) b |= 8u;
+	if (door > 0) b |= 16u;
+	return b;
+}
+
+void main() {
+	int GS = pc.a.x, slot = pc.a.y, NG = pc.a.z, NGP = pc.a.w;
+	int gx = int(gl_GlobalInvocationID.x), cy = int(gl_GlobalInvocationID.y);
+	if (gx * 4 >= NGP || cy >= NG) return;
+	uint pk = 0u;
+	for (int q = 0; q < 4; q++) {
+		int cx = gx * 4 + q;
+		uint b = cx < NG ? block(GS, slot, cx, cy) : 9u;       // (past the edge: blocked)
+		pk |= b << (8u * uint(q));
+	}
+	nav.n[(slot * NG * NGP + cy * NGP) / 4 + gx] = pk;
+}

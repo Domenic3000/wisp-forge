@@ -12,6 +12,7 @@ run/max_fps=60
 
 [autoload]
 
+Watchdog="*res://scripts/watchdog.gd"
 Defs="*res://scripts/defs.gd"
 
 [display]

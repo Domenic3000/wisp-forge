@@ -100,17 +100,27 @@ class BP:
 	func is_fill(i: int, j: int) -> bool:
 		return ok(i, j) and (c[j * w + i] & 0x10000) != 0
 	func rect(i0: int, j0: int, i1: int, j1: int, m: int, flags := 0) -> void:
-		for j in range(mini(j0, j1), maxi(j0, j1) + 1):
-			for i in range(mini(i0, i1), maxi(i0, i1) + 1):
-				fg(i, j, m, flags)
+		# (fg for every cell of the box, written out: a call per cell was most of planning's time)
+		var a0 := maxi(mini(i0, i1), 0)
+		var a1 := mini(maxi(i0, i1), w - 1)
+		var mm := (m & 255) | flags
+		for j in range(maxi(mini(j0, j1), 0), mini(maxi(j0, j1), h - 1) + 1):
+			var row := j * w
+			for i in range(a0, a1 + 1):
+				var v := c[row + i]
+				c[row + i] = (v & 0xff00) | mm | (v & 0x40000)
 	## solid block with its own back wall (so it is part of the building's structure)
 	func solid(i0: int, j0: int, i1: int, j1: int, m: int, flags := 0) -> void:
 		rect(i0, j0, i1, j1, m, flags)
 		rect_bg(i0, j0, i1, j1, m)
 	func rect_bg(i0: int, j0: int, i1: int, j1: int, m: int, wall := true) -> void:
-		for j in range(mini(j0, j1), maxi(j0, j1) + 1):
-			for i in range(mini(i0, i1), maxi(i0, i1) + 1):
-				bg(i, j, m, wall)
+		var a0 := maxi(mini(i0, i1), 0)
+		var a1 := mini(maxi(i0, i1), w - 1)
+		var mb := ((m & 255) << 8) | (0x40000 if wall and m != 0 else 0)
+		for j in range(maxi(mini(j0, j1), 0), mini(maxi(j0, j1), h - 1) + 1):
+			var row := j * w
+			for i in range(a0, a1 + 1):
+				c[row + i] = (c[row + i] & 0xff300ff) | mb
 
 # ------------------------------------------------------------------ styles ---
 func _style(bname: String, kind: String) -> Dictionary:
@@ -259,6 +269,11 @@ func _any_wet(x0: int, w: int) -> bool:
 # ---------------------------------------------------------------- planning ---
 ## Plans every structure on the planet. Deterministic for a given planet, so it can be
 ## re-run when a saved world is loaded (for the region names) without stamping again.
+var _kind := PackedInt32Array()     # Defs.KIND, our own copy (read by several threads at once)
+var _gmf := PackedInt32Array()      # per biome: top material, its depth, the one under it
+var _span := PackedInt32Array()     # Defs.SPAN, our own copy
+var plan_times := {}     # ms per step of the last plan (the test mode prints it)
+
 func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, boss_angle: float, build: bool) -> void:
 	N0 = Defs.NS
 	surf = surface
@@ -267,6 +282,13 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	biome_names = []
 	for b in planet["biomes"]:
 		biome_names.append(str(b))
+	# the biomes with a guardian (a planet says which; the classic ones have one in every biome)
+	guardian_biomes = (planet.get("guardians", biome_names) as Array).duplicate()
+	_kind = Defs.KIND.duplicate()
+	_span = Defs.SPAN.duplicate()
+	_gmf.clear()
+	for bn in biome_names:
+		_gmf.append_array(PackedInt32Array(_ground_mats_of(bn)))
 	spawn_col = int(fposmod(spawn_angle, TAU) / TAU * N0)
 	boss_col = int(fposmod(boss_angle, TAU) / TAU * N0)
 	structs.clear()
@@ -283,7 +305,10 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	warden_list.clear()
 	lair_why.clear()
 	_lair_cols.clear()
+	_jobs.clear()
 	used.append(Vector2i(spawn_col - 70, spawn_col + 70))
+	plan_times.clear()
+	var pt := Time.get_ticks_usec()
 	# something to discover a short walk from where you arrive
 	for tries in 40:
 		var side := 1 if tries % 2 == 0 else -1
@@ -294,7 +319,10 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		if ok:
 			break
 
-	var target := 26
+	plan_times["first"] = (Time.get_ticks_usec() - pt) / 1000
+	pt = Time.get_ticks_usec()
+	# (as many to the column as on a round of 8192: a bigger planet has more of everything)
+	var target := 26 * N0 / 8192
 	var placed := 0
 	for tries in 900:
 		if placed >= target:
@@ -302,6 +330,8 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		var x := rng.randi_range(0, N0 - 1)
 		if _try_place(x, false, build):
 			placed += 1
+	plan_times["structures"] = (Time.get_ticks_usec() - pt) / 1000
+	pt = Time.get_ticks_usec()
 	# dungeons: a gatehouse on the surface over a maze of halls below
 	var dn := 0
 	for tries in 80:
@@ -309,9 +339,13 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 			break
 		if _dungeon(rng.randi_range(0, N0 - 1), build):
 			dn += 1
+	plan_times["dungeons"] = (Time.get_ticks_usec() - pt) / 1000
+	pt = Time.get_ticks_usec()
 	# underground: sealed vaults, out of sight
-	for k in 6:
+	for k in 6 * N0 / 8192:
 		_vault(rng.randi_range(0, N0 - 1), build)
+	plan_times["vaults"] = (Time.get_ticks_usec() - pt) / 1000
+	pt = Time.get_ticks_usec()
 	# each biome's guardian, in a lair in the middle of a stretch of its biome: last, in the room
 	# the rest left, with a random sequence of its own (so adding them moved nothing else)
 	var keep_rng := rng
@@ -319,6 +353,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	rng.seed = int(planet["seed"]) * 131 + 977
 	_lairs(build)
 	rng = keep_rng
+	plan_times["lairs"] = (Time.get_ticks_usec() - pt) / 1000
 
 func _pick(weights: Dictionary) -> String:
 	var tot := 0.0
@@ -400,7 +435,7 @@ func _built(bp: BP, i: int, j: int) -> bool:
 	var v: int = bp.c[j * bp.w + i]
 	var f := v & 255
 	var g := (v >> 8) & 255
-	return (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0)
+	return (f != 255 and f != 0 and _kind[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0)
 
 ## Is cell (i, j) untouched natural ground (outside the blueprint or left as it is, below the surface)?
 func _natural(bp: BP, i: int, j: int) -> bool:
@@ -417,19 +452,21 @@ func _natural(bp: BP, i: int, j: int) -> bool:
 func _anchor_and_tidy(bp: BP) -> int:
 	var w := bp.w
 	var h := bp.h
-	var n_all := w * h
 	var removed_all := 0
 	for it in 6:
 		var removed := _stabilize_pass(bp)
 		removed_all += removed
 		if removed == 0:
 			break
-	for k in n_all:
-		var v: int = bp.c[k]
+	var cc: PackedInt32Array = bp.c
+	var kind := _kind
+	for k in w * h:
+		var v: int = cc[k]
 		var f := v & 255
 		var g := (v >> 8) & 255
-		if (f != 255 and f != 0 and Defs.KIND[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0):
-			bp.c[k] = v | F_ANCHOR
+		if (f != 255 and f != 0 and kind[f] == Defs.K_SOLID) or (g != 255 and g != 0 and (v & F_WALL) != 0):
+			cc[k] = v | F_ANCHOR
+	bp.c = cc
 	_place_chests(bp)
 	return removed_all
 
@@ -439,17 +476,27 @@ func _anchor_and_tidy(bp: BP) -> int:
 ## fails slides sideways along the same floor to the nearest good one, or the chest is left out.
 ## Chests also keep their distance from each other.
 func _place_chests(bp: BP) -> void:
+	if bp.chests.is_empty():
+		return
+	var w := bp.w
+	var h := bp.h
+	var cc: PackedInt32Array = bp.c
+	# the natural ground row of columns -3 .. w + 2 (index + 3)
+	var gjx := PackedInt32Array()
+	gjx.resize(w + 6)
+	for gi in w + 6:
+		gjx[gi] = ground_row(bp.x0 + gi - 3) - bp.y0
 	var keep := []
 	for q in bp.chests:
 		var found := false
 		# a chest planned indoors (a built back wall behind it) stays indoors
-		var indoors := _backed(bp, q.x, q.y - 1, 1)
+		var indoors := _backed(cc, w, h, q.x, q.y - 1, 1)
 		for d in range(0, 25):
 			for sgn in ([1] if d == 0 else [1, -1]):
 				var i: int = q.x + d * sgn
-				if indoors and not _backed(bp, i - 2, q.y - 1, Defs.CHEST_W + 4):
+				if indoors and not _backed(cc, w, h, i - 2, q.y - 1, Defs.CHEST_W + 4):
 					continue
-				if _chest_spot_ok(bp, i, q.y, keep):
+				if _chest_spot_ok(cc, w, h, gjx, _kind, i, q.y, keep):
 					keep.append(Vector2i(i, q.y))
 					found = true
 					break
@@ -457,61 +504,69 @@ func _place_chests(bp: BP) -> void:
 				break
 	bp.chests = keep
 
-## is there a built back wall behind all n columns from i on, in row j?
-func _backed(bp: BP, i: int, j: int, n: int) -> bool:
+## is there a built back wall behind all n columns from i on, in row j? (cells of a w x h blueprint)
+static func _backed(cc: PackedInt32Array, w: int, h: int, i: int, j: int, n: int) -> bool:
+	if j < 0 or j >= h:
+		return false
 	for k in n:
-		var g := bp.getb(i + k, j)
+		var x := i + k
+		if x < 0 or x >= w:
+			return false
+		var g := (cc[j * w + x] >> 8) & 255
 		if g == 0 or g == 255:
 			return false
 	return true
 
-func _floor_at(bp: BP, i: int, j: int) -> bool:
-	var f := bp.getf(i, j)
-	if f == 255:
-		return j >= ground_row(bp.x0 + i) - bp.y0    # natural ground
-	return f != 0 and Defs.KIND[f] == Defs.K_SOLID and f != Defs.SCAFFOLD
-
-func _open_at(bp: BP, i: int, j: int) -> bool:
-	var f := bp.getf(i, j)
-	if f == 255:
-		return j < ground_row(bp.x0 + i) - bp.y0 - 1    # natural air above the surface
-	return f == 0
-
-func _chest_spot_ok(bp: BP, i: int, fl: int, taken: Array) -> bool:
-	if i < 1 or i + Defs.CHEST_W >= bp.w - 1:
+## (cells cc of a w x h blueprint; gjx: the natural ground row of columns -3 .. w + 2)
+static func _chest_spot_ok(cc: PackedInt32Array, w: int, h: int, gjx: PackedInt32Array, kind: PackedInt32Array, i: int, fl: int, taken: Array) -> bool:
+	if i < 1 or i + Defs.CHEST_W >= w - 1 or fl < 0 or fl >= h:
 		return false
 	for t in taken:
 		if t.y == fl and absi(t.x - i) < Defs.CHEST_W + 8:
 			return false
 	for ci in range(i, i + Defs.CHEST_W):
-		if not _floor_at(bp, ci, fl):
+		# a floor: built solid (not a platform), or natural ground where the blueprint leaves it
+		var f := cc[fl * w + ci] & 255
+		if f == 255:
+			if fl < gjx[ci + 3]:
+				return false
+		elif f == 0 or kind[f] != Defs.K_SOLID or f == Defs.SCAFFOLD:
 			return false
-		for j0 in range(fl - Defs.CHEST_H, fl):
-			if bp.getb(ci, j0) == Defs.DECOR:
+		for j0 in range(maxi(fl - Defs.CHEST_H, 0), fl):
+			if ((cc[j0 * w + ci] >> 8) & 255) == Defs.DECOR:
 				return false                  # not in front of furniture
 	# open air around and above: room to see it and open it
 	for j in range(fl - Defs.CHEST_H - 5, fl):
 		for ci in range(i - 2, i + Defs.CHEST_W + 2):
-			if not _open_at(bp, ci, j):
+			var fo := 255
+			if j >= 0 and j < h and ci >= 0 and ci < w:
+				fo = cc[j * w + ci] & 255
+			if fo == 255:
+				if j >= gjx[ci + 3] - 1:
+					return false              # (natural ground, not the air above it)
+			elif fo != 0:
 				return false
 	# nothing loose overhead, up to the ceiling
 	for ci in range(i - 1, i + Defs.CHEST_W + 1):
 		var j := fl - Defs.CHEST_H - 6
 		while j >= 0:
-			var f := bp.getf(ci, j)
-			if f != 0 and f != 255:
-				if Defs.KIND[f] == Defs.K_POWDER or Defs.KIND[f] == Defs.K_LIQUID:
+			var f2 := cc[j * w + ci] & 255
+			if f2 != 0 and f2 != 255:
+				if kind[f2] == Defs.K_POWDER or kind[f2] == Defs.K_LIQUID:
 					return false
 				break
 			j -= 1
 	return true
 
 ## One round of support on the blueprint (Dial's algorithm over front and back cells). Returns
-## how many cells it removed.
+## how many cells it removed. (All on local arrays: buckets are linked lists in flat arrays.)
 func _stabilize_pass(bp: BP) -> int:
 	var w := bp.w
 	var h := bp.h
 	var n_all := w * h
+	var cc: PackedInt32Array = bp.c
+	var kind := _kind
+	var span := _span
 	var fs := PackedByteArray()
 	var bs := PackedByteArray()
 	fs.resize(n_all)
@@ -528,162 +583,302 @@ func _stabilize_pass(bp: BP) -> int:
 	groundj.resize(w)
 	for i in w:
 		groundj[i] = ground_row(bp.x0 + i) - bp.y0
-	for k in n_all:
-		var v: int = bp.c[k]
-		var f := v & 255
-		var g := (v >> 8) & 255
-		if f != 255 and f != 0:
-			fgb[k] = 1 if Defs.KIND[f] == Defs.K_SOLID else (2 if Defs.KIND[f] == Defs.K_POWDER else 0)
-		if f == 255 and k / w >= groundj[k % w]:
-			nat[k] = 1
-		if g != 255 and g != 0 and (v & F_WALL) != 0:
-			bgb[k] = 1
-	var buckets := []
-	for c in 64:
-		buckets.append([])     # plain Arrays: shared, so appending while scanning a bucket works
+	for j in h:
+		var row := j * w
+		for i in w:
+			var k := row + i
+			var v: int = cc[k]
+			var f := v & 255
+			var g := (v >> 8) & 255
+			if f != 255 and f != 0:
+				var kd := kind[f]
+				fgb[k] = 1 if kd == Defs.K_SOLID else (2 if kd == Defs.K_POWDER else 0)
+			elif f == 255 and j >= groundj[i]:
+				nat[k] = 1
+			if g != 255 and g != 0 and (v & F_WALL) != 0:
+				bgb[k] = 1
+	# buckets by cost (0..63): linked lists of entries (node = cell * 2 + layer)
+	var e_node := PackedInt32Array()
+	var e_next := PackedInt32Array()
+	var head := PackedInt32Array()
+	head.resize(64)
+	head.fill(-1)
 	# seeds: resting on (or beside) natural ground, foundations
-	for k in n_all:
-		var i := k % w
-		var j := k / w
-		var below_nat := j + 1 >= h or nat[k + w] == 1 or (j + 1 < h and fgb[k + w] == 2)
-		if j + 1 >= h:
-			below_nat = j + 1 >= groundj[i]
-		var side_nat := (i == 0 and j >= groundj[i]) or (i == w - 1 and j >= groundj[i]) or (i > 0 and nat[k - 1] == 1) or (i < w - 1 and nat[k + 1] == 1) or (j > 0 and nat[k - w] == 1)
-		var v2: int = bp.c[k]
-		var flagged := (v2 & (F_FILL | F_ANCHOR)) != 0
-		if fgb[k] == 1:
-			var sv := 0 if (below_nat or flagged) else (1 if side_nat else 99)
-			if sv < 99:
-				fs[k] = sv
-				buckets[sv].append(k * 2)
-		if bgb[k] == 1:
-			var bv := 0 if flagged else (1 if below_nat else (2 if side_nat else 99))
-			if bv < 99:
-				bs[k] = bv
-				buckets[bv].append(k * 2 + 1)
+	for j in h:
+		var row2 := j * w
+		for i in w:
+			var k := row2 + i
+			if fgb[k] != 1 and bgb[k] != 1:
+				continue
+			var below_nat := false
+			if j + 1 >= h:
+				below_nat = j + 1 >= groundj[i]
+			else:
+				below_nat = nat[k + w] == 1 or fgb[k + w] == 2
+			var side_nat := ((i == 0 or i == w - 1) and j >= groundj[i]) or (i > 0 and nat[k - 1] == 1) or (i < w - 1 and nat[k + 1] == 1) or (j > 0 and nat[k - w] == 1)
+			var flagged := (cc[k] & (F_FILL | F_ANCHOR)) != 0
+			if fgb[k] == 1:
+				var sv := 0 if (below_nat or flagged) else (1 if side_nat else 99)
+				if sv < 99:
+					fs[k] = sv
+					e_node.append(k * 2)
+					e_next.append(head[sv])
+					head[sv] = e_node.size() - 1
+			if bgb[k] == 1:
+				var bv := 0 if flagged else (1 if below_nat else (2 if side_nat else 99))
+				if bv < 99:
+					bs[k] = bv
+					e_node.append(k * 2 + 1)
+					e_next.append(head[bv])
+					head[bv] = e_node.size() - 1
 	for c in 64:
-		var q: Array = buckets[c]
-		var qi := 0
-		while qi < q.size():
-			var node: int = q[qi]
-			qi += 1
+		while head[c] >= 0:
+			var ei := head[c]
+			head[c] = e_next[ei]
+			var node: int = e_node[ei]
 			var k := node >> 1
 			var layer := node & 1
 			if (fs[k] if layer == 0 else bs[k]) != c:
 				continue
 			var i := k % w
 			var j := k / w
-			# neighbours: [index, is_up] for up, down, left, right
-			var cand := []
-			if j > 0: cand.append([k - w, 0])
-			if j + 1 < h: cand.append([k + w, 1])
-			if i > 0: cand.append([k - 1, 2])
-			if i + 1 < w: cand.append([k + 1, 3])
-			if layer == 0:
-				for e in cand:
-					var nk: int = e[0]
-					var dirn: int = e[1]
+			for dirn in 4:
+				var nk := 0
+				if dirn == 0:
+					if j == 0:
+						continue
+					nk = k - w
+				elif dirn == 1:
+					if j + 1 >= h:
+						continue
+					nk = k + w
+				elif dirn == 2:
+					if i == 0:
+						continue
+					nk = k - 1
+				else:
+					if i + 1 >= w:
+						continue
+					nk = k + 1
+				if layer == 0:
 					if fgb[nk] == 1:
 						var nc := c if dirn == 0 else c + 1      # the block above rests on this one
 						if nc < fs[nk]:
 							fs[nk] = nc
-							buckets[mini(nc, 63)].append(nk * 2)
+							e_node.append(nk * 2)
+							e_next.append(head[mini(nc, 63)])
+							head[mini(nc, 63)] = e_node.size() - 1
 					if bgb[nk] == 1:
 						var nb := c + 1 if dirn == 0 else c + 2  # a back wall leans on blocks around it
 						if nb < bs[nk]:
 							bs[nk] = nb
-							buckets[mini(nb, 63)].append(nk * 2 + 1)
+							e_node.append(nk * 2 + 1)
+							e_next.append(head[mini(nb, 63)])
+							head[mini(nb, 63)] = e_node.size() - 1
+				elif bgb[nk] == 1:
+					var nc2 := c if dirn == 0 else c + 1
+					if nc2 < bs[nk]:
+						bs[nk] = nc2
+						e_node.append(nk * 2 + 1)
+						e_next.append(head[mini(nc2, 63)])
+						head[mini(nc2, 63)] = e_node.size() - 1
+			if layer == 0:
 				if bgb[k] == 1 and c + 1 < bs[k]:
 					bs[k] = c + 1
-					buckets[mini(c + 1, 63)].append(k * 2 + 1)
+					e_node.append(k * 2 + 1)
+					e_next.append(head[mini(c + 1, 63)])
+					head[mini(c + 1, 63)] = e_node.size() - 1
 			else:
-				for e in cand:
-					var nk2: int = e[0]
-					var dirn2: int = e[1]
-					if bgb[nk2] == 1:
-						var nc2 := c if dirn2 == 0 else c + 1
-						if nc2 < bs[nk2]:
-							bs[nk2] = nc2
-							buckets[mini(nc2, 63)].append(nk2 * 2 + 1)
-				var f3: int = bp.c[k] & 255
+				var f3: int = cc[k] & 255
 				if fgb[k] == 1 and f3 != Defs.TREASURE and c + 1 < fs[k]:
 					fs[k] = c + 1
-					buckets[mini(c + 1, 63)].append(k * 2)
+					e_node.append(k * 2)
+					e_next.append(head[mini(c + 1, 63)])
+					head[mini(c + 1, 63)] = e_node.size() - 1
 	var removed := 0
 	for k in n_all:
-		var v3: int = bp.c[k]
-		if fgb[k] == 1 and fs[k] > Defs.SPAN[v3 & 255]:
-			_note_cut(bp, Defs.NAMES[v3 & 255])
+		if fgb[k] != 1 and bgb[k] != 1:
+			continue
+		var v3: int = cc[k]
+		var v0 := v3
+		if fgb[k] == 1 and fs[k] > span[v3 & 255]:
+			_note_cut(bp, Defs.NAMES[v3 & 255], k)
 			v3 = v3 & ~255
 			removed += 1
-		if bgb[k] == 1 and bs[k] > Defs.SPAN[(v3 >> 8) & 255]:
-			_note_cut(bp, "bg " + Defs.NAMES[(v3 >> 8) & 255])
+		if bgb[k] == 1 and bs[k] > span[(v3 >> 8) & 255]:
+			_note_cut(bp, "bg " + Defs.NAMES[(v3 >> 8) & 255], k)
 			v3 = v3 & ~0xff00 & ~F_WALL
 			removed += 1
-		bp.c[k] = v3
+		if v3 != v0:
+			cc[k] = v3
+	bp.c = cc
 	return removed
 
 ## what the soundness pass cut away, by material (for the test report)
-func _note_cut(bp: BP, nm: String) -> void:
+func _note_cut(bp: BP, nm: String, k := -1) -> void:
 	var cuts: Dictionary = bp.meta.get("cuts", {})
 	cuts[nm] = int(cuts.get(nm, 0)) + 1
 	bp.meta["cuts"] = cuts
+	if k >= 0:
+		var at: Array = bp.meta.get("cut_at", [])
+		if at.size() < 40:
+			at.append(Vector2i(k % bp.w, k / bp.w))
+		bp.meta["cut_at"] = at
 
+## A blueprint is done: queued for finishing (weathering, the soundness pass, the facts the game and
+## the tests keep), which `finish_all` runs for every queued blueprint at once, one per core. Each job
+## touches only its own blueprint and the planet's surface, so they can't disturb each other; their
+## results are gathered in the order they were planned, so the planet comes out the same every time.
 func _finish(bp: BP, build: bool) -> void:
 	if not build:
 		return
-	_roughen_underground(bp)
+	_jobs.append({"bp": bp, "rs": rng.randi()})
+
+var _jobs := []
+
+## finish every queued blueprint, spread over the cores (waits for them)
+func finish_all() -> void:
+	var gid := finish_start()
+	if gid >= 0:
+		WorkerThreadPool.wait_for_group_task_completion(gid)
+	finish_collect()
+
+## start finishing the queued blueprints in the background (-1: nothing to do); `finish_collect` once
+## WorkerThreadPool says the group is done
+func finish_start() -> int:
+	if _jobs.is_empty():
+		return -1
+	# each job works through a planner of its own (a copy of what finishing reads: the surface, the
+	# biomes, the tables): every call of a script's function counts a reference on the object it's
+	# called on, and all the threads counting on one shared planner slowed each other down tenfold
+	for jb in _jobs:
+		var helper = get_script().new()
+		helper._take_terrain(self)
+		jb["fin"] = helper
+	return WorkerThreadPool.add_group_task(_finish_job, _jobs.size(), -1, true, "finish blueprints")
+
+## (a finishing helper) what finishing a blueprint reads, from the planner
+func _take_terrain(src) -> void:
+	N0 = src.N0
+	surf = src.surf.duplicate()
+	biome_names = src.biome_names.duplicate(true)
+	_kind = src._kind.duplicate()
+	_span = src._span.duplicate()
+	_gmf = src._gmf.duplicate()
+
+func finish_collect() -> void:
+	var cells_k := 0
+	for jk in _jobs.size():
+		var jb: Dictionary = _jobs[jk]
+		if not jb.has("out"):
+			_finish_job(jk)      # (only if the pool never ran it)
+		var o: Dictionary = jb["out"]
+		structs.append(o["struct"])
+		chest_list.append_array(o["chests"])
+		door_list.append_array(o["doors"])
+		infos.append(o["info"])
+		if o["settle"] != null:
+			settle.append(o["settle"])
+		for key in ["f: weather", "f: anchor", "f: scans"]:
+			plan_times[key] = int(plan_times.get(key, 0)) + int(o["ms"][key])
+		cells_k += (jb["bp"] as BP).c.size()
+	plan_times["f: cells (k)"] = cells_k / 1000
+	plan_times["f: jobs"] = _jobs.size()
+	_jobs.clear()
+
+## (worker thread) finish queued blueprint k, through its own helper
+func _finish_job(k: int) -> void:
+	var jb: Dictionary = _jobs[k]
+	var helper = jb.get("fin", self)
+	jb["out"] = helper._finish_bp(jb["bp"], int(jb["rs"]))
+	jb.erase("fin")
+
+func _finish_bp(bp: BP, rs: int) -> Dictionary:
+	var tf0 := Time.get_ticks_usec()
+	_roughen_underground(bp, rs)
 	_weather_ground_line(bp)
+	var tf1 := Time.get_ticks_usec()
 	# what the tests check later: the built cells (not fills and foundations), before anchoring
 	var cells := PackedInt32Array()
-	for k in bp.c.size():
-		var v0: int = bp.c[k]
+	var kind := _kind
+	var cc0: PackedInt32Array = bp.c
+	for k0 in cc0.size():
+		var v0: int = cc0[k0]
 		var f0: int = v0 & 255
-		if f0 != 255 and f0 != 0 and Defs.KIND[f0] == Defs.K_SOLID and (v0 & (F_FILL | F_ANCHOR)) == 0:
-			cells.append(k)
+		if f0 != 255 and f0 != 0 and kind[f0] == Defs.K_SOLID and (v0 & (F_FILL | F_ANCHOR)) == 0:
+			cells.append(k0)
+	var tf2 := Time.get_ticks_usec()
 	var unsound := _anchor_and_tidy(bp)
+	var tf3 := Time.get_ticks_usec()
 	var kept := PackedInt32Array()
-	for k in cells:
-		if (bp.c[k] & 255) != 0:
-			kept.append(k)
+	var cc: PackedInt32Array = bp.c
+	for k1 in cells:
+		if (cc[k1] & 255) != 0:
+			kept.append(k1)
 	# (anchored on itself: it goes in cell for cell at any depth, and its doors, chests and guards
 	# are placed the same way, _bp_at)
 	var anc := bp.anchor()
-	structs.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c, "ax": posmod(anc.x, N0), "aw": anc.y})
 	# the rows it really writes (its box has untouched margins): the tests check they lie in the
-	# surface shell, so no seam ever runs through a structure
+	# surface shell, so no seam ever runs through a structure; and the box of whatever in it is
+	# loose (rubble, sand, water: powder or liquid that isn't anchored), the only part that settles
 	var rtop := bp.y0 + bp.h
 	var rbot := bp.y0 - 1
-	for k2 in bp.c.size():
-		var v2: int = bp.c[k2]
-		if (v2 & 255) != 255 or ((v2 >> 8) & 255) != 255:
-			var row2: int = bp.y0 + k2 / bp.w
-			rtop = mini(rtop, row2)
-			rbot = maxi(rbot, row2)
-	var solid := kept.size()
+	var li0 := bp.w
+	var li1 := -1
+	var lj0 := bp.h
+	var lj1 := -1
 	# props (background furniture): how many pixels, and how many ended up behind something solid
 	var decor := 0
 	var decor_hid := 0
-	for v1 in bp.c:
-		if ((v1 >> 8) & 255) == Defs.DECOR:
+	var bw := bp.w
+	for k2 in cc.size():
+		var v2: int = cc[k2]
+		var f2 := v2 & 255
+		var b2 := (v2 >> 8) & 255
+		if f2 == 255 and b2 == 255:
+			continue
+		var row2: int = k2 / bw
+		rtop = mini(rtop, bp.y0 + row2)
+		rbot = maxi(rbot, bp.y0 + row2)
+		if f2 != 255 and f2 != 0:
+			var kd: int = kind[f2]
+			if (kd == Defs.K_POWDER or kd == Defs.K_LIQUID) and (v2 & F_ANCHOR) == 0:
+				var col2: int = k2 - row2 * bw
+				li0 = mini(li0, col2)
+				li1 = maxi(li1, col2)
+				lj0 = mini(lj0, row2)
+				lj1 = maxi(lj1, row2)
+		if b2 == Defs.DECOR:
 			decor += 1
-			var f1: int = v1 & 255
-			if f1 != 0 and f1 != 255 and Defs.KIND[f1] != Defs.K_EMPTY:
+			if f2 != 0 and f2 != 255 and kind[f2] != Defs.K_EMPTY:
 				decor_hid += 1
+	var solid := kept.size()
 	var ch := []
+	var chs := []
 	for q in bp.chests:
 		ch.append(Vector2i(posmod(bp.x0 + q.x, N0), bp.y0 + q.y))
 		# the chest object: its middle, standing on the floor row
 		var rr := Defs.R_TOP - float(bp.y0 + q.y) + Defs.CHEST_H * 0.5 + 0.05
-		chest_list.append({"pos": _bp_at(bp, float(q.x + Defs.CHEST_W / 2), bp.y0 + q.y, rr), "ruined": bp.ruined})
+		chs.append({"pos": _bp_at(bp, float(q.x + Defs.CHEST_W / 2), bp.y0 + q.y, rr), "ruined": bp.ruined})
+	var drs := []
 	for d in bp.doors:
 		var dr := Defs.R_TOP - float(bp.y0 + int(d[1])) - float(d[3]) * 0.5
-		door_list.append({"pos": _bp_at(bp, float(d[0]) + float(d[2]) * 0.5, bp.y0 + int(d[1]) + int(d[3]) / 2, dr), "w": int(d[2]), "h": int(d[3]), "side": int(d[4]),
+		drs.append({"pos": _bp_at(bp, float(d[0]) + float(d[2]) * 0.5, bp.y0 + int(d[1]) + int(d[3]) / 2, dr), "w": int(d[2]), "h": int(d[3]), "side": int(d[4]),
 			"col": posmod(bp.x0 + int(d[0]), N0), "row": bp.y0 + int(d[1]), "ax": posmod(anc.x, N0), "aw": anc.y})
-	infos.append({"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "unsound": unsound, "rows": [rtop, rbot], "ax": posmod(anc.x, N0), "aw": anc.y, "data": bp.c if KEEP_DATA else PackedInt32Array()})
-	var cj := bp.y0 + bp.h / 2
-	var r := Defs.R_TOP - (cj + 0.5)
-	settle.append([_bp_at(bp, float(bp.w / 2) + 0.5, cj, r), maxf(bp.w, bp.h) * 0.5 + 26.0])
+	var info := {"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "ruined": bp.ruined, "solid": solid, "chests": ch, "cells": kept, "meta": bp.meta, "decor": decor, "decor_hid": decor_hid, "unsound": unsound, "rows": [rtop, rbot], "ax": posmod(anc.x, N0), "aw": anc.y, "data": bp.c if KEEP_DATA else PackedInt32Array()}
+	# settling (gpu.settle, right after stamping) only where something can still move: a window round
+	# the loose matter, reaching further down than up (it falls), none for a structure with nothing loose
+	var st = null
+	if li1 >= 0:
+		var lw := li1 - li0 + 1
+		var lh := lj1 - lj0 + 1
+		var cj := bp.y0 + (lj0 + lj1) / 2 + 16
+		var r := Defs.R_TOP - (cj + 0.5)
+		st = [_bp_at(bp, float(li0 + li1) * 0.5 + 0.5, cj, r), maxf(float(lw), float(lh) + 32.0) * 0.5 + 30.0]
+	var tf4 := Time.get_ticks_usec()
+	return {"struct": {"x0": posmod(bp.x0, N0), "y0": bp.y0, "w": bp.w, "h": bp.h, "data": bp.c, "ax": posmod(anc.x, N0), "aw": anc.y},
+		"chests": chs, "doors": drs, "info": info, "settle": st,
+		"ms": {"f: weather": (tf1 - tf0) / 1000, "f: anchor": (tf3 - tf2) / 1000, "f: scans": (tf2 - tf1 + tf4 - tf3) / 1000}}
 
 ## Where column i of blueprint bp (fractional: i + 0.5 is a cell's middle) is in row `row`, at
 ## radius r: as the stamp puts it, cell for cell in that row's shell (Defs.stamp_x).
@@ -725,7 +920,7 @@ func _guard(bp: BP, i: int, fl: int, type: String) -> void:
 func _top_solid(bp: BP, i: int) -> int:
 	for j in bp.h:
 		var f := bp.getf(i, j)
-		if f != 0 and f != 255 and Defs.KIND[f] == Defs.K_SOLID:
+		if f != 0 and f != 255 and _kind[f] == Defs.K_SOLID:
 			return j
 	return bp.h
 
@@ -1015,14 +1210,21 @@ func _foundation(bp: BP, ox: int, base: int, w: int, m: int) -> void:
 
 ## the ground's own materials at a column: [top, top depth, what lies under it] (anything that would
 ## run or flow, like mud, becomes dirt; a snow cap is the snow's business, not ours)
+## the ground's layers at a surface column: [top material, its depth, the material under it]
+## (worked out once per biome at the start of `plan`: blueprints are finished on several threads at
+## once, and reading the shared tables from all of them at the same time slowed them down)
 func _ground_mats(col: int) -> Array:
-	var bd: Dictionary = Defs.BIOMES.get(biome(col), {})
+	var bi := clampi(int(surf[posmod(col, N0) * 8 + 1]), 0, biome_names.size() - 1) * 3
+	return [_gmf[bi], _gmf[bi + 1], _gmf[bi + 2]]
+
+func _ground_mats_of(bname: String) -> Array:
+	var bd: Dictionary = Defs.BIOMES.get(bname, {})
 	var top: int = bd.get("top", Defs.DIRT)
 	var sub: int = bd.get("sub", Defs.DIRT)
 	var td: int = bd.get("topD", 1)
 	for k in 2:
 		var mm: int = top if k == 0 else sub
-		var kd: int = Defs.KIND[mm]
+		var kd: int = _kind[mm]
 		if kd != Defs.K_SOLID and kd != Defs.K_POWDER:
 			if k == 0:
 				top = Defs.GRASS   # gen.comp packs a liquid top layer (mud) to grass over dirt
@@ -1184,63 +1386,96 @@ func _break(bp: BP, i: int, j: int) -> void:
 ## edge instead of a ruler-straight one: along every side that meets natural ground, the stones
 ## reach out 0-3 cells further, course by course (runs of 2-4 rows), and flare out near the surface
 ## like a footing. Only natural ground is replaced (fill), so nothing built is touched.
-func _roughen_underground(bp: BP) -> void:
+func _roughen_underground(bp: BP, rs: int) -> void:
 	var w := bp.w
 	var h := bp.h
+	# (on a local copy of the cells, written back at the end: calling the blueprint's own helpers for
+	# every cell was most of the time it took)
+	var cc: PackedInt32Array = bp.c
 	var gj := PackedInt32Array()
 	gj.resize(w)
 	for i in w:
 		gj[i] = ground_row(bp.x0 + i) - bp.y0
-	var rs := rng.randi()
-	var adds := []
+	var rough := PackedByteArray()
+	rough.resize(256)
+	for rm in [Defs.MASONRY, Defs.BRICK, Defs.SANDSTONE, Defs.OBSIDIAN, Defs.MOSSBLOCK, Defs.RUNESTONE]:
+		rough[rm] = 1
+	var adds := PackedInt32Array()          # (column, row, material) in threes
 	for j in h:
+		var row := j * w
 		for i in w:
-			var f := bp.getf(i, j)
-			if not _rough_mat(f) or bp.is_fill(i, j):
+			var v := cc[row + i]
+			var f := v & 255
+			if rough[f] == 0 or (v & F_FILL) != 0:
 				continue
-			for dir in [-1, 1, 0]:
-				var di: int = dir
-				var dj := 1 if dir == 0 else 0
+			for dk in 3:
+				var dv := -1 if dk == 0 else (1 if dk == 1 else 0)     # left, right, down
+				var di := dv
+				var dj := 1 if dv == 0 else 0
 				var ni := i + di
 				var nj := j + dj
-				if not bp.ok(ni, nj) or bp.getf(ni, nj) != 255 or nj <= gj[ni]:
+				if ni < 0 or ni >= w or nj >= h or (cc[nj * w + ni] & 255) != 255 or nj <= gj[ni]:
 					continue
 				# the course this edge cell belongs to (rows in runs of 2-4) and how far it reaches
-				var course := (j + int(_blockr(rs, i, 0, 3) * 3.0)) / (2 + int(_blockr(rs, i, j / 4, 4) * 2.99))
-				var reach := int(_blockr(rs, i * 3 + dir, course, 5) * 3.99)
-				if dir != 0 and nj - gj[ni] < 7:
+				var b1 := float(posmod(hash(Vector3i(i, 0, rs + 3 * 7919)), 10007)) / 10007.0
+				var b2 := float(posmod(hash(Vector3i(i, j / 4, rs + 4 * 7919)), 10007)) / 10007.0
+				var course := (j + int(b1 * 3.0)) / (2 + int(b2 * 2.99))
+				var reach := int(float(posmod(hash(Vector3i(i * 3 + dv, course, rs + 5 * 7919)), 10007)) / 10007.0 * 3.99)
+				if dv != 0 and nj - gj[ni] < 7:
 					reach += 2                     # a footing near the surface
-				if dir == 0:
+				if dv == 0:
 					reach = mini(reach, 2)
 				for k in range(1, reach + 1):
-					adds.append(Vector3i(i + di * k, j + dj * k, f))
+					adds.append(i + di * k)
+					adds.append(j + dj * k)
+					adds.append(f)
 	# written outright, not as a fill: a fill only goes where the world is open, so the ragged edge
 	# would show in caves but never where the masonry meets solid earth, which is where it matters
-	for a in adds:
-		if bp.ok(a.x, a.y) and bp.getf(a.x, a.y) == 255 and a.y > gj[a.x]:
-			bp.fg(a.x, a.y, a.z, F_ANCHOR)
+	for a in range(0, adds.size(), 3):
+		var ax := adds[a]
+		var ay := adds[a + 1]
+		if ax < 0 or ay < 0 or ax >= w or ay >= h:
+			continue
+		var ak := ay * w + ax
+		if (cc[ak] & 255) == 255 and ay > gj[ax]:
+			cc[ak] = (cc[ak] & 0xff00) | (adds[a + 2] & 255) | F_ANCHOR | (cc[ak] & 0x40000)
 	# the same for back walls underground: where a buried hall's back wall meets the natural rock
 	# behind a cave, its edge is ragged too, not a straight cut
-	var badds := []
+	var badds := PackedInt32Array()
+	var dvs := PackedInt32Array([-1, 1, 0, 2])
 	for j in h:
+		var row2 := j * w
 		for i in w:
-			var g := bp.getb(i, j)
-			if g == 255 or g == 0 or (bp.c[j * w + i] & F_WALL) == 0 or j <= gj[i]:
+			var v2 := cc[row2 + i]
+			var g := (v2 >> 8) & 255
+			if g == 255 or g == 0 or (v2 & F_WALL) == 0 or j <= gj[i]:
 				continue
-			for dir in [-1, 1, 0, 2]:
-				var di2: int = -1 if dir == -1 else (1 if dir == 1 else 0)
-				var dj2: int = 1 if dir == 0 else (-1 if dir == 2 else 0)
-				var ni := i + di2
-				var nj := j + dj2
-				if not bp.ok(ni, nj) or bp.getb(ni, nj) != 255 or nj <= gj[ni] + 2:
+			for dk2 in 4:
+				var dv2 := dvs[dk2]
+				var di2: int = -1 if dv2 == -1 else (1 if dv2 == 1 else 0)
+				var dj2: int = 1 if dv2 == 0 else (-1 if dv2 == 2 else 0)
+				var ni2 := i + di2
+				var nj2 := j + dj2
+				if ni2 < 0 or nj2 < 0 or ni2 >= w or nj2 >= h or ((cc[nj2 * w + ni2] >> 8) & 255) != 255 or nj2 <= gj[ni2] + 2:
 					continue
-				var course := (j + int(_blockr(rs, i, 1, 6) * 3.0)) / (2 + int(_blockr(rs, i, j / 4, 7) * 2.99))
-				var reach := int(_blockr(rs, i * 3 + dir, course, 8) * 3.99)
-				for k in range(1, reach + 1):
-					badds.append(Vector3i(i + di2 * k, j + dj2 * k, g))
-	for a2 in badds:
-		if bp.ok(a2.x, a2.y) and bp.getb(a2.x, a2.y) == 255 and a2.y > gj[a2.x] + 2:
-			bp.bg(a2.x, a2.y, a2.z)
+				var c1 := float(posmod(hash(Vector3i(i, 1, rs + 6 * 7919)), 10007)) / 10007.0
+				var c2 := float(posmod(hash(Vector3i(i, j / 4, rs + 7 * 7919)), 10007)) / 10007.0
+				var course2 := (j + int(c1 * 3.0)) / (2 + int(c2 * 2.99))
+				var reach2 := int(float(posmod(hash(Vector3i(i * 3 + dv2, course2, rs + 8 * 7919)), 10007)) / 10007.0 * 3.99)
+				for k in range(1, reach2 + 1):
+					badds.append(i + di2 * k)
+					badds.append(j + dj2 * k)
+					badds.append(g)
+	for b in range(0, badds.size(), 3):
+		var bx := badds[b]
+		var by := badds[b + 1]
+		if bx < 0 or by < 0 or bx >= w or by >= h:
+			continue
+		var bk := by * w + bx
+		if ((cc[bk] >> 8) & 255) == 255 and by > gj[bx] + 2:
+			var m := badds[b + 2] & 255
+			cc[bk] = (cc[bk] & 0xff300ff) | (m << 8) | (0x40000 if m != 0 else 0)
+	bp.c = cc
 
 ## (a dungeon's runestone too: the roughening only ever adds cells outward into the earth, so its
 ## shafts and halls stay exactly as built)
@@ -1252,12 +1487,19 @@ func _roughen_underground(bp: BP) -> void:
 func _weather_ground_line(bp: BP) -> void:
 	var w := bp.w
 	var h := bp.h
+	var cc: PackedInt32Array = bp.c        # (a local copy, written back at the end)
 	var wr := RandomNumberGenerator.new()
 	wr.seed = hash(Vector2i(bp.x0, bp.y0)) ^ 0x5eed
 	var gj := PackedInt32Array()
 	gj.resize(w)
+	var gmc := PackedInt32Array()          # the ground's layers per column: top, its depth, under it
+	gmc.resize(w * 3)
 	for i in w:
 		gj[i] = ground_row(bp.x0 + i) - bp.y0
+		var gm: Array = _ground_mats(bp.x0 + i)
+		gmc[i * 3] = gm[0]
+		gmc[i * 3 + 1] = gm[1]
+		gmc[i * 3 + 2] = gm[2]
 	# columns in front of doors stay clear (a drift there would trip you on the doorstep)
 	var near_door := PackedByteArray()
 	near_door.resize(w)
@@ -1265,13 +1507,21 @@ func _weather_ground_line(bp: BP) -> void:
 		for i in range(int(d[0]) - 8, int(d[0]) + int(d[2]) + 8):
 			if i >= 0 and i < w:
 				near_door[i] = 1
-	var weatherable := func(f: int) -> bool:
-		return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.MOSSBLOCK or f == Defs.STONE
-	var outside := func(i: int, j: int) -> bool:
-		var b: int = bp.getb(i, j)
-		return b == 255 or b == 0
-	var earthy := func(f: int) -> bool:
-		return f == 255 or (f != 0 and Defs.KIND[f] == Defs.K_POWDER) or f == Defs.DIRT or f == Defs.GRASS or f == Defs.MUD
+	# what weathers (dressed stone), what counts as earth beside it
+	var weath := PackedByteArray()
+	weath.resize(256)
+	for wm in [Defs.MASONRY, Defs.BRICK, Defs.SANDSTONE, Defs.MOSSBLOCK, Defs.STONE]:
+		weath[wm] = 1
+	var earth := PackedByteArray()
+	earth.resize(256)
+	earth[255] = 1
+	for em in range(1, mini(_kind.size(), 255)):
+		if _kind[em] == Defs.K_POWDER:
+			earth[em] = 1
+	earth[Defs.DIRT] = 1
+	earth[Defs.GRASS] = 1
+	earth[Defs.MUD] = 1
+	const FF := F_FILL | F_ANCHOR
 	# 0. a ruin is half swallowed by the ground: its masonry near the ground line gives way to the
 	# ground's own soil in uneven lumps (most of it right at the surface, less deeper down), so its
 	# buried part reads as a ruin in the sand, not a band of bricks
@@ -1279,32 +1529,35 @@ func _weather_ground_line(bp: BP) -> void:
 		var p1 := wr.randf() * TAU
 		var p2 := wr.randf() * TAU
 		for i in w:
-			var gm0 := _ground_mats(bp.x0 + i)
 			for j in range(maxi(gj[i] - 1, 0), mini(gj[i] + 16, h)):
-				var f0 := bp.getf(i, j)
-				if not weatherable.call(f0):
+				var k0 := j * w + i
+				if weath[cc[k0] & 255] == 0:
 					continue
 				var nz := sin(float(i) * 0.21 + float(j) * 0.37 + p1) + sin(float(i) * 0.083 - float(j) * 0.19 + p2) + wr.randf() * 0.7
 				var depth0: int = j - gj[i]
 				if nz > -0.3 + float(maxi(depth0, 0)) * 0.12:
-					bp.fg(i, j, gm0[0] if depth0 < int(gm0[1]) else gm0[2], F_FILL | F_ANCHOR)
+					var m0 := gmc[i * 3] if depth0 < gmc[i * 3 + 1] else gmc[i * 3 + 2]
+					cc[k0] = (cc[k0] & 0xff00) | (m0 & 255) | FF | (cc[k0] & 0x40000)
 	# 1. the ends of courses crumble: a block with earth beside it gives way to earth, and now and
-	# then the one behind it too
+	# then the one behind it too (outside only: where there's no back wall)
 	for pass_k in 2:
-		var turn := []
+		var turn := PackedInt32Array()
 		for i in w:
 			for j in range(maxi(gj[i], 0), mini(gj[i] + 9, h)):      # (at and below the ground line only)
-				var f := bp.getf(i, j)
-				if not weatherable.call(f) or not outside.call(i, j):
+				var k1 := j * w + i
+				var v1 := cc[k1]
+				var b1 := (v1 >> 8) & 255
+				if weath[v1 & 255] == 0 or not (b1 == 255 or b1 == 0):
 					continue
-				var el: bool = (not bp.ok(i - 1, j)) or earthy.call(bp.getf(i - 1, j))
-				var er: bool = (not bp.ok(i + 1, j)) or earthy.call(bp.getf(i + 1, j))
+				var el: bool = i == 0 or earth[cc[k1 - 1] & 255] == 1
+				var er: bool = i == w - 1 or earth[cc[k1 + 1] & 255] == 1
 				if (el or er) and wr.randf() < (0.55 if pass_k == 0 else 0.3):
-					turn.append(Vector2i(i, j))
+					turn.append(k1)
 		for q in turn:
-			var gm := _ground_mats(bp.x0 + q.x)
-			var depth: int = q.y - gj[q.x]
-			bp.fg(q.x, q.y, gm[0] if depth < int(gm[1]) else gm[2], F_FILL | F_ANCHOR)
+			var qi := q % w
+			var depth := q / w - gj[qi]
+			var m1 := gmc[qi * 3] if depth < gmc[qi * 3 + 1] else gmc[qi * 3 + 2]
+			cc[q] = (cc[q] & 0xff00) | (m1 & 255) | FF | (cc[q] & 0x40000)
 	# 2. drifts over the exposed tops near the ground line, a smooth bumpy height along the run,
 	# and a top block here and there worn away to soil
 	var phase := wr.randf() * TAU
@@ -1312,21 +1565,30 @@ func _weather_ground_line(bp: BP) -> void:
 		if near_door[i] != 0:
 			continue
 		for j in range(maxi(gj[i] - 3, 1), mini(gj[i] + 5, h)):
-			var f := bp.getf(i, j)
-			if not weatherable.call(f) or not outside.call(i, j):
+			var k2 := j * w + i
+			var v2 := cc[k2]
+			var b2 := (v2 >> 8) & 255
+			if weath[v2 & 255] == 0 or not (b2 == 255 or b2 == 0):
 				continue
-			var above := bp.getf(i, j - 1)
-			if not (above == 0 or above == 255) or not outside.call(i, j - 1):
+			var va := cc[k2 - w]
+			var above := va & 255
+			var ba := (va >> 8) & 255
+			if not (above == 0 or above == 255) or not (ba == 255 or ba == 0):
 				break
-			var gm2 := _ground_mats(bp.x0 + i)
+			var top := gmc[i * 3]
 			var dh := int(round(1.2 + sin(float(i) * 0.45 + phase) * 1.1 + wr.randf() * 0.9))
 			for k in range(1, dh + 1):
-				var a2 := bp.getf(i, j - k)
-				if (a2 == 0 or a2 == 255) and outside.call(i, j - k):
-					bp.fg(i, j - k, gm2[0], F_FILL | F_ANCHOR)
+				if j - k < 0:
+					continue
+				var k3 := k2 - k * w
+				var a3 := cc[k3] & 255
+				var b3 := (cc[k3] >> 8) & 255
+				if (a3 == 0 or a3 == 255) and (b3 == 255 or b3 == 0):
+					cc[k3] = (cc[k3] & 0xff00) | (top & 255) | FF | (cc[k3] & 0x40000)
 			if wr.randf() < 0.3:
-				bp.fg(i, j, gm2[0], F_FILL | F_ANCHOR)
+				cc[k2] = (cc[k2] & 0xff00) | (top & 255) | FF | (cc[k2] & 0x40000)
 			break
+	bp.c = cc
 
 func _rough_mat(f: int) -> bool:
 	return f == Defs.MASONRY or f == Defs.BRICK or f == Defs.SANDSTONE or f == Defs.OBSIDIAN or f == Defs.MOSSBLOCK or f == Defs.RUNESTONE
@@ -1651,6 +1913,7 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 		bp.rect(pc, gl, pc, ground_row(bp.x0 + pc) - bp.y0 + 2, Defs.WOOD, F_FILL | F_ANCHOR)
 	bp.rect(sx - 3, gl - 23, sx + sw + 2, gl - 23, Defs.PLANK)
 	bp.bg(sx + sw / 2, gl - 22, Defs.TORCH)
+	_set_in_rock(bp, sx + sw / 2, gl - 22, sx + sw / 2, gl - 22)      # (hung from the beam)
 	# shaft, lined with planking behind (a load-bearing back wall), which carries the landings
 	# where a cave has eaten away the rock beside the shaft
 	bp.rect(sx, gl - 1, sx + sw - 1, gl + depth, 0)
@@ -1659,6 +1922,7 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 	_landings(bp, sx, sx + sw - 1, gl + 22, gl + depth - 6)
 	# drifts at the bottom
 	var fj := gl + depth
+	bp.meta["mine"] = {"sx": sx, "sw": sw, "gl": gl, "fj": fj, "dl": dl, "dr": dr, "depth": depth}
 	bp.rect(sx - dl, fj - 40, sx + sw + dr - 1, fj - 1, 0)
 	var p := sx - dl + 2
 	while p < sx + sw + dr - 2:
@@ -1672,6 +1936,9 @@ func _mine(x: int, b: String, ruined: bool, build: bool) -> bool:
 				bp.bg(p + 3, fj - 24, Defs.TORCH)
 				_set_in_rock(bp, p + 3, fj - 24, p + 3, fj - 24)
 		p += 16
+	# the landings' brackets and the planking are pinned into the shaft walls (again, after the drift:
+	# carving the front cells clears the anchor flag the back cells share)
+	_set_in_rock(bp, sx - 1, gl + 1, sx + sw, gl + depth - 1)
 	# what the miners left behind, and what moved in after
 	_chest(bp, sx - dl + 3, fj)
 	if rng.randf() < 0.6:
@@ -1808,16 +2075,18 @@ func label_at(pos: Vector2) -> String:
 ## A guardian's lair (Defs.BOSSES): an arena of level ground, paved in the middle and ramping back to
 ## the land at both ends, cleared to the sky; tall pillars of the biome's stone at its edges (their
 ## capitals in its trim: ice, timber, glowcaps...), broken stubs to take cover behind, and at one end
-## a stepped dais with an altar, braziers and a carved back wall, where a chest is sure. The guardian
-## waits in the middle (lair_list).
-const LAIR_W := 180
-const LAIR_UP := 96            # air cleared over the arena floor
-const LAIR_RAMP := 28          # columns at each end ramping back to the land
+## a stepped dais with an altar, braziers and a carved back wall, where a chest is sure, and a raised
+## mesa in the middle to fight up and down. The guardian waits in the middle (lair_list); it roams the
+## whole arena and follows you up to LEASH columns out of it.
+const LAIR_W := 440
+const LAIR_UP := 150           # air cleared over the arena floor
+const LAIR_RAMP := 44          # columns at each end ramping back to the land
+const LEASH := 200.0           # how far past its arena a guardian follows you
 
 func _lairs(build: bool) -> void:
 	var done := {}
 	for bname in biome_names:
-		if done.has(bname) or not Defs.BOSSES.has(bname):
+		if done.has(bname) or not Defs.BOSSES.has(bname) or not guardian_biomes.has(bname):
 			continue
 		done[bname] = true
 		# spots well inside this biome (every 16 columns), the deepest into it first
@@ -1826,7 +2095,7 @@ func _lairs(build: bool) -> void:
 			if biome(x) != bname:
 				continue
 			var depth := 0
-			while depth < 480 and biome(x - depth) == bname and biome(x + depth) == bname:
+			while depth < 640 and biome(x - depth) == bname and biome(x + depth) == bname:
 				depth += 16
 			if depth >= 32:
 				cands.append([x, depth])
@@ -1835,16 +2104,17 @@ func _lairs(build: bool) -> void:
 		var placed := false
 		# an open arena well away from where you arrive (wide, then narrower), else a hall dug under
 		# the ground with a shaft down to it; only then a little nearer
-		for near in [600, 380]:
+		# (distances in proportion to the planet: 600 and 380 columns on one 8192 round)
+		for near in [N0 * 600 / 8192, N0 * 380 / 8192]:
 			for tryk in 4:
-				var slope: int = [30, 56, 84, 84][tryk]
-				var lw: int = [180, 180, 180, 140][tryk]
+				var slope: int = [40, 70, 100, 100][tryk]
+				var lw: int = [LAIR_W, LAIR_W, LAIR_W, 360][tryk]
 				for cd in cands:
 					var x: int = cd[0]
 					if cdist(x, spawn_col) < near or cdist(x, boss_col) < 200:
 						_why["near start"] = int(_why.get("near start", 0)) + 1
 						continue
-					if _near_lair(x, 420):
+					if _near_lair(x, LAIR_W + 160):
 						_why["near a lair"] = int(_why.get("near a lair", 0)) + 1
 						continue
 					if _lair(x, bname, slope, lw, build):
@@ -1856,7 +2126,7 @@ func _lairs(build: bool) -> void:
 				break
 			for cd2 in cands:
 				var x2: int = cd2[0]
-				if cdist(x2, spawn_col) < near or cdist(x2, boss_col) < 260 or _near_lair(x2, 420):
+				if cdist(x2, spawn_col) < near or cdist(x2, boss_col) < 260 or _near_lair(x2, LAIR_W + 160):
 					continue
 				if _lair_deep(x2, bname, build):
 					placed = true
@@ -1868,6 +2138,7 @@ func _lairs(build: bool) -> void:
 
 var _why := {}
 var _lair_cols := []
+var guardian_biomes := []        # the biomes of this planet that have a guardian
 
 ## is there a lair already within d columns of x? (two guardians shouldn't wake together)
 func _near_lair(x: int, d: int) -> bool:
@@ -1945,9 +2216,12 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 		var ptop := mini(fl - ph, base - 12)          # (always standing well clear of the land)
 		_pillar(bp, bd, pi, pw, base, base - ptop, mini(base + 3, bp.h - 1))
 	_shrine(bp, bd, W, fl, LAIR_RAMP)
+	# a mesa in the middle (the guardian waits beside it): something to fight up and down
+	var mw := rng.randi_range(40, 58)
+	_mesa(bp, bd, W / 2 + rng.randi_range(18, 40) * (1 if rng.randf() < 0.5 else -1), fl, mw, rng.randi_range(12, 18))
 	var row := top + fl
 	lair_list.append({"biome": b, "pos": _bp_at(bp, float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": false,
-		"tether": float(W) * 0.5 - 18.0, "ceil": 70.0})
+		"tether": float(W) * 0.5 - 20.0 + LEASH, "arena": float(W) * 0.5 - 12.0, "ceil": float(LAIR_UP) - 20.0})
 	_lair_cols.append(x)
 	_claim(x0, W, bd["lair"], top, bot)
 	_finish(bp, build)
@@ -1957,8 +2231,8 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 ## with landings from a small gate on the surface (for biomes whose surface is all taken).
 func _lair_deep(x: int, b: String, build: bool) -> bool:
 	var bd: Dictionary = Defs.BOSSES[b]
-	var W := 170
-	var HH := 74                 # the hall's inside height
+	var W := 360
+	var HH := 120                # the hall's inside height
 	var T := 4                   # its walls
 	var x0 := x - W / 2
 	if not _deep_free(x0 - 10, W + 20):
@@ -1978,7 +2252,7 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 		_why["no shaft"] = int(_why.get("no shaft", 0)) + 1
 		return false
 	var gtop := _ground_range(sx, SW).x
-	var hall_fl := ground_row(x) + 130                # the hall's floor (top row of its paving)
+	var hall_fl := ground_row(x) + 200                # the hall's floor (top row of its paving)
 	var top := gtop - 34
 	var bot := hall_fl + T + 2
 	var bp := BP.new(x0 - T, top, W + 2 * T, bot - top + 1)
@@ -2011,15 +2285,30 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 		var pi := ox if side == 0 else ox + W - pw
 		_pillar(bp, bd, pi, pw, fl, HH)
 	_shrine(bp, bd, W, fl, ox + 4, ox)
+	_mesa(bp, bd, ox + W / 2 + rng.randi_range(20, 40) * (1 if rng.randf() < 0.5 else -1), fl, rng.randi_range(36, 50), rng.randi_range(10, 16))
 	var row := top + fl
 	lair_list.append({"biome": b, "pos": _bp_at(bp, float(ox) + float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": true,
-		"tether": float(W) * 0.5 - 18.0, "ceil": float(HH) - 24.0})
+		"tether": float(W) * 0.5 - 18.0, "arena": float(W) * 0.5 - 8.0, "ceil": float(HH) - 24.0})
 	_lair_cols.append(x)
 	_claim(sx - 4, SW + 8, bd["lair"], top, bot)
 	deep.append(Vector2i(x0 - T, x0 + W + T))
 	labels.append({"x0": posmod(x0, N0), "w": W, "ymin": hall_fl - HH - T, "ymax": bot, "name": bd["lair"]})
 	_finish(bp, build)
 	return true
+
+## a mesa of the lair's stone in the arena: `mw` wide at its foot on floor row fl, `mh` high, its
+## sides stepped in a cell a course (a guardian or you can climb it: never taller than its leap),
+## a course of trim on top
+func _mesa(bp: BP, bd: Dictionary, cx: int, fl: int, mw: int, mh: int) -> void:
+	var wall: int = bd["wall"]
+	var trim: int = bd["trim"]
+	for up in mh:
+		var hw := mw / 2 - up / 2
+		if hw < 4:
+			break
+		var j := fl - 1 - up
+		bp.rect(cx - hw, j, cx + hw, j, trim if up == mh - 1 else wall, F_ANCHOR)
+		bp.rect_bg(cx - hw, j, cx + hw, j, wall)
 
 ## a pillar of the lair's stone, `ph` tall on floor row fl, a capital of its trim with a notched top
 func _pillar(bp: BP, bd: Dictionary, pi: int, pw: int, fl: int, ph: int, base := -1) -> void:
@@ -2494,7 +2783,7 @@ func _dungeon_reach(bp: BP, rooms: Array, vault: int, si: int) -> Dictionary:
 		if not bp.ok(q.x, q.y) or seen[q.y * bp.w + q.x] == 1:
 			continue
 		var f := bp.getf(q.x, q.y)
-		if not (f == 0 or f == Defs.SCAFFOLD or Defs.KIND[f] == Defs.K_LIQUID or Defs.KIND[f] == Defs.K_POWDER):
+		if not (f == 0 or f == Defs.SCAFFOLD or _kind[f] == Defs.K_LIQUID or _kind[f] == Defs.K_POWDER):
 			continue
 		seen[q.y * bp.w + q.x] = 1
 		stack.append(q + Vector2i(1, 0))
@@ -2561,7 +2850,7 @@ func _prop_fits(bp: BP, rows: Array, i0: int, bottom: int, flip: bool, indoors: 
 		if standing and lowest == h - 1:
 			feet += 1
 			var below := bp.getf(i0 + x, bottom + 1)
-			var solid_below := (below != 255 and below != 0 and Defs.KIND[below] == Defs.K_SOLID) or \
+			var solid_below := (below != 255 and below != 0 and _kind[below] == Defs.K_SOLID) or \
 				(below == 255 and bottom + 1 >= ground_row(bp.x0 + i0 + x) - bp.y0)
 			if solid_below:
 				held += 1
@@ -2677,7 +2966,7 @@ func _yard_bottom(bp: BP, a0: int, a1: int) -> int:
 		var gr := bp.h - 1
 		for j in bp.h:
 			var f := bp.getf(i, j)
-			if (f != 255 and f != 0 and Defs.KIND[f] != Defs.K_EMPTY) or (f == 255 and j >= ground_row(bp.x0 + i) - bp.y0):
+			if (f != 255 and f != 0 and _kind[f] != Defs.K_EMPTY) or (f == 255 and j >= ground_row(bp.x0 + i) - bp.y0):
 				gr = j
 				break
 		best = mini(best, gr)

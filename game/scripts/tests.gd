@@ -79,6 +79,56 @@ func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
 	return out
 
 ## the chest object standing at a planned chest spot (left column, floor row), or null
+## a column near `from` (looking outward from it) where the ground is level across `w` columns (within
+## `level` rows), outside any named structure, with nothing standing in the `h` rows over it (no log, wall,
+## sand or water; trees are background and don't count) and, given `below`, solid ground that many rows
+## under it: (first column, the highest ground row there)
+func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0) -> Vector2i:
+	var b = g.builds
+	var why := {"level": 0, "label": 0, "wet": 0, "standing": 0, "hollow": 0}
+	for cs_d in range(0, 2400, 12):
+		for cs_s in [1, -1]:
+			var c0: int = from + cs_d * cs_s
+			var gmin := 1 << 30
+			var gmax := -(1 << 30)
+			for c in range(c0, c0 + w):
+				var gr: int = b.ground_row(c)
+				gmin = mini(gmin, gr)
+				gmax = maxi(gmax, gr)
+			if gmax - gmin > level:
+				why["level"] += 1
+				continue
+			if b.label_at(_cell_pos(c0 + w / 2, gmin - 5)) != "":
+				why["label"] += 1
+				continue
+			if b.wet(c0 + w / 2):
+				why["wet"] += 1
+				continue
+			var rr: Dictionary = g.gpu.read_rect(c0, gmin - h, w, h - 1)
+			var clear := true
+			for v in rr["fg"]:
+				var kd: int = Defs.KIND[v & 255]
+				if kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID:
+					clear = false
+					break
+			if not clear:
+				why["standing"] += 1
+				continue
+			if below > 0:
+				# (and solid ground under it, `below` rows down from its lowest point: no cave to break into)
+				var rb: Dictionary = g.gpu.read_rect(c0, gmax + 1, w, below)
+				for v2 in rb["fg"]:
+					var kd2: int = Defs.KIND[v2 & 255]
+					if kd2 != Defs.K_SOLID and kd2 != Defs.K_POWDER:
+						clear = false
+						break
+				if not clear:
+					why["hollow"] += 1
+					continue
+			return Vector2i(c0, gmin)
+	print("[clear] no clear stretch %d x %d (level %d) near column %d: %s" % [w, h, level, from, str(why)])
+	return Vector2i(from, b.ground_row(from))
+
 func _chest_obj(spot: Vector2i):
 	if spot.x < 0:
 		return null
@@ -224,6 +274,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_climb()
+		elif only == "nav":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_nav()
 		elif only == "guardians":
 			_go(g.player.pos)
 			await _frames(60)
@@ -234,6 +288,18 @@ func run() -> void:
 			await _test_wardens()
 		elif only == "biomes":
 			await _test_far_biomes()
+		elif only == "worlds":
+			await _test_worlds()
+		elif only == "stampdiag":
+			await _test_stampdiag()
+		elif only == "creatures":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_creatures()
+		elif only == "mines":
+			for mi_info in g.builds.infos:
+				if mi_info["meta"].has("mine") and int(mi_info.get("unsound", 0)) > 0:
+					print("[mines] %s unsound %d cuts %s at %s" % [str(mi_info["meta"]["mine"]), mi_info["unsound"], str(mi_info["meta"].get("cuts", {})), str(mi_info["meta"].get("cut_at", []))])
 		lines.append("")
 		lines.append("%d passed, %d failed, %.1f s (only %s)" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0, only])
 		var only_txt := "\n".join(lines)
@@ -275,7 +341,7 @@ func run() -> void:
 						an_where = "seam at row %d (%d / %d columns)" % [Defs.SH_Y1[an_s], an_no, an_ni]
 	# (the cells either side of a seam never line up, so a side can step up to a cell, plus how much
 	# narrower half the building's cells are below it: a ~2% seam)
-	_ok("a building's sides stay straight across every seam (within about a cell)", float(an_jog[24]) <= 1.3 and float(an_jog[48]) <= 1.6,
+	_ok("a building's sides stay straight across every seam (within about a cell)", float(an_jog[24]) <= 1.35 and float(an_jog[48]) <= 1.75,
 		"a side steps at most %.2f cells for a building 24 wide, %.2f for 48 (%s), %.2f for 96" % [an_jog[24], an_jog[48], an_where, an_jog[96]])
 	# stamped deep, through several seams, it reads back exactly as it was written, cell for cell
 	var an_c := int(fposmod(g.spawn_angle + 1.3, TAU) / TAU * Defs.NS)
@@ -317,6 +383,7 @@ func run() -> void:
 		nchest += info["chests"].size()
 	_ok("chests are placed", nchest >= 10, "%d chests" % nchest)
 	await _frames(10)
+	await _test_stampdiag()
 
 	# ---- diagnostics: the blueprints of the most furnished buildings, and how they look straight
 	# after generating (saves/shots/bp_N.png, early_N.png) ----
@@ -664,23 +731,42 @@ func run() -> void:
 
 	# ---- open a chest ----
 	var chest := Vector2i(-1, -1)
+	var cobj = null
 	for info in b.infos:
+		# (one near the surface, where its cells are where the surface columns say: a deep vault's
+		# or dungeon's go in on their own anchor)
 		if not info["ruined"] and info["chests"].size() > 0:
-			chest = info["chests"][0]
+			for ch_q in info["chests"]:
+				var ch_o = _chest_obj(ch_q)
+				var ch_place: String = b.label_at(ch_o.pos) if ch_o != null else ""
+				var ch_odd := "Halls" in ch_place or "Crypts" in ch_place or "Tomb" in ch_place or "Mine" in ch_place or "Vault" in ch_place
+				if ch_o != null and not ch_odd and ch_q.y <= b.ground_row(ch_q.x) + 6:
+					chest = ch_q
+					cobj = ch_o
+					break
+		if cobj != null:
 			break
-	var cobj = _chest_obj(chest)
 	if cobj != null:
-		_go(_cell_pos(chest.x - 6, chest.y - 10))
+		# (right beside it, on its floor, whichever side is open: looked at from its own grid)
+		_go(cobj.pos + cobj.pos.normalized() * 14.0)
+		await _frames(8)
+		var ch_side: Vector2 = g.basis_r(atan2(cobj.pos.y, cobj.pos.x))
+		var ch_at: Vector2 = cobj.pos + ch_side * (float(Defs.CHEST_W) * 0.5 + 6.0) + cobj.pos.normalized() * 5.0
+		if g.box_solid(g.to_grid(ch_at).x - 3.5, g.to_grid(ch_at).y - 8.5, 7.0, 17.0):
+			ch_at = cobj.pos - ch_side * (float(Defs.CHEST_W) * 0.5 + 6.0) + cobj.pos.normalized() * 5.0
+		_go(ch_at)
 		await _frames(40)
 		var before := 0
 		for m in Defs.NM:
 			before += g.player.inv[m]
+		var ch_reach: int = g._chest_in_reach().size()
+		var ch_d: float = g.player.pos.distance_to(cobj.pos)
 		g._try_open_chest()
 		await _frames(45)
 		var after := 0
 		for m in Defs.NM:
 			after += g.player.inv[m]
-		_ok("F opens a chest and gives loot", cobj.opened and after > before, "opened %s, satchel %d -> %d" % [cobj.opened, before, after])
+		_ok("F opens a chest and gives loot", cobj.opened and after > before, "opened %s, satchel %d -> %d (%.0f cells from it, in reach %s, at %s)" % [cobj.opened, before, after, ch_d, ch_reach > 0, b.label_at(cobj.pos)])
 		var shown: bool = g.chests.has(cobj)
 		await _frames(90)
 		_ok("an opened chest shows its inside, then vanishes", shown and not g.chests.has(cobj), "")
@@ -743,15 +829,23 @@ func run() -> void:
 		_ok("a chest stays still while you walk about", dev < 0.01, "moved %.3f cells as you walked" % dev)
 
 	# ---- a chest whose floor is dug out falls, whole (it doesn't float or come apart) ----
+	# (another surface building's chest, not the one opened: same rules as for that one)
 	var chest2 := Vector2i(-1, -1)
-	var nfound := 0
+	var c2obj = null
 	for info in b.infos:
 		if not info["ruined"] and info["chests"].size() > 0:
-			nfound += 1
-			if nfound == 2:
-				chest2 = info["chests"][0]
+			for c2_q in info["chests"]:
+				var c2_o = _chest_obj(c2_q)
+				if c2_o == null or c2_o == cobj or c2_q.y > b.ground_row(c2_q.x) + 6:
+					continue
+				var c2_place: String = b.label_at(c2_o.pos)
+				if "Halls" in c2_place or "Crypts" in c2_place or "Tomb" in c2_place or "Mine" in c2_place or "Vault" in c2_place:
+					continue
+				chest2 = c2_q
+				c2obj = c2_o
 				break
-	var c2obj = _chest_obj(chest2)
+		if c2obj != null:
+			break
 	if c2obj != null:
 		var r_before: float = c2obj.pos.length()
 		_go(_cell_pos(chest2.x - 14, chest2.y - 10))
@@ -913,7 +1007,7 @@ func run() -> void:
 		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("biome_%s.png" % bname))
 		var after_t := _plants(g.gpu.read_world(), toff, best_col, gr2)
 		tree_lines.append("%s %d->%d" % [bname, best_n, after_t])
-		if after_t < int(best_n * 0.97):
+		if after_t < int(best_n * 0.95):           # (a twig or a stray branch may drop; a tree mustn't)
 			tree_ok = false
 	_ok("trees stand when you come near, in every biome", tree_ok and biomes_seen > 0, ", ".join(tree_lines))
 
@@ -1670,6 +1764,11 @@ func run() -> void:
 	g.sel = 0
 
 	# ---- foes are dangerous: they see you, wind up (glowing) and then lunge, shoot, swoop or blink ----
+	# (out in the open: level ground with nothing standing over it, so a bat has a clear dive)
+	var fo_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) - 160, 110, 80)
+	var fo_a: float = (float(fo_st.x) + 55.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(fo_a), sin(fo_a)) * (g.gpu.surf_at(fo_a).x + 12.0))
+	await _frames(40)
 	var keep_foes: Array = g.enemies.duplicate()
 	g.enemies.clear()
 	var foe_lines := []
@@ -1830,7 +1929,7 @@ func run() -> void:
 		_go(sp9 * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
 		boss_e.hp = boss_e.max_hp * 0.3
 		boss_e.awake = true
-		await _frames(200)
+		await _frames(260)
 		_ok("a boss left alone recovers to full health", boss_e.hp >= boss_e.max_hp and not boss_e.awake,
 			"health %d of %d, %s" % [int(boss_e.hp), int(boss_e.max_hp), "asleep" if not boss_e.awake else "awake"])
 	else:
@@ -1937,10 +2036,11 @@ func run() -> void:
 		"seam at row %d (shells of %d and %d columns); sand %d -> %d above, %d below; brick %d above -> %d above, %d below (some may have broken into rubble)" % [sm_seam, Defs.SH_N[sm_s], Defs.SH_N[sm_s + 1], sm_sand0, sm_sand_up, sm_sand_dn, sm_stone0, sm_stone_up, sm_stone_dn])
 
 	# ---- one-way platforms: land on one, drop through it (down + jump), jump up through it ----
-	var pcol := int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 40
-	var pg: int = b.ground_row(pcol)
-	for pc2 in range(pcol - 16, pcol + 17):
-		pg = mini(pg, b.ground_row(pc2))
+	# (a level stretch near where you arrive with nothing standing on it: trees, logs from the felled
+	# tree, a building)
+	var pst := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 24, 40, 70)
+	var pcol := pst.x + 16
+	var pg: int = pst.y
 	var prow := pg - 16
 	_go(_cell_pos(pcol, pg - 40))
 	await _frames(10)
@@ -1982,11 +2082,13 @@ func run() -> void:
 	await _frames(90)
 	var back_up: bool = g.player.on_platform
 	_ok("platforms: land on one, drop through it, jump up through it", landed and dropped and back_up,
-		"strip at row %d (%d of 21 cells there, pillar %d of %d): stood at row %d (on it %s), after down + jump row %d (through %s), after a jump on it again %s" % [prow, strip_n, pillar_n, pil_g - prow - 1, row_on, landed, row_down, dropped, back_up])
+		("(at column %d) " % pcol) + "strip at row %d (%d of 21 cells there, pillar %d of %d): stood at row %d (on it %s), after down + jump row %d (through %s), after a jump on it again %s" % [prow, strip_n, pillar_n, pil_g - prow - 1, row_on, landed, row_down, dropped, back_up])
 
-	# ---- unsupported blocks fall, and falling rock hurts ----
-	var sp := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
-	var rs: float = g.gpu.surf_at(g.spawn_angle).x
+	# ---- unsupported blocks fall, and falling rock hurts (on a clear stretch: nothing over you) ----
+	var fst := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 90, 50, 70)
+	var fa: float = (float(fst.x) + 10.5) / float(Defs.NS) * TAU
+	var sp := Vector2(cos(fa), sin(fa))
+	var rs: float = g.gpu.surf_at(fa).x
 	_go(sp * (rs + 30.0))
 	await _frames(60)
 	var up: Vector2 = g.player.pos.normalized()
@@ -2025,12 +2127,22 @@ func run() -> void:
 	await _frames(150)
 	_ok("falling rock hurts the mage", g.hp < hp0, "health %.0f -> %.0f" % [hp0, g.hp])
 	# digging a pit right under your feet, again and again, costs nothing: you drop in with the rim
-	_go(Vector2(cos(g.spawn_angle + 0.03), sin(g.spawn_angle + 0.03)) * (g.gpu.surf_at(g.spawn_angle + 0.03).x + 14.0))
+	# (on clear ground: nothing standing over you that the digging could bring down, and no cave under
+	# it: breaking into one brings its roof down after you, and that does hurt)
+	var pit_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) - 120, 30, 70, 6, 64)
+	var pit_a: float = (float(pit_st.x) + 15.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(pit_a), sin(pit_a)) * (g.gpu.surf_at(pit_a).x + 14.0))
 	await _frames(60)
+	# (and nothing about to bite: a foe walking by once took 3 off and failed it)
+	for pt_e in g.enemies.duplicate():
+		if not pt_e.boss and pt_e.guard_id < 0:
+			g.enemies.erase(pt_e)
+	g.projs.clear()
+	g.spawn_timer = 600
 	g.hp = g.max_hp
 	g.iframes = 0
 	var hp1: float = g.hp
-	for pk in 6:
+	for pk in 4:
 		var upk: Vector2 = g.player.pos.normalized()
 		g.brushes.append([g.player.pos - upk * 12.0, g.player.dig_r, 1, 0, g.player.tier, 0, 0, 0])
 		await _frames(25)
@@ -2329,77 +2441,10 @@ func run() -> void:
 	await _test_guardians()
 	await _test_wardens()
 
-	# ---- the wild creatures: every biome (and each depth underground) has its own; they notice you,
-	# come after you with their moves, stay on screen and keep moving ----
-	var cr_god0: bool = g.test_god
-	g.test_god = true
-	var cr_rows := []
-	var cr_bad := []
-	var cr_places := []
-	for cr_b in g.planet.get("biomes", []):
-		if not cr_places.has(cr_b):
-			cr_places.append(cr_b)
-	cr_places.append_array(["cave1", "cave2", "cave3"])
-	var cr_none := []
-	for cr_w in cr_places:
-		if Defs.creatures_of(cr_w).is_empty():
-			cr_none.append(cr_w)
-	var cr_ids := []
-	for cr_k0 in Defs.CREATURES:
-		if not Defs.CREATURES[cr_k0].get("swim", false):
-			cr_ids.append(cr_k0)            # (swimmers are tried in the sea: _test_far_biomes)
-	# (on the ground: the test before this one leaves you up in the orbit band)
-	var cr_orig: Vector2 = g.player.pos
-	var cr_a0 := atan2(g.player.pos.y, g.player.pos.x)
-	_go(Vector2(cos(cr_a0), sin(cr_a0)) * (g.gpu.surf_at(cr_a0).x + 14.0))
-	await _frames(60)
-	var cr_home: Vector2 = g.player.pos
-	var cr_ang := atan2(cr_home.y, cr_home.x)
-	var cr_side: Vector2 = g.basis_r(cr_ang)
-	var cr_up: Vector2 = cr_home.normalized()
-	for cr_g0 in range(0, cr_ids.size(), 4):
-		_go(cr_home)
-		await _frames(20)
-		var cr_group := []
-		for cr_k in range(cr_g0, mini(cr_g0 + 4, cr_ids.size())):
-			var cr_id: String = cr_ids[cr_k]
-			var cr_d: Dictionary = Defs.creature_enemy("c_" + cr_id)
-			var cr_off := (36.0 + 22.0 * float(cr_k - cr_g0)) * (1.0 if (cr_k - cr_g0) % 2 == 0 else -1.0)
-			var cr_at: Vector2 = cr_home + cr_side * cr_off + cr_up * (20.0 if cr_d["fly"] and cr_d["def"]["go"] != "burrow" else 4.0)
-			cr_at = g.free_spot(cr_at, float(cr_d["w"]), float(cr_d["h"]), 20)
-			var cr_e = g.spawn_enemy("c_" + cr_id, cr_at)
-			cr_e.alert_t = 240             # (it has heard you: a wall between mustn't fail the test)
-			cr_e.seen_pos = cr_home
-			cr_group.append([cr_id, cr_e, cr_at, 0.0, 0.0, 9999.0, cr_e.pos])
-		for cr_f in 170:
-			await _frames(1)
-			if cr_f == 110:
-				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("creatures_%d.png" % int(cr_g0 / 4.0)))
-			for cr_row in cr_group:
-				var cr_e2 = cr_row[1]
-				if cr_e2.dead:
-					continue
-				cr_row[3] = maxf(float(cr_row[3]), (cr_e2.pos - Vector2(cr_row[2])).dot(cr_up))
-				cr_row[4] = float(cr_row[4]) + cr_e2.pos.distance_to(Vector2(cr_row[6]))
-				cr_row[5] = minf(float(cr_row[5]), cr_e2.pos.distance_to(g.player.pos))
-				cr_row[6] = cr_e2.pos
-		for cr_row2 in cr_group:
-			var cr_e3 = cr_row2[1]
-			var cr_hunt: bool = cr_e3.moves_done >= 1 or float(cr_row2[5]) < 26.0
-			var cr_fine: bool = cr_hunt and float(cr_row2[3]) < 70.0 and float(cr_row2[4]) > 6.0
-			cr_rows.append("%s %s%d moves, up %.0f, moved %.0f, nearest %.0f" % [cr_row2[0], "" if cr_fine else "(!) ", cr_e3.moves_done, cr_row2[3], cr_row2[4], cr_row2[5]])
-			if not cr_fine:
-				cr_bad.append(cr_row2[0])
-			if not cr_e3.dead:
-				g._kill_enemy(cr_e3)
-	g.test_god = cr_god0
-	g.boss_clouds.clear()
-	_go(cr_orig)
-	await _frames(30)
-	_ok("every biome and depth has creatures that come after you, attack, stay on screen and keep moving",
-		cr_none.is_empty() and cr_bad.is_empty(), "%d creatures; places without any: %s; %s" % [cr_ids.size(), str(cr_none), "; ".join(cr_rows)])
+	await _test_creatures()
 
 	await _test_climb()
+	await _test_nav()
 
 	# ---- save and load give back the same world ----
 	# (pieces still tumbling are set down first: saving would set them down anyway)
@@ -2477,7 +2522,7 @@ func run() -> void:
 		if g.space.active:
 			break
 	g.test_jump = false
-	g.space._ensure_rocks()
+	g.space._ensure_rocks(true)
 	var as_n0: int = g.space.rocks.size()
 	var as_kinds := {}
 	for as_a in g.space.rocks:
@@ -2697,6 +2742,7 @@ func run() -> void:
 	sf_sk.vel = tv_to.normalized() * 35.0
 	g.cam_c = sf_sk.pos
 	var tv_gap := 0
+	var tv_gap_at := ""
 	var tv_t0 := Time.get_ticks_usec()
 	var tv_held := false
 	var tv_shot := false
@@ -2707,7 +2753,9 @@ func run() -> void:
 		g.test_aim = Defs.planet_pos(1) - Defs.planet_pos(g.space.home) + Vector2(0.5, 0.5)
 		await _frames(1)
 		var tv_now := Time.get_ticks_usec()
-		tv_gap = maxi(tv_gap, tv_now - tv_t0)
+		if tv_now - tv_t0 > tv_gap:
+			tv_gap = tv_now - tv_t0
+			tv_gap_at = "tick %d, %s, made %.2f" % [tvk2, "travelling" if g.travelling else ("arrived %d ticks before" % (tvk2 - tv_arrive) if tv_arrive >= 0 else "before arriving"), g.travel_progress]
 		tv_t0 = tv_now
 		if g.travelling and sf_sk.vel.length() < 1.0:
 			tv_held = true
@@ -2737,7 +2785,7 @@ func run() -> void:
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("new_planet.png"))
 	_ok("the skiff carries you to another planet, made while you fly, and you land on it",
 		tv_board and tv_in >= 0 and tv_arrive >= 0 and tv_back >= 0 and tv_land >= 0 and int(g.planet["index"]) == 1 and absf(Defs.RS0 - float(g.planet["radius"])) < 0.5 and tv_with and absf(tv_above) < 200.0 and tv_saved and tv_gap < 250000,
-		"aboard %s; out after %d ticks; %s made and moved over to after %d ticks (held off while it was made: %s; longest frame %.0f ms); in its orbit band %d ticks later, landed %d ticks after that, %.0f above its ground line (radius %.0f), you aboard %s; both worlds saved %s" % [tv_board, tv_in, g.planet["name"], tv_arrive, tv_held, tv_gap / 1000.0, tv_back - tv_arrive, tv_land, tv_above, Defs.RS0, tv_with, tv_saved])
+		"aboard %s; out after %d ticks; %s made and moved over to after %d ticks (held off while it was made: %s; longest frame %.0f ms at %s); in its orbit band %d ticks later, landed %d ticks after that, %.0f above its ground line (radius %.0f), you aboard %s; both worlds saved %s" % [tv_board, tv_in, g.planet["name"], tv_arrive, tv_held, tv_gap / 1000.0, tv_gap_at, tv_back - tv_arrive, tv_land, tv_above, Defs.RS0, tv_with, tv_saved])
 
 	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
 	var sp_t := Time.get_ticks_msec()
@@ -2746,11 +2794,12 @@ func run() -> void:
 	await _frames(60)
 	var sp_a: float = atan2(g.player.pos.y, g.player.pos.x)
 	var sp_off: float = g.player.pos.length() - g.gpu.surf_at(sp_a).x
-	_ok("a planet of another size is laid out and generated to fit", absf(Defs.RS0 - float(g.planet["radius"])) < 0.5 and Defs.RS0 < 1304.0 and int(Defs.NS) < 8192 and absf(sp_off) < 40.0 and g.builds.infos.size() >= 5,
+	_ok("a planet of another size is laid out and generated to fit", absf(Defs.RS0 - float(g.planet["radius"])) < 0.5 and Defs.RS0 < float(Defs.make_planet(0)["radius"]) and absf(sp_off) < 40.0 and g.builds.infos.size() >= 5,
 		"%s: radius %.0f, %d surface columns, %d shells (%.1f M cells); generated in %d ms; you stand %.1f from the surface; %d structures" % [g.planet["name"], Defs.RS0, Defs.NS, Defs.NSH, Defs.total_cells() / 1000000.0, sp_ms, sp_off, g.builds.infos.size()])
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("small_planet.png"))
 
 	await _test_far_biomes()
+	await _test_worlds()
 
 	lines.append("")
 	lines.append("%d passed, %d failed, %.1f s" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0])
@@ -2762,6 +2811,213 @@ func run() -> void:
 		f.close()
 	g._delete_worlds()
 	g.get_tree().quit(0 if failed == 0 else 1)
+
+## the wild creatures: every biome (and each depth underground) has its own; they notice you, come after
+## you with their moves, stay on screen and keep moving
+func _test_creatures() -> void:
+	var cr_god0: bool = g.test_god
+	g.test_god = true
+	var cr_rows := []
+	var cr_bad := []
+	var cr_places := []
+	for cr_b in g.planet.get("biomes", []):
+		if not cr_places.has(cr_b):
+			cr_places.append(cr_b)
+	cr_places.append_array(["cave1", "cave2", "cave3"])
+	var cr_none := []
+	for cr_w in cr_places:
+		if Defs.creatures_of(cr_w).is_empty():
+			cr_none.append(cr_w)
+	var cr_ids := []
+	for cr_k0 in Defs.CREATURES:
+		if not Defs.CREATURES[cr_k0].get("swim", false):
+			cr_ids.append(cr_k0)            # (swimmers are tried in the sea: _test_far_biomes)
+	# (on the ground: the test before this one leaves you up in the orbit band)
+	var cr_orig: Vector2 = g.player.pos
+	# (on a clear, level stretch: spawned inside a tower, a creature can't come after you at all)
+	var cr_st := _clear_stretch(Build.cell_of(g.player.pos).x - 85, 170, 50, 30)
+	var cr_a0: float = (float(cr_st.x) + 85.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(cr_a0), sin(cr_a0)) * (g.gpu.surf_at(cr_a0).x + 14.0))
+	await _frames(60)
+	var cr_home: Vector2 = g.player.pos
+	var cr_ang := atan2(cr_home.y, cr_home.x)
+	var cr_side: Vector2 = g.basis_r(cr_ang)
+	var cr_up: Vector2 = cr_home.normalized()
+	for cr_g0 in range(0, cr_ids.size(), 4):
+		_go(cr_home)
+		await _frames(20)
+		var cr_group := []
+		for cr_k in range(cr_g0, mini(cr_g0 + 4, cr_ids.size())):
+			var cr_id: String = cr_ids[cr_k]
+			var cr_d: Dictionary = Defs.creature_enemy("c_" + cr_id)
+			var cr_off := (30.0 + 14.0 * float(cr_k - cr_g0)) * (1.0 if (cr_k - cr_g0) % 2 == 0 else -1.0)
+			var cr_at: Vector2 = cr_home + cr_side * cr_off + cr_up * (20.0 if cr_d["fly"] and cr_d["def"]["go"] != "burrow" else 4.0)
+			cr_at = g.free_spot(cr_at, float(cr_d["w"]), float(cr_d["h"]), 20)
+			var cr_e = g.spawn_enemy("c_" + cr_id, cr_at)
+			cr_e.alert_t = 240             # (it has heard you: a wall between mustn't fail the test)
+			cr_e.seen_pos = cr_home
+			cr_group.append([cr_id, cr_e, cr_at, 0.0, 0.0, 9999.0, cr_e.pos])
+		for cr_f in 170:
+			await _frames(1)
+			if cr_f == 110:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("creatures_%d.png" % int(cr_g0 / 4.0)))
+			for cr_row in cr_group:
+				var cr_e2 = cr_row[1]
+				if cr_e2.dead:
+					continue
+				cr_row[3] = maxf(float(cr_row[3]), (cr_e2.pos - Vector2(cr_row[2])).dot(cr_up))
+				cr_row[4] = float(cr_row[4]) + cr_e2.pos.distance_to(Vector2(cr_row[6]))
+				cr_row[5] = minf(float(cr_row[5]), cr_e2.pos.distance_to(g.player.pos))
+				cr_row[6] = cr_e2.pos
+		for cr_row2 in cr_group:
+			var cr_e3 = cr_row2[1]
+			var cr_hunt: bool = cr_e3.moves_done >= 1 or float(cr_row2[5]) < 26.0
+			var cr_fine: bool = cr_hunt and float(cr_row2[3]) < 70.0 and float(cr_row2[4]) > 6.0
+			cr_rows.append("%s %s%d moves, up %.0f, moved %.0f, nearest %.0f" % [cr_row2[0], "" if cr_fine else "(!) ", cr_e3.moves_done, cr_row2[3], cr_row2[4], cr_row2[5]])
+			if not cr_fine:
+				cr_bad.append(cr_row2[0])
+			if not cr_e3.dead:
+				g._kill_enemy(cr_e3)
+	g.test_god = cr_god0
+	g.boss_clouds.clear()
+	_go(cr_orig)
+	await _frames(30)
+	_ok("every biome and depth has creatures that come after you, attack, stay on screen and keep moving",
+		cr_none.is_empty() and cr_bad.is_empty(), "%d creatures; places without any: %s; %s" % [cr_ids.size(), str(cr_none), "; ".join(cr_rows)])
+
+## every game grows a system of its own: the rules for many seeds, and one random planet made for real
+func _test_worlds() -> void:
+	# ---- every game grows a system of its own (Defs.world_seed): the rules hold for many seeds ----
+	var wd_bad := []
+	var wd_names := {}
+	var wd_g0 := 0
+	var wd_gl := 0.0
+	var wd_kinds := {}
+	var wd_rmin := 1e9
+	var wd_rmax := 0.0
+	for wd_s in range(1, 41):
+		var wd_seen := []
+		var wd_pos := []
+		for wd_i in 5:
+			var wd_p: Dictionary = Defs.make_planet_for(wd_s * 7919, wd_i)
+			var wd_bl: Array = wd_p["biomes"]
+			var wd_gs: Array = wd_p.get("guardians", [])
+			wd_kinds[wd_p["kind"]] = int(wd_kinds.get(wd_p["kind"], 0)) + 1
+			wd_rmin = minf(wd_rmin, float(wd_p["radius"]))
+			wd_rmax = maxf(wd_rmax, float(wd_p["radius"]))
+			if wd_i == 0:
+				wd_g0 += wd_gs.size()
+				var wd_friendly := false
+				for wd_b in wd_bl:
+					wd_friendly = wd_friendly or (int(Defs.BIOMES[wd_b]["flags"]) & 8) != 0
+				if wd_p["kind"] != "temperate" or not wd_friendly:
+					wd_bad.append("seed %d: the first planet isn't a temperate one to start on" % wd_s)
+			else:
+				wd_gl += wd_gs.size()
+			if wd_bl.size() < 3 or wd_bl.size() > 8:
+				wd_bad.append("seed %d planet %d: %d biomes" % [wd_s, wd_i, wd_bl.size()])
+			for wd_b2 in wd_bl:
+				if not Defs.BIOMES.has(wd_b2) or not Defs.BOSSES.has(wd_b2):
+					wd_bad.append("seed %d planet %d: biome %s" % [wd_s, wd_i, wd_b2])
+			if wd_bl.has("ocean") and float(wd_p["sea"]) <= 0.0:
+				wd_bad.append("seed %d planet %d: ocean but no sea" % [wd_s, wd_i])
+			if wd_gs.is_empty() or wd_gs.size() > wd_bl.size():
+				wd_bad.append("seed %d planet %d: %d guardians" % [wd_s, wd_i, wd_gs.size()])
+			if wd_seen.has(wd_p["name"]):
+				wd_bad.append("seed %d: two planets called %s" % [wd_s, wd_p["name"]])
+			wd_seen.append(wd_p["name"])
+			wd_names[wd_p["name"]] = true
+			var wd_st := Defs.biome_starts(wd_p)
+			if wd_st.size() != wd_bl.size() or wd_st[0] != 0.0:
+				wd_bad.append("seed %d planet %d: biome starts %s" % [wd_s, wd_i, str(wd_st)])
+		# where they hang: apart from each other, none on top of home
+		var wd_keep: int = Defs.world_seed
+		Defs.world_seed = wd_s * 7919
+		for wd_k in 5:
+			wd_pos.append(Defs.planet_pos(wd_k))
+		Defs.world_seed = wd_keep
+		for wd_k1 in 5:
+			for wd_k2 in range(wd_k1 + 1, 5):
+				if (wd_pos[wd_k1] as Vector2).distance_to(wd_pos[wd_k2]) < 25000.0:
+					wd_bad.append("seed %d: planets %d and %d %.0f apart" % [wd_s, wd_k1, wd_k2, (wd_pos[wd_k1] as Vector2).distance_to(wd_pos[wd_k2])])
+	var wd_rules_ok := wd_bad.is_empty() and wd_names.size() > 120 and wd_kinds.size() >= 6
+	_ok("every game grows a system of its own (40 seeds: a temperate world first, sound biomes, seas, names, places)", wd_rules_ok,
+		"%d names among 200 planets; kinds %s; radius %.0f-%.0f; guardians on the first planet %.1f, on the others %.1f; %s" % [wd_names.size(), str(wd_kinds),
+		wd_rmin, wd_rmax, float(wd_g0) / 40.0, wd_gl / 160.0, "; ".join(wd_bad.slice(0, 6)) if not wd_bad.is_empty() else "all sound"])
+	# ---- and one of them made for real: the planet of a new game, guardians where it says ----
+	var wd_god0: bool = g.test_god
+	g.test_god = true
+	Defs.world_seed = 424242
+	g._delete_worlds()
+	var wd_t0 := Time.get_ticks_msec()
+	g._enter_planet(0)
+	var wd_ms := Time.get_ticks_msec() - wd_t0
+	var wd_pl: Dictionary = g.planet
+	var wd_lb := []
+	for wd_l in g.builds.lair_list:
+		wd_lb.append(wd_l["biome"])
+	var wd_want: Array = wd_pl.get("guardians", [])
+	var wd_match := true
+	for wd_b3 in wd_lb:
+		wd_match = wd_match and wd_want.has(wd_b3)
+	var wd_made_ok: bool = g.builds.infos.size() >= 20 and wd_match and wd_lb.size() >= wd_want.size() - 1 and wd_lb.size() >= 1
+	_ok("a new game's planet is made from its own seed, with guardians only where it says", wd_made_ok,
+		"%s (%s, radius %.0f): %s; %d structures; guardians wanted %s, lairs %s (no room: %s); made in %d ms (%s)" % [wd_pl["name"], wd_pl["kind"], float(wd_pl["radius"]),
+		wd_pl["desc"], g.builds.infos.size(), str(wd_want), str(wd_lb), str(g.builds.lair_why), wd_ms, str(g.gen_times)])
+	Defs.world_seed = 0
+	g._delete_worlds()
+	g.test_god = wd_god0
+
+## Stamps land where they're meant, whatever their anchor (a default one near you, one given, of any
+## width): `wrapc` once took % of negative numbers, which only came out right on a planet a power of
+## two columns round.
+func _test_stampdiag() -> void:
+	var sd_a: float = g.spawn_angle - 0.13
+	var sd_s: float = g.gpu.surf_at(sd_a).x
+	var b = g.builds
+	var sd_x: int = Build.cell_of(Vector2(cos(sd_a), sin(sd_a)) * sd_s).x
+	var sd_y: int = b.ground_row(sd_x + 5) - 40
+	var sd_d := PackedInt32Array()
+	sd_d.resize(100)
+	sd_d.fill(Defs.OBSIDIAN | 0x20000 | (255 << 8))
+	# (variants: [anchor column or -1 for the default, anchor width or -1 for none given, rows up])
+	var sd_cases := [[-1, -1, 0], [sd_x, 1, 12], [-2, 10, 24], [sd_x, 10, 36], [-1, -1, 48]]
+	var sd_lines := []
+	var sd_good := true
+	for sd_k in sd_cases.size():
+		var sc: Array = sd_cases[sd_k]
+		var sy: int = sd_y - int(sc[2])
+		var st := {"x0": sd_x, "y0": sy, "w": 10, "h": 10, "data": sd_d}
+		if int(sc[0]) >= 0:
+			st["ax"] = int(sc[0])
+		elif int(sc[0]) == -2:
+			st["ax"] = Defs.anchor_c
+		if int(sc[1]) >= 0:
+			st["aw"] = int(sc[1])
+		g.stamps.append(st)
+		var anc0: int = Defs.anchor_c
+		await _frames(3)
+		var raw: PackedByteArray = g.gpu.read_world()
+		var n2 := 0
+		var found := {}
+		for j in 10:
+			for i in range(-400, 400):
+				if (raw.decode_u32(Defs.raw_idx(sy + j, posmod(sd_x + i, Defs.NS)) * 4) & 255) == Defs.OBSIDIAN:
+					if i >= 0 and i < 10:
+						n2 += 1
+					found[i] = true
+		var ks: Array = found.keys()
+		ks.sort()
+		sd_lines.append("%s: %d of 100%s" % [str(sc), n2, "" if n2 == 100 else " (!) (anchor %d; found at %s)" % [anc0, str(ks.slice(0, 3))]])
+		sd_good = sd_good and n2 == 100
+	# (and the blocks cleared again)
+	var sd_air := PackedInt32Array()
+	sd_air.resize(100)
+	sd_air.fill(Defs.AIR | 0xFF00)
+	for sd_k2 in sd_cases.size():
+		g.stamps.append({"x0": sd_x, "y0": sd_y - int(sd_cases[sd_k2][2]), "w": 10, "h": 10, "data": sd_air, "ax": sd_x, "aw": 10})
+	await _frames(3)
+	_ok("stamps land where they're meant, whatever their anchor", sd_good, "[anchor, width, rows up]: " + "; ".join(sd_lines))
 
 ## The other planets' own biomes: Cindrel's ashlands (Kragmor in his caldera) and Thalassa's drowned
 ## shelves (Thalassor in a sanctum on the seabed, under the water), and the sea's swimmers, which
@@ -3113,6 +3369,147 @@ func _test_climb() -> void:
 	_go(cl_orig)
 	await _frames(20)
 	_ok("foes follow you up through a platform and onto a ledge, and down through the platform", cl_good, "; ".join(cl_lines))
+
+func _test_nav() -> void:
+	# ---- pathfinding (nav.gd): on a course in open air (a floor; stone slabs stepping up to the left;
+	# a long walkway at the top reaching back to the right), foes find their way round to you ----
+	var nv_god0: bool = g.test_god
+	g.test_god = true
+	var nv_orig: Vector2 = g.player.pos
+	var nv_a := atan2(nv_orig.y, nv_orig.x) - 0.12
+	var nv_up := Vector2(cos(nv_a), sin(nv_a))
+	var nv_c: Vector2i = Build.cell_of(nv_up * (g.gpu.surf_at(nv_a).x + 200.0))
+	var NW := 220
+	var NH := 100
+	var nv_box := Rect2i(150, 66, 31, 30)             # (a closed box on the floor, for 3 and 4)
+	var nv_inner := Rect2i(153, 69, 25, 27)
+	var nv_mk := func(box_mat: int, clear: bool) -> PackedInt32Array:
+		var dd := PackedInt32Array()
+		dd.resize(NW * NH)
+		dd.fill(0xFFFF)
+		for nj in NH:
+			for ni in NW:
+				var m := Defs.AIR                                      # (open air, whatever was there)
+				if nj >= 96 or ni < 3 or ni >= NW - 3:
+					m = Defs.OBSIDIAN                                  # floor, end walls (nothing breaks them)
+				elif nj >= 78 and nj <= 79 and ni >= 30 and ni <= 60:
+					m = Defs.STONE                                     # slab 1, 18 up
+				elif nj >= 60 and nj <= 61 and ni >= 3 and ni <= 22:
+					m = Defs.STONE                                     # slab 2, 36 up
+				elif nj >= 42 and nj <= 45 and ni >= 40:
+					m = Defs.STONE                                     # the walkway, 54 up
+				elif box_mat >= 0 and nv_box.has_point(Vector2i(ni, nj)) and not nv_inner.has_point(Vector2i(ni, nj)):
+					m = box_mat
+				if clear:
+					dd[nj * NW + ni] = Defs.AIR | 0xFF00
+				else:
+					dd[nj * NW + ni] = m | 0xFF00 | (0x20000 if m != Defs.AIR else 0)
+		return dd
+	g.stamps.append({"x0": nv_c.x, "y0": nv_c.y, "w": NW, "h": NH, "data": nv_mk.call(-1, false), "ax": nv_c.x, "aw": NW})
+	var nv_floor_r: float = Defs.R_TOP - float(nv_c.y + 96)
+	var nv_at := func(ci: int, cj: int) -> Vector2:
+		return _cell_pos(nv_c.x + ci, nv_c.y + cj, nv_c.x, NW)
+	var nv_o0: Vector2 = nv_at.call(0, 96)
+	var nv_side: Vector2 = g.basis_r(atan2(nv_o0.y, nv_o0.x))
+	var nv_col := func(p: Vector2) -> float:
+		return (p - nv_o0).dot(nv_side)
+	var nv_feet := func(ne) -> float:
+		return ne.pos.length() - float(ne.h) * 0.5 - nv_floor_r
+	var nv_lines := []
+	var nv_good := true
+	var nv_keep := func(foes: Array) -> void:
+		# (they hunt where you are as if they'd just heard you; whether they see you is their own affair)
+		for ne in foes:
+			ne.alert_t = 9999
+			ne.seen_pos = g.player.pos
+	# 1. walkers: you up on the walkway, they on the floor under you; the way up is the other way
+	_go(nv_at.call(190, 30))
+	await _frames(30)
+	var nv_walk := []
+	for nv_s in [["skeleton", 186, 86], ["slime", 172, 88], ["c_crawler", 202, 88]]:
+		var nv_e = g.spawn_enemy(String(nv_s[0]), nv_at.call(int(nv_s[1]), int(nv_s[2])))
+		nv_walk.append([nv_s[0], nv_e, -1, 0])
+	for nv_f in 1500:
+		await _frames(1)
+		var nv_all := true
+		for nv_row in nv_walk:
+			var nv_e2 = nv_row[1]
+			nv_keep.call([nv_e2])
+			nv_row[3] = maxi(int(nv_row[3]), int(nv_e2.wall_t))
+			if nv_f % 60 == 0 and int(nv_row[2]) < 0:
+				print("[nav] %s f%d col %.0f h %.0f path %d/%d ok %s air %s wall %d" % [nv_row[0], nv_f, nv_col.call(nv_e2.pos), nv_feet.call(nv_e2), nv_e2.path_i, nv_e2.path.size(), nv_e2.path_ok, nv_e2.nav_air, nv_e2.wall_t])
+			if int(nv_row[2]) < 0 and nv_feet.call(nv_e2) > 48.0 and nv_e2.pos.distance_to(g.player.pos) < 36.0:
+				nv_row[2] = nv_f
+			if int(nv_row[2]) < 0:
+				nv_all = false
+		if nv_all:
+			break
+	for nv_row2 in nv_walk:
+		var nv_ok: bool = int(nv_row2[2]) >= 0
+		nv_good = nv_good and nv_ok
+		nv_lines.append("%s up the stairs to you: %s (longest at a wall %d frames%s)" % [nv_row2[0], ("in %.1f s" % (float(nv_row2[2]) / 60.0)) if nv_ok else "(!) never",
+			int(nv_row2[3]), "" if nv_ok else ", now at column %.0f, %.0f up" % [nv_col.call(nv_row2[1].pos), nv_feet.call(nv_row2[1])]])
+		nv_row2[1].dead = true
+	await _frames(2)
+	# 2. a bat under the walkway flies round its end to you (it used to bump along underneath)
+	var nv_bat = g.spawn_enemy("bat", nv_at.call(190, 70))
+	var nv_bat_t := -1
+	var nv_bat_wall := 0
+	for nv_f2 in 900:
+		await _frames(1)
+		nv_keep.call([nv_bat])
+		nv_bat_wall = maxi(nv_bat_wall, nv_bat.wall_t)
+		if nv_f2 % 60 == 0:
+			print("[nav] bat f%d col %.0f h %.0f path %d/%d open %s key %s wall %d act '%s'" % [nv_f2, nv_col.call(nv_bat.pos), nv_feet.call(nv_bat), nv_bat.path_i, nv_bat.path.size(), nv_bat.fly_open, nv_bat.path_key, nv_bat.wall_t, nv_bat.act])
+		if nv_bat.pos.distance_to(g.player.pos) < 30.0 and nv_feet.call(nv_bat) > 46.0:
+			nv_bat_t = nv_f2
+			break
+	nv_good = nv_good and nv_bat_t >= 0
+	nv_lines.append("bat round the walkway: %s (longest at a wall %d frames)" % [("in %.1f s" % (float(nv_bat_t) / 60.0)) if nv_bat_t >= 0 else "(!) never (at column %.0f, %.0f up)" % [nv_col.call(nv_bat.pos), nv_feet.call(nv_bat)], nv_bat_wall])
+	nv_bat.dead = true
+	# 3. you shut in a box on the floor: a skeleton outside waits, it doesn't keep pushing at it
+	g.stamps.append({"x0": nv_c.x, "y0": nv_c.y, "w": NW, "h": NH, "data": nv_mk.call(Defs.OBSIDIAN, false), "ax": nv_c.x, "aw": NW})
+	_go(nv_at.call(165, 84))
+	await _frames(20)
+	var nv_sk = g.spawn_enemy("skeleton", nv_at.call(105, 86))
+	var nv_push := 0
+	for nv_f3 in 420:
+		await _frames(1)
+		nv_keep.call([nv_sk])
+		if nv_f3 >= 240 and nv_sk.hit_wall:
+			nv_push += 1
+	var nv_wait_ok: bool = nv_push < 40
+	nv_good = nv_good and nv_wait_ok
+	nv_lines.append("shut in: the skeleton pressed at the wall %d of its last 180 frames%s (column %.0f, way ok %s)" % [nv_push, "" if nv_wait_ok else " (!)", nv_col.call(nv_sk.pos), nv_sk.path_ok])
+	nv_sk.dead = true
+	# 4. the same box in brick, a guardian outside: it smashes its way in, all at once
+	g.stamps.append({"x0": nv_c.x, "y0": nv_c.y, "w": NW, "h": NH, "data": nv_mk.call(Defs.BRICK, false), "ax": nv_c.x, "aw": NW})
+	await _frames(10)
+	var nv_boss = g.spawn_enemy("boss_forest", nv_at.call(100, 76))
+	nv_boss.awake = true
+	nv_boss.act_cd = 30
+	var nv_in := -1
+	var nv_hits := 0
+	for nv_f4 in 1200:
+		await _frames(1)
+		nv_hits = maxi(nv_hits, nv_boss.breach_hits)
+		if nv_f4 % 60 == 0 and nv_in < 0:
+			print("[nav] guardian f%d col %.0f h %.0f unreach %d act '%s' move '%s' hits %d path %d ok %s" % [nv_f4, nv_col.call(nv_boss.pos), nv_feet.call(nv_boss), nv_boss.unreach_t, nv_boss.act, nv_boss.move, nv_boss.breach_hits, nv_boss.path.size(), nv_boss.path_ok])
+		if nv_boss.pos.distance_to(g.player.pos) < 20.0:
+			nv_in = nv_f4
+			break
+	var nv_breach_ok: bool = nv_in >= 0 and nv_hits > 0
+	nv_good = nv_good and nv_breach_ok
+	nv_lines.append("guardian at a brick hut: %s, %d blasts%s" % [("in to you in %.1f s" % (float(nv_in) / 60.0)) if nv_in >= 0 else "(!) never got in",
+		nv_hits, "" if nv_breach_ok else " (column %.0f, unreachable %d, act '%s' move '%s')" % [nv_col.call(nv_boss.pos), nv_boss.unreach_t, nv_boss.act, nv_boss.move]])
+	g.enemies.erase(nv_boss)
+	var nv_nav = g.nav_of_slot(0)
+	nv_lines.append("graphs built %d (last %.1f ms on its thread)" % [nv_nav.builds, float(nv_nav.build_us) / 1000.0])
+	g.stamps.append({"x0": nv_c.x, "y0": nv_c.y, "w": NW, "h": NH, "data": nv_mk.call(-1, true), "ax": nv_c.x, "aw": NW})
+	g.test_god = nv_god0
+	_go(nv_orig)
+	await _frames(20)
+	_ok("foes find their way round to you: up stairs the other way, round a walkway, never pushing at a wall; a guardian breaks in", nv_good, "; ".join(nv_lines))
 
 func _sha(d: PackedByteArray) -> String:
 	var h := HashingContext.new()

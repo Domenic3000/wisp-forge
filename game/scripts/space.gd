@@ -87,8 +87,10 @@ var centre := Vector2.ZERO      # (its centre)
 var view_ang := 0.0             # the view's turn out here (main.world_to_screen uses it)
 var sun_ang := 0.0              # where the sun is (it turns once a day, as on the planet)
 var _bodies_for := -1
+var _discs := {}                # (each planet's disc picture, kept between journeys: [texture, sun angle])
 var rocks := []                 # the asteroids near home (asteroid.gd), in its coordinates
 var _rocks_for := -1            # (the planet they belong to)
+var _rock_plan := []            # (rocks still to be made for it: one a tick, so arriving doesn't stall)
 var _rock_sprites := []
 var _lit: Shader
 var _mining := 0                # (frames since you last dug at a rock)
@@ -309,6 +311,7 @@ func travel(index: int) -> void:
 	# the planet you leave is written in the background (the skiff you ride goes with you)
 	await game.save_world_async(riding)
 	await game.arrive_planet(index)
+	var ta := Time.get_ticks_usec()
 	_reanchor(Defs.planet_pos(home) - Defs.planet_pos(index))
 	home = index
 	target = -1
@@ -316,9 +319,20 @@ func travel(index: int) -> void:
 	_find_near(game.skiff.pos if riding else game.player.pos)
 	# the planet's own clock, set so that its sun stands where the sun is now
 	game.time += fposmod(sun_ang - game.sun_angle(), TAU) / TAU * game.day_len()
+	var t_move := Time.get_ticks_usec() - ta
+	# (its picture, and saving it, each in a frame of its own: the first picture from a new device
+	# is slow, and with the rest it made the longest frame of a journey)
+	await get_tree().process_frame
+	ta = Time.get_ticks_usec()
 	pictures[home] = game.capture_planet()
+	var t_pic := Time.get_ticks_usec() - ta
 	game.ui.toast("%s: %s" % [game.planet["name"], game.planet["desc"]], Color(0.8, 0.95, 0.9), 5.0)
+	await get_tree().process_frame
+	ta = Time.get_ticks_usec()
 	game.save_game()
+	var t_prog := Time.get_ticks_usec() - ta
+	if game.testing:
+		print("[travel] after arriving (ms): moving over %d, the planet's picture %d, progress saved %d" % [t_move / 1000, t_pic / 1000, t_prog / 1000])
 	await game.save_world_async()
 
 ## Moves everything out here by `d` (the new home to the origin).
@@ -336,6 +350,7 @@ func _reanchor(d: Vector2) -> void:
 		p["pos"] += d
 	centre += d
 	rocks.clear()                 # (the old home's: saved with it; the new home's are made next)
+	_rock_plan.clear()
 	_rocks_for = -1
 
 ## the nearest planet's pull out here (per tick, toward its centre): as at the top of its orbit
@@ -517,9 +532,15 @@ func _make_bodies() -> void:
 	for i in range(base, base + n):
 		var pl: Dictionary = Defs.make_planet(i)
 		var top: float = float(pl["radius"]) + Defs.ATMO
+		# (a disc is ~17 ms of script: the five of them made again on every journey were most of the
+		# frame you arrive in, so one is kept until the sun has moved well round)
+		var dk := "%d_%d" % [Defs.world_seed, i]
+		var dc: Array = _discs.get(dk, [])
+		if dc.is_empty() or absf(angle_difference(float(dc[1]), sun_ang)) > 0.5:
+			dc = [ImageTexture.create_from_image(_disc_image(pl, sun_dir)), sun_ang]
+			_discs[dk] = dc
 		bodies.append({"index": i, "pos": Defs.planet_pos(i) - Defs.planet_pos(home), "top": top,
-			"space": top + Defs.ORBIT_ROWS, "name": pl["name"],
-			"tex": ImageTexture.create_from_image(_disc_image(pl, sun_dir))})
+			"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": dc[0]})
 
 func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 	var n := 128
@@ -554,7 +575,7 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 			var lam := clampf(s.dot(light) + nz * 0.35, 0.0, 1.0) * 0.9 + 0.1
 			var ang := fposmod(atan2(s.y, s.x), TAU)
 			var nv := noise.get_noise_2d(float(x), float(y))
-			var bi := int(fposmod(ang / TAU * cols.size() + nv * 0.6, float(cols.size())))
+			var bi := Defs.biome_index_at(pl, ang + nv * 0.6 / float(cols.size()) * TAU)
 			var c: Color = cols[bi]
 			c = c.lightened(nv * 0.25) if nv > 0.0 else c.darkened(-nv * 0.3)
 			if sea and nv < -0.05:
@@ -569,44 +590,60 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 
 ## The asteroids of home: loaded with its world, or grown from its seed the first time (a few
 ## clusters over its orbit band, each of its own kind: stony, icy, metallic).
-func _ensure_rocks() -> void:
+func _ensure_rocks(all := false) -> void:
 	var idx := int(game.planet.get("index", -1))
-	if idx < 0 or idx == _rocks_for or idx != home:
+	if idx >= 0 and idx != _rocks_for and idx == home:
+		_rocks_for = idx
+		rocks.clear()
+		_rock_plan.clear()
+		var saved = game.planet_state.get("asteroids", null)
+		if typeof(saved) == TYPE_ARRAY:
+			for d in saved:
+				_rock_plan.append({"save": d})
+		else:
+			# (every draw from the planet's seed is made here, in the order it always was, so the rocks
+			# come out the same however many ticks they take to make)
+			var rng := RandomNumberGenerator.new()
+			rng.seed = int(game.planet.get("seed", idx)) ^ 0xA57E
+			var ncl := 3
+			var a0 := rng.randf() * TAU
+			for c in ncl:
+				var ca := a0 + float(c) * TAU / float(ncl) + rng.randf_range(-0.3, 0.3)
+				var cpos := Vector2(cos(ca), sin(ca)) * (Defs.R_SPACE + rng.randf_range(700.0, 1900.0))
+				var ckind: String = Asteroid.KINDS[c % Asteroid.KINDS.size()]
+				for k in rng.randi_range(2, 4):
+					var kind: String = ckind if k == 0 or rng.randf() < 0.65 else "stony"
+					var r := rng.randf_range(12.0, 34.0) if k > 0 else rng.randf_range(26.0, 38.0)
+					var rs := rng.randi()
+					var p := cpos + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 240.0 * float(mini(k, 1))
+					var v := Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 0.01
+					_rock_plan.append({"seed": rs, "r": r, "kind": kind, "pos": p, "vel": v})
+	if _rocks_for != home:
 		return
-	_rocks_for = idx
-	rocks.clear()
-	var saved = game.planet_state.get("asteroids", null)
-	if typeof(saved) == TYPE_ARRAY:
-		for d in saved:
-			var a = Asteroid.from_save(d)
+	while not _rock_plan.is_empty():
+		var pl: Dictionary = _rock_plan.pop_front()
+		if pl.has("save"):
+			var a = Asteroid.from_save(pl["save"])
 			if a != null:
 				rocks.append(a)
-		return
-	var rng := RandomNumberGenerator.new()
-	rng.seed = int(game.planet.get("seed", idx)) ^ 0xA57E
-	var ncl := 3
-	var a0 := rng.randf() * TAU
-	for c in ncl:
-		var ca := a0 + float(c) * TAU / float(ncl) + rng.randf_range(-0.3, 0.3)
-		var cpos := Vector2(cos(ca), sin(ca)) * (Defs.R_SPACE + rng.randf_range(700.0, 1900.0))
-		var ckind: String = Asteroid.KINDS[c % Asteroid.KINDS.size()]
-		for k in rng.randi_range(2, 4):
-			var kind: String = ckind if k == 0 or rng.randf() < 0.65 else "stony"
-			var r := rng.randf_range(12.0, 34.0) if k > 0 else rng.randf_range(26.0, 38.0)
-			var a2 = Asteroid.make(rng.randi(), r, kind)
-			a2.pos = cpos + Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 240.0 * float(mini(k, 1))
-			a2.vel = Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 0.01
+		else:
+			var a2 = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
+			a2.pos = pl["pos"]
+			a2.vel = pl["vel"]
 			# (not on top of one already there)
 			for o in rocks:
 				var gap: Vector2 = a2.pos - o.pos
 				if gap.length() < a2.reach() + o.reach():
 					a2.pos = o.pos + gap.normalized() * (a2.reach() + o.reach() + 10.0)
 			rocks.append(a2)
+		if not all:
+			break
 
 ## for saving with the world: home's asteroids, or null if they aren't the ones for `index`
 func rocks_state(index: int) -> Variant:
 	if _rocks_for != index:
 		return null
+	_ensure_rocks(true)               # (any still to be made: all of them are saved)
 	var out := []
 	for a in rocks:
 		out.append(a.save())

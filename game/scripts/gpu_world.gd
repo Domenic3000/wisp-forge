@@ -25,6 +25,10 @@ var read_parts := {}     # and how long each part of reading it back took
 var rb_buf := RID()
 var rb_off := [0, 0, 0, 0]   # where the counters, light, picture and grids start in it
 var _rb_slots := 1
+var nav_buf := RID()         # each player's coarse nav map (shaders/navmap.comp; scripts/nav.gd)
+var NG := 96                 # nav map blocks a side (GS / 4)
+var NGP := 96                # bytes to a nav map row (a multiple of 4)
+var nav_off := 0             # where the nav maps lie in the read-back buffer (`grid`)
 var grid_off := 0            # the collision grids are read where they lie in that buffer (no copy):
 var light_off := 0           # grid is the whole buffer, the grids start at grid_off, the light at light_off
 var topple_iters := 2    # falling-block passes per frame
@@ -64,7 +68,7 @@ var view_img: Image
 var frame := 0
 
 var create_ms := {}     # (init_async: how long each shader took to make on the device)
-const SHADERS := ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants", "rectread"]
+const SHADERS := ["surface", "gen", "react", "move", "boundary", "brush", "grid", "light", "blur", "render", "support", "topple", "stamp", "plants", "rectread", "navmap"]
 
 func init() -> bool:
 	if not _alloc():
@@ -81,6 +85,9 @@ func init() -> bool:
 ## the game goes on (space travel: main.arrive_planet).
 func init_async() -> bool:
 	create_ms.clear()
+	# (a frame between freeing the old world and making the new one's buffers: each takes ~100 ms on a
+	# planet of 20 M cells, together they were the longest frame of a journey)
+	await Engine.get_main_loop().process_frame
 	var ta := Time.get_ticks_usec()
 	if not _alloc():
 		return false
@@ -208,19 +215,25 @@ func resize(w: int, h: int) -> void:
 	LW = int(ceil(float(VW) / LS)) + 1
 	LH = int(ceil(float(VH) / LS)) + 1
 	GS = clampi(int(ceil((maxi(w, h) + 96) / 4.0)) * 4, 384, 1024)
-	for key in ["light", "blur_h", "blur_v", "render", "grid"]:
+	NG = GS / 4
+	NGP = int(ceil(NG / 4.0)) * 4
+	for key in ["light", "blur_h", "blur_v", "render", "grid", "navmap"]:
 		if sets.has(key) and sets[key].is_valid() and rd.uniform_set_is_valid(sets[key]):
 			rd.free_rid(sets[key])
-	for b in [light_a, light_b, view_buf, grid_buf, rb_buf]:
+	for b in [light_a, light_b, view_buf, grid_buf, rb_buf, nav_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
 	grid_buf = rd.storage_buffer_create(GS * GS * MAXP)    # one collision grid per player
+	nav_buf = rd.storage_buffer_create(NG * NGP * MAXP)    # and its nav map
 	grid = PackedByteArray()
 	sets["grid"] = _mkset("grid", [[0, world_buf], [1, params_buf], [7, grid_buf], [3, counts_buf], [8, aux_buf]])
+	sets["navmap"] = _mkset("navmap", [[7, grid_buf], [11, nav_buf]])
 	light_a = rd.storage_buffer_create(LW * LH * 16)
 	light_b = rd.storage_buffer_create(LW * LH * 16)
 	view_buf = rd.storage_buffer_create(VW * VH * 4)
-	rb_off = [0, 64 * MAXP * 4, 64 * MAXP * 4 + LW * LH * 16, 64 * MAXP * 4 + LW * LH * 16 + VW * VH * 4]
+	# read back in one go: the counters, the light, the picture, the nav maps, then the grids
+	nav_off = 64 * MAXP * 4 + LW * LH * 16 + VW * VH * 4
+	rb_off = [0, 64 * MAXP * 4, 64 * MAXP * 4 + LW * LH * 16, nav_off + NG * NGP * MAXP]
 	rb_buf = rd.storage_buffer_create(rb_off[3] + GS * GS * MAXP)
 	sets["light"] = _mkset("light", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [8, aux_buf]])
 	sets["blur_h"] = _mkset("blur", [[4, light_a], [5, light_b]])
@@ -275,6 +288,13 @@ func build_surface(planet: Dictionary) -> void:
 		var bd: Dictionary = Defs.BIOMES[bl[b]]
 		setp(8 + 2 * b, Vector4(bd["off"], bd["amp"], bd["top"], bd["flags"]))
 		setp(9 + 2 * b, Vector4(bd["sub"], bd["topD"], bd["subD"], int(bd["ug"]) + int(bd["flora"]) * 16))
+	# where each biome starts round the planet (biomes have widths of their own)
+	var bst := Defs.biome_starts(planet)
+	var st8 := PackedFloat32Array([1, 1, 1, 1, 1, 1, 1, 1])
+	for q in mini(bst.size(), 8):
+		st8[q] = bst[q]
+	setp(24, Vector4(st8[0], st8[1], st8[2], st8[3]))
+	setp(25, Vector4(st8[4], st8[5], st8[6], st8[7]))
 	setp(120, Vector4(0, 0, 0, 0))
 	_upload_params()
 	var cl := rd.compute_list_begin()
@@ -357,6 +377,9 @@ func stamp(structs: Array, seed: int) -> void:
 
 ## Runs the simulation (no rain, no rendering) around the given points so freshly stamped
 ## structures settle: whatever the generator (or a ruin's decay) left unsupported falls now.
+var settle_ms := Vector2i.ZERO     # the last settle: ms recording the passes, ms waiting for the GPU
+var settle_wins := 0
+
 func settle(centers: Array, half: float, frames: int) -> void:
 	flush()
 	if centers.is_empty():
@@ -368,13 +391,28 @@ func settle(centers: Array, half: float, frames: int) -> void:
 	for c in centers:
 		# each entry: [world position, half size]; half > 0 overrides
 		wins.append_array(_window(c[0], half if half > 0.0 else float(c[1])))
+	var t_rec := 0
+	var t_sync := 0
+	# (what settles is loose rubble, sand and water: fewer liquid and plant passes than a game frame)
+	var keep_pi := plant_iters
+	var keep_fp := flow_passes
+	plant_iters = mini(plant_iters, 2)
+	flow_passes = mini(flow_passes, 2)
 	for f in frames:
 		frame += 1
+		var ta := Time.get_ticks_usec()
 		var cl := rd.compute_list_begin()
 		_sim_passes(cl, wins, -1, 0, 0)
 		rd.compute_list_end()
+		var tb := Time.get_ticks_usec()
 		rd.submit()
 		rd.sync()
+		t_rec += tb - ta
+		t_sync += Time.get_ticks_usec() - tb
+	plant_iters = keep_pi
+	flow_passes = keep_fp
+	settle_ms = Vector2i(t_rec / 1000, t_sync / 1000)
+	settle_wins = wins.size()
 
 func _dispatch_set(cl: int, shader_name: String, uset: RID, ints: Array, gx: int, gy: int, floats := []) -> void:
 	var pcb := _pc(ints, floats)
@@ -499,6 +537,8 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 			var gf: Array = grid_frames[gs]
 			var gc: Vector2 = gf[0]
 			_dispatch(cl, "grid", "grid", [GS, gs], [gc.x, gc.y, gf[1]], groups(GS / 4, 16), groups(GS, 16))
+		for gs2 in mini(grid_frames.size(), MAXP):
+			_dispatch(cl, "navmap", "navmap", [GS, gs2, NG, NGP], [], groups(NGP / 4, 16), groups(NG, 16))
 		rd.compute_list_end()
 		rd.capture_timestamp("collision grid")
 		cl = rd.compute_list_begin()
@@ -518,6 +558,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		rd.buffer_copy(counts_buf, rb_buf, 0, rb_off[0], 64 * MAXP * 4)
 		rd.buffer_copy(light_a, rb_buf, 0, rb_off[1], LW * LH * 16)
 		rd.buffer_copy(view_buf, rb_buf, 0, rb_off[2], VW * VH * 4)
+		rd.buffer_copy(nav_buf, rb_buf, 0, nav_off, NG * NGP * _rb_slots)
 		rd.buffer_copy(grid_buf, rb_buf, 0, rb_off[3], GS * GS * _rb_slots)
 	rd.submit()
 	if sim_only:
@@ -547,7 +588,7 @@ func flush() -> void:
 	read_parts["read: one copy"] = Time.get_ticks_usec() - tq
 	tq = Time.get_ticks_usec()
 	counts = all.slice(rb_off[0], rb_off[1]).to_int32_array()
-	var vb := all.slice(rb_off[2], rb_off[3])
+	var vb := all.slice(rb_off[2], rb_off[2] + VW * VH * 4)
 	grid = all
 	grid_off = rb_off[3]
 	light_off = rb_off[1]
@@ -704,7 +745,7 @@ func cleanup() -> void:
 	for nm in shaders:
 		rd.free_rid(shaders[nm]["pipeline"])
 		rd.free_rid(shaders[nm]["shader"])
-	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf, shells_buf]:
+	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf, shells_buf, nav_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
 	rd.free()
@@ -713,7 +754,7 @@ func cleanup() -> void:
 	sets = {}
 	shaders = {}
 	world_buf = RID(); aux_buf = RID(); sites_buf = RID(); params_buf = RID(); surf_buf = RID(); counts_buf = RID()
-	grid_buf = RID(); light_a = RID(); light_b = RID(); view_buf = RID(); rb_buf = RID(); shells_buf = RID()
+	grid_buf = RID(); light_a = RID(); light_b = RID(); view_buf = RID(); rb_buf = RID(); shells_buf = RID(); nav_buf = RID()
 	grid = PackedByteArray()
 	grid_off = 0
 	light_off = 0

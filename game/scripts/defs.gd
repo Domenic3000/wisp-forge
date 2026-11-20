@@ -504,14 +504,41 @@ const BIOMES := {
 	"ocean": {"name": "Drowned Shelf", "under": "Abyssal Grottos", "off": 62.0, "amp": 18.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 6, "ug": 0, "flags": 0},
 }
 
-## Where the planets hang (world units, Verdance at the centre): space travel flies between them. Each
-## further round of five planets lies far off along x (a prototype layout).
+## Where the planets hang (world units, the home planet of the system at the centre): space travel
+## flies between them. Each further round of five planets lies far off along x. The classic system
+## (world_seed 0, the test mode) uses SYSTEM; every game's own system is grown from its seed.
 const SYSTEM := [Vector2(0, 0), Vector2(-52000, 18000), Vector2(41000, 47000), Vector2(66000, -24000), Vector2(-30000, -61000)]
 
 func planet_pos(i: int) -> Vector2:
-	return SYSTEM[i % SYSTEM.size()] + Vector2(float(i / SYSTEM.size()) * 400000.0, 0.0)
+	var rnd := Vector2(float(i / SYSTEM.size()) * 400000.0, 0.0)
+	var k := i % SYSTEM.size()
+	if world_seed == 0 or k == 0:
+		return SYSTEM[k] + rnd if world_seed == 0 else rnd
+	# this game's round: the planets spread round the home one, each at its own distance
+	var prng := RandomNumberGenerator.new()
+	prng.seed = hash([world_seed, i / SYSTEM.size(), 11])
+	var a0 := prng.randf() * TAU
+	var p := Vector2.ZERO
+	for q in range(1, SYSTEM.size()):
+		var a := a0 + float(q - 1) / float(SYSTEM.size() - 1) * TAU + prng.randf_range(-0.35, 0.35)
+		var d := prng.randf_range(46000.0, 74000.0)
+		if q == k:
+			p = Vector2(cos(a), sin(a)) * d
+	return p + rnd
 
-## Each planet has its own size: "radius" is its mean surface radius in cells (Verdance 1304).
+## ---- the planets ----
+## Every planet is half as wide again as the first designs (PLANET_SCALE). The classic system is
+## the hand-made table (PLANETS: the test mode plays it, so its checks stay repeatable); every game
+## (world_seed, picked when a journey starts and kept in its save) grows a system of its own:
+## the first planet always a temperate world to start on, the others of kinds (PLANET_KINDS) in a
+## random order, each with a name from parts, its own mix of biomes in an order and widths of its
+## own, its size, sea, lava, wealth, sky and place in the system.
+const PLANET_SCALE := 1.5
+var world_seed := 0
+var _planet_cache := {}
+
+## Each planet has its own size: "radius" is its mean surface radius in cells (classic Verdance
+## 1304 before PLANET_SCALE).
 const PLANETS := [
 	{"name": "Verdance", "radius": 1304.0, "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},
 	{"name": "Cindrel", "radius": 1100.0, "desc": "A volcanic world. The mantle is close to the surface.", "biomes": ["ashland", "mountain", "desert", "ashland", "ashland"], "magmaR": 780.0, "sea": -1.0, "rich": 1.4, "lava": 2.6, "sky": Color(1.25, 0.78, 0.7)},
@@ -520,17 +547,200 @@ const PLANETS := [
 	{"name": "Fenhollow", "radius": 950.0, "desc": "A drowned marsh world with deep black lakes.", "biomes": ["marsh", "grove", "marsh", "tundra", "marsh", "jungle"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
 ]
 
+## The kinds of planet a system grows (sizes before PLANET_SCALE; magma: the mantle's top as a share
+## of the radius; sea: its level in cells under the mean surface, -1 for none; must: biomes it always
+## has). A planet with any ocean always has a sea.
+const PLANET_KINDS := {
+	"temperate": {"pool": {"forest": 3, "jungle": 2, "marsh": 2, "tundra": 2, "mountain": 2, "savanna": 2, "desert": 2, "grove": 2},
+		"n": [6, 8], "must": ["forest"], "radius": [1250, 1450], "sea": [-1, -1], "lava": [0.8, 1.2], "rich": [0.9, 1.1],
+		"magma": [0.42, 0.5], "sky": Color(1, 1, 1), "adj": ["temperate cradle", "green", "gentle", "living"]},
+	"volcanic": {"pool": {"ashland": 6, "mountain": 2, "desert": 1},
+		"n": [4, 6], "must": ["ashland", "ashland"], "radius": [1000, 1200], "sea": [-1, -1], "lava": [2.2, 3.0], "rich": [1.3, 1.5],
+		"magma": [0.6, 0.72], "sky": Color(1.25, 0.78, 0.7), "adj": ["volcanic", "smouldering", "burning"]},
+	"ocean": {"pool": {"ocean": 6, "forest": 1, "marsh": 1, "tundra": 1, "jungle": 1},
+		"n": [5, 8], "must": ["ocean", "ocean", "ocean"], "radius": [1450, 1700], "sea": [20, 32], "lava": [0.6, 1.0], "rich": [1.1, 1.3],
+		"magma": [0.36, 0.44], "sky": Color(0.85, 1.05, 1.15), "adj": ["water", "storm-swept", "island"]},
+	"desert": {"pool": {"desert": 6, "mountain": 2, "savanna": 2, "ashland": 1},
+		"n": [4, 6], "must": ["desert", "desert"], "radius": [1300, 1550], "sea": [-1, -1], "lava": [1.2, 1.8], "rich": [1.4, 1.6],
+		"magma": [0.42, 0.5], "sky": Color(1.15, 1.0, 0.8), "adj": ["desert", "sun-baked", "parched"]},
+	"marsh": {"pool": {"marsh": 5, "grove": 2, "jungle": 2, "tundra": 1},
+		"n": [5, 7], "must": ["marsh", "marsh"], "radius": [900, 1100], "sea": [14, 20], "lava": [0.8, 1.2], "rich": [1.5, 1.7],
+		"magma": [0.6, 0.66], "sky": Color(0.85, 1.0, 0.85), "adj": ["marsh", "drowned", "misty"]},
+	"frozen": {"pool": {"tundra": 6, "mountain": 3, "grove": 1, "forest": 1},
+		"n": [4, 7], "must": ["tundra", "tundra"], "radius": [1100, 1400], "sea": [-1, -1], "lava": [0.6, 1.0], "rich": [1.3, 1.5],
+		"magma": [0.42, 0.5], "sky": Color(0.9, 0.97, 1.12), "adj": ["frozen", "ice-bound", "wind-scoured"]},
+	"wild": {"pool": {"forest": 1, "jungle": 1, "marsh": 1, "tundra": 1, "mountain": 1, "savanna": 1, "desert": 1, "grove": 1, "ashland": 1, "ocean": 1},
+		"n": [6, 8], "must": [], "radius": [1200, 1600], "sea": [-1, -1], "lava": [0.9, 1.6], "rich": [1.3, 1.6],
+		"magma": [0.42, 0.55], "sky": Color(1.05, 0.95, 1.1), "adj": ["strange", "wild", "patchwork"]},
+}
+const PLANET_ORDER := ["volcanic", "ocean", "desert", "marsh", "frozen", "wild"]
+const BIOME_WORDS := {"forest": "woods", "jungle": "jungle", "marsh": "bogs", "tundra": "snowfields", "mountain": "peaks",
+	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas"}
+const NAME_A := ["Ver", "Cin", "Thal", "Ser", "Fen", "Ar", "Bel", "Cor", "Dra", "El", "Gal", "Hal", "Ith", "Kel", "Lor", "Mor",
+	"Nev", "Or", "Pyr", "Quel", "Ryn", "Syl", "Tor", "Ul", "Vel", "Wyn", "Zar", "Ash", "Brim", "Cal", "Del", "Em", "Fal", "Gry",
+	"Hes", "Ka", "Mal", "Nim", "Oss", "Per", "Rhe", "Sol", "Tav", "Va", "Yr"]
+const NAME_B := ["", "", "", "a", "e", "i", "o", "an", "el", "or", "is", "en", "ar", "u"]
+const NAME_C := ["dance", "drel", "lassa", "re", "hollow", "mere", "holm", "dor", "eth", "ion", "ara", "ox", "une", "ys", "ath",
+	"eil", "ant", "ora", "is", "ul", "wyn", "mar", "thas", "vane", "ris", "gard", "phe", "dun", "nor", "lis"]
+
 func make_planet(i: int) -> Dictionary:
+	return make_planet_for(world_seed, i)
+
+## planet i of the system grown from ws (0: the classic one); a fresh copy each time
+func make_planet_for(ws: int, i: int) -> Dictionary:
+	var key := "%d:%d" % [ws, i]
+	if not _planet_cache.has(key):
+		_planet_cache[key] = _classic_planet(i) if ws == 0 else _grown_planet(ws, i)
+	return (_planet_cache[key] as Dictionary).duplicate(true)
+
+func _classic_planet(i: int) -> Dictionary:
 	var base: Dictionary = PLANETS[i % PLANETS.size()].duplicate(true)
 	var cycle := i / PLANETS.size()
 	base["index"] = i
 	base["seed"] = 1337 + i * 7919
+	base["kind"] = ["temperate", "volcanic", "ocean", "desert", "marsh"][i % PLANETS.size()]
 	if cycle > 0:
 		base["name"] = "%s %d" % [base["name"], cycle + 1]
 	base["rich"] = float(base["rich"]) * (1.0 + cycle * 0.25)
 	# depths were set for a planet of Verdance's size: the mantle sits as deep in proportion
+	base["radius"] = float(base["radius"]) * PLANET_SCALE
 	base["magmaR"] = float(base["magmaR"]) * float(base["radius"]) / 1304.0
 	return base
+
+## which kind planet i of the system grown from ws is (the first always temperate)
+func _planet_kind(ws: int, i: int) -> String:
+	if i == 0:
+		return "temperate"
+	var krng := RandomNumberGenerator.new()
+	krng.seed = hash([ws, i / 5, 3])
+	var order := PLANET_ORDER.duplicate()
+	for q in range(order.size() - 1, 0, -1):
+		var r := krng.randi_range(0, q)
+		var t = order[q]
+		order[q] = order[r]
+		order[r] = t
+	if i < 5:
+		return order[(i - 1) % order.size()]
+	# later rounds: any kind, a temperate one now and then
+	return "temperate" if i % 5 == 0 else order[(i % 5 - 1) % order.size()]
+
+func _grown_planet(ws: int, i: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([ws, i, 7])
+	var kind := _planet_kind(ws, i)
+	var kd: Dictionary = PLANET_KINDS[kind]
+	var cycle := i / 5
+	# biomes: the kind's must-haves, filled from its pool, then shuffled round the planet
+	var n := rng.randi_range(int(kd["n"][0]), int(kd["n"][1]))
+	var bl: Array = (kd["must"] as Array).duplicate()
+	var pool: Dictionary = kd["pool"]
+	var tot := 0.0
+	for bp_ in pool:
+		tot += float(pool[bp_])
+	while bl.size() < n:
+		var r := rng.randf() * tot
+		for bq in pool:
+			r -= float(pool[bq])
+			if r <= 0.0:
+				bl.append(bq)
+				break
+	for q in range(bl.size() - 1, 0, -1):
+		var r2 := rng.randi_range(0, q)
+		var t = bl[q]
+		bl[q] = bl[r2]
+		bl[r2] = t
+	# widths: each biome its own share of the way round (0.6 to 1.5 of an even share)
+	var ws_ := PackedFloat32Array()
+	var wt := 0.0
+	for q in bl.size():
+		ws_.append(rng.randf_range(0.6, 1.5))
+		wt += ws_[q]
+	var starts := PackedFloat32Array()
+	var acc := 0.0
+	for q in bl.size():
+		starts.append(acc / wt)
+		acc += ws_[q]
+	var radius := rng.randf_range(float(kd["radius"][0]), float(kd["radius"][1])) * PLANET_SCALE
+	var sea := -1.0
+	if float(kd["sea"][0]) >= 0.0:
+		sea = rng.randf_range(float(kd["sea"][0]), float(kd["sea"][1]))
+	if bl.has("ocean") and sea < 0.0:
+		sea = rng.randf_range(20.0, 30.0)
+	var sky: Color = kd["sky"]
+	sky = Color(sky.r + rng.randf_range(-0.06, 0.06), sky.g + rng.randf_range(-0.06, 0.06), sky.b + rng.randf_range(-0.06, 0.06))
+	# a name from parts, never one another planet of the round already has
+	var pname := ""
+	for tries in 20:
+		var nrng := RandomNumberGenerator.new()
+		nrng.seed = hash([ws, i, 13, tries])
+		pname = String(NAME_A[nrng.randi_range(0, NAME_A.size() - 1)]) + String(NAME_B[nrng.randi_range(0, NAME_B.size() - 1)]) + String(NAME_C[nrng.randi_range(0, NAME_C.size() - 1)])
+		var clash := false
+		for o in range(i - i % 5, i):
+			if String(make_planet_for(ws, o)["name"]).begins_with(pname):
+				clash = true
+		if not clash:
+			break
+	if cycle > 0:
+		pname = "%s %s" % [pname, ["", "II", "III", "IV", "V", "VI"][mini(cycle, 5)]]
+	# what it's like, from its kind and its commonest biomes
+	var counts := {}
+	for bc in bl:
+		counts[bc] = int(counts.get(bc, 0)) + 1
+	var common: Array = counts.keys()
+	common.sort_custom(func(ca, cb): return int(counts[ca]) > int(counts[cb]))
+	var words := []
+	for cw in common.slice(0, 3):
+		words.append(BIOME_WORDS[cw])
+	var list := String(words[0]) if words.size() == 1 else ", ".join(words.slice(0, words.size() - 1)) + " and " + String(words[-1])
+	var adjs: Array = kd["adj"]
+	var adj := String(adjs[rng.randi_range(0, adjs.size() - 1)])
+	var desc := "%s %s world of %s." % ["An" if "aeiou".contains(adj.left(1)) else "A", adj, list]
+	# which biomes have a guardian: not all of them; more on the planets further on (2 on the first,
+	# 2-4 on the rest of its round, two more each round after)
+	var distinct := []
+	for bd_ in bl:
+		if not distinct.has(bd_) and BOSSES.has(bd_):
+			distinct.append(bd_)
+	for q2 in range(distinct.size() - 1, 0, -1):
+		var r3 := rng.randi_range(0, q2)
+		var t3 = distinct[q2]
+		distinct[q2] = distinct[r3]
+		distinct[r3] = t3
+	var ng: int = 2 if i == 0 else int([2, 3, 3, 4, 4][i % 5]) + cycle * 2 + rng.randi_range(-1, 0)
+	var guardians: Array = distinct.slice(0, clampi(ng, 1, distinct.size()))
+	return {"name": pname, "index": i, "kind": kind, "seed": 1 + posmod(hash([ws, i, 5]), 0xFFFFFE), "guardians": guardians,
+		"radius": radius, "desc": desc, "biomes": bl, "starts": starts,
+		"magmaR": radius * rng.randf_range(float(kd["magma"][0]), float(kd["magma"][1])), "sea": sea,
+		"rich": rng.randf_range(float(kd["rich"][0]), float(kd["rich"][1])) * (1.0 + cycle * 0.25),
+		"lava": rng.randf_range(float(kd["lava"][0]), float(kd["lava"][1])), "sky": sky}
+
+## where each of a planet's biomes starts, as a share of the way round (an even share each unless
+## the planet says otherwise)
+func biome_starts(pl: Dictionary) -> PackedFloat32Array:
+	if pl.has("starts"):
+		return pl["starts"]
+	var st := PackedFloat32Array()
+	var n: int = (pl["biomes"] as Array).size()
+	for q in n:
+		st.append(float(q) / float(n))
+	return st
+
+## the middle of a planet's biome b, as an angle
+func biome_mid(pl: Dictionary, b: int) -> float:
+	var st := biome_starts(pl)
+	var hi := st[b + 1] if b + 1 < st.size() else 1.0
+	return (st[b] + hi) * 0.5 * TAU
+
+## which of a planet's biomes is at angle a (its index)
+func biome_index_at(pl: Dictionary, a: float) -> int:
+	var st := biome_starts(pl)
+	var u := fposmod(a, TAU) / TAU
+	var bi := st.size() - 1
+	for q in range(1, st.size()):
+		if u < st[q]:
+			bi = q - 1
+			break
+	return bi
 
 # ---------------------------------------------------------------- spells ----
 const SPELL_ORDER := ["spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend"]

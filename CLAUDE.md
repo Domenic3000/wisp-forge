@@ -16,14 +16,15 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 
 ## Planet geometry (per planet)
 - `Defs.set_geometry(radius)` lays out the shells ("rings") for a planet's mean surface radius
-  (`PLANETS[i]["radius"]`, Verdance 1304). Rows count down from the top of the atmosphere (`R_TOP` = radius +
+  (`Defs.make_planet(i)["radius"]`: every planet is `PLANET_SCALE` (1.5) times the size it was first designed at;
+  classic Verdance 1956). Rows count down from the top of the atmosphere (`R_TOP` = radius +
   `ATMO`, row 0) to `R_IN`; the orbit band above the atmosphere has NEGATIVE rows (-`ORBIT_ROWS`..-1) up to `R_SPACE`.
   Shells are stored top to bottom (`SH_Y0`/`SH_Y1`/`SH_N`/`SH_OFF`; every `SH_Y0` even). The surface shell (`SURF`,
   `NS` columns = square cells at the mean surface, a multiple of 64) reaches `SURF_HALF` (330) rows up and down, so
   the ground lies in it. Above and below it the shells are thin (`SEAM_STEP` 0.021: each has about 2% more or
   fewer columns than its neighbour, multiples of 16; under 3.2% above radius 320, larger only near the heart), and
   every shell's cells are square at its middle, so the view never visibly changes size at a seam (the user saw a
-  2x squeeze at the old halving seams). Verdance: 110 shells, 13 M cells. Neighbours across a seam: `colTo(from, to, x)`
+  2x squeeze at the old halving seams). Classic Verdance (1956): 139 shells, about 22 M cells (a 175 MB raw save). Neighbours across a seam: `colTo(from, to, x)`
   (the cell whose middle is nearest; GLSL and `Defs.col_to`), `stepC`/`nbr`, `shAbove`/`shBelow`; a surface column
   in shell s: `colIn` / `Defs.col_in`; a cell of the read-back world: `Defs.raw_idx(row, surface col)`. `shellOf` /
   `shell_of_row` binary-search the shells. Use `floor` for rows (they go negative). In scripts use `Defs.NS` (typed)
@@ -39,6 +40,17 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   seam; every inner write is an `atomicCompSwap`, outer cells are written only by their owner); `topple` runs a thread per column per shell and drops a block across a seam by
   `atomicCompSwap` on the cell below. The unrolled view's scale (`main.unroll_step`) is the row-weighted average of
   the shells' column steps within `UNROLL_EASE` rows: exact inside a shell, smooth across seams.
+- Worlds per game: `Defs.world_seed` (picked at a new journey in `start_game`, kept in progress.json; 0 = the
+  classic hand-made system of `PLANETS`/`SYSTEM`, which the test mode plays so its checks stay repeatable).
+  `Defs.make_planet(i)` = `make_planet_for(world_seed, i)` (cached, a fresh copy each call; the title's slot list uses
+  a slot's own seed). `_grown_planet`: planet 0 is always "temperate" (a friendly start biome), the others of
+  `PLANET_KINDS` (volcanic, ocean, desert, marsh, frozen, wild) in a seeded order: biomes from the kind's must-haves +
+  weighted pool, shuffled, each with its own width (`"starts"`: fractions round the planet; `Defs.biome_starts`,
+  `biome_mid`, `biome_index_at`; params P.p[24..25] for surface.comp), radius/sea/lava/rich/magma/sky from the kind's
+  ranges (any ocean means a sea), a name from parts (`NAME_A/B/C`, unique in the round), a description from its
+  commonest biomes, and `"guardians"`: which biomes have a lair (2 on the first planet, 2-4 on the rest of its round,
+  2 more each round after; classic planets have none listed = every biome). `planet_pos` grows the round's places
+  (46-74 thousand from home). The planet seed stays under 2^24 (it goes to the GPU as a float).
 - A planet of another size re-creates the GPU world (`gpu.cleanup()` + `init()`) in `_make_world`. buildings.gd takes
   `N0` from `Defs.NS`. Depths that scale with size: `magmaR` (make_planet), the core radius (surface.comp).
 - Stamps and `read_rect` go in CELL FOR CELL at any depth (the user wants buildings built down or underground to keep
@@ -78,7 +90,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   test mode `[travel]` prints the slowest step of each kind (`_phase`) and each shader's set-up time. Until it's ready no planet
   can be approached closer than `HOLD` above its orbit band (`_hold`). Then `_reanchor` shifts players, skiff,
   camera, wisp and particles so the new planet is at the origin, its clock is set so its sun stands where the sun
-  is (`sun_ang`), its picture is taken, and it is saved. `_enter_planet` (title, portals) runs the same
+  is (`sun_ang`), its picture is taken, and it is saved (each in a frame of its own; the other planets' discs
+  are kept in `_discs`, not made again on every journey). The test allows no frame over 250 ms on the way. `_enter_planet` (title, portals) runs the same
   `_make_world` all at once.
 - Pixel bodies (`scripts/pixel_body.gd`, RefCounted): the general flying/drifting object made of cells (material
   + variant per cell in a w x h grid, body coords x along the nose, y down; `pos` = centre of mass, `ang` the +x
@@ -97,7 +110,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   no room or outline), `take(k)` clears a cell and its pixel (the picture `img` is kept, updated in place),
   `settle_mass` rebuilds keeping every cell where it was, `split_off(idx)` makes a piece a rock of its own,
   `solid_at`, `save`/`from_save` (base64 cells). space.gd keeps home's `rocks` (`_ensure_rocks`: three clusters
-  of 2-4 over the orbit band from the planet's seed, or loaded from `planet_state["asteroids"]`, written by
+  of 2-4 over the orbit band from the planet's seed, or loaded from `planet_state["asteroids"]`; every draw is
+  made at once into `_rock_plan`, then one rock is made a tick (`_ensure_rocks(true)` makes the rest now, and
+  `rocks_state` does before saving), written by
   `_world_meta` via `rocks_state`; `_reanchor` drops them, they were saved with the old home). Out there:
   `mine` (hold dig: cells within `dig_r` of the reach point, `HARD <= tier`, the brush's rate, into `inv`, dust
   streams to you), `_update_rocks` (drift, spin, rebuild a few frames after digging, `_split` once you stop:
@@ -125,6 +140,41 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   world: the close view's columns widen with height and would stretch it); its riders are drawn inside that
   transform (`_draw_mage(..., place)`), so they sit and turn with it. Air drag 0.97 a tick below `R_TOP` (none above);
   coming back from space it sheds its speed to 8 a tick, and glows coming down fast through the air.
+
+## Pathfinding (scripts/nav.gd)
+- `shaders/navmap.comp` runs after grid.comp: one byte per 4 x 4 grid cells per mage (bit 0 blocks, 1 platform, 2
+  liquid, 3 all blocked, 4 a door), read back in the same buffer as the grids (`gpu.nav_off`, `NG` blocks a side,
+  `NGP` bytes a row). `main.nav_of_slot(k)` keeps a Nav per mage; `_take_gpu_results` ticks it: every `EVERY` frames,
+  while any foe has `ask`ed for a class, the map goes to a WorkerThreadPool task that builds a graph per class:
+  walkers `w<wb>x<hb>j<jh>[d]` (AStar2D: stand nodes; edges walk/step, drop off an edge or through a platform, jump
+  straight up within jh blocks then over at the top, jump a gap of up to 4; "d" opens doors), fliers `f..`/swimmers
+  `s..` (AStarGrid2D of where the body plus a block of room fits; swimmers in water only). Queries on the main
+  thread: `walk_path`, `fly_path`, `fly_clear` (world points; the graphs keep the grid frame they were built in).
+- foe_ai.gd `nav_walk(g, e, feet_goal, jump_v, gacc, tol, doors)`: the heading (-1/0/1) and it makes the jumps and
+  drops itself (`Enemy.path`, `path_i`, `path_t`, `nav_air`, `nav_dx` for hoppers' hop size); 0 = there or as near as
+  it gets (it stands, never pushing: `wall_t` > 50 drops the way and waits); NAN = no graph yet (callers fall back on
+  the old `climb`/`_walker_nav`). `nav_fly` (straight when `fly_clear`, else along the grid, cutting corners);
+  `fly_line` (a bat only dives with a clear line); `can_reach` (could it stand within a quarter of its width + 10 of
+  you). Used by skeletons/archers (doors), slimes/mimics, creatures and guardians (`BossAI._nav_around`), and every
+  flier through main's `_flier_steer`.
+- Guardians out of reach: `unreach_t` counts while `can_reach` fails (charge and slam are then left out of `_suits`);
+  past 150 frames, within 110 and on its level, a walking guardian with a charge does a breach (`Enemy.breach`): the
+  charge blasts a hole of its own size (power 2: brick and stone, not obsidian or runestone) in one go, at most twice.
+  Wardens don't breach (their halls are warded). Test: `_test_nav` ("nav").
+
+## Making a planet quickly
+- `_make_world` times its steps (`gen_times`, printed by the test mode with `builds.plan_times` and the settle split).
+  Verdance at 1.5x is made in about 3.7 s on the RTX 3070 laptop (12.3 s at the old size before this work).
+- buildings.gd `_finish` only queues a blueprint (with the `rng.randi()` its roughening used, so layouts don't
+  change); `finish_all` / `finish_start` + `finish_collect` finish every queued blueprint on WorkerThreadPool
+  (`_finish_bp` through a helper copy of the planner per job, `_take_terrain`), results gathered in order.
+- In the editor-build engine every call on an object (and every `bp.c[k]` read) goes through a shared lock: the hot
+  loops (`_roughen_underground`, `_weather_ground_line`, `_stabilize_pass` with flat-array buckets, `_anchor_and_tidy`,
+  `_place_chests`, BP.rect/rect_bg) work on a local copy of the cells and plain tables (`_kind`, `_span`, `_gmf`) and
+  write it back once. Keep new per-cell code that way, or threads slow each other down tenfold.
+- Settling (`gpu.settle`) covers only windows round each blueprint's loose matter (unanchored powder or liquid; none
+  for a structure without any), with fewer plant and liquid passes than a game frame.
+- Structures, vaults and the lair spacing scale with the planet's columns (per 8192); dungeons stay at `DUNGEONS` (4).
 
 ## Cell format
 - Main buffer (binding 0), uint per cell:
@@ -244,7 +294,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 10 minutes (a full run takes about 8), so a broken run never leaves the game open. tests.gd is loaded at run
+- Test mode quits by itself after 10 minutes (a full run takes about 8), so a broken run never leaves the game open;
+  `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
+  up (a parse error in main.gd used to leave a blank window) or that passes 11 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -291,7 +343,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ground curves away in it (a row every 10-15 cells far out): never assume a floor is on one row; follow it
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
-- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "guardians", "wardens" or "biomes") runs just that
+- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
+  "worlds", "creatures", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -308,20 +361,23 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   breach), enraged below half health. A guardian stays in its lair: `Enemy.tether` (cells along the ground from
   its home, from the lair's "tether") and `ceil` (how high fliers go) bound where it heads (`_in_lair`,
   `_lair_point`), a charge stops at the edge, a slam lands inside; walkers keep moving round you (`pace`, a new side
-  every second or two), hop what's under `CLIMB` and smash through taller things (`_clear_way`; a charge bounds
-  over a low step instead of grinding against it), steer whenever
+  every second or two) by the nav graph (`_nav_around`, below), hop what's under `CLIMB` (`_clear_way` only turns
+  them back now: the old chipping at walls just made a hole to shoot through; a charge bounds over a low step), steer whenever
   resting on something (a chest isn't "ground"), and hop free after 1.5 s without progress; fliers steer round
   obstacles with main's `_flier_steer`. Leaps are worked out from the planet's pull to rise `SLAM_H`/`HOP_H`/
   `BREACH_H` cells, and gravity always applies to walkers (it used to be off for a slam: they flew off screen). New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
   spore) with "col", "splat" (matter left where they land) and "home" (spores drift after you); `boss_clouds`.
   Lairs: buildings.gd `_lairs` runs LAST in `plan`, with its own RNG (so adding lairs moved no other structure:
   several tests depend on the layout near the start), one per biome: spots deep inside the biome first; an open
-  arena (`_lair`: dry, level enough, 180 or 140 wide, levelled and paved, ramping to the land, cleared to the sky)
-  at least 600 columns from the start, else an underground hall (`_lair_deep`: 170 x 74, 130 rows down, a shaft with
-  landings from a small gate on the surface), then the same at 380; never within 420 columns of another lair.
-  Both use `_pillar` and `_shrine` (cover stubs, a stepped dais with an altar, braziers, a carved stele standing on
-  the floor, a sure chest). `lair_list` ({biome, pos, name, deep}) -> main `_spawn_guardians`; `lair_why` says why
-  a biome got none. A guardian wakes within `BossAI.WAKE` (110). Test mode sets `test_calm` (guardians stay asleep)
+  arena (`_lair`: dry, level enough, `LAIR_W` 440 wide (360 at a pinch), levelled and paved, ramping to the land,
+  cleared `LAIR_UP` 150 to the sky, a stepped `_mesa` beside the middle) at least 600/8192 of the way round from the
+  start, else an underground hall (`_lair_deep`: 360 x 120, 200 rows down, a shaft with landings from a small gate
+  on the surface), then the same at 380/8192; never within `LAIR_W` + 160 columns of another lair. Only biomes in
+  the planet's "guardians" get one (`guardian_biomes`). Both use `_pillar` and `_shrine` (cover stubs, a stepped dais
+  with an altar, braziers, a carved stele standing on the floor, a sure chest). `lair_list` ({biome, pos, name, deep,
+  tether, arena, ceil}) -> main `_spawn_guardians` (`Enemy.arena`: the arena's half width; `tether` reaches `LEASH`
+  200 past it, so a guardian follows you out). A guardian wakes within `BossAI.WAKE` (110) or once you're in its arena.
+  Left alone (you 300 away for 200 frames) it heals and goes home. Test mode sets `test_calm` (guardians stay asleep)
   except during the guardians' own test, so other checks aren't disturbed by a boss nearby. Beaten: `_guardian_falls`
   (relic into `items`, loot, `planet_state["bosses_dead"]`). Relic effects live where they matter: ironbark in
   `hurt`, coil in `_update_player`'s speed, pearl in the breath check, rimefang in the spark's impact, roc in
@@ -383,6 +439,12 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   and title_screen.gd draw them as crisp pixels in the sprite's own transform, with the sprite outline.
 
 ## Gotchas
+- Never take `%` of a negative number in a shader: Vulkan leaves it undefined, and on the NVIDIA laptop it came out
+  right only when the divisor was a power of two (Verdance was 8192 columns round; at 12288, every stamp anchored to
+  its right vanished). common.comp `wrapc` only ever takes `%` of non-negative numbers; use it. (render.comp's brick
+  and plank patterns still take `%` of rows, which go negative in the orbit band: only a look, but mind it.)
+- Tests that set something up "a little way from where you arrive" must look for a clear spot (`_clear_stretch`:
+  level ground, nothing standing over it), not trust the layout: the planet changes size and seed.
 - Windows reserves file names like `aux`, `con`, `nul`, `prn`. Never name a shader include that way.
 - Local variables must not shadow Object methods (`set`, `_set`, `get`) or each other inside one function.
 - Shaders: `/home/claude/tools/glcheck` plus `build_shaders.py` syntax-check them with Mesa, if those tools exist in the session.

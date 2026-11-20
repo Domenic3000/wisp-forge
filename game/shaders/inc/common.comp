@@ -68,7 +68,10 @@ int shBelow(int s) { return s + 1 < NSH ? s + 1 : -1; }
 int colTo(int from, int to, int x) { return ((2 * x + 1) * SH_N(to)) / (2 * SH_N(from)); }
 // a surface-shell column (the surface table, sites) in shell s, by angle
 int colIn(int s, int c) { return ((2 * c + 1) * SH_N(s)) / (2 * NS); }
-int wrapc(int x, int n) { x = x % n; return x < 0 ? x + n : x; }
+// (x mod n, 0..n-1, for any x: % is only ever taken of non-negative numbers. Vulkan leaves % of a
+// negative number undefined, and on NVIDIA it came out right only for widths that are a power of two:
+// a planet 8192 columns round worked, one of 12288 sent stamps anchored to their right astray)
+int wrapc(int x, int n) { return x >= 0 ? x % n : n - 1 - ((-x - 1) % n); }
 // A stamp's column k (counted from its anchor column ax, of an anchor aw wide) in shell s: one cell
 // per blueprint column in every shell, centred on the anchor's middle (Defs.stamp_x), so a building
 // is the same pixel for pixel at any depth. In the surface shell it is column ax + k.

@@ -209,7 +209,8 @@ static func swoop(g, e, tgt, dx: float, dy: float, dist: float) -> bool:
 	var s: Dictionary = e.d["ai"]["swoop"]
 	match e.act:
 		"":
-			if e.see and e.act_cd <= 0 and dist < float(s["range"]):
+			# (only when its whole body has a clear way down to you: it used to dive into walls)
+			if e.see and e.act_cd <= 0 and dist < float(s["range"]) and fly_line(g, e, tgt.pos):
 				start(e, "windup", int(s["windup"]))
 				return true
 			return false
@@ -218,6 +219,11 @@ static func swoop(g, e, tgt, dx: float, dy: float, dist: float) -> bool:
 			e.vy = e.vy * 0.85 - 0.04
 			e.act_t -= 1
 			if e.act_t <= 0:
+				if not fly_line(g, e, tgt.pos):
+					# you moved behind something: no dive this time
+					e.act = ""
+					e.act_cd = 20
+					return true
 				e.aim = Vector2(dx, dy).normalized()
 				e.act = "dive"
 				e.act_t = int(s["time"])
@@ -534,3 +540,153 @@ static func _plan_down(g, e, l: Vector2, feet: float, gl: Vector2) -> bool:
 				break                                     # a wall: not this way
 			f = gnd
 	return false
+
+# ------------------------------------------------------------- pathfinding ---
+const Nav := preload("res://scripts/nav.gd")
+
+## Walking (or hopping) to the feet point `to` (world) along the nav graph (nav.gd): returns the way
+## to head (-1, 0 or 1), and makes the jumps and drops along the way itself (straight up from the
+## take-off spot, then over once its feet clear the top; across a gap; down through the platform it
+## stands on). 0: it's there, or as near as it can get, so it stands: it never pushes on against a
+## wall. NAN: no graph for it yet (the caller gets about its own way meanwhile).
+## jump_v: its strongest jump; tol: how near the take-off spot counts; doors: it opens doors.
+## e.path_ok says whether the way it has gets all the way to `to`.
+static func nav_walk(g, e, to: Vector2, jump_v: float, gacc: float, tol := 3.0, doors := false) -> float:
+	var nav = g.nav_of_grid()
+	var jump_h := jump_v * jump_v / (2.0 * maxf(gacc, 0.01)) - 4.0
+	var key := Nav.key_for("walk", e.w, e.h, jump_h, doors)
+	nav.ask(key)
+	if not nav.has(key):
+		return NAN
+	var a := atan2(e.pos.y, e.pos.x)
+	var feet: Vector2 = e.pos + g.basis_d(a) * (e.h * 0.5)
+	if e.hold_t > 0:
+		e.hold_t -= 1
+		return 0.0
+	if e.wall_t > 50 and not e.nav_air:
+		# pushing at a wall it thought it could pass (something just built, a door it can't open):
+		# it stops, and looks for another way in a moment
+		e.wall_t = 0
+		e.path = PackedVector2Array()
+		e.path_t = 0
+		e.hold_t = 20
+		return 0.0
+	e.path_t -= 1
+	if e.path_t <= 0 or e.path_key != key or to.distance_to(e.path_goal) > 16.0:
+		e.path = nav.walk_path(key, feet, to)
+		e.path_i = 1
+		e.path_t = 24 + randi() % 12
+		e.path_goal = to
+		e.path_key = key
+		e.path_ok = e.path.size() > 0 and e.path[e.path.size() - 1].distance_to(to) < 14.0
+	e.nav_dx = 0.0
+	if e.path.is_empty():
+		e.nav_air = false
+		return NAN                   # (nowhere it stands in the graph: wedged, or in the air; the old way)
+	if e.path.size() < 2:
+		e.nav_air = false
+		return 0.0
+	var l: Vector2 = g.to_grid(e.pos)
+	var fy: float = l.y + e.h * 0.5
+	while e.path_i < e.path.size():
+		var wq: Vector2 = g.to_grid(e.path[e.path_i])
+		if absf(wq.x - l.x) < 3.0 and absf(wq.y - fy) < 4.5:
+			e.path_i += 1
+		else:
+			break
+	if e.path_i >= e.path.size():
+		e.nav_air = false
+		return 0.0
+	var wp: Vector2 = g.to_grid(e.path[e.path_i])
+	var prev: Vector2 = g.to_grid(e.path[e.path_i - 1])
+	var rise: float = fy - wp.y
+	var dirx := signf(wp.x - l.x)
+	e.nav_dx = wp.x - l.x                # (hoppers size their hops by it)
+	if e.nav_air:
+		if e.on_ground and e.vy >= 0.0:
+			e.nav_air = false
+		else:
+			# on its way up: straight up, then over once its feet are above where it lands
+			if e.nav_gap or fy < wp.y + 1.5:
+				e.vx = dirx * maxf(absf(e.vx), 1.3)
+			else:
+				e.vx *= 0.6
+			return dirx
+	var gap := absf(wp.x - prev.x) > 6.0 and absf(rise) < 7.0
+	if rise > float(e.step_h) + 1.5 or gap:
+		# a jump, from the take-off spot (the last place on the way it stood)
+		if absf(prev.x - l.x) > tol:
+			e.nav_dx = prev.x - l.x
+			return signf(prev.x - l.x)
+		if e.on_ground:
+			var hgt := maxf(rise, 0.0) + (8.0 if gap else 5.0)
+			e.vy = -minf(jump_v, sqrt(2.0 * gacc * hgt))
+			var air: float = 2.0 * -e.vy / maxf(gacc, 0.01)
+			e.vx = dirx * clampf(absf(wp.x - l.x) / maxf(air, 1.0), 0.8, 3.0) if gap else 0.0
+			e.nav_air = true
+			e.nav_gap = gap
+		return 0.0
+	if rise < -6.0 and e.on_platform and absf(wp.x - l.x) < 5.0:
+		e.drop_t = 12                # down through the platform
+		return 0.0
+	return dirx if absf(wp.x - l.x) > 1.0 else 0.0
+
+## Could a walker get to the feet point `to` at all? (its own way about, not just near: where it
+## could stand nearest that spot is no further off than a quarter of its width and ten cells.) True
+## with no graph yet.
+static func can_reach(g, e, to: Vector2, jump_v: float, gacc: float, doors := false) -> bool:
+	var nav = g.nav_of_grid()
+	var key := Nav.key_for("walk", e.w, e.h, jump_v * jump_v / (2.0 * maxf(gacc, 0.01)) - 4.0, doors)
+	if not nav.has(key):
+		return true
+	var feet: Vector2 = e.pos + g.basis_d(atan2(e.pos.y, e.pos.x)) * (e.h * 0.5)
+	var p: PackedVector2Array = nav.walk_path(key, feet, to)
+	return p.size() > 0 and p[p.size() - 1].distance_to(to) < 10.0 + e.w * 0.25
+
+## A flier's heading toward `to` (world; swim: a swimmer, in water only): straight there when the way
+## is open, else along the nav grid (the furthest point of its way it can fly straight to). In the
+## local frame (x along the ground, y down); ZERO when it can't get anywhere nearer. NAN-free: with no
+## graph yet it's the straight heading.
+static func nav_fly(g, e, to: Vector2, swim := false) -> Vector2:
+	var nav = g.nav_of_grid()
+	var key := Nav.key_for("swim" if swim else "fly", e.w, e.h)
+	nav.ask(key)
+	var a := atan2(e.pos.y, e.pos.x)
+	var r: Vector2 = g.basis_r(a)
+	var dn: Vector2 = g.basis_d(a)
+	var o: Vector2 = to - e.pos
+	var direct := Vector2(o.dot(r), o.dot(dn))
+	if not nav.has(key):
+		return direct.normalized() if direct.length() > 0.5 else Vector2.ZERO
+	e.path_t -= 1
+	if e.path_t <= 0 or e.path_key != key or to.distance_to(e.path_goal) > 16.0:
+		e.fly_open = nav.fly_clear(key, e.pos, to)
+		e.path = PackedVector2Array() if e.fly_open else nav.fly_path(key, e.pos, to)
+		e.path_i = 1
+		e.path_t = 12 + randi() % 8
+		e.path_goal = to
+		e.path_key = key
+		e.path_ok = e.fly_open or (e.path.size() > 0 and e.path[e.path.size() - 1].distance_to(to) < 14.0)
+	if e.fly_open or e.path.is_empty():
+		# (straight there: nothing in the way, or it isn't anywhere the grid has room for it, wedged)
+		return direct.normalized() if direct.length() > 0.5 else Vector2.ZERO
+	while e.path_i < e.path.size() and e.path[e.path_i].distance_to(e.pos) < 5.0:
+		e.path_i += 1
+	if e.path_i >= e.path.size():
+		return Vector2.ZERO
+	# (cutting corners: the furthest of the next few points it can fly straight to)
+	var ti: int = e.path_i
+	if g.frame % 4 == e.look_t % 4:
+		for k in range(e.path_i + 1, mini(e.path_i + 4, e.path.size())):
+			if nav.fly_clear(key, e.pos, e.path[k]):
+				ti = k
+		e.path_i = ti
+	var o2: Vector2 = e.path[ti] - e.pos
+	return Vector2(o2.dot(r), o2.dot(dn)).normalized()
+
+## can a flier fly straight at a world point without hitting anything? (true with no graph yet)
+static func fly_line(g, e, to: Vector2) -> bool:
+	var nav = g.nav_of_grid()
+	var key := Nav.key_for("fly", e.w, e.h)
+	nav.ask(key)
+	return nav.fly_clear(key, e.pos, to)

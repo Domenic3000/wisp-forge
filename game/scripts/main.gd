@@ -14,6 +14,7 @@ const Skiff := preload("res://scripts/skiff.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
+const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
@@ -115,6 +116,25 @@ class Enemy extends Body:
 	var climb_to := Vector2.ZERO     # where it means to stand (world)
 	var climb_from := Vector2.ZERO   # where it jumps or drops from (world)
 	var climb_why := ""        # (why its last look about found no way up: for the tests)
+	# its way about (nav.gd; foe_ai.gd nav_walk / nav_fly)
+	var path := PackedVector2Array()   # feet points (walkers) or middles (fliers) along its way, world
+	var path_i := 1            # the next point of it
+	var path_t := 0            # frames till it looks for a way again
+	var path_goal := Vector2.ZERO
+	var path_key := ""
+	var path_ok := false       # the way gets all the way there
+	var fly_open := false      # (a flier: nothing in the way, it flies straight)
+	var wall_t := 0            # frames in a row it has been pressed against a wall
+	var hold_t := 0            # frames it stands still before looking for another way
+	var nav_air := false       # in the air on a jump of its way
+	var nav_gap := false       # (that jump is across a gap)
+	var unreach_t := 0         # frames you've been out of its reach (a guardian then smashes in)
+	var reach_ok := true       # (it can get to you: looked at now and then)
+	var roam := 0.0            # (a creature out of reach: where it roams to, cells along the ground from itself)
+	var breach := false        # this charge smashes through walls
+	var breach_hits := 0       # (how many holes this breach has blasted)
+	var nav_dx := 0.0          # (grid cells across to the next point of its way)
+	var arena := 0.0           # a guardian's arena: how far either side of its middle (it wakes when you come in)
 
 var gpu
 var ui
@@ -534,6 +554,9 @@ func _take_gpu_results() -> void:
 		players[k].grid_a = frames[k][1]
 	for m in players:
 		_apply_counts(m)
+	# (each mage's nav graphs are rebuilt from the grid just read, now and then, on a worker thread)
+	for m2 in players:
+		nav_of_slot(m2.slot).tick(m2)
 	_use_grid(player)
 	_flush_loot()
 	view_c = _sub_view_c
@@ -1322,6 +1345,18 @@ func in_grid(p: Vector2, margin: float) -> bool:
 
 func gtype(ix: int, iy: int) -> int:
 	return gpu.grid_type(_gslot, ix, iy)
+
+## The foes' pathfinding (nav.gd), one per mage: built from that mage's collision grid.
+var navs := []
+
+func nav_of_slot(k: int):
+	while navs.size() <= k:
+		navs.append(Nav.new(self, navs.size()))
+	return navs[k]
+
+## the nav of the collision grid in use (_use_grid)
+func nav_of_grid():
+	return nav_of_slot(_gslot)
 
 ## point the physics helpers (to_grid, gtype, box_solid...) at a mage's collision grid
 func _use_grid(m: Mage) -> void:
@@ -2498,8 +2533,9 @@ func _spawn_guardians() -> void:
 		var d: Dictionary = Defs.boss_enemy("boss_" + biome)
 		var at: Vector2 = lr["pos"]
 		var ge = spawn_enemy("boss_" + biome, at + at.normalized() * (float(d["h"]) * 0.5 + 2.0))
-		ge.tether = float(lr.get("tether", 60.0))       # (it stays in its lair)
+		ge.tether = float(lr.get("tether", 60.0))       # (its lair, and as far as it follows you out of it)
 		ge.ceil = float(lr.get("ceil", 60.0))
+		ge.arena = float(lr.get("arena", 0.0))
 	for wl in builds.warden_list:
 		var key: String = wl["key"]
 		if dead_list.has(key):
@@ -2553,6 +2589,16 @@ func _walker_nav(e: Enemy, dx: float, dist: float, speed: float, jump_v: float, 
 ## it looks ~12 cells along its way and, if that's blocked, takes the nearest open heading
 ## (over the top first) for a short while.
 func _flier_steer(e: Enemy, want: Vector2) -> Vector2:
+	# by its way about (nav.gd): straight at the point when nothing's in the way, else round what is
+	# (a swimmer through the water only); the old probe below until its graph is built
+	var nav = nav_of_grid()
+	var swim: bool = e.d.get("def", {}).get("swim", false)
+	var key := Nav.key_for("swim" if swim else "fly", e.w, e.h)
+	if nav.has(key):
+		var a := atan2(e.pos.y, e.pos.x)
+		var to := e.pos + basis_r(a) * want.x + basis_d(a) * want.y
+		return FoeAI.nav_fly(self, e, to, swim)
+	nav.ask(key)
 	if e.avoid_t > 0:
 		e.avoid_t -= 1
 		return e.avoid
@@ -2582,9 +2628,9 @@ func _update_enemies() -> void:
 		if e.boss:
 			# a boss nobody is fighting recovers: after a few seconds alone it is back at full
 			# health, asleep where it started, so it has to be beaten in one fight
-			if dist > 230.0 or tgt.dead:
+			if dist > 300.0 or tgt.dead:
 				e.leash_t += 1
-				if e.leash_t > 150 and (e.hp < e.max_hp or e.awake):
+				if e.leash_t > 200 and (e.hp < e.max_hp or e.awake):
 					e.hp = e.max_hp
 					e.awake = false
 					e.leaping = false
@@ -2632,8 +2678,25 @@ func _update_enemies() -> void:
 				# hops after you once it knows you're there; close by, a crouch and a leap aimed at you
 				var busy := FoeAI.leap(self, e, tgt, dx, dy, g)
 				var cjv := 5.4 if e.type == "slime" else 4.6
-				var cdir2 := 0.0 if busy or gl == Vector2.ZERO else FoeAI.climb(self, e, gl, cjv, g, 5.0)
-				if cdir2 != 0.0:
+				# by its way about (nav.gd): little hops along it, the big jumps nav_walk makes itself
+				# (NAN: no graph yet, so the old way below)
+				var nd2 := NAN
+				if not busy and gl != Vector2.ZERO:
+					nd2 = FoeAI.nav_walk(self, e, from_grid(to_grid(e.pos) + gl + Vector2(0.0, 8.5)), cjv, g, 5.0)
+				var cdir2 := 0.0 if busy or gl == Vector2.ZERO or not is_nan(nd2) else FoeAI.climb(self, e, gl, cjv, g, 5.0)
+				if not is_nan(nd2):
+					if not e.nav_air and e.on_ground and e.vy >= 0.0:
+						e.vx *= 0.75 if e.type == "slime" else 0.7
+						e.t -= 1
+						if e.t <= 0 and nd2 != 0.0:
+							# a hop sized to land at the next point of its way (not past it, off a ledge)
+							var hv := 2.6 + randf() * 0.6
+							var hair := 2.0 * hv / maxf(g, 0.01)
+							var top_v: float = (1.4 + randf() * 0.6) if e.type == "slime" else (1.8 + randf() * 0.6)
+							e.vx = nd2 * clampf((absf(e.nav_dx) + 2.0) / hair, 0.3, top_v) * slow_f
+							e.vy = -hv
+							e.t = (24 + randf() * 20) if e.type == "slime" else (16 + randf() * 14)
+				elif cdir2 != 0.0:
 					# on its way to another level: little hops to the take-off point (climb jumps from there)
 					if e.on_ground and e.vy >= 0.0:
 						e.vx *= 0.75
@@ -2674,7 +2737,16 @@ func _update_enemies() -> void:
 				var ai: Dictionary = e.d["ai"]
 				var busy2 := FoeAI.melee(self, e, tgt, dx, dy) if ai.has("melee") else FoeAI.ranged(self, e, tgt, dist)
 				if not busy2:
-					if gl != Vector2.ZERO:
+					# by its way about (nav.gd), unless an archer that sees you is backing off or holding
+					# its range; NAN: no graph yet, so the old way below
+					var nd := NAN
+					var keep0: Array = ai.get("keep", [])
+					if gl != Vector2.ZERO and (keep0.is_empty() or not e.see or dist > float(keep0[1])):
+						nd = FoeAI.nav_walk(self, e, from_grid(to_grid(e.pos) + gl + Vector2(0.0, 8.5)), 3.9, g, 2.5, ai.get("doors", false))
+					if not is_nan(nd):
+						if not e.nav_air and e.on_ground:
+							e.vx += (nd * (0.85 if ai.has("melee") else 0.75) * slow_f - e.vx) * 0.25
+					elif gl != Vector2.ZERO:
 						# you're on another level: up onto the platform or ledge, or down through the floor
 						# (an archer that can see you would rather shoot)
 						var cdir := FoeAI.climb(self, e, gl, 3.9, g, 2.5, ai.has("melee") or not e.see)
@@ -2718,8 +2790,8 @@ func _update_enemies() -> void:
 					var sp := 1.6 * slow_f
 					e.vx = clampf(e.vx, -sp, sp)
 					e.vy = clampf(e.vy, -sp, sp)
-					if e.hit_wall:
-						e.vy -= 0.3
+					if e.hit_wall and e.path_key == "":
+						e.vy -= 0.3              # (no way about yet: up over what it hit)
 			"imp":
 				# keeps its distance and throws fire that leads you; close in and it blinks away
 				e.phase += 0.05
@@ -2774,6 +2846,8 @@ func _update_enemies() -> void:
 			e.vy = 0.0
 		else:
 			move_body(e)
+			# (how long it has been pressed against a wall: its way about gives up on that way)
+			e.wall_t = e.wall_t + 1 if e.hit_wall and (e.on_ground or e.d["fly"]) else 0
 		e.anim += absf(e.vx) * 0.2 + 0.02
 		if e.stuck > 30:
 			# wedged in (sand piled on, a block conjured into it): work it free to the nearest open
@@ -3610,9 +3684,9 @@ func slot_info(n: int) -> Dictionary:
 	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if typeof(d) != TYPE_DICTIONARY:
 		return {}
-	var pl: Dictionary = Defs.make_planet(int(d.get("planet", 0)))
+	var pl: Dictionary = Defs.make_planet_for(int(d.get("world_seed", 0)), int(d.get("planet", 0)))
 	var saved := float(d.get("saved", FileAccess.get_modified_time(path)))
-	return {"planet": pl.get("name", "?"), "tier": int(d.get("tier", 1)), "spells": (d.get("known", []) as Array).size(),
+	return {"planet": pl.get("name", "?"), "seed": int(d.get("world_seed", 0)), "tier": int(d.get("tier", 1)), "spells": (d.get("known", []) as Array).size(),
 		"played": float(d.get("played", 0.0)), "saved": saved}
 
 ## Play a slot: carry on with its journey, or start a new one in an empty slot.
@@ -3677,6 +3751,8 @@ func start_game(use_save: bool) -> void:
 		_apply_save(s)
 	else:
 		_delete_worlds()
+		# a new journey: a system of planets of its own (the test mode keeps the classic one)
+		Defs.world_seed = 0 if testing else 1 + randi() % 0xFFFFFE
 		player.inv.fill(0)
 		known = ["spark", "conjure"]
 		tier = 1
@@ -3700,6 +3776,7 @@ func start_game(use_save: bool) -> void:
 func _enter_planet(index: int) -> void:
 	_make_world(index, false)
 	_respawn()
+	_gt("respawn")
 	if _loaded and planet_state.has("player"):
 		var pp: Array = planet_state["player"]
 		player.pos = Vector2(float(pp[0]), float(pp[1]))
@@ -3714,8 +3791,12 @@ func _enter_planet(index: int) -> void:
 	for k in 60:
 		gpu.step([player.pos], [], false, true)
 	_gpu_frame(false)
+	_gt("liquids round you")
 	if not _loaded:
 		save_world(false)
+	_gt("save")
+	if testing:
+		print("[gen] %s: steps (ms) %s; planning %s; settling: %d windows, recording %d ms, GPU %d ms" % [planet["name"], gen_times, builds.plan_times, gpu.settle_wins, gpu.settle_ms.x, gpu.settle_ms.y])
 	ui.toast("%s: %s" % [planet["name"], planet["desc"]], Color(0.8, 0.95, 0.9), 6.0)
 
 ## Flying through space toward another planet: it is made while you fly (`_make_world` spread over
@@ -3762,8 +3843,21 @@ var _loaded := false              # (the planet just made came from its save)
 ## world again: the shaders have the geometry built in), its surface, its saved world or a fresh one
 ## with its structures settled, then chests, doors, foes. All at once from the title, or a step a
 ## frame when `arriving` from space.
+## how long each step of making a planet took (ms; the test mode prints it)
+var gen_times := {}
+var _gt0 := 0
+
+func _gt(nm: String) -> void:
+	var now := Time.get_ticks_usec()
+	gen_times[nm] = int(gen_times.get(nm, 0)) + (now - _gt0) / 1000
+	_gt0 = now
+
 func _make_world(index: int, arriving: bool) -> void:
 	var tree := get_tree()
+	for nv in navs:
+		nv.clear()
+	gen_times.clear()
+	_gt0 = Time.get_ticks_usec()
 	planet = Defs.make_planet(index)
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))
@@ -3777,12 +3871,14 @@ func _make_world(index: int, arriving: bool) -> void:
 			ok = gpu.init()
 		if not ok:
 			push_error(gpu.error_text)
+	_gt("geometry and shaders")
 	gpu.fresh = false
 	travel_progress = 0.2
 	if arriving:
 		await saves_done()          # (the planet you left may still be being written)
 		_phase_go()
 	gpu.build_surface(planet)
+	_gt("surface")
 	# spawn in the middle of the first friendly biome
 	var bl: Array = planet["biomes"]
 	var sb := 0
@@ -3790,7 +3886,7 @@ func _make_world(index: int, arriving: bool) -> void:
 		if int(Defs.BIOMES[bl[i]]["flags"]) & 8:
 			sb = i
 			break
-	spawn_angle = (sb + 0.5) / bl.size() * TAU
+	spawn_angle = Defs.biome_mid(planet, sb)
 	var best := spawn_angle
 	for k in range(-20, 21):
 		var a := spawn_angle + k * 0.002
@@ -3810,6 +3906,7 @@ func _make_world(index: int, arriving: bool) -> void:
 		print("[Wisp Forge] regenerating %s with the new structure generator" % planet["name"])
 	planet_state["gen"] = GEN_VERSION
 	_loaded = loaded
+	_gt("load")
 	if arriving:
 		_phase("surface and load")
 		await tree.process_frame
@@ -3823,8 +3920,22 @@ func _make_world(index: int, arriving: bool) -> void:
 			await tree.process_frame
 			_phase_go()
 		WorkerThreadPool.wait_for_task_completion(task)
+		_gt("plan buildings")
+		# (and every blueprint finished at once, one per core)
+		var gid: int = builds.finish_start()
+		if gid >= 0:
+			_phase("finish blueprints")
+			while not WorkerThreadPool.is_group_task_completed(gid):
+				await tree.process_frame
+				_phase_go()
+			WorkerThreadPool.wait_for_group_task_completion(gid)
+		builds.finish_collect()
+		_gt("finish blueprints")
 	else:
 		builds.plan(planet, gpu.surface, spawn_angle, boss_a, not loaded)
+		_gt("plan buildings")
+		builds.finish_all()
+		_gt("finish blueprints")
 	travel_progress = 0.35
 	if not loaded:
 		var tg0 := Time.get_ticks_usec()
@@ -3836,7 +3947,10 @@ func _make_world(index: int, arriving: bool) -> void:
 				_phase("generate")
 				await tree.process_frame
 				_phase_go()
+		_gt("generate cells")
 		gpu.stamp(builds.structs, int(planet["seed"]))
+		gpu.flush()
+		_gt("stamp")
 		# let the ruins fall into ruin: unsupported pieces drop and break before you arrive
 		if arriving:
 			for k in 75:
@@ -3848,12 +3962,14 @@ func _make_world(index: int, arriving: bool) -> void:
 		else:
 			var tg1 := Time.get_ticks_usec()
 			gpu.settle(builds.settle, 0.0, 150)
+			_gt("settle")
 			if testing:
 				print("[gen] cells and stamping %d ms, settling %d ms (%d areas)" % [(tg1 - tg0) / 1000, (Time.get_ticks_usec() - tg1) / 1000, builds.settle.size()])
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
 	_make_chests(loaded)
 	_make_doors(loaded)
+	_gt("chests and doors")
 	if chunks == null:
 		chunks = Chunks.new(self)
 	chunks.clear()
@@ -3883,6 +3999,7 @@ func _make_world(index: int, arriving: bool) -> void:
 	if not planet_state.get("boss_dead", false):
 		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
 	_spawn_guardians()
+	_gt("foes")
 	if loaded:
 		time = float(planet_state.get("time", time))
 	if arriving:
@@ -4060,7 +4177,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 34            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 35            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -4128,7 +4245,7 @@ func _save_path() -> String:
 	return _save_dir().path_join("progress.json")
 
 func save_game() -> void:
-	var d := {"planet": planet.get("index", 0), "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
+	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat,
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
@@ -4146,6 +4263,7 @@ func _load_save():
 	return d
 
 func _apply_save(s: Dictionary) -> void:
+	Defs.world_seed = int(s.get("world_seed", 0))      # (journeys from before every game had its own: the classic system)
 	var a: Array = s.get("inv", [])
 	for i in mini(a.size(), Defs.NM):
 		player.inv[i] = int(a[i])

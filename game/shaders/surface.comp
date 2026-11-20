@@ -10,9 +10,15 @@ void main() {
 	float th = (float(i) + 0.5) / float(NS) * TAU;
 	vec2 dir = vec2(cos(th), sin(th));
 	int nb = max(1, int(P.p[4].w));
-	float seg = th / TAU * float(nb);
-	int bi = int(floor(seg)) % nb;
-	float local = fract(seg);
+	// each biome starts where P.p[24..25] says (a share of the way round: they have widths of their own)
+	float u = th / TAU;
+	int bi = nb - 1;
+	for (int k = 1; k < nb; k++) {
+		if (u < P.p[24 + k / 4][k % 4]) { bi = k - 1; break; }
+	}
+	float blo = P.p[24 + bi / 4][bi % 4];
+	float bhi = bi + 1 < nb ? P.p[24 + (bi + 1) / 4][(bi + 1) % 4] : 1.0;
+	float local = clamp((u - blo) / max(bhi - blo, 1e-5), 0.0, 1.0);
 	float E = 0.07;
 	int b0 = bi, b1 = bi; float t = 0.0;
 	if (local > 1.0 - E) { b1 = (bi + 1) % nb; t = (local - (1.0 - E)) / (2.0 * E); }
