@@ -2419,6 +2419,9 @@ func _kill_enemy(e: Enemy) -> void:
 
 ## A biome guardian is beaten: its relic is yours, with its hoard; it stays dead on this planet.
 func _guardian_falls(e: Enemy) -> void:
+	if e.d.get("warden", false):
+		_warden_falls(e)
+		return
 	var bd: Dictionary = e.d["def"]
 	var biome: String = e.d["biome"]
 	var dead_list: Array = planet_state.get("bosses_dead", [])
@@ -2445,7 +2448,43 @@ func _guardian_falls(e: Enemy) -> void:
 			o.summoner = null
 	save_game()
 
-## the guardians of this planet's biomes, each in its lair (not the ones already beaten)
+## A dungeon's warden is beaten: its loot (and a Healing Draught), it stays dead, and the ward on
+## its reliquary's door breaks (a stamp clears the runestone; the world keeps it open from then on).
+func _warden_falls(e: Enemy) -> void:
+	var bd: Dictionary = e.d["def"]
+	var key: String = e.d["key"]
+	var dead_list: Array = planet_state.get("bosses_dead", [])
+	if not dead_list.has(key):
+		dead_list.append(key)
+	planet_state["bosses_dead"] = dead_list
+	ui.toast("%s falls!" % bd["name"], bd["col"], 6.0)
+	var loot: Dictionary = bd["loot"]
+	for mt in loot:
+		player.inv[int(mt)] += int(loot[mt])
+	items["potion"] = int(items.get("potion", 0)) + 1
+	_roll_loot(3, 1.4)
+	for wl in builds.warden_list:
+		if wl["key"] != key:
+			continue
+		var wr: Dictionary = wl["ward"]
+		var air := PackedInt32Array()
+		air.resize(int(wr["w"]) * int(wr["h"]))
+		air.fill(Defs.AIR | 0xFF00)
+		stamps.append({"x0": wr["x0"], "y0": wr["y0"], "w": wr["w"], "h": wr["h"], "data": air, "ax": wr["ax"], "aw": wr["aw"]})
+		var mid: Vector2 = Defs.stamp_pos(int(wr["y0"]) + int(wr["h"]) / 2, int(wr["ax"]), int(wr["aw"]), Defs.k_of(int(wr["x0"]) + int(wr["w"]) / 2, int(wr["ax"])))
+		for k in 50:
+			var dirv := Vector2.from_angle(randf() * TAU)
+			_particle(mid + dirv * randf() * 8.0, dirv * (0.8 + randf() * 1.6), 30 + randi() % 30, Color(0.6, 0.9, 1.0), true, 0.0)
+		ui.toast("The ward on the Sealed Reliquary breaks!", Color(0.6, 0.9, 1.0), 6.0)
+	shake = 14.0
+	audio.play("rare")
+	for o in enemies:
+		if o.summoner == e:
+			o.summoner = null
+	save_game()
+
+## the guardians of this planet's biomes, each in its lair (not the ones already beaten), and
+## the wardens of its dungeons, each in its hall
 func _spawn_guardians() -> void:
 	var dead_list: Array = planet_state.get("bosses_dead", [])
 	for lr in builds.lair_list:
@@ -2457,6 +2496,16 @@ func _spawn_guardians() -> void:
 		var ge = spawn_enemy("boss_" + biome, at + at.normalized() * (float(d["h"]) * 0.5 + 2.0))
 		ge.tether = float(lr.get("tether", 60.0))       # (it stays in its lair)
 		ge.ceil = float(lr.get("ceil", 60.0))
+	for wl in builds.warden_list:
+		var key: String = wl["key"]
+		if dead_list.has(key):
+			continue
+		Defs.register_warden(key, wl["def"])
+		var wd: Dictionary = Defs.warden_enemy(key)
+		var wat: Vector2 = wl["pos"]
+		var we = spawn_enemy(key, wat + wat.normalized() * (float(wd["h"]) * 0.5 + 2.0))
+		we.tether = float(wl["tether"])                 # (it stays in its hall)
+		we.ceil = float(wl["ceil"])
 
 ## How high a walker must climb to get past the wall in front of it (cells), or -1 if it is
 ## taller than `reach`. Uses the collision grid currently in use.
@@ -4005,7 +4054,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 33            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 34            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

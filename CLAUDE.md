@@ -166,6 +166,17 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   shafts with landings one above the other). Rooms get themes (`_dungeon_room`); the farthest is a reliquary
   walled in brick or obsidian. `_dungeon_reach` flood-fills from the shaft and stores the result in `bp.meta`
   for the tests.
+- Dungeon wardens: the reliquary's neighbour nearest the way in (never the entrance) is the warden's hall, as big
+  as its slot allows (94 x 70), furnished as kind "warden" (pillars, braziers, no guards). The door between it and the
+  reliquary is a ward of RUNESTONE (the reliquary's other doors keep its seal). `scripts/wardens.gd` `make(seed,
+  biome, dungeon)` grows the warden from the dungeon's own seed (never the planet's `rng`): a body plan of
+  boss_art.gd in crypt colours (bone, shade, rot, ember) with the biome's accent, guardian moves plus `summon`
+  (skeletons; bats for a bird), a name from parts ("Gravemaw, Warden of the Frozen Crypts"). buildings.gd
+  `warden_list` ({key "warden_<seed>_<col>", pos, def, tether, ceil, ward stamp rect, name}); main `_spawn_guardians`
+  registers each (`Defs.register_warden`; `Defs.warden_enemy`, `enemy_def` for "warden_") and spawns it unless
+  `bosses_dead` has its key. It wakes only with you inside its hall (`BossAI._in_hall`). `_guardian_falls` hands a
+  warden to `_warden_falls`: loot, a Healing Draught, and a stamp clears the ward. A boss's summons appear on the
+  floor under it (`_ground_under`), never through the stone into the room above. Test: `_test_wardens` ("wardens").
 - Dungeon walls, floors and shafts are `RUNESTONE` (warded stone, hardness 4: only the Core Siphon cuts it), so
   dungeons are explored through their halls; the gatehouse above ground is ordinary stone.
 - Props (`scripts/props.gd`): furniture and town details grown procedurally as small pixel grids (chars index
@@ -233,7 +244,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 9 minutes (a full run takes about 6.5), so a broken run never leaves the game open. tests.gd is loaded at run
+- Test mode quits by itself after 9 minutes (a full run takes about 7), so a broken run never leaves the game open. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -280,7 +291,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ground curves away in it (a row every 10-15 cells far out): never assume a floor is on one row; follow it
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
-- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb" or "guardians") runs just that
+- Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "guardians" or "wardens") runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

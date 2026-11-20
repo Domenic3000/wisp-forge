@@ -43,7 +43,7 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 				_wander(g, e, gacc, go, float(bd["speed"]) * slow_f)
 				return
 	elif not e.awake:
-		if dist < WAKE and not tgt.dead and not g.test_calm:
+		if dist < WAKE and not tgt.dead and not g.test_calm and (not e.d.get("warden", false) or _in_hall(g, e, tgt)):
 			wake(g, e)
 		else:
 			_rest(g, e, gacc)
@@ -138,6 +138,12 @@ static func _rest(g, e, gacc: float) -> void:
 ## how far along the ground a point is from its lair's middle (cells; + is the lair's "right")
 static func _off(g, e, p: Vector2) -> float:
 	return (p - e.home).dot(g.basis_r(atan2(e.home.y, e.home.x)))
+
+## is the target inside a warden's hall? (it wakes only then: through the walls of a room next door
+## it would only rage at the stone)
+static func _in_hall(g, e, tgt) -> bool:
+	var up: float = (tgt.pos - e.home).dot(e.home.normalized())
+	return absf(_off(g, e, tgt.pos)) < e.tether + 16.0 and up > -float(e.h) and up < e.ceil + 12.0
 
 ## a place along the ground, kept within its lair (`tether` cells either side of the middle)
 static func _in_lair(e, off: float) -> float:
@@ -350,10 +356,10 @@ static func _suits(e, k: String, dx: float, dy: float, dist: float) -> bool:
 	return dist < 230.0
 
 ## where the ground is under a point (the first solid cell going down, up to 50 cells)
-static func _ground_under(g, p: Vector2) -> Vector2:
+static func _ground_under(g, p: Vector2, reach := 50) -> Vector2:
 	var dn: Vector2 = -p.normalized()
 	var q := p
-	for k in 50:
+	for k in reach:
 		var kd: int = Defs.KIND[g.type_at(q + dn)]
 		if kd == Defs.K_SOLID or kd == Defs.K_POWDER:
 			return q
@@ -450,8 +456,13 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 					mine += 1
 			var want: int = mini(int(pr.get("n", 2)), int(pr.get("max", 4)) - mine)
 			for s in want:
-				var at: Vector2 = e.pos + g.basis_r(atan2(e.pos.y, e.pos.x)) * (randf() - 0.5) * 40.0 + up * 10.0
-				var m = g.spawn_enemy(String(pr.get("type", "slime")), g.free_spot(at, 12.0, 10.0, 12))
+				# on the floor below it, near it (a flier up by the ceiling mustn't call them into the
+				# room above through the stone)
+				var mt: String = String(pr.get("type", "slime"))
+				var mdef: Dictionary = Defs.enemy_def(mt)
+				var foot := _ground_under(g, e.pos + g.basis_r(atan2(e.pos.y, e.pos.x)) * (randf() - 0.5) * 32.0, 90)
+				var at: Vector2 = foot + up * (float(mdef["h"]) * 0.5 + 1.0)
+				var m = g.spawn_enemy(mt, g.free_spot(at, float(mdef["w"]), float(mdef["h"]), 6))
 				m.summoner = e
 				FoeAI.puff(g, m.pos, e.d["def"]["col"])
 			FoeAI.start(e, "recover", 30)

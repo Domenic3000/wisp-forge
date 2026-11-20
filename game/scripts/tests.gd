@@ -219,6 +219,7 @@ func run() -> void:
 	var only := FileAccess.get_file_as_string(only_f).strip_edges() if FileAccess.file_exists(only_f) else ""
 	if only != "":
 		only_now = only
+		g.ui.title.visible = false      # (the full run puts the title away in its early checks)
 		if only == "climb":
 			_go(g.player.pos)
 			await _frames(60)
@@ -227,6 +228,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_guardians()
+		elif only == "wardens":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_wardens()
 		lines.append("")
 		lines.append("%d passed, %d failed, %.1f s (only %s)" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0, only])
 		var only_txt := "\n".join(lines)
@@ -2320,6 +2325,7 @@ func run() -> void:
 	g.chunks.clear()
 
 	await _test_guardians()
+	await _test_wardens()
 
 	# ---- the wild creatures: every biome (and each depth underground) has its own; they notice you,
 	# come after you with their moves, stay on screen and keep moving ----
@@ -2749,6 +2755,87 @@ func run() -> void:
 		f.close()
 	g._delete_worlds()
 	g.get_tree().quit(0 if failed == 0 else 1)
+
+## the dungeon wardens: each waits in the hall before its reliquary (asleep until you come into the
+## hall), fights with its moves, and its fall breaks the runestone ward on the reliquary's door
+func _test_wardens() -> void:
+	var wn_items0: Dictionary = g.items.duplicate()
+	var wn_god0: bool = g.test_god
+	var wn_back: Vector2 = g.player.pos
+	g.test_god = true
+	var wn_rows := []
+	var wn_ok := 0
+	var wn_list: Array = g.builds.warden_list
+	for wn_i in wn_list.size():
+		var wn_l: Dictionary = wn_list[wn_i]
+		var wn_key: String = wn_l["key"]
+		var wn_e = null
+		for wn_en in g.enemies:
+			if wn_en.type == wn_key and not wn_en.dead:
+				wn_e = wn_en
+		if wn_e == null:
+			wn_rows.append("%s: no warden" % wn_l["name"])
+			continue
+		var wn_wd: Dictionary = wn_e.d["def"]
+		var wr: Dictionary = wn_l["ward"]
+		var wn_at: Vector2 = wn_l["pos"]
+		var wn_side: Vector2 = g.basis_r(atan2(wn_at.y, wn_at.x))
+		# from the room next door (beyond its hall) it stays asleep
+		g.test_calm = false
+		_go(wn_at + wn_side * (float(wn_e.tether) + 60.0) + wn_at.normalized() * 10.0)
+		await _frames(30)
+		var wn_slept: bool = not wn_e.awake
+		# in its hall it wakes and fights
+		_go(wn_at + wn_side * 26.0 + wn_at.normalized() * 10.0)
+		g.player.dead = false
+		var wn_walk := 0.0
+		var wn_last: Vector2 = wn_e.pos
+		var wn_out := 0.0
+		var wn_br: Vector2 = g.basis_r(atan2(wn_e.home.y, wn_e.home.x))
+		for wn_f in 240:
+			await _frames(1)
+			if wn_f == 150:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("warden_%d.png" % wn_i))
+			if wn_e.dead:
+				break
+			wn_walk += wn_e.pos.distance_to(wn_last)
+			wn_last = wn_e.pos
+			wn_out = maxf(wn_out, absf((wn_e.pos - wn_e.home).dot(wn_br)) - wn_e.tether)
+		var wn_moves: int = wn_e.moves_done
+		var wn_awake: bool = wn_e.awake
+		# the ward before (runestone), and after it falls (open)
+		var wn_before := 0
+		for v in g.gpu.read_rect(int(wr["x0"]), int(wr["y0"]), int(wr["w"]), int(wr["h"]), int(wr["ax"]), int(wr["aw"]))["fg"]:
+			if (v & 255) == Defs.RUNESTONE:
+				wn_before += 1
+		g._hurt_enemy(wn_e, 99999.0, 0.0, 0.0)
+		await _frames(4)
+		var wn_after := 0
+		for v2 in g.gpu.read_rect(int(wr["x0"]), int(wr["y0"]), int(wr["w"]), int(wr["h"]), int(wr["ax"]), int(wr["aw"]))["fg"]:
+			if (v2 & 255) != Defs.AIR:
+				wn_after += 1
+		var wn_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(wn_key)
+		var wn_n: int = int(wr["w"]) * int(wr["h"])
+		var wn_fine: bool = wn_slept and wn_awake and wn_moves >= 1 and wn_dead and wn_before == wn_n and wn_after == 0 and wn_out < 14.0
+		if wn_fine:
+			wn_ok += 1
+		wn_rows.append("%s%s, %s (%s): asleep from next door %s, awake %s, %d moves, moved %.0f, past its hall %.0f, ward %d/%d runestone then %d left" % [
+			"" if wn_fine else "(!) ", wn_wd["name"], wn_wd["title"], wn_wd["body"]["plan"], wn_slept, wn_awake, wn_moves, wn_walk, wn_out, wn_before, wn_n, wn_after])
+		# (its minions go too, so they don't follow you into the checks after this)
+		for wn_m in g.enemies:
+			if wn_m.summoner == wn_e or (wn_m.summoner == null and not wn_m.boss and wn_m.pos.distance_to(wn_at) < 150.0 and wn_m.guard_id < 0):
+				wn_m.dead = true
+	for wn_r in g.items.keys():
+		if not wn_items0.has(wn_r):
+			g.items.erase(wn_r)
+	g.items["potion"] = wn_items0.get("potion", 0)
+	g.test_god = wn_god0
+	g.test_calm = true
+	g.boss_clouds.clear()
+	_go(wn_back)
+	await _frames(60)
+	_ok("each dungeon's warden waits in its hall, fights, and its fall breaks the reliquary's ward", wn_list.size() >= 2 and wn_ok == wn_list.size(),
+		"%d wardens: %s" % [wn_list.size(), "; ".join(wn_rows)])
 
 ## the biome guardians (its own function so it can run alone: see `only`)
 var only_now := ""

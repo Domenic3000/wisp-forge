@@ -1659,11 +1659,32 @@ func boss_enemy(type: String) -> Dictionary:
 	_boss_enemy[type] = d
 	return d
 
-## any foe's definition (the fixed ones, or a guardian)
+## The dungeon wardens of the planet the GPU holds ("warden_<key>" -> its definition from
+## wardens.gd), registered by main.gd as the world is made (they come from the dungeons' seeds).
+var WARDENS := {}
+var _warden_enemy := {}
+
+func register_warden(type: String, wd: Dictionary) -> void:
+	WARDENS[type] = wd
+	_warden_enemy.erase(type)
+
+## a warden as a foe: a boss like a guardian ("def" is its definition, "key" what marks it beaten)
+func warden_enemy(type: String) -> Dictionary:
+	if _warden_enemy.has(type):
+		return _warden_enemy[type]
+	var b: Dictionary = WARDENS[type]
+	var d := {"w": b["w"], "h": b["h"], "hp": b["hp"], "dmg": b["dmg"], "fly": bool(b.get("fly", false)), "spr": type,
+		"boss": true, "warden": true, "drops": [], "def": b, "biome": "", "key": type, "ai": {"sight": 300.0}}
+	_warden_enemy[type] = d
+	return d
+
+## any foe's definition (the fixed ones, a creature, a guardian or a warden)
 func enemy_def(type: String) -> Dictionary:
 	if ENEMY.has(type):
 		return ENEMY[type]
-	return creature_enemy(type) if type.begins_with("c_") else boss_enemy(type)
+	if type.begins_with("c_"):
+		return creature_enemy(type)
+	return warden_enemy(type) if type.begins_with("warden_") else boss_enemy(type)
 
 func sprite_texture(key: String) -> ImageTexture:
 	# draws the sprite with a 1-pixel dark outline, 16-bit style

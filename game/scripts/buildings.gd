@@ -1,4 +1,5 @@
 extends RefCounted
+const Wardens := preload("res://scripts/wardens.gd")
 ## Procedural structures: cottages, towns, towers, castles, desert temples, stilt huts,
 ## mineshafts, catacombs and sealed vaults. Nothing is hand-drawn: each structure is grown
 ## from simple rules (floors, walls, doors, roofs) in materials that suit its biome, and
@@ -33,6 +34,10 @@ var chest_list := []             # {pos (world centre), ruined}: treasure chests
 var door_list := []              # {pos (world centre), w, h, side}: doors (closed cells; the game opens and closes them)
 var lair_why := {}                # biome -> why no lair fitted (candidates, and what turned them down)
 var lair_list := []               # {biome, pos (the arena floor's middle), name}: the guardians' lairs
+## the dungeon wardens: {key ("warden_<seed>_<col>": its foe type), pos (its hall floor's middle),
+## def (wardens.gd), tether, ceil, ward (the stamp rectangle of the reliquary's warded door), name}
+var warden_list := []
+var _seed := 0
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
 var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
 var used := []                    # occupied surface column ranges
@@ -253,6 +258,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	N0 = Defs.NS
 	surf = surface
 	rng.seed = int(planet["seed"]) * 31 + 7
+	_seed = int(planet["seed"])
 	biome_names = []
 	for b in planet["biomes"]:
 		biome_names.append(str(b))
@@ -269,6 +275,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	chest_list.clear()
 	door_list.clear()
 	lair_list.clear()
+	warden_list.clear()
 	lair_why.clear()
 	_lair_cols.clear()
 	used.append(Vector2i(spawn_col - 70, spawn_col + 70))
@@ -2057,7 +2064,9 @@ func _shrine(bp: BP, bd: Dictionary, W: int, fl: int, edge: int, ox := 0) -> voi
 ## few extra loops) joins them with corridors (side by side) and shafts with landings (one above
 ## the other), and each room gets a theme. The room farthest from the entrance is a reliquary
 ## walled in a material the staff can't cut yet (brick or obsidian): the treasure there waits
-## for a stronger focus.
+## for a stronger focus, or for its warden to fall. The room before it on the way in is the
+## warden's hall (as big as a slot allows), and the door between them is a ward of runestone that
+## breaks when the warden dies (wardens.gd grows the warden; main.gd `_warden_falls`).
 const DUNGEONS := 4
 const DSW := 112       # slot width: a room up to 96 wide with its walls and a gap
 const DSH := 86        # slot height: a room up to 72 tall
@@ -2134,6 +2143,24 @@ func _dungeon(x: int, build: bool) -> bool:
 				vault = k
 	if vault < 0:
 		return false
+	# the warden's hall: the reliquary's neighbour nearest the way in (never the entrance itself),
+	# made as big as its slot allows
+	var hall := -1
+	var hall_d := 1 << 20
+	for e0 in edges:
+		var other := -1
+		if e0.x == vault:
+			other = e0.y
+		elif e0.y == vault:
+			other = e0.x
+		if other >= 0 and other != ce and int(dist[other]) < hall_d:
+			hall_d = int(dist[other])
+			hall = other
+	if hall >= 0:
+		var hr: Dictionary = rooms[hall]
+		hr["i0"] = DW + 4 + int(hr["c"]) * DSW + DW + 1
+		hr["i1"] = int(hr["i0"]) + (DSW - 2 * DW - 8) - 1
+		hr["top"] = int(hr["fl"]) - (DSH - 2 * DW - 6)
 	# --- where it goes: the gatehouse sits over the entrance room ---
 	var entry: Dictionary = rooms[ce]
 	var s0 := (int(entry["i0"]) + int(entry["i1"])) / 2 - DSHAFT / 2     # the shaft's left column, local
@@ -2174,7 +2201,8 @@ func _dungeon(x: int, build: bool) -> bool:
 			var hi: Dictionary = rb if ra["c"] < rb["c"] else ra
 			if hi["i0"] - DW - 1 >= lo["i1"] + DW + 1:
 				bp.solid(lo["i1"] + DW + 1, lo["fl"] - DCOR - DW, hi["i0"] - DW - 1, lo["fl"] + DW - 1, wall)
-			links.append({"kind": "corridor", "a": lo, "b": hi, "va": lo == rooms[vault], "vb": hi == rooms[vault]})
+			links.append({"kind": "corridor", "a": lo, "b": hi, "va": lo == rooms[vault], "vb": hi == rooms[vault],
+				"ward": hall >= 0 and ((e.x == hall and e.y == vault) or (e.y == hall and e.x == vault))})
 		else:
 			var up: Dictionary = ra if ra["r"] < rb["r"] else rb
 			var dn: Dictionary = rb if ra["r"] < rb["r"] else ra
@@ -2183,10 +2211,12 @@ func _dungeon(x: int, build: bool) -> bool:
 			var sw := mini(DSHAFT, ov1 - ov0 + 1)
 			var si := ov0 + rng.randi_range(0, maxi(0, ov1 - ov0 + 1 - sw))
 			bp.solid(si - DW, up["fl"] + DW, si + sw - 1 + DW, dn["top"] - DW - 1, wall)
-			links.append({"kind": "shaft", "a": up, "b": dn, "si": si, "sw": sw, "va": up == rooms[vault], "vb": dn == rooms[vault]})
+			links.append({"kind": "shaft", "a": up, "b": dn, "si": si, "sw": sw, "va": up == rooms[vault], "vb": dn == rooms[vault],
+				"ward": hall >= 0 and ((e.x == hall and e.y == vault) or (e.y == hall and e.x == vault))})
 	bp.solid(s0 - DW, 0, s0 + DSHAFT - 1 + DW, int(entry["top"]) - DW - 1, wall)
 	# 2) hollow everything out, with the back wall behind
 	var back: int = st["back"]
+	var ward := Rect2i()
 	for k in rooms.size():
 		var rm2: Dictionary = rooms[k]
 		if rm2["on"]:
@@ -2198,11 +2228,16 @@ func _dungeon(x: int, build: bool) -> bool:
 		if ln["kind"] == "corridor":
 			bp.rect(la["i1"] + 1, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, 0)
 			bp.rect_bg(la["i1"] + 1, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, back)
-			# the reliquary's doorway is walled up
+			# the reliquary's doorway is walled up (from the warden's hall, by its ward)
+			var dm: int = Defs.RUNESTONE if ln["ward"] else seal
 			if ln["vb"]:
-				bp.rect(lb2["i0"] - DW, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, seal)
+				bp.rect(lb2["i0"] - DW, la["fl"] - DCOR, lb2["i0"] - 1, la["fl"] - 1, dm)
+				if ln["ward"]:
+					ward = Rect2i(int(lb2["i0"]) - DW, int(la["fl"]) - DCOR, DW, DCOR)
 			if ln["va"]:
-				bp.rect(la["i1"] + 1, la["fl"] - DCOR, la["i1"] + DW, la["fl"] - 1, seal)
+				bp.rect(la["i1"] + 1, la["fl"] - DCOR, la["i1"] + DW, la["fl"] - 1, dm)
+				if ln["ward"]:
+					ward = Rect2i(int(la["i1"]) + 1, int(la["fl"]) - DCOR, DW, DCOR)
 		else:
 			var si2: int = ln["si"]
 			var sw2: int = ln["sw"]
@@ -2210,10 +2245,15 @@ func _dungeon(x: int, build: bool) -> bool:
 			bp.rect_bg(si2, la["fl"], si2 + sw2 - 1, lb2["top"] - 1, back)
 			# landings all the way down into the lower room (its back wall holds them up)
 			_landings(bp, si2, si2 + sw2 - 1, la["fl"] + DW + 8, lb2["fl"] - 18)
+			var dm2: int = Defs.RUNESTONE if ln["ward"] else seal
 			if ln["vb"]:
-				bp.rect(si2, lb2["top"] - DW, si2 + sw2 - 1, lb2["top"] - 1, seal)
+				bp.rect(si2, lb2["top"] - DW, si2 + sw2 - 1, lb2["top"] - 1, dm2)
+				if ln["ward"]:
+					ward = Rect2i(si2, int(lb2["top"]) - DW, sw2, DW)
 			if ln["va"]:
-				bp.rect(si2, la["fl"], si2 + sw2 - 1, la["fl"] + DW - 1, seal)
+				bp.rect(si2, la["fl"], si2 + sw2 - 1, la["fl"] + DW - 1, dm2)
+				if ln["ward"]:
+					ward = Rect2i(si2, int(la["fl"]), sw2, DW)
 	bp.rect(s0, 0, s0 + DSHAFT - 1, int(entry["top"]) - 1, 0)
 	bp.rect_bg(s0, 0, s0 + DSHAFT - 1, int(entry["top"]) - 1, back)
 	_landings(bp, s0, s0 + DSHAFT - 1, 10, int(entry["fl"]) - 18)
@@ -2235,6 +2275,8 @@ func _dungeon(x: int, build: bool) -> bool:
 			rm3["kind"] = "entry"
 		elif k == vault:
 			rm3["kind"] = "reliquary"
+		elif k == hall:
+			rm3["kind"] = "warden"
 		else:
 			rm3["kind"] = kinds[ki % kinds.size()]
 			ki += 1
@@ -2249,6 +2291,21 @@ func _dungeon(x: int, build: bool) -> bool:
 	var vr: Dictionary = rooms[vault]
 	labels.append({"x0": posmod(dx0 + int(vr["i0"]) - DW, N0), "w": int(vr["i1"]) - int(vr["i0"]) + 1 + 2 * DW, "ax": posmod(dx0, N0), "aw": dw,
 		"ymin": by0 + int(vr["top"]) - DW, "ymax": by0 + int(vr["fl"]) + DW, "name": "Sealed Reliquary"})
+	bp.meta["warden"] = hall >= 0 and ward.size.x > 0
+	if hall >= 0 and ward.size.x > 0:
+		# the warden: grown from this dungeon's own seed (so the planet's layout draws nothing for it)
+		var hr2: Dictionary = rooms[hall]
+		var wkey := "warden_%d_%d" % [posmod(_seed, 100000), posmod(dx0, N0)]
+		var wdef: Dictionary = Wardens.make(_seed * 7919 + posmod(dx0, N0) * 31 + 5, b, name)
+		var hrow := by0 + int(hr2["fl"])
+		var hw2 := int(hr2["i1"]) - int(hr2["i0"]) + 1
+		warden_list.append({"key": wkey, "def": wdef, "name": name, "biome": b,
+			"pos": _bp_at(bp, (float(hr2["i0"]) + float(hr2["i1"]) + 1.0) * 0.5, hrow, Defs.R_TOP - float(hrow)),
+			"tether": float(hw2) * 0.5 - float(wdef["w"]) * 0.5 - 3.0, "ceil": float(int(hr2["fl"]) - int(hr2["top"])) - 8.0,
+			"ward": {"x0": posmod(dx0 + ward.position.x, N0), "y0": by0 + ward.position.y, "w": ward.size.x, "h": ward.size.y,
+				"ax": posmod(dx0, N0), "aw": dw}})
+		labels.append({"x0": posmod(dx0 + int(hr2["i0"]) - DW, N0), "w": hw2 + 2 * DW, "ax": posmod(dx0, N0), "aw": dw,
+			"ymin": by0 + int(hr2["top"]) - DW, "ymax": by0 + int(hr2["fl"]) + DW, "name": "%s's Hall" % wdef["name"]})
 	labels.append({"x0": posmod(dx0, N0), "w": dw, "ymin": by0 - 4, "ymax": by0 + bh, "name": name})
 	_finish(bp, build)
 	# --- the gatehouse, and the shaft from its floor down to the halls ---
@@ -2374,6 +2431,18 @@ func _dungeon_room(bp: BP, rm: Dictionary, st: Dictionary, b: String, sure: bool
 			bp.rect(p0, fl, p1, fl + 7, 0)
 			bp.rect_bg(p0, fl, p1, fl + 7, st["back"])
 			bp.rect(p0, fl + 1, p1, fl + 7, liq)
+		"warden":
+			# the warden's hall: no guards (it calls its own), tall pillars against the back wall
+			# with heavy capitals, and a brazier either side
+			var p2 := i0 + 12
+			while p2 < i1 - 12:
+				bp.rect_bg(p2, top, p2 + 3, fl - 1, st["post"] if st["post"] != st["back"] else st.get("course", st["back"]))
+				bp.rect_bg(p2 - 2, top + 2, p2 + 5, top + 4, st.get("course", st["back"]))
+				bp.rect_bg(p2 - 2, fl - 3, p2 + 5, fl - 1, st.get("course", st["back"]))
+				p2 += 22
+			for bx in [i0 + 6, i1 - 8]:
+				bp.rect(bx, fl - 3, bx + 2, fl - 1, st["wall"])
+				bp.bg(bx + 1, fl - 4, Defs.TORCH)
 		"reliquary":
 			_chest(bp, i0 + 6, fl, true)
 			_chest(bp, i1 - 5 - Defs.CHEST_W, fl, true)
