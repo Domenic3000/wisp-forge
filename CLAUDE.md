@@ -279,7 +279,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `scripts/boss_ai.gd` `tick` (called from `_update_enemies` before the fixed foes' match): getting around (walk,
   hop, fly, slither, burrow: `Enemy.under` = hidden and untouchable, not moved by move_body), moves as state
   machines on `Enemy.act` windup -> go -> recover (charge, slam, spit, rain, erupt, roar, summon, cloud, dive, gust,
-  breach), enraged below half health. New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
+  breach), enraged below half health. A guardian stays in its lair: `Enemy.tether` (cells along the ground from
+  its home, from the lair's "tether") and `ceil` (how high fliers go) bound where it heads (`_in_lair`,
+  `_lair_point`), a charge stops at the edge, a slam lands inside; walkers keep moving round you (`pace`, a new side
+  every second or two), hop what's under `CLIMB` and smash through taller things (`_clear_way`), steer whenever
+  resting on something (a chest isn't "ground"), and hop free after 1.5 s without progress; fliers steer round
+  obstacles with main's `_flier_steer`. Leaps are worked out from the planet's pull to rise `SLAM_H`/`HOP_H`/
+  `BREACH_H` cells, and gravity always applies to walkers (it used to be off for a slam: they flew off screen). New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
   spore) with "col", "splat" (matter left where they land) and "home" (spores drift after you); `boss_clouds`.
   Lairs: buildings.gd `_lairs` runs LAST in `plan`, with its own RNG (so adding lairs moved no other structure:
   several tests depend on the layout near the start), one per biome: spots deep inside the biome first; an open

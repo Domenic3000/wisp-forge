@@ -24,6 +24,12 @@ extends RefCounted
 
 const FoeAI := preload("res://scripts/foe_ai.gd")
 const WAKE := 110.0            # (you have to come into its lair to wake it)
+# how high it leaps (cells), whatever the planet's pull: the jump speed is worked out from it, so a
+# leap always stays on screen
+const SLAM_H := 34.0
+const HOP_H := 20.0
+const BREACH_H := 50.0
+const CLIMB := 24.0            # the tallest thing it jumps over; anything taller it smashes through
 
 static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow_f: float) -> void:
 	var bd: Dictionary = e.d["def"]
@@ -55,7 +61,7 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 			_begin(g, e, tgt, dx, dy, dist)
 	if go == "slither" or go == "burrow":
 		_trail(e)
-	if go != "fly" and go != "slither" and go != "burrow" and not e.leaping:
+	if go != "fly" and go != "slither" and go != "burrow":
 		e.vy += gacc
 
 static func wake(g, e) -> void:
@@ -83,50 +89,107 @@ static func _rest(g, e, gacc: float) -> void:
 		e.vy += gacc
 
 # ------------------------------------------------------------ getting around ---
+## how far along the ground a point is from its lair's middle (cells; + is the lair's "right")
+static func _off(g, e, p: Vector2) -> float:
+	return (p - e.home).dot(g.basis_r(atan2(e.home.y, e.home.x)))
+
+## a place along the ground, kept within its lair (`tether` cells either side of the middle)
+static func _in_lair(e, off: float) -> float:
+	return clampf(off, -e.tether, e.tether) if e.tether > 0.0 else off
+
 static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd: float, go: String) -> void:
 	e.t += 1.0
+	var po := _off(g, e, tgt.pos)
+	var bo := _off(g, e, e.pos)
+	# where it wants to be: round you, never still for long (a new side every second or two),
+	# always inside its lair (you can leave it; it won't follow you out among the buildings)
+	e.pace_t -= 1
+	if e.pace_t <= 0:
+		e.pace_t = 60 + randi() % 80
+		e.pace = (26.0 + randf() * 44.0) * (1.0 if randf() < 0.5 else -1.0)
+	var goal := _in_lair(e, po + e.pace)
+	var d := goal - bo
+	# resting on something (the ground, or a chest or a body that doesn't count as ground)
+	var footed: bool = e.on_ground or absf(e.vy) < 0.25
+	# not getting anywhere for a second and a half (wedged on something): it hops free
+	if go == "walk" or go == "hop":
+		e.prog_t += 1
+		if e.prog_t >= 90:
+			if absf(d) > 10.0 and e.prog_pos.distance_to(e.pos) < 3.0 and footed:
+				e.vy = -sqrt(2.0 * gacc * 16.0)
+				e.vx = signf(d) * spd * 1.6
+			e.prog_pos = e.pos
+			e.prog_t = 0
 	match go:
 		"walk":
 			e.facing = -1 if dx < 0 else 1
-			if absf(dx) > 26.0:
-				var nd: float = g._walker_nav(e, dx, dist, 0.5, 5.0, gacc)
-				if e.on_ground:
-					e.vx += (nd * spd - e.vx) * 0.12
-			elif e.on_ground:
+			if absf(d) > 4.0:
+				var dirx := signf(d)
+				e.vx += (dirx * spd - e.vx) * (0.14 if footed else 0.04)
+				_clear_way(g, e, dirx, gacc)
+			elif footed:
 				e.vx *= 0.8
 		"hop":
 			e.facing = -1 if dx < 0 else 1
-			if e.on_ground:
+			if footed:
 				e.vx *= 0.7
-				if int(e.t) % 70 == 0:
-					e.vx = signf(dx) * spd * 2.0
-					e.vy = -4.0
+				if int(e.t) % 55 == 0 and absf(d) > 6.0:
+					var vy0 := sqrt(2.0 * gacc * HOP_H)
+					var air := 2.0 * vy0 / maxf(gacc, 0.01)
+					e.vx = clampf(d / air, -spd * 2.2, spd * 2.2)
+					e.vy = -vy0
 		"fly", "slither":
-			# circle above you (a serpent weaves wider and lower)
+			# circle above you (a serpent weaves wider and lower), within its lair and under its roof
 			var up: Vector2 = tgt.pos.normalized()
-			var side: Vector2 = g.basis_r(atan2(tgt.pos.y, tgt.pos.x))
 			var sway := sin(e.t * (0.013 if go == "slither" else 0.01))
-			var want: Vector2 = tgt.pos + up * (36.0 if go == "slither" else 58.0) + side * sway * (95.0 if go == "slither" else 70.0)
-			_steer(g, e, want, spd, 0.08)
+			var hover := 36.0 if go == "slither" else 58.0
+			var want: Vector2 = tgt.pos + up * hover + g.basis_r(atan2(tgt.pos.y, tgt.pos.x)) * sway * (95.0 if go == "slither" else 70.0)
+			_steer(g, e, _lair_point(g, e, want), spd, 0.08)
 		"burrow":
-			# under the ground toward the spot under you
+			# under the ground toward the spot under you (within its lair)
 			e.under = true
-			var below: Vector2 = tgt.pos.normalized() * (tgt.pos.length() - 26.0)
+			var below: Vector2 = _lair_point(g, e, tgt.pos)
+			below = below.normalized() * (tgt.pos.length() - 26.0)
 			var to: Vector2 = below - e.pos
 			if to.length() > 1.0:
 				e.pos += to.normalized() * minf(spd, to.length())
 			e.facing = -1 if dx < 0 else 1
 			_rumble(g, e)
 
-## fliers: ease toward a point (world velocity -> the body's own frame)
+## a point brought inside its lair: along the ground within its tether, no higher than its roof
+static func _lair_point(g, e, p: Vector2) -> Vector2:
+	if e.tether <= 0.0:
+		return p
+	var ha := atan2(e.home.y, e.home.x)
+	var br: Vector2 = g.basis_r(ha)
+	var up: Vector2 = e.home.normalized()
+	var o: Vector2 = p - e.home
+	var along := clampf(o.dot(br), -e.tether, e.tether)
+	var high := clampf(o.dot(up), -20.0, e.ceil)
+	return e.home + br * along + up * high
+
+## something in its way on the ground: hop over it if it's low; if it's tall, smash through it
+static func _clear_way(g, e, dirx: float, gacc: float) -> void:
+	if not e.hit_wall or not (e.on_ground or absf(e.vy) < 0.25):
+		return
+	var need: int = g._wall_height(e, dirx, CLIMB)
+	if need >= 0:
+		e.vy = -sqrt(2.0 * gacc * (float(need) + 4.0))
+	elif g.frame - e.smash_f > 40:
+		e.smash_f = g.frame
+		var a := atan2(e.pos.y, e.pos.x)
+		g._explode(e.pos + g.basis_r(a) * dirx * (e.w * 0.5 + 4.0), 8.0, 1, 0, 0.0)
+		g.shake = maxf(g.shake, 5.0)
+
+## fliers: ease toward a point, steering round anything solid in the way
 static func _steer(g, e, want: Vector2, spd: float, acc: float) -> void:
 	var a := atan2(e.pos.y, e.pos.x)
 	var o: Vector2 = want - e.pos
-	var v := o.normalized() * minf(spd, o.length() * 0.05 + 0.3)
-	var lx: float = v.dot(g.basis_r(a))
-	var ly: float = v.dot(g.basis_d(a))
-	e.vx += (lx - e.vx) * acc
-	e.vy += (ly - e.vy) * acc
+	var mag := minf(spd, o.length() * 0.05 + 0.3)
+	var lw := Vector2(o.dot(g.basis_r(a)), o.dot(g.basis_d(a)))
+	var dirv: Vector2 = g._flier_steer(e, lw) if lw.length() > 1.0 else Vector2.ZERO
+	e.vx += (dirv.x * mag - e.vx) * acc
+	e.vy += (dirv.y * mag - e.vy) * acc
 	if absf(e.vx) > 0.2:
 		e.facing = 1 if e.vx > 0.0 else -1
 
@@ -271,11 +334,14 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			e.aim = Vector2(signf(dx), 0.0)
 			e.facing = int(e.aim.x)
 		"slam":
-			# a leap aimed to land on you
-			var gg: float = g.gravity_at(e.pos)
-			var air: float = 2.0 * 5.6 / (0.17 * gg)
-			e.vx = clampf(dx / air, -4.5, 4.5) if pr.get("far", false) else clampf(dx / air, -3.0, 3.0)
-			e.vy = -5.6
+			# a leap aimed to land on you (or as near as its lair allows), never higher than SLAM_H
+			var gs: float = 0.17 * float(g.gravity_at(e.pos))
+			var vy0 := sqrt(2.0 * gs * SLAM_H)
+			var air: float = 2.0 * vy0 / maxf(gs, 0.01)
+			var land := _in_lair(e, _off(g, e, tgt.pos)) - _off(g, e, e.pos)
+			var lim := 4.5 if pr.get("far", false) else 3.0
+			e.vx = clampf(land / air, -lim, lim)
+			e.vy = -vy0
 			e.leaping = true
 			FoeAI.start(e, "go", 140)
 		"spit":
@@ -288,7 +354,7 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 		"erupt":
 			_burst(g, e.spot, 9.0, 2, pr.get("col", Color(0.5, 0.4, 0.3)))
 			if tgt.pos.distance_to(e.spot) < 16.0:
-				g.hurt(tgt, float(e.d["dmg"]) * 1.4, Vector2(0.0, -5.0), true)
+				g.hurt(tgt, float(e.d["dmg"]) * 1.4, Vector2(0.0, -3.6), true)
 			# enraged, it strikes again where you are now
 			if e.raged and not e.raged_burst:
 				e.raged_burst = true
@@ -331,9 +397,9 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			e.pos = ground - up * 4.0
 			_burst(g, ground, 11.0, 2, Color(0.9, 0.78, 0.5))
 			if tgt.pos.distance_to(ground) < 20.0:
-				g.hurt(tgt, float(e.d["dmg"]) * 1.3, Vector2(signf(dx) * 2.0, -5.5), true)
+				g.hurt(tgt, float(e.d["dmg"]) * 1.3, Vector2(signf(dx) * 2.0, -3.8), true)
 			e.under = false
-			e.gvel = up * 6.4 + g.basis_r(atan2(e.pos.y, e.pos.x)) * signf(dx) * 1.2
+			e.gvel = up * sqrt(2.0 * 0.17 * float(g.gravity_at(e.pos)) * BREACH_H) + g.basis_r(atan2(e.pos.y, e.pos.x)) * signf(dx) * 1.0
 			FoeAI.start(e, "go", 120)
 			e.hit_done = false
 
@@ -356,7 +422,7 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				e.vx = -dirx * 1.5
 				FoeAI.start(e, "recover", 70)
 				return
-			if e.act_t <= 0 or (dx * dirx < -60.0):
+			if e.act_t <= 0 or (dx * dirx < -60.0) or (e.tether > 0.0 and _off(g, e, e.pos) * dirx > e.tether + 6.0):
 				FoeAI.start(e, "recover", 26)
 		"slam":
 			if e.on_ground and e.act_t < 136:

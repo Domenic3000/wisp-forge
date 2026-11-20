@@ -1887,12 +1887,15 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 	var pave: int = bd["floor"]
 	var trim: int = bd["trim"]
 	# the arena: level, paved in the middle, ramping back to the land at the ends, open to the sky
+	var tops := PackedInt32Array()
+	tops.resize(W)
 	for i in W:
 		var g := ground_row(x0 + i) - top
 		var e := mini(i, W - 1 - i)
 		var t := clampf(1.0 - float(e) / float(LAIR_RAMP), 0.0, 1.0)
 		t = t * t * (3.0 - 2.0 * t)
 		var target := int(round(lerpf(float(fl), float(g), t)))
+		tops[i] = target
 		var clear_from := int(round(lerpf(0.0, float(mini(target, g)) - 4.0, t)))
 		bp.rect(i, maxi(0, clear_from), i, target - 1, 0)
 		bp.rect_bg(i, maxi(0, clear_from), i, target - 1, 0, false)
@@ -1903,17 +1906,23 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 			# paving: two courses, set into the ground
 			for j2 in range(target, target + 2):
 				bp.fg(i, j2, pave, F_ANCHOR)
-	# the pillars at its edges (one may have fallen to a stub), capitals in the trim
+	# the pillars at its rim, standing on the land where the ramps meet it (one may have fallen to a
+	# stub), capitals in the trim: the floor between them is all open to fight on
 	for side in 2:
 		var pw := 7
-		var pi := LAIR_RAMP + 2 if side == 0 else W - LAIR_RAMP - 2 - pw
+		var pi := 3 if side == 0 else W - 3 - pw
+		var base := 0
+		for q in pw:
+			base = maxi(base, tops[pi + q])
 		var ph := rng.randi_range(44, 64)
 		if rng.randf() < 0.25:
 			ph = rng.randi_range(14, 24)
-		_pillar(bp, bd, pi, pw, fl, ph)
+		var ptop := mini(fl - ph, base - 12)          # (always standing well clear of the land)
+		_pillar(bp, bd, pi, pw, base, base - ptop, mini(base + 3, bp.h - 1))
 	_shrine(bp, bd, W, fl, LAIR_RAMP)
 	var row := top + fl
-	lair_list.append({"biome": b, "pos": _bp_at(bp, float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": false})
+	lair_list.append({"biome": b, "pos": _bp_at(bp, float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": false,
+		"tether": float(W) * 0.5 - 18.0, "ceil": 70.0})
 	_lair_cols.append(x)
 	_claim(x0, W, bd["lair"], top, bot)
 	_finish(bp, build)
@@ -1974,11 +1983,12 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 	# inside: columns at the ends, then the same shrine an open lair has
 	for side in 2:
 		var pw := 7
-		var pi := ox + 6 if side == 0 else ox + W - 13
+		var pi := ox if side == 0 else ox + W - pw
 		_pillar(bp, bd, pi, pw, fl, HH)
 	_shrine(bp, bd, W, fl, ox + 4, ox)
 	var row := top + fl
-	lair_list.append({"biome": b, "pos": _bp_at(bp, float(ox) + float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": true})
+	lair_list.append({"biome": b, "pos": _bp_at(bp, float(ox) + float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": true,
+		"tether": float(W) * 0.5 - 18.0, "ceil": float(HH) - 24.0})
 	_lair_cols.append(x)
 	_claim(sx - 4, SW + 8, bd["lair"], top, bot)
 	deep.append(Vector2i(x0 - T, x0 + W + T))
@@ -1987,10 +1997,10 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 	return true
 
 ## a pillar of the lair's stone, `ph` tall on floor row fl, a capital of its trim with a notched top
-func _pillar(bp: BP, bd: Dictionary, pi: int, pw: int, fl: int, ph: int) -> void:
+func _pillar(bp: BP, bd: Dictionary, pi: int, pw: int, fl: int, ph: int, base := -1) -> void:
 	var wall: int = bd["wall"]
 	var trim: int = bd["trim"]
-	bp.solid(pi, fl - ph, pi + pw - 1, fl - 1, wall)
+	bp.solid(pi, fl - ph, pi + pw - 1, fl - 1 if base < 0 else base, wall)
 	bp.rect(pi - 1, fl - ph - 3, pi + pw, fl - ph - 1, trim)
 	if bd.has("glow"):
 		for gi in range(pi, pi + pw, 2):

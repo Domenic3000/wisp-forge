@@ -102,6 +102,11 @@ class Enemy extends Body:
 	var gvel := Vector2.ZERO   # (its flight out of the ground, in world units)
 	var trail := PackedVector2Array()   # a serpent's segments, head first
 	var summoner = null        # the guardian that called it
+	var tether := 0.0          # how far along the ground from its lair's middle it may go (0: anywhere)
+	var ceil := 60.0           # how high above where it waits it may fly
+	var pace := 0.0            # where round you it's heading (cells along the ground from you)
+	var pace_t := 0
+	var smash_f := -100        # (the frame it last smashed through something)
 
 var gpu
 var ui
@@ -2418,7 +2423,9 @@ func _spawn_guardians() -> void:
 			continue
 		var d: Dictionary = Defs.boss_enemy("boss_" + biome)
 		var at: Vector2 = lr["pos"]
-		spawn_enemy("boss_" + biome, at + at.normalized() * (float(d["h"]) * 0.5 + 2.0))
+		var ge = spawn_enemy("boss_" + biome, at + at.normalized() * (float(d["h"]) * 0.5 + 2.0))
+		ge.tether = float(lr.get("tether", 60.0))       # (it stays in its lair)
+		ge.ceil = float(lr.get("ceil", 60.0))
 
 ## How high a walker must climb to get past the wall in front of it (cells), or -1 if it is
 ## taller than `reach`. Uses the collision grid currently in use.
@@ -3929,7 +3936,7 @@ func travel_next() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 32            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 33            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1

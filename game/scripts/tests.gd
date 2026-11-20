@@ -2307,9 +2307,24 @@ func run() -> void:
 		var gd_side: Vector2 = g.basis_r(atan2(gd_at.y, gd_at.x))
 		_go(gd_at + gd_side * 50.0 + gd_at.normalized() * 12.0)
 		g.player.dead = false
-		await _frames(110)
-		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("boss_%s.png" % gd_bio))
-		await _frames(40)
+		# how it moves while it fights: how high it gets, how far it strays, how much it gets around
+		var gd_up := 0.0
+		var gd_out := 0.0
+		var gd_walk := 0.0
+		var gd_last: Vector2 = gd_e.pos
+		var gd_home: Vector2 = gd_e.home
+		var gd_br: Vector2 = g.basis_r(atan2(gd_home.y, gd_home.x))
+		for gd_f in 240:
+			await _frames(1)
+			if gd_f == 150:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("boss_%s.png" % gd_bio))
+			if gd_e.dead:
+				break
+			var gd_o: Vector2 = gd_e.pos - gd_home
+			gd_up = maxf(gd_up, gd_o.dot(gd_home.normalized()))
+			gd_out = maxf(gd_out, absf(gd_o.dot(gd_br)) - gd_e.tether)
+			gd_walk += gd_e.pos.distance_to(gd_last)
+			gd_last = gd_e.pos
 		var gd_moves: int = gd_e.moves_done
 		var gd_awake: bool = gd_e.awake
 		var gd_rel: String = gd_e.d["def"]["relic"]
@@ -2317,11 +2332,12 @@ func run() -> void:
 		await _frames(2)
 		var gd_got: bool = g.items.has(gd_rel)
 		var gd_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(gd_bio)
-		if gd_awake and gd_moves >= 1 and gd_got and gd_dead:
+		# (it stays on screen: never more than about 80 cells up; in its lair; and on the move)
+		var gd_flies: bool = gd_e.d["def"]["go"] == "fly" or gd_e.d["def"]["go"] == "slither"
+		if gd_awake and gd_moves >= 1 and gd_got and gd_dead and gd_up < (95.0 if gd_flies else 70.0) and gd_out < 14.0 and gd_walk > 40.0:
 			gd_ok += 1
-		var gd_rs: float = g.gpu.surf_at(atan2(gd_at.y, gd_at.x)).x
-		gd_rows.append("%s%s: awake %s, %d moves, relic %s (floor %.0f deep, you %.0f deep)" % [gd_bio, " (underground)" if gd_l.get("deep", false) else "", gd_awake, gd_moves, gd_got,
-			gd_rs - gd_at.length(), gd_rs - g.player.pos.length()])
+		gd_rows.append("%s%s: awake %s, %d moves, relic %s, highest %.0f, past its lair %.0f, moved %.0f" % [gd_bio, " (underground)" if gd_l.get("deep", false) else "", gd_awake, gd_moves, gd_got,
+			gd_up, gd_out, gd_walk])
 	# (the relics are given back, so the checks after this aren't changed by them)
 	for gd_r in Defs.RELICS:
 		if not gd_items0.has(gd_r):
