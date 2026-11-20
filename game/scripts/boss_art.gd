@@ -291,6 +291,20 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 		c.poly(PackedVector2Array([sn + Vector2(-hd * 0.3, 1.0), sn + Vector2(hd * 0.55, 0.0), sn + Vector2(hd * 0.45, 3.5)]), Color(0.25, 0.04, 0.06), false)
 		c.px(int(sn.x + hd * 0.2), int(sn.y + 1.0), Color(0.95, 0.92, 0.85))
 	c.px(int(sn.x + hd * 0.42), int(sn.y - 1.0), dark)
+	if b.get("tusks", false):
+		# a boar's tusks curling up from the jaw
+		var tb2 := sn + Vector2(hd * 0.1, hd * 0.25)
+		c.poly(PackedVector2Array([tb2, tb2 + Vector2(hd * 0.35, -hd * 0.1), tb2 + Vector2(hd * 0.5, -hd * 0.55), tb2 + Vector2(hd * 0.2, 0.0)]), Color(0.95, 0.92, 0.82))
+	if b.get("horns", false):
+		# a ram's horns, curled round beside the head
+		var hc := hp + Vector2(-hd * 0.25, -hd * 0.3)
+		var prev := hc
+		for k5 in 9:
+			var aa := -1.9 + float(k5) * 0.62
+			var rr := hd * (0.75 - 0.05 * float(k5))
+			var q := hc + Vector2(cos(aa), sin(aa)) * rr
+			c.line(prev, q, belly.darkened(0.25), 2.0 if k5 < 6 else 1.0)
+			prev = q
 	if b.get("ears", false) or b.get("mane", false):
 		c.poly(PackedVector2Array([hp + Vector2(-hd * 0.45, -hd * 0.3), hp + Vector2(-hd * 0.2, -hd * 1.0), hp + Vector2(hd * 0.05, -hd * 0.35)]), base)
 	c.eye(hp.x + hd * 0.12, hp.y - hd * 0.2, cs[4])

@@ -299,6 +299,15 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (relic into `items`, loot, `planet_state["bosses_dead"]`). Relic effects live where they matter: ironbark in
   `hurt`, coil in `_update_player`'s speed, pearl in the breath check, rimefang in the spark's impact, roc in
   levitation, lionheart +40 max health once, sunidol in `_hurt_enemy`, lantern a light in `_tick`.
+- Wild creatures (`Defs.CREATURES`, foe type "c_<id>", `Defs.creature_enemy` / `creatures_of(where)`): two or so per
+  biome and per depth underground ("cave1" upper caves, "cave2" middle, "cave3" the deep), grown by boss_art.gd's
+  body plans (beast with tusks/horns too) and moved by boss_ai.gd's moves, with `e.boss` false: foe_ai.gd `think`
+  gives them sight/hearing/memory; with nothing to hunt they `_wander` near `home`; moves are half size (`_sz`:
+  slam/breach heights), charges shorter, and they never break the land (`_burst(..., wreck=false)`, `_clear_way`
+  turns them back instead of smashing). Optional `pack` (wolves, hyenas, jackals), `pace`, `cd`, `drops`. `_try_spawn`:
+  the biome's creatures by day and night on the surface (`_wild_pick`, `_biome_name_at`; fliers come in through
+  the air, serpents and burrowers on the ground), each depth band's underground. Test: every creature hunts,
+  stays on screen and moves (`saves/shots/creatures_N.png`).
 - Rigid chunks (`scripts/chunks.gd`): grid.comp reports one felled-tree cell (counts[59]/[60]: a plant cell whose
   support reached 62) and one creaking block (counts[56]/[57]) per mage; `detect` reads the world around it
   (`gpu.read_rect`: `shaders/rectread.comp` copies just the rectangle into a small buffer, read back in one go), takes the loose cells out with a stamp and makes

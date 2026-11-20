@@ -1549,6 +1549,104 @@ const RELICS := {
 	"lantern": {"name": "Glowcap Lantern", "desc": "A soft light goes with you."},
 }
 
+# ------------------------------------------------------------- creatures ---
+## The wild creatures of each biome and each depth underground: small cousins of the guardians, grown
+## from the same body plans (scripts/boss_art.gd) and moved by the same brain (scripts/boss_ai.gd),
+## but without a lair: they wander until they see or hear you (foe_ai.gd `think`), hunt while they
+## remember you, then wander again. `where`: biome names, or "cave1" (the upper caves), "cave2" (the
+## middle depths), "cave3" (the deep, near the magma). `pack`: how many come together. `pace`: how
+## widely it circles you (1 = a guardian's). `cd`: frames between its moves.
+const CREATURES := {
+	"boar": {"name": "Thornback Boar", "where": ["forest"], "w": 18.0, "h": 13.0, "hp": 40.0, "dmg": 8.0, "go": "walk", "speed": 1.1,
+		"body": {"plan": "beast", "len": 20, "tall": 11, "leg": 7, "head": 7, "neck": 2, "base": "#5e4430", "belly": "#8e7258", "accent": "#3a2a1c",
+			"dark": "#22180f", "eye": "#ffb03a", "skin": "fur", "tusks": true, "tail": "short", "ears": true},
+		"moves": {"charge": {"v": 3.4}}, "drops": [[WOOD, 3, 0.5], [LEAF, 3, 0.4]]},
+	"greenwing": {"name": "Greenwing", "where": ["forest", "jungle"], "w": 10.0, "h": 8.0, "hp": 18.0, "dmg": 6.0, "go": "fly", "speed": 1.7,
+		"body": {"plan": "bird", "len": 11, "span": 14, "base": "#3e7a3a", "belly": "#b8d88a", "accent": "#e8c83a", "dark": "#1a301a", "eye": "#ff4a2a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.8}}, "drops": [[LEAF, 3, 0.6]]},
+	"viper": {"name": "Vine Viper", "where": ["jungle"], "w": 7.0, "h": 6.0, "hp": 26.0, "dmg": 7.0, "go": "slither", "speed": 1.7,
+		"body": {"plan": "serpent", "segs": 7, "rad": 2.8, "base": "#2a9a4a", "belly": "#e8e070", "accent": "#e83a2a", "dark": "#123a1a", "eye": "#ffe14a"},
+		"moves": {"spit": {"proj": "venom", "n": 1, "spread": 0.1}, "dive": {"v": 3.6}}, "drops": [[WOOD, 2, 0.5], [CRYSTAL, 1, 0.15]]},
+	"redfrog": {"name": "Ember Frog", "where": ["jungle"], "w": 11.0, "h": 8.0, "hp": 22.0, "dmg": 6.0, "go": "hop", "speed": 0.9,
+		"body": {"plan": "toad", "len": 13, "tall": 8, "base": "#d8402a", "belly": "#f0d070", "accent": "#2a3ad8", "dark": "#401a10", "eye": "#1a1a1a", "skin": "spots"},
+		"moves": {"spit": {"proj": "venom", "n": 2, "spread": 0.2}}, "drops": [[SHROOM, 1, 0.3], [CRYSTAL, 1, 0.1]]},
+	"bogtoad": {"name": "Bog Toad", "where": ["marsh"], "w": 14.0, "h": 10.0, "hp": 34.0, "dmg": 7.0, "go": "hop", "speed": 0.9,
+		"body": {"plan": "toad", "len": 16, "tall": 10, "base": "#5a6a34", "belly": "#b0a868", "accent": "#7a5a2a", "dark": "#26301a", "eye": "#ffb21a", "skin": "warts"},
+		"moves": {"slam": {}, "spit": {"proj": "mudball", "n": 2, "spread": 0.2}}, "drops": [[MUD, 4, 0.8], [SHROOM, 1, 0.3]]},
+	"leech": {"name": "Mire Leech", "where": ["marsh"], "w": 6.0, "h": 5.0, "hp": 18.0, "dmg": 6.0, "go": "slither", "speed": 1.4,
+		"body": {"plan": "serpent", "segs": 6, "rad": 2.4, "base": "#3a3028", "belly": "#8a5a4a", "accent": "#c83a3a", "dark": "#1a1410", "eye": "#ff6a3a"},
+		"moves": {"dive": {"v": 3.4}}, "drops": [[MUD, 3, 0.6], [WATER, 3, 0.6]]},
+	"frostwolf": {"name": "Frost Wolf", "where": ["tundra"], "pack": 3, "w": 17.0, "h": 13.0, "hp": 30.0, "dmg": 8.0, "go": "walk", "speed": 1.5,
+		"body": {"plan": "beast", "len": 20, "tall": 9, "leg": 9, "head": 7, "neck": 3, "base": "#c8d4de", "belly": "#eef4f8", "accent": "#8fe8ff",
+			"dark": "#4a5a6a", "eye": "#5cf0ff", "skin": "fur", "tail": "long", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[SNOW, 4, 0.6], [FROST, 1, 0.3]]},
+	"snowowl": {"name": "Snow Owl", "where": ["tundra"], "w": 10.0, "h": 8.0, "hp": 20.0, "dmg": 6.0, "go": "fly", "speed": 1.6,
+		"body": {"plan": "bird", "len": 11, "span": 14, "base": "#e8eef4", "belly": "#ffffff", "accent": "#e8b03a", "dark": "#6a7a8a", "eye": "#ffd23a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.8}}, "drops": [[SNOW, 3, 0.6], [FROST, 1, 0.2]]},
+	"craghawk": {"name": "Crag Hawk", "where": ["mountain"], "w": 11.0, "h": 8.0, "hp": 22.0, "dmg": 7.0, "go": "fly", "speed": 1.9,
+		"body": {"plan": "bird", "len": 12, "span": 16, "base": "#7a5a3a", "belly": "#c8a878", "accent": "#e8c040", "dark": "#2e2018", "eye": "#ffea3a", "skin": "fur"},
+		"moves": {"dive": {"v": 4.2}}, "drops": [[STONE, 3, 0.5], [COPPER, 1, 0.25]]},
+	"ram": {"name": "Rock Ram", "where": ["mountain"], "w": 18.0, "h": 14.0, "hp": 46.0, "dmg": 10.0, "go": "walk", "speed": 1.0,
+		"body": {"plan": "beast", "len": 20, "tall": 12, "leg": 9, "head": 7, "neck": 3, "base": "#8a8478", "belly": "#d8d0c0", "accent": "#5a5248",
+			"dark": "#2a2622", "eye": "#ffb03a", "skin": "fur", "horns": true, "tail": "short"},
+		"moves": {"charge": {"v": 3.6}, "slam": {}}, "drops": [[STONE, 4, 0.6], [COPPER, 1, 0.3]]},
+	"hyena": {"name": "Dust Hyena", "where": ["savanna"], "pack": 3, "w": 16.0, "h": 12.0, "hp": 28.0, "dmg": 7.0, "go": "walk", "speed": 1.5,
+		"body": {"plan": "beast", "len": 19, "tall": 9, "leg": 9, "head": 7, "neck": 3, "base": "#b89058", "belly": "#e0c898", "accent": "#5a3a1a",
+			"dark": "#3a2410", "eye": "#ffd25a", "skin": "spots", "tail": "tuft", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[DRYGRASS, 4, 0.6], [COPPER, 1, 0.2]]},
+	"vulture": {"name": "Vulture", "where": ["savanna", "desert"], "w": 11.0, "h": 8.0, "hp": 22.0, "dmg": 6.0, "go": "fly", "speed": 1.6,
+		"body": {"plan": "bird", "len": 12, "span": 18, "base": "#3a2e28", "belly": "#d8b8a0", "accent": "#e8a0a0", "dark": "#1a1410", "eye": "#ffd23a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.6}}, "drops": [[DRYGRASS, 2, 0.5]]},
+	"sandviper": {"name": "Sand Viper", "where": ["desert"], "w": 8.0, "h": 7.0, "hp": 30.0, "dmg": 9.0, "go": "burrow", "speed": 1.4,
+		"body": {"plan": "serpent", "segs": 8, "rad": 3.2, "base": "#c8985a", "belly": "#f0dca8", "accent": "#8a4a1a", "dark": "#5a3a1a", "eye": "#ff3a1a", "teeth": true},
+		"moves": {"breach": {"proj": "sandball", "n": 2, "spread": 0.3}}, "drops": [[SAND, 4, 0.8], [CRYSTAL, 1, 0.15]]},
+	"jackal": {"name": "Desert Jackal", "where": ["desert"], "pack": 2, "w": 15.0, "h": 12.0, "hp": 24.0, "dmg": 7.0, "go": "walk", "speed": 1.5,
+		"body": {"plan": "beast", "len": 18, "tall": 8, "leg": 9, "head": 7, "neck": 3, "base": "#d0a868", "belly": "#f0dcb0", "accent": "#7a5a2a",
+			"dark": "#4a3418", "eye": "#ffd23a", "skin": "fur", "tail": "long", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[SAND, 3, 0.5], [SANDSTONE, 2, 0.3]]},
+	"sporepuff": {"name": "Spore Puff", "where": ["grove"], "w": 12.0, "h": 13.0, "hp": 30.0, "dmg": 5.0, "go": "walk", "speed": 0.45,
+		"body": {"plan": "fungus", "len": 13, "tall": 14, "base": "#a05ac8", "belly": "#f0e0d0", "accent": "#e8a0ff", "dark": "#3a1c4a", "eye": "#3fffe0", "skin": "spots"},
+		"moves": {"cloud": {"r": 12.0, "t": 200}}, "drops": [[SHROOM, 2, 0.7], [MYCELIUM, 3, 0.5]]},
+	"mycelite": {"name": "Mycelite", "where": ["grove"], "w": 9.0, "h": 10.0, "hp": 20.0, "dmg": 5.0, "go": "hop", "speed": 0.8,
+		"body": {"plan": "fungus", "len": 10, "tall": 11, "base": "#4a8ac8", "belly": "#e8e0d8", "accent": "#3fe0c8", "dark": "#1a2a4a", "eye": "#ffea5a", "skin": "spots"},
+		"moves": {"spit": {"proj": "spore", "n": 1, "spread": 0.1}}, "drops": [[SHROOM, 2, 0.6]]},
+	"crawler": {"name": "Cave Crawler", "where": ["cave1"], "w": 17.0, "h": 9.0, "hp": 30.0, "dmg": 8.0, "go": "walk", "speed": 1.2,
+		"body": {"plan": "beast", "len": 19, "tall": 7, "leg": 5, "head": 6, "neck": 1, "base": "#4a4a52", "belly": "#7a7a84", "accent": "#7affd0",
+			"dark": "#1a1a20", "eye": "#7affd0", "skin": "scales", "spikes": 4, "tail": "long"},
+		"moves": {"charge": {"v": 3.4}}, "drops": [[STONE, 3, 0.5], [COAL, 2, 0.4], [COPPER, 1, 0.3]]},
+	"glowworm": {"name": "Glow Worm", "where": ["cave2"], "w": 7.0, "h": 6.0, "hp": 30.0, "dmg": 7.0, "go": "slither", "speed": 1.5,
+		"body": {"plan": "serpent", "segs": 9, "rad": 3.0, "base": "#2a4a5a", "belly": "#9affe8", "accent": "#3fffe0", "dark": "#0e1a22", "eye": "#c8ffff"},
+		"moves": {"spit": {"proj": "spore", "n": 1, "spread": 0.1}}, "drops": [[SHROOM, 2, 0.6], [CRYSTAL, 1, 0.25]]},
+	"stonetoad": {"name": "Stone Toad", "where": ["cave2"], "w": 15.0, "h": 11.0, "hp": 50.0, "dmg": 9.0, "go": "hop", "speed": 0.8,
+		"body": {"plan": "toad", "len": 17, "tall": 11, "base": "#6a6a64", "belly": "#a8a49a", "accent": "#d8a03a", "dark": "#2a2a26", "eye": "#ffb03a", "skin": "warts"},
+		"moves": {"slam": {}, "spit": {"proj": "rock", "n": 1, "spread": 0.1}}, "drops": [[STONE, 4, 0.6], [DEEPSTONE, 2, 0.4], [COPPER, 1, 0.3]]},
+	"magmahound": {"name": "Magma Hound", "where": ["cave3"], "w": 19.0, "h": 13.0, "hp": 60.0, "dmg": 12.0, "go": "walk", "speed": 1.4,
+		"body": {"plan": "beast", "len": 22, "tall": 10, "leg": 9, "head": 8, "neck": 3, "base": "#4a1a14", "belly": "#8a3a1a", "accent": "#ff8a2a",
+			"dark": "#1a0a08", "eye": "#ffd23a", "skin": "scales", "spikes": 5, "tail": "long", "ears": true},
+		"moves": {"charge": {"v": 4.0}, "spit": {"proj": "efire", "n": 2, "spread": 0.2}}, "drops": [[EMBER, 3, 1.0], [OBSIDIAN, 2, 0.4]]},
+}
+
+## the creatures that live in a place ("forest", "cave2"...)
+func creatures_of(where: String) -> Array:
+	var out := []
+	for id in CREATURES:
+		if (CREATURES[id]["where"] as Array).has(where):
+			out.append(id)
+	return out
+
+var _creature_enemy := {}
+
+## a creature as a foe ("c_<id>"): like a guardian's, but not a boss (no lair, no rage), its own sight
+func creature_enemy(type: String) -> Dictionary:
+	if _creature_enemy.has(type):
+		return _creature_enemy[type]
+	var c: Dictionary = CREATURES[type.trim_prefix("c_")]
+	var go: String = c["go"]
+	var d := {"w": c["w"], "h": c["h"], "hp": c["hp"], "dmg": c["dmg"], "fly": go == "fly" or go == "slither" or go == "burrow", "spr": type,
+		"boss": false, "drops": c.get("drops", []), "def": c, "creature": true, "ai": {"sight": 170.0}}
+	_creature_enemy[type] = d
+	return d
+
 var _boss_enemy := {}
 
 ## A guardian as a foe ("boss_<biome>"): the fields every foe has, the boss's own definition in "def".
@@ -1563,7 +1661,9 @@ func boss_enemy(type: String) -> Dictionary:
 
 ## any foe's definition (the fixed ones, or a guardian)
 func enemy_def(type: String) -> Dictionary:
-	return ENEMY[type] if ENEMY.has(type) else boss_enemy(type)
+	if ENEMY.has(type):
+		return ENEMY[type]
+	return creature_enemy(type) if type.begins_with("c_") else boss_enemy(type)
 
 func sprite_texture(key: String) -> ImageTexture:
 	# draws the sprite with a 1-pixel dark outline, 16-bit style

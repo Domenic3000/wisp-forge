@@ -1505,6 +1505,24 @@ func gravity_at(p: Vector2) -> float:
 		return 1.0
 	return maxf(0.06, 1.0 - (r - rs - 150.0) / 380.0)
 
+## the name of the biome at an angle ("forest", "tundra"...)
+func _biome_name_at(a: float) -> String:
+	var names: Array = planet.get("biomes", ["forest"])
+	return String(names[clampi(int(gpu.surf_at(a).y), 0, names.size() - 1)])
+
+## a wild creature of a place ("forest", "cave2"...), or "" if none lives there or enough are about
+func _wild_pick(where: String, most: int) -> String:
+	var ids: Array = Defs.creatures_of(where)
+	if ids.is_empty():
+		return ""
+	var wild := 0
+	for e in enemies:
+		if e.d.get("creature", false):
+			wild += 1
+	if wild >= most:
+		return ""
+	return "c_" + String(ids[randi() % ids.size()])
+
 func _biome_at(a: float) -> Dictionary:
 	var bi := int(gpu.surf_at(a).y)
 	var names: Array = planet.get("biomes", ["forest"])
@@ -2365,6 +2383,10 @@ func _kill_enemy(e: Enemy) -> void:
 	if spr.has("pal"):
 		for ck in spr["pal"]:
 			cols.append(Color(spr["pal"][ck]))
+	if e.d.has("def"):
+		for ck in ["base", "belly", "accent", "dark"]:
+			if e.d["def"]["body"].has(ck):
+				cols.append(Color(e.d["def"]["body"][ck]))
 	for k in (120 if e.boss else 34):
 		var c: Color = cols[randi() % cols.size()] if not cols.is_empty() and k % 3 != 0 else Color(1, 0.7, 0.3)
 		var off := Vector2(randf() - 0.5, randf() - 0.5) * Vector2(e.w, e.h)
@@ -2374,7 +2396,7 @@ func _kill_enemy(e: Enemy) -> void:
 			var n := 1 + randi() % int(dr[1])
 			player.inv[int(dr[0])] += n
 			ui.toast("+%d %s" % [n, Defs.NAMES[int(dr[0])]], Defs.COLOR[int(dr[0])])
-	if e.d.has("def"):
+	if e.boss and e.d.has("def"):
 		_guardian_falls(e)
 	if e.type == "golem":
 		items["heart"] = true
@@ -2694,7 +2716,7 @@ func _update_enemies() -> void:
 				if e.trail[sk].distance_to(tgt.pos) < BossArt.seg_radius(e.d["def"]["body"], sk) + 4.0:
 					hurt(tgt, float(e.d["dmg"]) * 0.6, Vector2(signf(dx) * 2.0, -1.5), true)
 					break
-		if e.d.has("def") and e.awake and not e.under:
+		if e.boss and e.d.has("def") and e.awake and not e.under:
 			lights.append([e.pos, 26.0, Color(e.d["def"]["col"]) * 0.45])
 		if e.type == "golem":
 			lights.append([e.pos, 40.0, Color(1.0, 0.4, 0.1)])
@@ -2730,6 +2752,10 @@ func _try_spawn() -> void:
 			if undead < 2:
 				type = "skeleton" if randf() < 0.55 else "archer"
 		if type == "":
+			# the biome's own creatures, by day and (more of them) by night
+			if randf() < (0.5 if night else 0.32):
+				type = _wild_pick(_biome_name_at(a), 4 if night else 3)
+		if type == "":
 			var slimes := 0
 			for e in enemies:
 				if e.type == "slime":
@@ -2740,23 +2766,28 @@ func _try_spawn() -> void:
 	elif r > sa.z:
 		if randf() > 0.45:
 			return
-		type = "bat"
+		type = "bat" if randf() < 0.55 else _wild_pick("cave1", 3)
 	elif r > sa.w:
 		if randf() > 0.5:
 			return
-		type = "bat" if randf() < 0.6 else "imp"
+		var rk := randf()
+		type = "bat" if rk < 0.3 else ("imp" if rk < 0.5 else _wild_pick("cave2", 3))
 	else:
 		if randf() > 0.5:
 			return
-		type = "imp"
-	var d: Dictionary = Defs.ENEMY[type]
+		type = "imp" if randf() < 0.5 else _wild_pick("cave3", 3)
+	if type == "":
+		return
+	var d: Dictionary = Defs.enemy_def(type)
+	var pack: int = int(d["def"].get("pack", 1)) if d.has("def") else 1
+	var go: String = d["def"]["go"] if d.has("def") else ""
 	# Foes come in from out of sight, never popping up (or dropping in) on screen. How far the
 	# view reaches from the mage, in world cells (a screen pixel is ustep * r cells across):
 	var reach_x := VW * 0.5 * zoom * maxf(1.0, ustep * r) + float(d["w"]) + 10.0
 	var reach_y := VH * 0.5 * zoom + float(d["h"]) + 10.0
 	var cv := _view()
 	var ca := atan2(cv.y, cv.x)
-	if not d["fly"]:
+	if (not d["fly"] or go == "burrow" or go == "slither") and r > sa.x - 14.0:
 		# on the ground just past the edge of the view (it waits, still, until you come near)
 		for tries in 6:
 			var side := -1.0 if randf() < 0.5 else 1.0
@@ -2769,6 +2800,10 @@ func _try_spawn() -> void:
 			if absf((gp - player.pos).dot(basis_d(a))) > 80.0:
 				continue                      # a cliff far above or below: not where you'd meet it
 			spawn_enemy(type, gp)
+			# (a pack comes together, a few strides apart)
+			for pk in pack - 1:
+				var pa := ga + side * float(pk + 1) * (float(d["w"]) + 6.0) / maxf(gs.x, 1.0)
+				spawn_enemy(type, Vector2(cos(pa), sin(pa)) * (gpu.surf_at(pa).x + float(d["h"]) * 0.5 + 1.0))
 			return
 		return
 	# underground: in open cave space inside the simulated area, but outside the view
@@ -2780,7 +2815,10 @@ func _try_spawn() -> void:
 		if absf(lx - l0.x) < reach_x and absf(ly - l0.y) < reach_y:
 			continue                          # it would appear on screen
 		if not box_solid(lx - d["w"] * 0.5, ly - d["h"] * 0.5, d["w"], d["h"]) and Defs.KIND[gtype(int(lx), int(ly))] != Defs.K_LIQUID:
-			spawn_enemy(type, from_grid(Vector2(lx, ly)))
+			var sp := from_grid(Vector2(lx, ly))
+			if r > sa.x - 14.0 and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
+				continue                      # (a bird of the surface comes in through the air, not a cave)
+			spawn_enemy(type, sp)
 			# bats often hunt in pairs
 			if type == "bat" and randf() < 0.5 and not box_solid(lx + 6.0 - d["w"] * 0.5, ly - 4.0 - d["h"] * 0.5, d["w"], d["h"]):
 				spawn_enemy(type, from_grid(Vector2(lx + 6.0, ly - 4.0)))

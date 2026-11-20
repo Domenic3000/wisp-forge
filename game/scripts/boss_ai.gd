@@ -34,7 +34,15 @@ const CLIMB := 24.0            # the tallest thing it jumps over; anything talle
 static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow_f: float) -> void:
 	var bd: Dictionary = e.d["def"]
 	var go: String = bd["go"]
-	if not e.awake:
+	if not e.boss:
+		# a wild creature: it hunts while it sees you or remembers where you were (foe_ai.gd's
+		# think, run just before this), and wanders about where it lives otherwise
+		# (a burrower feels you through the ground: it needs no line of sight)
+		if tgt.dead or not (e.see or e.alert_t > 0 or (go == "burrow" and dist < 120.0)):
+			if e.act == "":
+				_wander(g, e, gacc, go, float(bd["speed"]) * slow_f)
+				return
+	elif not e.awake:
 		if dist < WAKE and not tgt.dead and not g.test_calm:
 			wake(g, e)
 		else:
@@ -44,8 +52,9 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 		e.vx *= 0.9
 		_rest(g, e, gacc)
 		return
-	e.see = true
-	if not e.raged and e.hp < e.max_hp * 0.5:
+	if e.boss:
+		e.see = true
+	if e.boss and not e.raged and e.hp < e.max_hp * 0.5:
 		e.raged = true
 		g.ui.toast("%s is enraged!" % bd["name"], bd["col"], 3.0)
 		g.audio.play("roar", e.pos, 1.0)
@@ -54,8 +63,8 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 	if e.act != "":
 		_run(g, e, tgt, dx, dy, dist, gacc, spd)
 	else:
-		if e.act_cd > 0:
-			e.act_cd -= 1
+		if e.act_cd > 0 and e.boss:
+			e.act_cd -= 1            # (a creature's counts down in foe_ai.gd's think)
 		_get_around(g, e, tgt, dx, dy, dist, gacc, spd, go)
 		if e.act_cd <= 0:
 			_begin(g, e, tgt, dx, dy, dist)
@@ -71,6 +80,43 @@ static func wake(g, e) -> void:
 	g.ui.toast("%s, %s, awakens!" % [String(bd["name"]).to_upper(), String(bd["title"]).to_upper()], bd["col"], 4.0)
 	g.audio.play("roar", e.pos, 1.2)
 	g.shake = maxf(g.shake, 10.0)
+
+## A creature with nothing to hunt: it ambles about near where it lives (walkers and hoppers to and
+## fro, fliers circling, burrowers under the ground).
+static func _wander(g, e, gacc: float, go: String, spd: float) -> void:
+	e.t += 1.0
+	e.pace_t -= 1
+	if e.pace_t <= 0:
+		e.pace_t = 90 + randi() % 140
+		e.pace = randf_range(-40.0, 40.0) if randf() < 0.7 else _off(g, e, e.pos)
+	var d: float = e.pace - _off(g, e, e.pos)
+	var footed: bool = e.on_ground or absf(e.vy) < 0.25
+	match go:
+		"walk":
+			if absf(d) > 3.0 and footed:
+				e.vx += (signf(d) * spd * 0.4 - e.vx) * 0.1
+				e.facing = 1 if d > 0.0 else -1
+				_clear_way(g, e, signf(d), gacc)
+			elif footed:
+				e.vx *= 0.8
+		"hop":
+			if footed:
+				e.vx *= 0.7
+				if int(e.t) % 80 == 0 and absf(d) > 6.0:
+					e.vy = -sqrt(2.0 * gacc * HOP_H * 0.6)
+					e.vx = clampf(d * 0.03, -spd, spd)
+					e.facing = 1 if d > 0.0 else -1
+		"fly", "slither":
+			var up: Vector2 = e.home.normalized()
+			var br: Vector2 = g.basis_r(atan2(e.home.y, e.home.x))
+			_steer(g, e, e.home + br * e.pace + up * (8.0 + 6.0 * sin(e.t * 0.02)), spd * 0.5, 0.05)
+			if go == "slither":
+				_trail(e)
+		"burrow":
+			e.under = true
+			_trail(e)
+	if go == "walk" or go == "hop":
+		e.vy += gacc
 
 ## asleep (or with nobody to fight): settled where it is; a burrower waits under the sand
 static func _rest(g, e, gacc: float) -> void:
@@ -106,7 +152,7 @@ static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: floa
 	e.pace_t -= 1
 	if e.pace_t <= 0:
 		e.pace_t = 60 + randi() % 80
-		e.pace = (26.0 + randf() * 44.0) * (1.0 if randf() < 0.5 else -1.0)
+		e.pace = (26.0 + randf() * 44.0) * float(e.d["def"].get("pace", 1.0 if e.boss else 0.5)) * (1.0 if randf() < 0.5 else -1.0)
 	var goal := _in_lair(e, po + e.pace)
 	var d := goal - bo
 	# resting on something (the ground, or a chest or a body that doesn't count as ground)
@@ -142,14 +188,15 @@ static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: floa
 			# circle above you (a serpent weaves wider and lower), within its lair and under its roof
 			var up: Vector2 = tgt.pos.normalized()
 			var sway := sin(e.t * (0.013 if go == "slither" else 0.01))
-			var hover := 36.0 if go == "slither" else 58.0
-			var want: Vector2 = tgt.pos + up * hover + g.basis_r(atan2(tgt.pos.y, tgt.pos.x)) * sway * (95.0 if go == "slither" else 70.0)
+			var sc := 1.0 if e.boss else 0.45      # (a small creature keeps closer)
+			var hover := (36.0 if go == "slither" else 58.0) * sc
+			var want: Vector2 = tgt.pos + up * hover + g.basis_r(atan2(tgt.pos.y, tgt.pos.x)) * sway * (95.0 if go == "slither" else 70.0) * sc
 			_steer(g, e, _lair_point(g, e, want), spd, 0.08)
 		"burrow":
 			# under the ground toward the spot under you (within its lair)
 			e.under = true
 			var below: Vector2 = _lair_point(g, e, tgt.pos)
-			below = below.normalized() * (tgt.pos.length() - 26.0)
+			below = below.normalized() * (tgt.pos.length() - (26.0 if e.boss else 16.0))
 			var to: Vector2 = below - e.pos
 			if to.length() > 1.0:
 				e.pos += to.normalized() * minf(spd, to.length())
@@ -175,6 +222,9 @@ static func _clear_way(g, e, dirx: float, gacc: float) -> void:
 	var need: int = g._wall_height(e, dirx, CLIMB)
 	if need >= 0:
 		e.vy = -sqrt(2.0 * gacc * (float(need) + 4.0))
+	elif not e.boss:
+		e.pace = -e.pace                # (a creature can't break walls: it turns back)
+		e.pace_t = 60
 	elif g.frame - e.smash_f > 40:
 		e.smash_f = g.frame
 		var a := atan2(e.pos.y, e.pos.x)
@@ -229,14 +279,14 @@ static func _moves(e) -> Array:
 	var bd: Dictionary = e.d["def"]
 	var out: Array = bd["moves"].keys()
 	if e.raged:
-		out.append_array(bd["rage"].keys())
+		out.append_array(bd.get("rage", {}).keys())
 	return out
 
 static func _params(e, mv: String) -> Dictionary:
 	var bd: Dictionary = e.d["def"]
 	if bd["moves"].has(mv):
 		return bd["moves"][mv]
-	return bd["rage"].get(mv, {})
+	return bd.get("rage", {}).get(mv, {})
 
 ## the kind of move ("spit2" is a spit)
 static func kind_of(mv: String) -> String:
@@ -265,7 +315,7 @@ static func _begin(g, e, tgt, dx: float, dy: float, dist: float) -> void:
 static func _suits(e, k: String, dx: float, dy: float, dist: float) -> bool:
 	match k:
 		"charge":
-			return e.on_ground and absf(dy) < 30.0 and absf(dx) > 30.0 and absf(dx) < 190.0
+			return e.on_ground and absf(dy) < 30.0 and absf(dx) > (30.0 if e.boss else 12.0) and absf(dx) < 190.0
 		"slam":
 			return e.on_ground and dist < 170.0
 		"spit":
@@ -322,7 +372,7 @@ static func _run(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd:
 			if e.act_t <= 0:
 				e.act = ""
 				e.move = ""
-				e.act_cd = int((50.0 if e.raged else 80.0) * (0.6 + randf() * 0.6))
+				e.act_cd = int((50.0 if e.raged else 80.0) * (0.6 + randf() * 0.6)) if e.boss else int(e.d["def"].get("cd", 120)) + randi() % 60
 
 ## the moment the wind-up ends
 static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr: Dictionary, spd: float) -> void:
@@ -330,16 +380,16 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 	var ta := atan2(tgt.pos.y, tgt.pos.x)
 	match k:
 		"charge":
-			FoeAI.start(e, "go", 75)
+			FoeAI.start(e, "go", 75 if e.boss else 45)
 			e.aim = Vector2(signf(dx), 0.0)
 			e.facing = int(e.aim.x)
 		"slam":
 			# a leap aimed to land on you (or as near as its lair allows), never higher than SLAM_H
 			var gs: float = 0.17 * float(g.gravity_at(e.pos))
-			var vy0 := sqrt(2.0 * gs * SLAM_H)
+			var vy0 := sqrt(2.0 * gs * SLAM_H * _sz(e))
 			var air: float = 2.0 * vy0 / maxf(gs, 0.01)
 			var land := _in_lair(e, _off(g, e, tgt.pos)) - _off(g, e, e.pos)
-			var lim := 4.5 if pr.get("far", false) else 3.0
+			var lim := (4.5 if pr.get("far", false) else 3.0) * (1.0 if e.boss else 0.8)
 			e.vx = clampf(land / air, -lim, lim)
 			e.vy = -vy0
 			e.leaping = true
@@ -352,7 +402,7 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			FoeAI.start(e, "go", 4 * (int(pr.get("n", 6)) + (3 if e.raged else 0)))
 			g.audio.play("roar", e.pos, 0.8)
 		"erupt":
-			_burst(g, e.spot, 9.0, 2, pr.get("col", Color(0.5, 0.4, 0.3)))
+			_burst(g, e.spot, 9.0, 2, pr.get("col", Color(0.5, 0.4, 0.3)), e.boss)
 			if tgt.pos.distance_to(e.spot) < 16.0:
 				g.hurt(tgt, float(e.d["dmg"]) * 1.4, Vector2(0.0, -3.6), true)
 			# enraged, it strikes again where you are now
@@ -385,7 +435,7 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 				FoeAI.puff(g, m.pos, e.d["def"]["col"])
 			FoeAI.start(e, "recover", 30)
 		"cloud":
-			g.boss_clouds.append({"pos": tgt.pos, "r": 22.0, "t": 300, "col": e.d["def"]["col"]})
+			g.boss_clouds.append({"pos": tgt.pos, "r": float(pr.get("r", 22.0)), "t": int(pr.get("t", 300)), "col": e.d["def"].get("col", Color(0.8, 0.5, 1.0))})
 			FoeAI.start(e, "recover", 24)
 		"dive":
 			e.aim = (tgt.pos - e.pos).normalized()
@@ -395,11 +445,11 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			# out of the ground under you: a crater, a burst of sand at you, then an arc back down
 			var ground: Vector2 = _ground_under(g, tgt.pos)
 			e.pos = ground - up * 4.0
-			_burst(g, ground, 11.0, 2, Color(0.9, 0.78, 0.5))
+			_burst(g, ground, 11.0, 2, Color(0.9, 0.78, 0.5), e.boss)
 			if tgt.pos.distance_to(ground) < 20.0:
 				g.hurt(tgt, float(e.d["dmg"]) * 1.3, Vector2(signf(dx) * 2.0, -3.8), true)
 			e.under = false
-			e.gvel = up * sqrt(2.0 * 0.17 * float(g.gravity_at(e.pos)) * BREACH_H) + g.basis_r(atan2(e.pos.y, e.pos.x)) * signf(dx) * 1.0
+			e.gvel = up * sqrt(2.0 * 0.17 * float(g.gravity_at(e.pos)) * BREACH_H * _sz(e)) + g.basis_r(atan2(e.pos.y, e.pos.x)) * signf(dx) * 1.0
 			FoeAI.start(e, "go", 120)
 			e.hit_done = false
 
@@ -409,16 +459,17 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 	match k:
 		"charge":
 			var dirx: float = e.aim.x
-			e.vx = dirx * (4.2 + (0.8 if e.raged else 0.0))
+			e.vx = dirx * (float(pr.get("v", 4.2)) + (0.8 if e.raged else 0.0))
 			if not e.hit_done and _touching(g, e, tgt, 4.0):
 				e.hit_done = true
 				g.hurt(tgt, float(e.d["dmg"]) * 1.5, Vector2(dirx * 5.0, -3.0), true)
 			# into a wall: it breaks the wall and is stunned for a moment
 			var wh: int = g._wall_height(e, dirx, 8.0)
-			if e.act_t < 70 and (wh < 0 or wh > 5):
-				var front: Vector2 = e.pos + g.basis_r(a) * dirx * (e.w * 0.5 + 3.0)
-				g._explode(front, 8.0, 1, 0, 0.0)
-				g.shake = maxf(g.shake, 10.0)
+			if e.act_t < (70 if e.boss else 40) and (wh < 0 or wh > 5):
+				if e.boss:
+					var front: Vector2 = e.pos + g.basis_r(a) * dirx * (e.w * 0.5 + 3.0)
+					g._explode(front, 8.0, 1, 0, 0.0)
+				g.shake = maxf(g.shake, 10.0 * _sz(e))
 				e.vx = -dirx * 1.5
 				FoeAI.start(e, "recover", 70)
 				return
@@ -428,8 +479,8 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 			if e.on_ground and e.act_t < 136:
 				e.leaping = false
 				var feet: Vector2 = e.pos + g.basis_d(a) * (e.h * 0.5 + 1.0)
-				_burst(g, feet, 10.0, 1, Color(0.7, 0.6, 0.45))
-				if absf(dx) < 48.0 and absf(dy) < 30.0:
+				_burst(g, feet, 10.0, 1, Color(0.7, 0.6, 0.45), e.boss)
+				if absf(dx) < 48.0 * _sz(e) + 8.0 and absf(dy) < 30.0 * _sz(e) + 6.0:
 					g.hurt(tgt, float(e.d["dmg"]) * 1.2, Vector2(signf(dx) * 3.5, -3.5), true)
 				FoeAI.start(e, "recover", 28)
 			elif e.act_t <= 0:
@@ -444,7 +495,7 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 			if e.act_t <= 0:
 				FoeAI.start(e, "recover", 30)
 		"dive":
-			var v: Vector2 = e.aim * (5.0 + (0.8 if e.raged else 0.0))
+			var v: Vector2 = e.aim * (float(pr.get("v", 5.0)) + (0.8 if e.raged else 0.0))
 			e.vx = v.dot(g.basis_r(a))
 			e.vy = v.dot(g.basis_d(a))
 			if not e.hit_done and _touching(g, e, tgt, 4.0):
@@ -452,7 +503,7 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				g.hurt(tgt, float(e.d["dmg"]) * 1.4, e.aim * 4.0 + Vector2(0.0, -2.0), true)
 			if e.on_ground or e.act_t <= 0:
 				if e.on_ground:
-					_burst(g, e.pos + g.basis_d(a) * (e.h * 0.5), 7.0, 1, Color(0.7, 0.6, 0.45))
+					_burst(g, e.pos + g.basis_d(a) * (e.h * 0.5), 7.0, 1, Color(0.7, 0.6, 0.45), e.boss)
 				FoeAI.start(e, "recover", 36)
 		"breach":
 			# flung up out of the ground, then down and back in
@@ -466,7 +517,7 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				g.hurt(tgt, float(e.d["dmg"]), Vector2(signf(dx) * 3.0, -3.0), true)
 			var kd: int = Defs.KIND[g.type_at(e.pos)]
 			if (e.gvel.dot(e.pos.normalized()) < 0.0 and (kd == Defs.K_SOLID or kd == Defs.K_POWDER) and e.act_t < 100) or e.act_t <= 0:
-				_burst(g, e.pos, 7.0, 2, Color(0.9, 0.78, 0.5))
+				_burst(g, e.pos, 7.0, 2, Color(0.9, 0.78, 0.5), e.boss)
 				e.under = true
 				FoeAI.start(e, "recover", 40)
 
@@ -477,12 +528,18 @@ static func _touching(g, e, tgt, pad: float) -> bool:
 	return absf(o.dot(g.basis_r(a))) < (e.w + tgt.w) * 0.5 + pad and absf(o.dot(g.basis_d(a))) < (e.h + tgt.h) * 0.5 + pad
 
 ## the ground bursts: it breaks (as a blast does), with a spray of its colour
-static func _burst(g, p: Vector2, r: float, power: int, col: Color) -> void:
-	g._explode(p, r, power, 0, 0.0)
+## (a wild creature's only throws up dust: it never breaks the land)
+static func _burst(g, p: Vector2, r: float, power: int, col: Color, wreck := true) -> void:
+	if wreck:
+		g._explode(p, r, power, 0, 0.0)
 	var up: Vector2 = p.normalized()
-	for k in 30:
+	for k in (30 if wreck else 14):
 		g._particle(p, (up * (1.0 + randf() * 2.0) + Vector2(randf() - 0.5, randf() - 0.5) * 2.0), 20 + randi() % 20, col, false, 0.08)
-	g.shake = maxf(g.shake, 7.0)
+	g.shake = maxf(g.shake, 7.0 if wreck else 2.0)
+
+## how big its moves are: a guardian's in full, a wild creature's about half
+static func _sz(e) -> float:
+	return 1.0 if e.boss else 0.5
 
 ## The spore clouds (cloud): drifting colour, hurting whoever stands in them.
 static func update_clouds(g) -> void:
