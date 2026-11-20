@@ -189,6 +189,7 @@ func _cell_col(f: int, gb: int, src: int) -> Color:
 func run() -> void:
 	var t_all := Time.get_ticks_msec()
 	g.test_calm = true          # (the guardians sleep through the checks that aren't about them)
+	g.test_no_wild = true       # (and no wild creature wanders into checks that aren't about them)
 	lines.append("Wisp Forge test report  %s" % Time.get_datetime_string_from_system())
 	lines.append("GPU: %s" % RenderingServer.get_video_adapter_name())
 	lines.append("")

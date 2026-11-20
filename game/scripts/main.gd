@@ -148,6 +148,7 @@ var test_aim := Vector2.ZERO # test mode: where the local mage points (zero: the
 var test_cast := false       # test mode: hold the left button
 var test_dig := false        # test mode: hold the right button
 var test_calm := false       # test mode: the biome guardians stay asleep (except while their own test runs)
+var test_no_wild := false    # test mode: no wild creatures come by themselves (their own test spawns them)
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
@@ -1513,7 +1514,7 @@ func _biome_name_at(a: float) -> String:
 ## a wild creature of a place ("forest", "cave2"...), or "" if none lives there or enough are about
 func _wild_pick(where: String, most: int) -> String:
 	var ids: Array = Defs.creatures_of(where)
-	if ids.is_empty():
+	if ids.is_empty() or test_no_wild:
 		return ""
 	var wild := 0
 	for e in enemies:

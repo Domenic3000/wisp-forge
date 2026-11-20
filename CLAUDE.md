@@ -307,7 +307,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   turns them back instead of smashing). Optional `pack` (wolves, hyenas, jackals), `pace`, `cd`, `drops`. `_try_spawn`:
   the biome's creatures by day and night on the surface (`_wild_pick`, `_biome_name_at`; fliers come in through
   the air, serpents and burrowers on the ground), each depth band's underground. Test: every creature hunts,
-  stays on screen and moves (`saves/shots/creatures_N.png`).
+  stays on screen and moves (`saves/shots/creatures_N.png`). Test mode sets `test_no_wild` so none come by
+  themselves into the other checks.
 - Rigid chunks (`scripts/chunks.gd`): grid.comp reports one felled-tree cell (counts[59]/[60]: a plant cell whose
   support reached 62) and one creaking block (counts[56]/[57]) per mage; `detect` reads the world around it
   (`gpu.read_rect`: `shaders/rectread.comp` copies just the rectangle into a small buffer, read back in one go), takes the loose cells out with a stamp and makes
