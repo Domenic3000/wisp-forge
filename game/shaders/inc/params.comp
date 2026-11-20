@@ -4,12 +4,14 @@ layout(std430, set = 0, binding = 1) restrict readonly buffer Params { vec4 p[];
 // camera: p[1] = (Cx, Cy, angle, zoom), p[2] = (VW, VH, LS, numLights)
 vec2 camR() { float a = P.p[1].z; return vec2(sin(a), -cos(a)); }
 vec2 camD() { float a = P.p[1].z; return vec2(-cos(a), -sin(a)); }
-// Near the surface (zoom < 2.5) the view is "unrolled": screen x follows the angle around the
-// planet (one pixel = one column of the shell the camera is in) and screen y the height, so the ground reads flat and
-// every building stands straight anywhere on screen. Zoomed out, you see the real round planet.
+// The view is the world as it is, turned so that up points away from the planet's centre (a pixel is
+// always P.p[1].w world units, at any height). With the "unrolled" setting (P.p[122].w = 1, only in the
+// close view) it is drawn in strips instead: screen x follows the angle around the planet (one pixel =
+// one column of the shell the camera is in) and screen y the height, so the ground reads flat and every
+// building stands straight anywhere on screen, but what's above and below you is stretched.
 vec2 screenToWorld(vec2 px) {
 	vec2 o = (px - P.p[2].xy * 0.5) * P.p[1].w;
-	if (P.p[1].w < 2.5) {
+	if ((int(P.p[122].w + 0.5) & 1) != 0) {
 		float ustep = P.p[122].z > 0.0 ? P.p[122].z : TAU / float(NS);   // one column of the camera's shell per pixel
 		float th = P.p[1].z - o.x * ustep;
 		float r = length(P.p[1].xy) - o.y;

@@ -1934,7 +1934,26 @@ func run() -> void:
 			"health %d of %d, %s" % [int(boss_e.hp), int(boss_e.max_hp), "asleep" if not boss_e.awake else "awake"])
 	else:
 		_ok("a boss left alone recovers to full health", false, "no boss in the world")
-	# ---- the unrolled view keeps the cells around you one pixel wide at any depth ----
+	# ---- the close view is the world as it is (the "view" setting's default): a world unit is the
+	# same size on screen at any height, and the camera sits on a cell's corner (no shimmer) ----
+	var wv_unrolled: bool = g.unrolled()
+	var wv_c: Vector2 = g.view_c
+	var wv_r := wv_c.length()
+	var wv_s: int = Defs.shell_of_row(int(Defs.R_TOP - roundf(wv_r)))
+	var wv_k := atan2(wv_c.y, wv_c.x) / (TAU / float(Defs.SH_N[wv_s]))
+	var wv_corner: bool = absf(wv_r - roundf(wv_r)) < 0.01 and absf(wv_k - roundf(wv_k)) < 0.02
+	var wv_sizes := []
+	var wv_same := true
+	for wv_h in [-300.0, -60.0, 0.0, 60.0, 300.0]:
+		var wv_p: Vector2 = wv_c.normalized() * (wv_r + wv_h)
+		var wv_a: Vector2 = g.world_to_screen(wv_p)
+		var wv_b: Vector2 = g.world_to_screen(wv_p + g.basis_r(atan2(wv_p.y, wv_p.x)) * 10.0)
+		var wv_px: float = wv_a.distance_to(wv_b) * g.zoom / 10.0
+		wv_sizes.append("%+d: %.3f" % [int(wv_h), wv_px])
+		wv_same = wv_same and absf(wv_px - 1.0) < 0.002
+	_ok("the close view is the world as it is: nothing stretches going up or down, the camera sits on a cell's corner",
+		not wv_unrolled and wv_corner and wv_same, "unrolled %s; camera at radius %.2f, column %.3f; a world unit across on screen at %s" % [wv_unrolled, wv_r, wv_k, ", ".join(wv_sizes)])
+	# ---- the unrolled view (the other setting) keeps the cells around you one pixel wide at any depth ----
 	var widths := []
 	var view_ok := true
 	for rr in [1300.0, 900.0, 500.0, 250.0, 120.0]:
@@ -2123,7 +2142,9 @@ func run() -> void:
 	g.hp = g.max_hp
 	g.iframes = 0
 	var hp0: float = g.hp
-	g.brushes.append([g.player.pos + up * 40.0, 1.8, 5, Defs.STONE, 0, 8, 0])
+	# (a block big enough that, lifted out as a rigid piece, it can't slip past him between the
+	# points a falling piece is checked against: a 3-cell one once fell by without a scratch)
+	g.brushes.append([g.player.pos + up * 40.0, 2.6, 5, Defs.STONE, 0, 8, 0])
 	await _frames(150)
 	_ok("falling rock hurts the mage", g.hp < hp0, "health %.0f -> %.0f" % [hp0, g.hp])
 	# digging a pit right under your feet, again and again, costs nothing: you drop in with the rim
@@ -2475,7 +2496,7 @@ func run() -> void:
 			break
 	g.test_jump = false
 	var sx_pic: bool = not g.space.pictures.get(int(g.planet["index"]), {}).is_empty()
-	# jet outward: the view zooms out, the picture takes over and the GPU rests
+	# jet outward: the camera stays on you; once the planet is out of sight the GPU rests
 	g.test_cast = true
 	var sx_gf0: int = g.gpu.frame
 	var sx_off := -1

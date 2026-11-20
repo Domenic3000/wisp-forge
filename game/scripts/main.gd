@@ -7,6 +7,7 @@ extends Node2D
 const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
 const Overlay := preload("res://scripts/overlay.gd")
+const MapView := preload("res://scripts/map_view.gd")
 const Space := preload("res://scripts/space.gd")
 const BossAI := preload("res://scripts/boss_ai.gd")
 const BossArt := preload("res://scripts/boss_art.gd")
@@ -126,6 +127,7 @@ class Enemy extends Body:
 	var fly_open := false      # (a flier: nothing in the way, it flies straight)
 	var wall_t := 0            # frames in a row it has been pressed against a wall
 	var hold_t := 0            # frames it stands still before looking for another way
+	var lost_t := 0            # frames standing where its way-finding graph has no room for it
 	var nav_air := false       # in the air on a jump of its way
 	var nav_gap := false       # (that jump is across a gap)
 	var unreach_t := 0         # frames you've been out of its reach (a guardian then smashes in)
@@ -143,6 +145,7 @@ var space                 # above the orbit band: the space view and the staff-j
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
 var view_rect: TextureRect
+var map_view: Node2D
 var pix: Node2D
 
 var state := "title"      # title, loading, play, forge, dead, error
@@ -160,7 +163,7 @@ var sky_rain := 0.0        # rain as seen in the sky, eased between biomes
 var cam_unwrap := 0.0      # camera angle without the jump at a full turn (for parallax)
 var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
-var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed"}
+var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed", "view": "world"}
 var boss_info := Vector4.ZERO
 var boss_clouds := []          # the Mycelord's spore clouds (boss_ai.gd update_clouds)
 var scale_px := 4
@@ -381,16 +384,22 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color(0.02, 0.02, 0.05))
 	pix = Node2D.new()
 	add_child(pix)
-	view_rect = TextureRect.new()
-	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	pix.add_child(view_rect)
+	# (space first: out there it draws the stars under the planet's picture, which is clear past the
+	# orbit band)
 	space = Space.new()
 	space.game = self
 	pix.add_child(space)
+	view_rect = TextureRect.new()
+	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	pix.add_child(view_rect)
 	overlay = Overlay.new()
 	overlay.game = self
 	overlay.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pix.add_child(overlay)
+	map_view = MapView.new()
+	map_view.game = self
+	map_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	pix.add_child(map_view)
 	ui = UI.new()
 	ui.game = self
 	add_child(ui)
@@ -475,6 +484,12 @@ func _process(delta: float) -> void:
 		_tick_acc = minf(_tick_acc - steps / 60.0, 1.0 / 60.0)
 		for k in steps:
 			_tick()
+	if state == "map":
+		_map_tick(delta)
+		if map_tab == "planet" and not travelling:
+			_gpu_frame(true, 1)
+		ui.update_hud(self)
+		map_view.queue_redraw()
 	if state == "play" or state == "dead" or state == "forge":
 		tp = Time.get_ticks_usec()
 		if (space.active and not space.live) or travelling:
@@ -561,6 +576,10 @@ func _take_gpu_results() -> void:
 	_flush_loot()
 	view_c = _sub_view_c
 	ustep = _sub_ustep
+	if _map_shown > 0:
+		_map_shown -= 1
+		if _map_shown == 0:
+			view_rect.self_modulate.a = 1.0
 	var tu := Time.get_ticks_usec()
 	if view_tex == null or view_tex.get_width() != gpu.VW or view_tex.get_height() != gpu.VH:
 		view_tex = ImageTexture.create_from_image(gpu.view_img)
@@ -590,6 +609,7 @@ func capture_planet() -> Dictionary:
 	var ang := atan2(cam_c.y, cam_c.x)
 	_write_frame_params()
 	gpu.setp(1, Vector4(0.0, 0.0, ang, zc))
+	gpu.setp(122, Vector4(_p122.x, _p122.y, _p122.z, 0.0))   # (the whole planet, round)
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, 0))           # (no torch lights: their places are for the close view)
 	var frames := []
 	for k in mini(players.size(), gpu.MAXP):
@@ -600,6 +620,8 @@ func capture_planet() -> Dictionary:
 	var img: Image = gpu.view_img.get_region(Rect2i((VW - side) / 2, (VH - side) / 2, side, side))
 	img.generate_mipmaps()
 	return {"tex": ImageTexture.create_from_image(img), "zoom": zc, "angle": ang, "edge": (Defs.R_TOP + 60.0) / zc / float(side)}
+
+var _p122 := Vector4.ZERO
 
 func _write_frame_params() -> void:
 	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
@@ -612,6 +634,15 @@ func _write_frame_params() -> void:
 		var step := ustep_next
 		var ca := roundf(atan2(c.y, c.x) / step) * step
 		c = Vector2(cos(ca), sin(ca)) * roundf(c.length())
+	elif close_view():
+		# the world as it is, locked to the cells of the shell you're in: the camera sits on a corner of
+		# a cell and the view is turned to that cell's column, so the cells round you are square on
+		# screen, and moving a cell moves the picture exactly a cell (the terrain never shimmers)
+		var cr0 := roundf(c.length())
+		var cs: int = Defs.shell_of_row(int(Defs.R_TOP - cr0))
+		var cstep: float = TAU / float(Defs.SH_N[cs])
+		var ca0 := roundf(atan2(c.y, c.x) / cstep) * cstep
+		c = Vector2(cos(ca0), sin(ca0)) * cr0
 	view_c_next = c
 	if view_c == Vector2.ZERO:
 		view_c = c
@@ -630,7 +661,11 @@ func _write_frame_params() -> void:
 	var rr := sky_rain
 	gpu.setp(3, Vector4(rr * 0.0015 if rr > 0.05 else 0.0, wmat, rr, flash))
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
-	gpu.setp(122, Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, 0))
+	# (w, flags: 1 the close view drawn in strips (see screenToWorld), 2 out in space: clear past the
+	# orbit band, where space.gd draws the stars under the picture)
+	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0)
+	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
+	gpu.setp(122, _p122)
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
 	var cr := c.length()
 	# the camera's angle, unwrapped (it keeps counting past a full turn) so parallax never jumps
@@ -1266,9 +1301,12 @@ func basis_r(a: float) -> Vector2:
 func basis_d(a: float) -> Vector2:
 	return Vector2(-cos(a), -sin(a))
 
-## The view near the surface is unrolled (see screenToWorld in shaders/inc/params.comp): x follows
-## the angle (one pixel = one surface column), y the height, so buildings stand straight anywhere
-## on screen. Zoomed out to the map, the planet is drawn round.
+## The close view is the world as it is (the "view" setting "world", the default): turned so that up
+## is away from the planet's centre, a pixel always the same size, so nothing squeezes or stretches
+## going up or down; the horizon curves a little. Set to "unrolled" it is drawn in strips instead (see
+## screenToWorld in shaders/inc/params.comp): x follows the angle, y the height, so the ground reads
+## flat and buildings stand straight anywhere on screen, but what's above or below you is stretched.
+## Zoomed out to the map, the planet is always drawn round.
 ## The unrolled view draws one column of the camera's own shell per pixel, so the cells around
 ## you are always one pixel wide. Shells next to each other differ by only a sixteenth or so in
 ## columns (Defs.set_geometry), and across a seam the scale is the average over the shells within
@@ -1296,12 +1334,17 @@ func unroll_step(r: float) -> float:
 		sum += (b - at) * log(TAU / float(Defs.SH_N[Defs.NSH - 1]))
 	return exp(sum / (b - a))
 
-func unrolled() -> bool:
+## zoomed in on the planet (not the round map, not out in space): sprites stand upright on whole pixels
+func close_view() -> bool:
 	# (out in space, with the planet shown as its picture, the view is always flat: close by an
 	# asteroid it zooms right in, and nothing there needs the planet's curve unrolled)
 	if space != null and space.active and not space.live:
 		return false
 	return zoom < 2.5
+
+## the close view drawn in strips (the "view" setting), rather than as the world is
+func unrolled() -> bool:
+	return close_view() and settings.get("view", "world") == "unrolled"
 
 func _view() -> Vector2:
 	return cam_c if view_c == Vector2.ZERO else view_c
@@ -1676,7 +1719,7 @@ func _tick() -> void:
 func _update_camera(aim: Vector2) -> void:
 	var a := atan2(player.pos.y, player.pos.x)
 	var up := player.pos.normalized()
-	var look := (aim - player.pos) * 0.12 if zoom_i == 0 else Vector2.ZERO
+	var look := ((aim - player.pos) * 0.12).limit_length(24.0) if zoom_i == 0 else Vector2.ZERO
 	var target := player.pos + up * 4.0 + look
 	# zoomed far out: slide the view toward the planet's centre so the whole globe fits
 	if zoom >= 8.0:
@@ -1684,6 +1727,10 @@ func _update_camera(aim: Vector2) -> void:
 	elif zoom >= 4.0:
 		target = up * player.pos.length() * 0.8
 	cam_c = cam_c.lerp(target, 0.12)
+	# (never far behind you: flying the skiff up, or a long fall, you stay near the middle of the view)
+	var lag := cam_c - target
+	if zoom < 2.5 and lag.length() > 14.0:
+		cam_c = target + lag.normalized() * 14.0
 	if cam_c.length() < Defs.R_IN + 10.0:
 		cam_c = up * (Defs.R_IN + 10.0)
 
@@ -3187,6 +3234,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if k == KEY_C or (k == KEY_ESCAPE and state == "forge"):
 				toggle_forge()
 				return
+		if state == "map":
+			_map_key(k)
+			return
 		if k == KEY_ESCAPE and state == "play":
 			ui.toggle_settings()
 			return
@@ -3211,10 +3261,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_interact()
 		elif k == KEY_K:
 			call_skiff()
-		elif k == KEY_M or k == KEY_Z:
-			zoom_i = (zoom_i + 1) % zoom_levels.size()
-			zoom = zoom_levels[zoom_i]
-			ui.toast("View: %s" % ("close" if zoom_i == 0 else "x%d" % int(zoom)), Color(0.8, 0.9, 1.0), 1.0)
+		elif k == KEY_M:
+			open_map()
 		elif k == KEY_F8 or k == KEY_F7:
 			# developer shortcut: jump 120 cells down (F8) or up (F7)
 			var up2 := player.pos.normalized()
@@ -3230,6 +3278,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				if Defs.COLLECT[m] == 1 and Defs.PLACE[m] == 1:
 					player.inv[m] += 200
 			ui.toast("Creative stock: +200 of every material", Color(0.6, 1, 0.6))
+	elif state == "map" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
+		_map_mouse(ev)
 	elif ev is InputEventMouseButton and ev.pressed and state == "play":
 		var wheel: bool = ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN
 		if wheel and ui.mouse_over_ui(false):
@@ -3667,6 +3717,105 @@ func toggle_forge() -> void:
 		state = "play"
 		ui.hide_forge()
 
+# ==================================================================== map ===
+## The map (M) is a menu of its own: the game waits while it's open (the play camera never zooms
+## out). "planet": the GPU draws the planet zoomed out, turned to `map_ang` (A/D or a drag turn it;
+## W/S or the wheel zoom, the last level fits the whole planet); map_view.gd draws the markers.
+## "system" (Tab): the round of planets. Out in space it opens on the system.
+var map_tab := "planet"
+var map_zoom_i := 1
+var map_ang := 0.0
+var _map_back := {}
+var _map_drag := false
+
+func map_zooms() -> Array:
+	# (the last fits the whole planet with its orbit band, whatever its size)
+	return [4.0, 10.0, 2.0 * (Defs.R_SPACE + 30.0) / float(mini(VW, VH))]
+
+func open_map() -> void:
+	if state != "play" or travelling or player == null:
+		return
+	state = "map"
+	_map_back = {"cam": cam_c, "zoom": zoom, "view": view_rect.visible}
+	map_ang = atan2(player.pos.y, player.pos.x)
+	map_tab = "system" if space.active and not space.live else "planet"
+	_map_drag = false
+	space.visible = false                    # (out there: the map is drawn on its own)
+	overlay.queue_redraw()
+	ui.show_map(self)
+	_map_camera()
+
+func close_map() -> void:
+	if state != "map":
+		return
+	state = "play"
+	zoom = float(_map_back.get("zoom", 1.0))
+	cam_c = _map_back.get("cam", cam_c)
+	view_c = Vector2.ZERO
+	view_rect.visible = bool(_map_back.get("view", true))
+	# (the picture still to come was drawn for the map: hidden until one from the play camera)
+	view_rect.self_modulate.a = 0.0
+	_map_shown = 2
+	space.visible = space.active
+	ui.hide_map()
+	map_view.queue_redraw()
+	overlay.queue_redraw()
+
+var _map_shown := 0
+
+func _map_camera() -> void:
+	var zs: Array = map_zooms()
+	map_zoom_i = clampi(map_zoom_i, 0, zs.size() - 1)
+	zoom = float(zs[map_zoom_i])
+	var up := Vector2(cos(map_ang), sin(map_ang))
+	var r: float = clampf(player.pos.length(), Defs.R_IN + 20.0, Defs.R_TOP)
+	if map_zoom_i == zs.size() - 1:
+		cam_c = up                               # (the whole planet: its middle, turned to map_ang)
+	elif zoom >= 8.0:
+		cam_c = up * maxf(Defs.R_IN + 20.0, r * 0.55)
+	else:
+		cam_c = up * r * 0.85
+	view_rect.visible = map_tab == "planet"
+
+func _map_tick(_delta: float) -> void:
+	var turn := 0.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		turn += 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		turn -= 1.0
+	if turn != 0.0:
+		map_ang += turn * 4.0 * zoom / maxf(player.pos.length(), 200.0)
+	_map_camera()
+
+func _map_key(k: int) -> void:
+	if k == KEY_M or k == KEY_ESCAPE:
+		close_map()
+	elif k == KEY_TAB:
+		map_tab = "system" if map_tab == "planet" else "planet"
+		_map_camera()
+		ui.show_map(self)
+	elif k == KEY_W or k == KEY_UP or k == KEY_EQUAL or k == KEY_KP_ADD:
+		map_zoom_i -= 1
+		_map_camera()
+	elif k == KEY_S or k == KEY_DOWN or k == KEY_MINUS or k == KEY_KP_SUBTRACT:
+		map_zoom_i += 1
+		_map_camera()
+
+func _map_mouse(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton:
+		if ev.button_index == MOUSE_BUTTON_LEFT:
+			_map_drag = ev.pressed
+		elif ev.pressed and ev.button_index == MOUSE_BUTTON_WHEEL_UP:
+			map_zoom_i -= 1
+			_map_camera()
+		elif ev.pressed and ev.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			map_zoom_i += 1
+			_map_camera()
+	elif ev is InputEventMouseMotion and _map_drag and map_tab == "planet":
+		# (the planet follows the mouse: dragging right turns it so what was on the left comes over)
+		map_ang += ev.relative.x / float(scale_px) * zoom / maxf(player.pos.length(), 200.0)
+		_map_camera()
+
 # ========================================================== planet setup ===
 ## ---- save slots: each its own folder under saves/ (slot_1, slot_2, slot_3) ----
 const SLOTS := 3
@@ -3770,7 +3919,7 @@ func start_game(use_save: bool) -> void:
 	state = "play"
 	if s == null:
 		ui.toast("Right-click to excavate. Left-click casts your selected spell.", Color.WHITE, 7.0)
-		ui.toast("Press C to open the Wisp Forge. Press M to zoom out and see the whole planet.", Color(1, 0.82, 0.23), 9.0)
+		ui.toast("Press C to open the Wisp Forge. Press M for the map.", Color(1, 0.82, 0.23), 9.0)
 	save_game()
 
 func _enter_planet(index: int) -> void:

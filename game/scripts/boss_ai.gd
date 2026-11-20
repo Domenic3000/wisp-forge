@@ -348,6 +348,23 @@ static func _steer(g, e, want: Vector2, spd: float, acc: float) -> void:
 	if absf(e.vx) > 0.2:
 		e.facing = 1 if e.vx > 0.0 else -1
 
+## frames a burrower keeps still under the spot, its sand boiling, before it bursts out
+const BREACH_TELL := 32
+
+## the tell before a burrower bursts out: sand spurting from the spot, more and higher as it comes
+static func _boil(g, e) -> void:
+	var up: Vector2 = e.spot.normalized()
+	var br: Vector2 = g.basis_r(atan2(e.spot.y, e.spot.x))
+	var k := 1.0 - float(e.act_t) / float(BREACH_TELL)
+	var col: Color = Defs.COLOR[g.type_at(e.spot - up * 2.0)] if Defs.KIND[g.type_at(e.spot - up * 2.0)] != Defs.K_EMPTY else Color(0.86, 0.74, 0.5)
+	for n in 1 + int(k * 3.0):
+		g._particle(e.spot + br * (randf() - 0.5) * (e.w + 6.0), up * (0.5 + randf() * (0.8 + k * 1.6)) + br * (randf() - 0.5) * 0.6,
+			18 + randi() % 14, col.lightened(randf() * 0.2), true, 0.06)
+	if e.act_t == BREACH_TELL:
+		g.audio.play("rumble", e.spot, 0.9)
+	if g.player.pos.distance_to(e.spot) < 120.0:
+		g.shake = maxf(g.shake, 1.2 + k * 1.5)
+
 ## a burrower moving under you: the ground above it trembles
 static func _rumble(g, e) -> void:
 	if g.frame % 3 != 0:
@@ -413,7 +430,7 @@ static func _begin(g, e, tgt, dx: float, dy: float, dist: float) -> void:
 			FoeAI.start(e, "windup", int(float(wt.get(kind_of(mv), 30)) * (0.75 if e.raged else 1.0)))
 			e.hit_done = false
 			e.spot = tgt.pos
-			if kind_of(mv) == "erupt":
+			if kind_of(mv) == "erupt" or kind_of(mv) == "breach":
 				e.spot = _ground_under(g, tgt.pos)
 			return
 
@@ -467,8 +484,15 @@ static func _run(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd:
 			if k == "erupt" and g.frame % 2 == 0:
 				g._particle(e.spot + g.basis_r(atan2(e.spot.y, e.spot.x)) * (randf() - 0.5) * 14.0, up * (0.2 + randf() * 0.6), 16, pr.get("col", Color(0.6, 0.5, 0.3)), true, 0.0)
 			if k == "breach":
-				_get_around(g, e, tgt, dx, dy, dist, gacc, spd * 1.4, "burrow")
-				_rumble(g, e)
+				# it comes after you under the ground (its mound shows where), then stops under the spot
+				# it will burst out of: the sand there boils up for half a second first, so you can see it
+				# coming and get out of the way
+				if e.act_t > BREACH_TELL:
+					_get_around(g, e, tgt, dx, dy, dist, gacc, spd * 1.4, "burrow")
+					_rumble(g, e)
+					e.spot = _ground_under(g, tgt.pos)
+				else:
+					_boil(g, e)
 			if e.act_t <= 0:
 				_strike(g, e, tgt, dx, dy, dist, k, pr, spd)
 		"go":
@@ -556,8 +580,8 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			FoeAI.start(e, "go", 42)
 			g.audio.play("roar", e.pos, 0.7)
 		"breach":
-			# out of the ground under you: a crater, a burst of sand at you, then an arc back down
-			var ground: Vector2 = _ground_under(g, tgt.pos)
+			# out of the ground where it showed it would: a crater, a burst of sand, then an arc back down
+			var ground: Vector2 = e.spot
 			e.pos = ground - up * 4.0
 			_burst(g, ground, 11.0, 2, Color(0.9, 0.78, 0.5), e.boss)
 			if tgt.pos.distance_to(ground) < 20.0:

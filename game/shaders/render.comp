@@ -481,6 +481,8 @@ void main() {
 	vec2 px = vec2(float(ix) + 0.5, float(iy) + 0.5);
 	vec2 pos = screenToWorld(px);
 	float r = length(pos);
+	// out in space, past the orbit band: clear (space.gd draws the stars there, under this picture)
+	if ((int(P.p[122].w + 0.5) & 2) != 0 && r >= R_SPACE) { view.px[iy * VW + ix] = 0u; return; }
 	float th = angleOf(pos);
 	vec4 sa = surfA(th), sb = surfB(th);
 	vec3 col; int flag = 0; // 0 lit, 1 self-lit, 2 sky

@@ -582,7 +582,16 @@ static func nav_walk(g, e, to: Vector2, jump_v: float, gacc: float, tol := 3.0, 
 	e.nav_dx = 0.0
 	if e.path.is_empty():
 		e.nav_air = false
-		return NAN                   # (nowhere it stands in the graph: wedged, or in the air; the old way)
+		if e.in_liquid or not e.on_ground:
+			return NAN               # (swimming, or in the air: the old way)
+		# standing somewhere the graph has no room for it (down a shaft a little narrower than the
+		# map's 4-cell blocks think it needs, wedged): it doesn't run at the walls; it stands, and now
+		# and then jumps straight up to try to get out
+		e.lost_t += 1
+		if e.lost_t % 75 == 0:
+			e.vy = -jump_v
+		return 0.0
+	e.lost_t = 0
 	if e.path.size() < 2:
 		e.nav_air = false
 		return 0.0

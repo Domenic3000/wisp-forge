@@ -67,16 +67,33 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Vacuum (react.comp, row < 0): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
   holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
 - Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).
+- The view (user, 20 Nov: "switch from bent strips to world coordinates"): the close view is the world as it is
+  (setting "view": "world", the default), turned so up points away from the planet's centre, a pixel always
+  `zoom` world units, so nothing squeezes going up or down; the horizon curves a little. `_write_frame_params`
+  locks the camera to a corner of a cell of the shell it's in and turns the view to that cell's column, so moving
+  a cell moves the picture exactly a cell (no shimmer). `main.close_view()` (zoomed in, not out in space with the
+  planet out of sight): sprites upright on whole pixels. `main.unrolled()` = close view AND the "unrolled" setting:
+  the old strips (screenToWorld branch on P.p[122].w bit 1; `unroll_step`). P.p[122].w bit 2: past `R_SPACE` the
+  picture is clear (out in space and on the map), so what's under it shows (space.gd's stars, the clear colour).
+  Cells high in or deep under the thick surface shell (SURF, +-330 rows) are up to 17% wide or narrow, so there a
+  column is now and then a pixel wider or narrower (the price of no stretching).
+- The map (M, `main.open_map`; state "map", the game waits): "planet" renders the planet zoomed out (`map_zooms()`:
+  4, 10 and one that fits the whole planet with its band; turned to `map_ang`: A/D or a drag; W/S or the wheel
+  zoom), `scripts/map_view.gd` draws the markers (you, the party, home, the skiff) and, on Tab, "system": the round
+  of planets laid out round their middle (`space.disc_texture`), the one you're on marked. The play camera never
+  zooms out any more (zoom_levels[0] = 1); closing hides the picture until one from the play camera is back.
 - Space (`scripts/space.gd`, a Node2D under the overlay): levitating into the top of the orbit band
   (`R_SPACE - 9.5`) calls `space.try_enter()` (a party can't leave yet: more than one player blocks it). It takes the
   planet's picture (`main.capture_planet`: one render with the camera at the centre, zoomed so the band fits,
   turned to the view's angle), and from then `_tick` hands over to `space.tick()`: the staff jet (hold cast, push
-  toward the aim, mana), the planet's pull fading with distance, a wisp bubble (no breath), the camera zooming out
-  with distance. While `zoom < SWAP_ZOOM` the live planet is still rendered (`live`); beyond it the GPU does
-  nothing (`_process` skips `_gpu_frame`), `view_c` follows `cam_c`, and space.gd draws the stars, the sun, the
-  other planets (procedural discs from their biomes, `_disc_image`) and the planet's picture (a Sprite2D masked to a
-  disc, placed by the world->screen affine). Back below `R_SPACE - 10` moving inward: `exit()`, the zoom eases back
-  (`planet_tick`), a short cooldown. Space shares the world coordinates of `space.home` (the planet the GPU holds, at
+  toward the aim, mana), the planet's pull fading with distance, a wisp bubble (no breath). The camera stays on you
+  at the ground's zoom (user, 20 Nov: no zooming out). While any of the orbit band is within the screen's half
+  diagonal the live planet is rendered (`live`; space.gd, drawn UNDER the picture, shows its stars past the band);
+  beyond it the GPU does nothing (`_process` skips `_gpu_frame`), `view_c` follows `cam_c`, and space.gd draws the
+  stars (two depths of drift, so speed shows), the sun (a small disc toward the screen's edge, as in the planet's
+  sky), the other planets (procedural discs from their biomes, `_disc_image`, or the pictures taken as you left
+  them, a Sprite2D masked to a disc, placed by the world->screen affine) and markers at the edge pointing to each.
+  Back below `R_SPACE - 10` moving inward: `exit()`, a short cooldown. Space shares the world coordinates of `space.home` (the planet the GPU holds, at
   the origin); every planet's place is `Defs.planet_pos(i)` (`Defs.SYSTEM`, a round of five; the next round lies
   400000 along x), and `bodies` are the round's planets relative to home. The nearest planet (`near`, `centre`)
   pulls, sets the zoom, and turns the view (`view_ang`, eased; `main.view_angle()` uses it in space); the skiff's
@@ -152,8 +169,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   thread: `walk_path`, `fly_path`, `fly_clear` (world points; the graphs keep the grid frame they were built in).
 - foe_ai.gd `nav_walk(g, e, feet_goal, jump_v, gacc, tol, doors)`: the heading (-1/0/1) and it makes the jumps and
   drops itself (`Enemy.path`, `path_i`, `path_t`, `nav_air`, `nav_dx` for hoppers' hop size); 0 = there or as near as
-  it gets (it stands, never pushing: `wall_t` > 50 drops the way and waits); NAN = no graph yet (callers fall back on
-  the old `climb`/`_walker_nav`). `nav_fly` (straight when `fly_clear`, else along the grid, cutting corners);
+  it gets (it stands, never pushing: `wall_t` > 50 drops the way and waits); NAN = no graph yet, or swimming / in the
+  air with no way (callers fall back on the old `climb`/`_walker_nav`). Standing where the graph has no room for it
+  (a shaft a little narrower than its 4-cell blocks think it needs) it stands and jumps straight up every 75 frames
+  (`lost_t`), never running at the walls (a creature fallen down a shaft did). `nav_fly` (straight when `fly_clear`, else along the grid, cutting corners);
   `fly_line` (a bat only dives with a clear line); `can_reach` (could it stand within a quarter of its width + 10 of
   you). Used by skeletons/archers (doors), slimes/mimics, creatures and guardians (`BossAI._nav_around`), and every
   flier through main's `_flier_steer`.
@@ -356,7 +375,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `_boss_art`): plans beast (antlers, mane, spikes, ears, tails), bird, toad, fungus, serpent (head + segments drawn
   along `Enemy.trail` by overlay `_draw_serpent`; birds and serpents are drawn centred, `_sprite_mid`). Behaviour:
   `scripts/boss_ai.gd` `tick` (called from `_update_enemies` before the fixed foes' match): getting around (walk,
-  hop, fly, slither, burrow: `Enemy.under` = hidden and untouchable, not moved by move_body), moves as state
+  hop, fly, slither, burrow: `Enemy.under` = hidden and untouchable, not moved by move_body; overlay `_draw_mound` heaves
+  the ground over a burrower so you see where it goes, and a breach's last `BREACH_TELL` frames of wind-up it keeps
+  still under `e.spot` while the sand there boils up (`_boil`), then bursts out there, not under where you are now), moves as state
   machines on `Enemy.act` windup -> go -> recover (charge, slam, spit, rain, erupt, roar, summon, cloud, dive, gust,
   breach), enraged below half health. A guardian stays in its lair: `Enemy.tether` (cells along the ground from
   its home, from the lair's "tether") and `ceil` (how high fliers go) bound where it heads (`_in_lair`,

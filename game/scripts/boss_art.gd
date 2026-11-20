@@ -247,7 +247,9 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var tb := Vector2(cx - L * 0.5, cy - T * 0.15)
 	match String(b.get("tail", "short")):
 		"short":
-			c.blob(tb.x - 2.0, tb.y, 3.0, 2.5, belly)
+			# a stub that tapers up and back (a 3-cell blob read as a square block)
+			c.limb(tb + Vector2(1.0, 0.0), tb + Vector2(-5.0, -2.5 - bob), 2.0, 0.9, base, skin, acc)
+			c.px(int(tb.x - 5.0), int(tb.y - 2.5 - bob), base.darkened(0.25))
 		"long":
 			c.limb(tb, tb + Vector2(-9.0, 4.0 - bob), 3.0, 2.0, base, skin, acc)
 			c.limb(tb + Vector2(-9.0, 4.0 - bob), tb + Vector2(-15.0, 1.0), 2.0, 1.5, base, skin, acc)

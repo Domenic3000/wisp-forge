@@ -1,10 +1,11 @@
 ## Space: everything above the orbit band (Defs.R_SPACE).
 ##
-## Out here nobody touches the planet's cells, so they are neither simulated nor drawn: as you climb
-## the camera keeps zooming out, and once a cell is smaller than a pixel (SWAP_ZOOM) the planet is
-## shown as a picture of itself taken the moment you left (main.capture_planet: one render of the
-## whole planet), so the swap can't be seen. The other planets hang where Defs.planet_pos puts them,
-## as discs grown from their biomes until you've been there (then as their pictures). A sun, stars.
+## The camera stays on you, as close as on the ground (the whole planet is on the map, M). While any of
+## the planet is on screen it is drawn from its cells (`live`; out here the picture is clear past the
+## orbit band, and this node, drawn under it, shows the stars there); once it's out of sight the GPU
+## rests and only this node draws: stars, the sun, the other planets where Defs.planet_pos puts them
+## (discs grown from their biomes, or the pictures taken as you left them: main.capture_planet), the
+## asteroids, and markers at the screen's edge pointing to each planet.
 ##
 ## Space shares the world coordinates of `home`, the planet the GPU holds, which sits at the origin.
 ## Fly toward another planet and, once it is clearly the nearer one, it is made in the background
@@ -359,21 +360,14 @@ func pull(p: Vector2) -> float:
 	var top: float = float(near.get("space", Defs.R_SPACE))
 	return 0.17 * 0.06 * pow(top / maxf((p - centre).length(), top), 2.0)
 
-## the camera follows the mage, zooming out with the height over the nearest planet so its near
-## side stays well on screen (a quarter of the view's height below you), and turning to keep it below
+## the camera stays on you, as close as on the ground (the user: no zooming out as you leave), turning
+## to keep the nearest planet below you. Home (at the origin) is drawn from its cells while any of its
+## orbit band is on screen; past that the GPU rests.
 func _follow(m) -> void:
-	var h: float = (m.pos - centre).length() - float(near.get("top", Defs.R_TOP))
-	var zh := h / (0.25 * float(game.VH))
-	var zt := clampf(zh, SWAP_ZOOM * 0.98, 160.0)
-	# near an asteroid the view comes in close, so it fills a good part of the screen
-	var rk = nearest_rock(m.pos)
-	if rk != null:
-		var dr: float = (m.pos - rk.pos).length() - rk.reach()
-		zt = minf(zt, clampf((maxf(dr, 0.0) + rk.reach() * 2.4) / (0.5 * float(game.VH)), 1.0, 160.0))
-	game.zoom = lerpf(game.zoom, zt, 0.035)
-	game.cam_c = game.cam_c.lerp(m.pos, 0.2)
-	# (the live planet only while you're down near it; up by a rock, it's still its picture)
-	live = game.zoom < SWAP_ZOOM and zh < SWAP_ZOOM and not game.travelling and int(near.get("index", home)) == home
+	game.zoom = float(game.zoom_levels[0])
+	game.cam_c = m.pos                   # (on you exactly: out here you can go very fast)
+	var reach: float = Vector2(game.VW, game.VH).length() * 0.5 * game.zoom + 8.0
+	live = game.cam_c.length() - Defs.R_SPACE < reach and not game.travelling
 	var cc: Vector2 = game.cam_c
 	var va := (cc - centre).angle()
 	if live:
@@ -381,7 +375,7 @@ func _follow(m) -> void:
 	else:
 		view_ang = lerp_angle(view_ang, va, 0.03)
 		game.view_c = game.cam_c         # (nothing from the GPU to line the sprites up with)
-	visible = not live
+	visible = true
 	game.view_rect.visible = live
 	queue_redraw()
 
@@ -410,29 +404,33 @@ func _world_xf() -> Transform2D:
 	return Transform2D(game.world_to_screen(Vector2(1, 0)) - t, game.world_to_screen(Vector2(0, 1)) - t, t)
 
 func _draw() -> void:
-	if not active or live:
+	if not active:
 		return
 	var w: int = game.VW
 	var h: int = game.VH
 	draw_rect(Rect2(0, 0, w, h), Color(0.006, 0.006, 0.02))
 	var xf := _world_xf()
-	# stars: a fixed field turned with the view, drifting a little as you travel
+	# stars: a fixed field turned with the view, drifting as you travel (two depths: the nearer half
+	# drifts faster, so you can feel your speed with the camera always on you)
 	var rot := xf.x.angle()
-	var drift: Vector2 = (game.cam_c + Defs.planet_pos(maxi(home, 0))) * 0.004   # (whole-system coordinates: no jump when home moves)
+	var sys_c: Vector2 = game.cam_c + Defs.planet_pos(maxi(home, 0))   # (whole-system coordinates: no jump when home moves)
 	var ctr := Vector2(w, h) * 0.5
 	var reach := Vector2(w, h).length() * 0.5 + 4.0
 	var tw := float(game.frame) * 0.03
-	for s in stars:
-		var p0: Vector2 = s[0] - drift
+	for si in stars.size():
+		var s: Array = stars[si]
+		var p0: Vector2 = s[0] - sys_c * (0.004 if si % 2 == 0 else 0.03)
 		var q := Vector2(fposmod(p0.x, 1024.0) - 512.0, fposmod(p0.y, 1024.0) - 512.0)
 		if q.length() > reach:
 			continue
 		var sp := ctr + q.rotated(rot)
 		var b: float = 0.35 + 0.65 * float(s[1]) * (0.75 + 0.25 * sin(tw + float(s[2])))
 		draw_rect(Rect2(sp.floor(), Vector2.ONE), Color(b, b, b * 1.08))
-	# the sun, far off where the light comes from (so far that it keeps its place as you travel)
-	var sun_s: Vector2 = xf * (game.cam_c + Vector2(cos(sun_ang), sin(sun_ang)) * SUN_DIST)
-	var sun_r := maxf(3.0, SUN_R / game.zoom)
+	# the sun, far off where the light comes from (so far that it keeps its place as you travel): as on
+	# the planet's sky, a small disc out toward the edge of the view, the way it lies
+	var sun_dir: Vector2 = xf.basis_xform(Vector2(cos(sun_ang), sin(sun_ang))).normalized()
+	var sun_s: Vector2 = ctr + sun_dir * float(h) * 0.42
+	var sun_r := 5.5
 	for k in 4:
 		draw_circle(sun_s, sun_r * (2.2 - k * 0.38), Color(1.0, 0.85, 0.5, 0.06 + k * 0.05))
 	draw_circle(sun_s, sun_r, Color(1.0, 0.97, 0.85))
@@ -442,6 +440,8 @@ func _draw() -> void:
 		var c: Vector2 = bd["pos"]
 		var idx := int(bd["index"])
 		var pic: Dictionary = pictures.get(idx, {})
+		if live and idx == home:
+			continue                      # (drawn from its cells, over this)
 		if pic.is_empty():
 			var rr: float = bd["top"]
 			draw_set_transform_matrix(xf)
@@ -541,6 +541,16 @@ func _make_bodies() -> void:
 			_discs[dk] = dc
 		bodies.append({"index": i, "pos": Defs.planet_pos(i) - Defs.planet_pos(home), "top": top,
 			"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": dc[0]})
+
+## a planet's disc picture (for the map's system chart): the one kept for space, or made now
+func disc_texture(i: int) -> Texture2D:
+	var dk := "%d_%d" % [Defs.world_seed, i]
+	var dc: Array = _discs.get(dk, [])
+	if dc.is_empty():
+		var sa: float = game.sun_angle()
+		dc = [ImageTexture.create_from_image(_disc_image(Defs.make_planet(i), Vector2(cos(sa), sin(sa)))), sa]
+		_discs[dk] = dc
+	return dc[0]
 
 func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 	var n := 128

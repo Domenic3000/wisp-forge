@@ -31,6 +31,9 @@ var boss_bar: ProgressBar
 var boss_lbl: Label
 var dig_warn: Label
 var forge: PanelContainer
+var map_bar: PanelContainer
+var map_title: Label
+var map_hint: Label
 var forge_list: VBoxContainer
 var title
 var death: Control
@@ -74,6 +77,7 @@ func _ready() -> void:
 	add_child(root)
 	_build_hud()
 	_build_forge()
+	_build_map_bar()
 	_build_screens()
 
 func _process(delta: float) -> void:
@@ -534,6 +538,8 @@ func _build_settings() -> void:
 			"Low simulates and lights the world in fewer passes, with bigger pixels, for weaker graphics."],
 		["Dithering", "dither", [["Off", "off"], ["Subtle", "subtle"], ["Retro", "retro"]],
 			"Off draws clean colour bands like a SNES. Retro is the old checkerboard look."],
+		["View", "view", [["World", "world"], ["Unrolled", "unrolled"]],
+			"World shows the planet as it is (the horizon curves a little). Unrolled lays the ground out flat, but stretches what's above and below you."],
 		["Window", "window", [["Windowed", "windowed"], ["Fullscreen", "fullscreen"], ["Exclusive", "exclusive"]],
 			"Fullscreen covers the whole screen (F11 or Alt + Enter switches). Exclusive takes over the display, which can run smoother."],
 		["Pixel size", "pixel", [["Auto", 0], ["3", 3], ["4", 4], ["5", 5], ["6", 6]],
@@ -576,7 +582,7 @@ func _build_settings() -> void:
 			["Left mouse", "Cast the selected spell"], ["Right mouse", "Excavate (dig at a chest to open it)"],
 			["Shift + right mouse", "Deconstruct background tiles; take furniture whole"], ["F", "Open a chest or door; at a bed, make it home"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
-			["C", "Wisp Forge (crafting)"], ["M", "Zoom out"],
+			["C", "Wisp Forge (crafting)"], ["M", "Map (Tab: the system)"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: how walls and blocks are laid)"],
 			["Esc", "Settings and controls"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 13, GOLD))
@@ -644,6 +650,38 @@ func show_death() -> void:
 
 func hide_death() -> void:
 	death.visible = false
+
+## the map's banner: which map, and its keys
+func _build_map_bar() -> void:
+	map_bar = _panel(Color(0.05, 0.04, 0.09, 0.9), TRIM, 10)
+	map_bar.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	map_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	map_bar.offset_top = 12
+	map_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_bar.visible = false
+	root.add_child(map_bar)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_bar.add_child(v)
+	map_title = _head("", 24, CREAM)
+	map_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(map_title)
+	map_hint = _label("", 12, DIM)
+	map_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(map_hint)
+
+func show_map(g) -> void:
+	if g.map_tab == "system":
+		map_title.text = "The system"
+		map_hint.text = "Tab: the planet    M or Esc: close"
+	else:
+		map_title.text = "Map of %s" % String(g.planet.get("name", ""))
+		map_hint.text = "A / D or drag: turn    W / S or wheel: zoom    Tab: the system    M or Esc: close"
+	map_bar.visible = true
+
+func hide_map() -> void:
+	map_bar.visible = false
 
 func show_forge() -> void:
 	_render_forge()

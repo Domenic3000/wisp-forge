@@ -35,7 +35,7 @@ func _draw_build_preview() -> void:
 		# a whole structure, as one picture, its top-left corner (on screen) on its corner cell
 		var tx: Texture2D = pv["tex"]
 		var csp: Vector2 = game.world_to_screen(pv["corner"]) - Vector2(0.5, 0.5) / z
-		var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(pv["corner"].y, pv["corner"].x), -PI, PI)
+		var rot := 0.0 if game.unrolled() else wrapf(game.view_angle() - atan2(pv["corner"].y, pv["corner"].x), -PI, PI)
 		draw_set_transform(csp, rot, Vector2.ONE / z)
 		draw_texture(tx, Vector2.ZERO, Color(1, 1, 1, pulse + 0.2))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -181,6 +181,47 @@ func _draw_serpent(e, tint: Color) -> void:
 	var open: bool = e.act == "windup" or e.act == "go"
 	_sprite_mid(e.type + ("_head_open" if open else "_head"), e.pos, e.facing < 0, white, tint)
 
+## A burrower under the ground: the ground over it heaves up in a moving mound (its own colour,
+## lit on top, a crack of shadow under the lip), so you can always see where it is and where it goes.
+## Over the spot it is about to burst from, the mound swells and shudders.
+func _draw_mound(e) -> void:
+	var up: Vector2 = e.pos.normalized()
+	var p: Vector2 = e.pos
+	var found := false
+	for k in 48:
+		if Defs.KIND[game.type_at(p + up)] == Defs.K_EMPTY:
+			found = true
+			break
+		p += up
+	if not found:
+		return                         # (deep under: nothing shows on the surface)
+	var sp: Vector2 = game.world_to_screen(p + up * 0.5)
+	if sp.x < -30 or sp.y < -30 or sp.x > game.VW + 30 or sp.y > game.VH + 30:
+		return
+	var t := float(game.frame)
+	var tell: bool = e.act == "windup" and e.move.begins_with("breach")
+	var z: float = game.zoom
+	var hw: float = (float(e.w) * 0.5 + 3.0) / z
+	var hh: float = (2.4 + sin(t * 0.25) * 0.6 + (2.5 if tell else 0.0)) / z
+	var jit := Vector2((randf() - 0.5) * 2.0, 0.0) if tell else Vector2.ZERO
+	var base: Vector2 = sp.round() + jit
+	var gt: int = game.type_at(p - up * 1.5)
+	var col: Color = Defs.COLOR[gt] if Defs.KIND[gt] != Defs.K_EMPTY else Color(0.86, 0.74, 0.5)
+	col = col * _lit(sp)
+	col.a = 1.0
+	var n := int(ceil(hw))
+	for i in range(-n, n + 1):
+		var f := float(i) / maxf(hw, 1.0)
+		if absf(f) > 1.0:
+			continue
+		var h := roundf(hh * sqrt(1.0 - f * f))
+		if h < 1.0:
+			continue
+		draw_rect(Rect2(base + Vector2(i, -h), Vector2(1, h)), col)
+		draw_rect(Rect2(base + Vector2(i, -h), Vector2(1, 1)), col.lightened(0.25))
+	# the crack along its foot
+	draw_rect(Rect2(base + Vector2(-n, 0), Vector2(2 * n + 1, 1)), col.darkened(0.45))
+
 ## a picture centred on a world point (fliers and serpents, which have no feet to stand on)
 func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Color(1, 1, 1)) -> void:
 	if not tex.has(key):
@@ -189,9 +230,9 @@ func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Co
 	var sp: Vector2 = game.world_to_screen(wpos)
 	if sp.x < -80 or sp.y < -80 or sp.x > game.VW + 80 or sp.y > game.VH + 80:
 		return
-	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
+	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
 	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / float(game.zoom)
-	draw_set_transform(sp.round() if game.unrolled() else sp, rot, sc)
+	draw_set_transform(sp.round() if game.close_view() else sp, rot, sc)
 	var mod := Color(4, 4, 4) if white else _lit(sp) * tint
 	var ts := t.get_size()
 	draw_texture(t, -(ts * 0.5).floor(), mod)
@@ -216,15 +257,16 @@ func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
 		# cell rows are whole numbers of radius (R_TOP is a whole number)
 		feet = up * roundf(feet.length())
 	var sp: Vector2 = game.world_to_screen(feet)
-	if game.unrolled() or absf(wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)) < 0.02:
+	if game.close_view() or absf(wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)) < 0.02:
 		sp = sp.round()
 	return [sp, raw]
 
 func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1)) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
-	# upright in the unrolled view; turned with the planet's curve in the round map view
-	var rot := 0.0 if game.unrolled() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
+	# upright in the close view (crisp pixels: turned a few degrees they'd go jagged); turned with the
+	# planet's curve in the round map view
+	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
 	var z: float = game.zoom
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
@@ -257,7 +299,7 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 		_masks[key] = MageRig.body_mask(key)
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground)[0]
-	var rot := 0.0 if game.unrolled() else wrapf((game.view_angle() if game.space.active else atan2(game.cam_c.y, game.cam_c.x)) - a, -PI, PI)
+	var rot := 0.0 if game.close_view() else wrapf((game.view_angle() if game.space.active else atan2(game.cam_c.y, game.cam_c.x)) - a, -PI, PI)
 	# (out in space the view zooms far out: the mage stays big enough to see)
 	var zs: float = minf(game.zoom, 2.0) if game.space.active else game.zoom
 	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / zs
@@ -348,8 +390,8 @@ func _px(wpos: Vector2, col: Color) -> void:
 	draw_rect(Rect2(sp.floor(), Vector2.ONE), col)
 
 func _draw() -> void:
-	if game == null or game.state == "title" or game.state == "loading" or game.state == "error":
-		return
+	if game == null or game.state == "title" or game.state == "loading" or game.state == "error" or game.state == "map":
+		return                       # (the map draws its own markers: map_view.gd)
 	var t_draw := Time.get_ticks_usec()
 	_draw_all()
 	game.prof_add("drawing sprites", Time.get_ticks_usec() - t_draw)
@@ -397,13 +439,12 @@ func _draw_all() -> void:
 	# foes
 	# pieces breaking off: felled trees and fragments of buildings, turned as they tumble
 	if game.chunks != null:
-		var cam_a := atan2(game.cam_c.y, game.cam_c.x)
 		for c in game.chunks.list:
 			game.chunks.textures(c)
 			if c.tex_f == null:
 				continue
 			var csp: Vector2 = game.world_to_screen(c.pos)
-			var ref := atan2(c.pos.y, c.pos.x) if game.unrolled() else cam_a
+			var ref: float = atan2(c.pos.y, c.pos.x) if game.unrolled() else game.view_angle()
 			draw_set_transform(csp, game.chunks.screen_angle(c, ref), Vector2.ONE / float(game.zoom))
 			var cm := _lit(csp)
 			draw_texture(c.tex_b, c.img_origin, cm)
@@ -419,6 +460,8 @@ func _draw_all() -> void:
 			_boss_art(e)
 			var plan: String = e.d["def"]["body"]["plan"]
 			if plan == "serpent":
+				if e.under:
+					_draw_mound(e)
 				_draw_serpent(e, tint)
 				continue
 			if plan == "bird":
