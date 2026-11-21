@@ -232,6 +232,9 @@ func _test_towns() -> void:
 		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("shop.png"))
 		g.towns.close_shop()
 	g.items["coins"] = tn_c0
+	await _test_town_days(tn_t, tn_mid)
+	_test_requests(tn_t)
+	_test_kind_trade()
 	g.time = tn_time0
 	g.test_god = tn_god0
 	g.spawn_timer = 600
@@ -241,6 +244,245 @@ func _test_towns() -> void:
 ## Sky events: each started on its own for a few seconds (they never start by themselves in test mode),
 ## at night for the night ones, on a clear stretch of open ground, with a picture of each
 ## (saves/shots/sky_<id>.png). main's `sky_stats` counts what each did.
+
+## a village's day: at night its folk go home and sleep, in the morning they come out again; who'd be where
+## at each hour (towns.gd `want_place`)
+func _test_town_days(t: Dictionary, mid: int) -> void:
+	var tw = g.towns
+	var mid_p: Vector2 = _cell_pos(mid, g.builds.ground_row(mid) - 14)
+	var res := []
+	for v in tw.folk:
+		if not v.keeper and int(v.town["seed"]) == int(t["seed"]):
+			res.append(v)
+	# the schedule itself
+	var sched_ok := true
+	var sched_bad := ""
+	for v1 in res:
+		if v1.house.is_empty() or tw.want_place(v1, 23.5) != v1.house or tw.want_place(v1, 3.0) != v1.house:
+			sched_ok = false
+			sched_bad = "%s isn't home at night" % v1.name
+		var noon: Dictionary = tw.want_place(v1, 12.0)
+		if not noon.is_empty() and noon != v1.job:
+			sched_ok = false
+			sched_bad = "%s is somewhere odd at noon" % v1.name
+	# night: everyone in reach of the simulation walks home and goes in
+	_go(mid_p)
+	g.time = tw.time_for_hour(mid_p, 22.6)
+	await _frames(2)
+	var watch := res
+	var at_dusk := []
+	for v2 in res:
+		at_dusk.append("%s %s%s" % [v2.name, "in" if not v2.inside.is_empty() else "out", "" if g.in_grid(v2.pos, 14.0) else " (far)"])
+	var home := 0
+	var slept := 0
+	var waited := 0
+	for k in 40:
+		await _frames(30)
+		waited += 30
+		home = 0
+		slept = 0
+		for v3 in watch:
+			if v3.inside == v3.house:
+				home += 1
+			if v3.asleep:
+				slept += 1
+		if home == watch.size():
+			break
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town_night.png"))
+	# (they walk there: "stuck", stepping in after pushing on a wall for 90 ticks, is the exception)
+	var night_ok: bool = not watch.is_empty() and home == watch.size() and slept > 0 and int(tw.stats.get("stuck", 0)) * 2 <= int(tw.stats.get("went_in", 0))
+	var late := []
+	for v6 in watch:
+		if v6.inside != v6.house:
+			late.append("%s (%s, fade %d, blocked %d, %.0f cells from home)" % [v6.name, "in grid" if g.in_grid(v6.pos, 12.0) else "far",
+				v6.fade, v6.block_t, absf(tw._dc(float(int(v6.house["x0"]) + int(v6.house["w"]) / 2), v6.pos))])
+	# morning: out into the street again
+	g.time = tw.time_for_hour(mid_p, 8.2)
+	var out := 0
+	var want_out := 0
+	for k2 in 24:
+		await _frames(30)
+		out = 0
+		want_out = 0
+		for v4 in watch:
+			if tw.want_place(v4, tw.hour_at(v4.pos)).is_empty():
+				want_out += 1
+				if v4.inside.is_empty():
+					out += 1
+		if want_out > 0 and out == want_out:
+			break
+	var morn_ok: bool = want_out > 0 and out == want_out
+	for v7 in watch:
+		if tw.want_place(v7, tw.hour_at(v7.pos)).is_empty() and not v7.inside.is_empty():
+			late.append("%s still in at %.1f h (%s, fade %d, talk %d)" % [v7.name, tw.hour_at(v7.pos), "in grid" if g.in_grid(v7.pos, 12.0) else "far", v7.fade, v7.talk_t])
+	_ok("living towns: folk keep the hours (home asleep at night, out in the morning)", sched_ok and night_ok and morn_ok,
+		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep); in the morning %d of the %d who'd be out came out; %s%s" % [
+		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept,
+		out, want_out, JSON.stringify(tw.stats), "" if late.is_empty() else "; LATE: " + ", ".join(late)])
+	g.time = tw.time_for_hour(mid_p, 12.0)
+
+## a villager's requests: each kind taken, done and rewarded (a hunt counted by a real kill)
+func _test_requests(t: Dictionary) -> void:
+	var tw = g.towns
+	var rq0: Array = (g.planet_state.get("requests", []) as Array).duplicate(true)
+	var rn0: Dictionary = (g.planet_state.get("req_n", {}) as Dictionary).duplicate(true)
+	var c0: int = int(g.items.get("coins", 0))
+	var pot0: int = int(g.items.get("potion", 0))
+	g.planet_state["requests"] = []
+	var asker = null
+	for v in tw.folk:
+		if v.asker and int(v.town["seed"]) == int(t["seed"]):
+			asker = v
+	var lines := []
+	var ok := asker != null
+	if asker != null:
+		asker.asleep = false
+		asker.fade = 0
+		asker.offer = {}
+		var mark0: String = tw.mark_of(asker)
+		# fetch: offered, taken, then handed in once you've the goods
+		var rf: Dictionary = tw.make_request(asker, "fetch")
+		var mat := int(rf["mat"])
+		var inv0: int = g.player.inv[mat]
+		g.player.inv[mat] = 0                    # (earlier checks may have left some in the satchel)
+		asker.offer = rf
+		tw.take(asker)
+		var mark1: String = tw.mark_of(asker)
+		g.player.inv[mat] = int(rf["n"]) + 3
+		var mark2: String = tw.mark_of(asker)
+		var cf: int = int(g.items.get("coins", 0))
+		tw._request_talk(asker)
+		var fetch_ok: bool = mark0 == "offer" and mark1 == "wait" and mark2 == "ready" and tw.requests().is_empty() and g.player.inv[mat] == 3 \
+			and int(g.items["coins"]) == cf + int(rf["reward"])
+		g.player.inv[mat] = inv0
+		lines.append("fetch %s (marks %s/%s/%s): %s" % [tw.short(rf), mark0, mark1, mark2, fetch_ok])
+		ok = ok and fetch_ok
+		# whoever asks next in the village (the asker moves on)
+		var nxt = null
+		for v2 in tw.folk:
+			if v2.asker and int(v2.town["seed"]) == int(t["seed"]):
+				nxt = v2
+		ok = ok and nxt != null
+		if nxt != null:
+			nxt.fade = 0
+			nxt.asleep = false
+			# hunt: a creature of the village's biome, killed for real
+			var rh: Dictionary = tw.make_request(nxt, "hunt")
+			if String(rh["kind"]) == "hunt":
+				nxt.offer = rh
+				tw.take(nxt)
+				var hunt_rq: Dictionary = tw.requests()[0]
+				var kills := 0
+				for kk in int(rh["n"]):
+					var e = g.spawn_enemy(String(rh["foe"]), g.player.pos + g.player.pos.normalized() * 30.0)
+					if e != null:
+						g._kill_enemy(e)
+						g.enemies.erase(e)
+						kills += 1
+				var ch: int = int(g.items.get("coins", 0))
+				var ready: bool = tw.mark_of(nxt) == "ready"
+				tw._request_talk(nxt)
+				var hunt_ok: bool = kills == int(rh["n"]) and int(hunt_rq["got"]) == int(rh["n"]) and ready and tw.requests().is_empty() and int(g.items["coins"]) == ch + int(rh["reward"])
+				lines.append("hunt %s: %s" % [tw.short(hunt_rq), hunt_ok])
+				ok = ok and hunt_ok
+			else:
+				lines.append("(no creatures in %s to hunt)" % t.get("biome", "?"))
+			# deliver: a letter to a keeper in another village
+			var rd: Dictionary = tw.make_request(nxt, "deliver")
+			if String(rd["kind"]) == "deliver":
+				nxt.offer = rd
+				tw.take(nxt)
+				var dest := {}
+				for t2 in g.builds.towns:
+					if int(t2["seed"]) == int(rd["to"]):
+						dest = t2
+				var kp = g.new_villager()
+				kp.keeper = true
+				kp.role = String(rd["to_role"])
+				kp.town = dest
+				kp.name = "Test"
+				var wrong = g.new_villager()
+				wrong.keeper = true
+				wrong.role = "inn" if kp.role != "inn" else "smithy"
+				wrong.town = dest
+				var cd: int = int(g.items.get("coins", 0))
+				var not_wrong: bool = not tw._deliver_to(wrong)
+				var given: bool = tw._deliver_to(kp)
+				var del_ok: bool = not_wrong and given and tw.requests().is_empty() and int(g.items["coins"]) == cd + int(rd["reward"])
+				lines.append("deliver %s: %s" % [tw.short(rd), del_ok])
+				ok = ok and del_ok
+			else:
+				lines.append("(no other village to send a letter to)")
+		# no more than MAX_REQUESTS at once
+		for k in Defs.MAX_REQUESTS:
+			tw.requests().append({"kind": "fetch", "from": -1 - k, "mat": Defs.WOOD, "n": 1, "who": "x", "town_name": "x", "town": 0, "reward": 0})
+		var cur = null
+		for v5 in tw.folk:
+			if v5.asker and int(v5.town["seed"]) == int(t["seed"]):
+				cur = v5
+		var full_ok: bool = cur != null and tw.mark_of(cur) == "" and not tw._request_talk(cur)
+		lines.append("full hands (%d at once): %s" % [Defs.MAX_REQUESTS, full_ok])
+		ok = ok and full_ok
+	g.planet_state["requests"] = rq0
+	g.planet_state["req_n"] = rn0
+	for f in tw.folk:
+		if int(f.town["seed"]) == int(t["seed"]) and not f.keeper:
+			f.asker = f.idx == tw.asker_index(f.town)
+	g.items["coins"] = c0
+	g.items["potion"] = pot0
+	_ok("living towns: villagers' requests (bring, hunt, deliver) are taken, done and paid", ok, ("no asker in %s" % t["name"]) if asker == null else "; ".join(lines))
+
+## each kind of planet's shops: the ward its danger needs, its fare, an imported ore, a better price for its own
+func _test_kind_trade() -> void:
+	var tw = g.towns
+	var bad := []
+	var seen := 0
+	for kind in Defs.PLANET_ORDER:
+		for role in Defs.SHOPS:
+			var sd: Dictionary = tw.shop_def_for(role, kind, 4242)
+			var base: int = (Defs.SHOPS[role]["sell"] as Array).size()
+			var extra: Array = (Defs.KIND_TRADE.get(kind, {}) as Dictionary).get(role, [])
+			var want: int = base + extra.size() + (1 if role == "smithy" and Defs.KIND_ORES.has(kind) else 0)
+			if (sd["sell"] as Array).size() != want:
+				bad.append("%s %s sells %d, not %d" % [kind, role, (sd["sell"] as Array).size(), want])
+			if (Defs.SHOPS[role]["sell"] as Array).size() != base:
+				bad.append("SHOPS changed")
+			for it in sd["sell"]:
+				seen += 1
+				if it.has("item") and Defs.RECIPES.filter(func(r): return r["id"] == it["item"]).is_empty():
+					bad.append("%s: no such item %s" % [kind, it["item"]])
+				if it.has("spell") and not Defs.SPELLS.has(it["spell"]):
+					bad.append("%s: no such spell %s" % [kind, it["spell"]])
+				if it.has("give"):
+					for m in it["give"]:
+						if int(m) >= Defs.NM:
+							bad.append("%s: no such material %d" % [kind, int(m)])
+			if role == "smithy" and Defs.KIND_ORES.has(kind):
+				var own := int(Defs.KIND_ORES[kind]["mat"])
+				var imp: Dictionary = (sd["sell"] as Array).back()
+				if (imp["give"] as Dictionary).has(own) or int(sd["own_ore"][0]) != own or int(sd["own_ore"][2]) <= int(Defs.SHOPS["smithy"]["ores"][1]):
+					bad.append("%s smithy: import or own ore wrong" % kind)
+		# a world with a danger sells the ward for it
+		for hz in Defs.HAZARDS:
+			if float((Defs.CLIMATES.get(kind, {}) as Dictionary).get(hz, 0.0)) > 0.0:
+				var ward := String(Defs.HAZARDS[hz]["ward"])
+				var sold := false
+				for role2 in Defs.SHOPS:
+					for it2 in tw.shop_def_for(role2, kind, 1)["sell"]:
+						if String(it2.get("item", "")) == ward:
+							sold = true
+				if not sold:
+					bad.append("%s doesn't sell the %s" % [kind, ward])
+	# a bought ward is yours (and shows as yours)
+	var had: bool = g.items.has("sunveil")
+	tw.grant({"item": "sunveil"})
+	var got: bool = tw.owned({"item": "sunveil"})
+	if not had:
+		g.items.erase("sunveil")
+	if not got:
+		bad.append("a bought Sun Veil isn't yours")
+	_ok("living towns: each kind of planet's shops sell its own wares", bad.is_empty(), ("%d things for sale across %d kinds, all real" % [seen, Defs.PLANET_ORDER.size()]) if bad.is_empty() else "; ".join(bad))
+
 func _test_sky() -> void:
 	var sk_god0: bool = g.test_god
 	var sk_from: Vector2 = g.player.pos

@@ -71,6 +71,17 @@ class Villager extends Body:
 	var say := ""
 	var say_t := 0
 	var gone := false
+	var job: Dictionary          # (the house they work in, or {})
+	var inside: Dictionary       # (the house they're in now, or {}: the street)
+	var idx := 0                 # (which resident of the village)
+	var asker := false           # (the one with a request for you: towns.gd `mark_of`)
+	var offer: Dictionary        # (a request said out loud, waiting for a second F)
+	var offer_t := 0
+	var asleep := false
+	var fade := 0                # (stepping through a house's side: towns.gd `_step`)
+	var fade_to := Vector2.ZERO
+	var fade_in: Dictionary
+	var block_t := 0
 
 func new_villager() -> Villager:
 	return Villager.new()
@@ -557,9 +568,9 @@ func _exit_tree() -> void:
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 600000:
-		# a test run that hasn't finished in 10 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 10 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 780000:
+		# a test run that hasn't finished in 13 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 13 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:
@@ -2689,6 +2700,7 @@ func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
 func _kill_enemy(e: Enemy) -> void:
 	e.dead = true
 	audio.play("foe_die", e.pos)
+	towns.on_kill(e.type)                # (a villager's hunt may want it)
 	if e.guard_id >= 0:
 		var slain: Array = planet_state.get("slain", [])
 		if not slain.has(e.guard_id):

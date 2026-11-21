@@ -244,23 +244,44 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   fireworks (rockets that burst into coloured particles). The HUD's weather shows the event, then " · <hazard>!".
   Test: `_test_sky` ("sky").
 
-## Living towns (scripts/towns.gd, folk_art.gd; user, 20 Nov: "towns with people walking around and shops")
+## Living towns (scripts/towns.gd, folk_art.gd; user, 20 Nov: "towns with people walking around and shops"; then their days, requests, trades per kind)
 - buildings.gd `_town` records each village in `towns` ({x0, w, name, ruined, living (not ruined), seed, biome,
   houses: [{role, x0, w, floor (the ground floor's row), ruined}]}; `_cottage` leaves its house in `_house`); a
   standing village gets a name from parts (`town_name`, its own seed: nothing else moves) instead of "Deserted".
-- towns.gd (main `towns`, ticked on the planet): `_people` every 30 ticks: a living village within `NEAR` columns
-  gets its keepers (one per shop/smithy/tavern/inn, in the middle of its ground floor, always there) and by day its
-  walkers (two per home, one per shop, `MAX_WALKERS`); past `FAR` they're dropped. main `Villager` (a Body): seed
-  -> look (folk_art.gd `frames`: a 13 x 21 figure from parts; overlay caches "folk_<seed>_stand/walk0/walk1") and
-  name (`name_for`). `_walk`: keepers stand and face you; walkers pick spots along the village, idle, turn at walls
-  and drops (`_drop_ahead`), run from foes, and at night walk to their house and go in (`gone`). F (main
-  `_interact`, after chests): `talk` — a keeper opens the shop (state "shop", the game waits; ui.gd `show_shop`,
-  F/Esc leave), anyone else says `line_for` (a greeting and a rumour: the nearest living guardian and its lair, a
-  crypt, this world's ore, its hazard and ward, the village's shops, or village talk), drawn as a speech bubble
-  (overlay `_bubble`). Trade: `Defs.SHOPS[role]` "sell" (give/potion/meal/rest/chart) and "buy" (material ->
-  [how many, coins]; the smithy also buys every world's ore); `buy`/`sell`; coins in `items["coins"]` (from chests,
-  guardians 60, wardens 30, and selling). "chart" puts the lairs and crypts in `planet_state["charted"]`, which the
-  map draws; villages you've been to (`planet_state["towns_seen"]`) are on the map too. Test: `_test_towns` ("towns").
+- towns.gd (main `towns`, ticked on the planet): `_people` every 30 ticks fills a living village within `NEAR` columns
+  (`_fill`) and drops it past `FAR`: a keeper per shop/smithy/tavern/inn (in the middle of its ground floor, always
+  there; the smith throws sparks by day) and its residents (two per home, one living over each other house, that
+  house their `job`; `MAX_FOLK`), each put where `want_place(v, hour)` says: home asleep 22-6, some still in bed
+  before 7, the job 9-16 (three in four), the tavern of an evening if there is one, else the street. `hour_at(p)`
+  is the local hour (noon = sun overhead; `time_for_hour` for tests). main `Villager` (a Body): seed -> look
+  (folk_art.gd `frames`: a 13 x 21 figure from parts; overlay caches "folk_<seed>_stand/walk0/walk1") and name
+  (`name_for`); `inside` (a house dict or {} = `STREET`), `job`, `asleep`, `fade` (`_step`: they fade out at a
+  house's side and in at `fade_to`, going in, out, or PAST a house in the way: houses block the street; stuck for
+  90 ticks they step to where they're going). `_walk`: keepers face you; in the street residents wander the
+  village, turn at walls and drops, run from foes; indoors they potter about the room; overlay draws a sleeper's
+  drifting "z"s. F (main `_interact`, after chests): `talk` — a keeper takes a letter that's for them
+  (`_deliver_to`) or opens the shop (state "shop", the game waits; ui.gd `show_shop`, F/Esc leave), the asker deals
+  with their request, anyone else says `line_for` (a greeting and a rumour: the nearest living guardian and its
+  lair, a crypt, this world's ore, its hazard and ward, the village's shops, or village talk; sleepers grumble),
+  drawn as a speech bubble (overlay `_bubble`).
+- Requests: one resident per village is the asker (`asker_index`: from the village's seed and `planet_state["req_n"]`
+  (done there), so it moves on), marked by overlay `_folk_mark` from `mark_of` (gold "!" offer, grey "?" under way,
+  gold "?" done). `make_request` (seeded the same way): "fetch" (`Defs.FETCH` material and count), "hunt" (2-4 of
+  a `Defs.creatures_of(village biome)`, counted by `on_kill` from main `_kill_enemy`), "deliver" (a letter to the
+  shop or tavern keeper of another living village). F shows it, a second F `take`s it (into
+  `planet_state["requests"]`, `Defs.MAX_REQUESTS` at once; the HUD lists them by `short`), talking to them again
+  hands it in (`_finish`: coins, a Healing Draught one time in three). Test: `_test_requests`.
+- Trade: `shop_def` = `shop_def_for(role, planet kind, planet seed)`: `Defs.SHOPS[role]` ("sell": give/potion/meal/
+  rest/chart/item (an `items` key, a ward)/heat_ward/spell; "buy": material -> [how many, coins]; the smithy also
+  buys every world's ore) plus `Defs.KIND_TRADE[kind][role]` (each world's ward for its danger, its fare, the Heat
+  Ward on volcanic, Silver and the Scroll of Mending in a realm) and, at the smithy of a world with its own ore, an
+  imported ore (`Defs.IMPORT`, picked by the seed) and a better price for its own (`Defs.OWN_ORE`, "own_ore").
+  `buy`/`grant`/`owned` (a ward you have shows "yours")/`sell`; coins in `items["coins"]` (from chests, guardians
+  60, wardens 30, requests, selling). "chart" puts the lairs and crypts in `planet_state["charted"]`, which the map
+  draws; villages you've been to (`planet_state["towns_seen"]`) are on the map too.
+- Tests ("towns"): `_test_towns` (walk, talk, trade), `_test_town_days` (home and asleep at night, out in the
+  morning; a picture `town_night.png`), `_test_requests`, `_test_kind_trade` (every kind's stock is real, and its
+  danger's ward is sold).
 
 ## Music (scripts/audio.gd)
 - Tracks in game/audio/music/ by name: mood (surface_day, surface_night, underground, deep, boss, space, title) or
@@ -422,9 +443,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 10 minutes (a full run takes about 8), so a broken run never leaves the game open;
+- Test mode quits by itself after 13 minutes (a full run takes about 9), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
-  up (a parse error in main.gd used to leave a blank window) or that passes 11 minutes. tests.gd is loaded at run
+  up (a parse error in main.gd used to leave a blank window) or that passes 14 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).

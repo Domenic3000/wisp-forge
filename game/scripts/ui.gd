@@ -533,9 +533,10 @@ func _render_shop() -> void:
 		var l := _label(String(it["name"]), 14, CREAM)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
-		row.add_child(_label("%d coins" % int(it["price"]), 14, Color(1, 0.85, 0.4)))
+		var have_it: bool = tw.owned(it)
+		row.add_child(_label("yours" if have_it else "%d coins" % int(it["price"]), 14, DIM if have_it else Color(1, 0.85, 0.4)))
 		var b := _button("Buy")
-		b.disabled = tw.coins() < int(it["price"])
+		b.disabled = have_it or tw.coins() < int(it["price"])
 		b.pressed.connect(func():
 			tw.buy(_shop_v, i)
 			_render_shop())
@@ -545,7 +546,7 @@ func _render_shop() -> void:
 	for bb in tw.buys(_shop_v):
 		var mat: int = bb[0]
 		var have: int = game.inv[mat]
-		if mat >= Defs.FIREOPAL and have <= 0:
+		if mat >= Defs.FIREOPAL and have <= 0 and mat != Defs.kind_ore(game.planet):
 			continue                              # (a far world's ore: only shown once you have some)
 		var row2 := HBoxContainer.new()
 		row2.add_theme_constant_override("separation", 10)
@@ -926,6 +927,10 @@ func update_hud(g) -> void:
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
 			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]
+		# the villagers' requests you've taken (towns.gd)
+		var rqs: Array = g.towns.requests() if g.towns != null else []
+		for rq in rqs:
+			info.text += "\n· " + g.towns.short(rq)
 	# build mode replaces the spell bar with the building bar
 	hotbar.visible = not g.build_on
 	build_bar.visible = g.build_on

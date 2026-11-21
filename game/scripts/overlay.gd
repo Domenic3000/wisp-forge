@@ -535,12 +535,17 @@ func _draw_all() -> void:
 				tex[fk + "_" + fn] = ImageTexture.create_from_image(fr[fn])
 		var walking: bool = absf(v.vx) > 0.08
 		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
-		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground)
+		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v))
 	for v2 in game.towns.folk:
+		if v2.fade > 0:
+			continue
 		if v2.say_t > 0 and v2.say != "":
 			_bubble(v2.pos, v2.say, clampf(float(v2.say_t) / 30.0, 0.0, 1.0))
 		elif v2.keeper and (v2.pos as Vector2).distance_to(game.player.pos) < 60.0:
 			_bubble(v2.pos, "%s · %s  [F]" % [v2.name, Defs.SHOPS[v2.role]["title"]], 0.75)
+		else:
+			_folk_mark(v2)
+
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	for e in game.enemies:
 		var tl: float = FoeAI.tell(e)
@@ -622,3 +627,32 @@ func _draw_all() -> void:
 		for a in 24:
 			var t := a / 24.0 * TAU
 			draw_rect(Rect2((rp + Vector2(cos(t), sin(t)) * (r + 0.5)).round(), Vector2.ONE), col)
+
+## over a villager: the asker's mark (towns.gd `mark_of`: a gold "!" for a request, a "?" for one under
+## way, gold when it's done), or a sleeper's drifting "z"s. (The overlay draws in game pixels, `scale_px` screen
+## pixels each, so text is drawn through a 1/px transform at its screen size.)
+func _folk_mark(v) -> void:
+	var mk: String = game.towns.mark_of(v)
+	var a := atan2(v.pos.y, v.pos.x)
+	var f := ThemeDB.fallback_font
+	var px: float = float(game.scale_px)
+	if mk != "":
+		var bob := sin(float(game.frame) * 0.08) * 1.2
+		var hp: Vector2 = game.world_to_screen(v.pos - game.basis_d(a) * (13.0 + bob))
+		var ch := "!" if mk == "offer" else "?"
+		var col := Color(0.62, 0.62, 0.68) if mk == "wait" else Color(1.0, 0.82, 0.25)
+		var fs := 40
+		var sz := f.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		draw_set_transform(hp.round(), 0.0, Vector2.ONE / px)
+		var at := Vector2(-sz.x * 0.5, 0.0)
+		for o in [Vector2(-3, 0), Vector2(3, 0), Vector2(0, -3), Vector2(0, 3)]:
+			draw_string(f, at + o, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.06, 0.02))
+		draw_string(f, at, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	elif v.asleep:
+		for k in 3:
+			var ph := fposmod(float(game.frame) * 0.01 + float(k) / 3.0, 1.0)
+			var zp: Vector2 = game.world_to_screen(v.pos - game.basis_d(a) * (9.0 + ph * 9.0) + game.basis_r(a) * (1.0 + ph * 4.0))
+			draw_set_transform(zp.round(), 0.0, Vector2.ONE / px)
+			draw_string(f, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, int(16.0 + ph * 13.0), Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.8))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

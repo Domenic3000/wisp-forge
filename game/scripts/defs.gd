@@ -677,6 +677,32 @@ const SHOPS := {
 			{"name": "Hearty Meal (30 health)", "price": 12, "meal": 30.0}],
 		"buy": {PLANK: [10, 3], WOOD: [8, 2]}},
 }
+## What a village's shops add on each kind of planet (towns.gd `shop_def` merges it into SHOPS): the ward its
+## danger calls for, its own fare, building stock it's known for. Entries as in SHOPS, plus "item": an
+## `items` key you then own (a ward), "heat_ward": the Heat Ward, "spell": a spell you then know. On every
+## world but the first, the smithy also sells a few of another world's ore ("import", picked by the planet's
+## seed) and pays better for this world's own ore ("own_ore": [how many, coins]).
+const KIND_TRADE := {
+	"volcanic": {"smithy": [{"name": "Heat Ward", "price": 120, "heat_ward": true}, {"name": "Obsidian x6", "price": 12, "give": {OBSIDIAN: 6}}],
+		"tavern": [{"name": "Fire-roasted Feast (45 health)", "price": 16, "meal": 45.0}]},
+	"ocean": {"shop": [{"name": "Tide Charm", "price": 90, "item": "tidecharm"}], "tavern": [{"name": "Fish Stew (45 health)", "price": 16, "meal": 45.0}]},
+	"desert": {"shop": [{"name": "Sun Veil", "price": 90, "item": "sunveil"}, {"name": "Glass x12", "price": 12, "give": {GLASS: 12}}],
+		"tavern": [{"name": "Date Cakes (45 health)", "price": 16, "meal": 45.0}]},
+	"marsh": {"shop": [{"name": "Fen Mask", "price": 90, "item": "fenmask"}], "tavern": [{"name": "Bog Tea (45 health)", "price": 16, "meal": 45.0}]},
+	"frozen": {"shop": [{"name": "Hearth Charm", "price": 90, "item": "hearth"}], "tavern": [{"name": "Hot Cider (45 health)", "price": 16, "meal": 45.0}]},
+	"wild": {"shop": [{"name": "Healing Draught x2", "price": 70, "potion": 2}], "tavern": [{"name": "Hunter's Stew (45 health)", "price": 16, "meal": 45.0}]},
+	"realm": {"shop": [{"name": "Scroll of Mending", "price": 150, "spell": "mend"}], "smithy": [{"name": "Silver Ore x4", "price": 40, "give": {SILVER: 4}}],
+		"inn": [{"name": "A royal suite (full health, till morning)", "price": 25, "rest": true}]},
+}
+const IMPORT := [3, 45]          # (an imported ore: how many, coins)
+const OWN_ORE := [2, 8]          # (what a smith pays for this world's own ore)
+
+## What villagers ask of you (towns.gd `_request`): bring them something ("fetch": [material, how many]),
+## thin out a creature that troubles them ("hunt": 2-4 of a creature of the village's biome), or carry a
+## letter to a keeper in another village ("deliver"). Rewards in coins, now and then a draught too.
+const FETCH := [[WOOD, 20], [LEAF, 30], [COPPER, 12], [COAL, 12], [SHROOM, 6], [STONE, 40], [GLASS, 6], [PLANK, 16], [SAND, 30], [TORCH, 6], [BRICK, 10]]
+const MAX_REQUESTS := 3
+
 const FOLK_FIRST := ["Ada", "Bram", "Cora", "Dell", "Edda", "Finn", "Gwen", "Hob", "Ida", "Jory", "Kit", "Lene", "Mags", "Ned",
 	"Orla", "Pip", "Rosk", "Sela", "Tam", "Una", "Vik", "Wynn", "Yara", "Zeb", "Bess", "Col", "Dov", "Ena", "Hale", "Moll"]
 const FOLK_LAST := ["Miller", "Thatcher", "Brook", "Ashdown", "Fletcher", "Cooper", "Hale", "Reed", "Marsh", "Stone", "Wright", "Farrow", "Tanner", "Shaw"]

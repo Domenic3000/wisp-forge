@@ -1,10 +1,17 @@
 ## Living towns: the people of the villages that still stand (buildings.gd `towns` with "living").
-## Near you a village fills with its folk: by day each house's people walk the street (turning at walls
-## and drops, running from foes, going indoors at night), and a keeper stands in every shop, smithy,
-## tavern and inn, day and night. Talk to anyone (F) for a word or a rumour; talk to a keeper to trade
-## (main state "shop", ui.gd's shop panel): coins for what you gather, and what the shop sells for coins
-## (Defs.SHOPS, by the keeper's role). The folk are made again from their village's seed each time you
-## come (same names, same looks); only your coins and what you bought are kept.
+## Near you a village fills with its folk (`_fill`): a keeper in every shop, smithy, tavern and inn, day and
+## night, and its residents, each with a home (and those who live over a shop, a workplace). Their day
+## follows the local hour (`want_place`): out in the street in the morning and by day, some at work in their
+## shop, the tavern of an evening, home asleep at night. Going in or out of a house, or past one that's in
+## the way, they step through it (a short fade at its side). In the street they turn at walls and drops and
+## run from foes; indoors they potter about the room.
+## Talk to anyone (F) for a word or a rumour (`line_for`). One resident of each village (marked "!") has a
+## request (`_request`: bring something, thin out a creature, carry a letter to another village); a second F
+## takes it, and talking to them again hands it in (a letter is handed to the keeper it's for). Talk to a
+## keeper to trade (main state "shop", ui.gd's shop panel): coins for what you gather, and the shop's stock
+## (`shop_def`: Defs.SHOPS by role, plus Defs.KIND_TRADE for this kind of planet and an imported ore).
+## The folk are made again from their village's seed each time you come (same names, same looks);
+## requests (planet_state["requests"], ["req_n"]) and coins are kept.
 extends RefCounted
 
 const FolkArt := preload("res://scripts/folk_art.gd")
@@ -12,12 +19,14 @@ const NEAR := 520.0          # a village this near (cells round the planet) has 
 const FAR := 760.0           # ...and this far off they're gone again
 const TALK := 24.0           # how close to talk to someone
 const WALK := 0.55
-const MAX_WALKERS := 8
+const HURRY := 0.8           # (going somewhere: home, to work, to the tavern)
+const MAX_FOLK := 10         # residents a village (keepers besides)
+const FADE := 18             # ticks to fade out (and in again) stepping through a house's side
+const STREET := {}           # (the place "out in the street")
 
 var game
 var folk: Array = []         # main.gd Villager bodies
-var _peopled := {}           # village seed -> true (its keepers are in)
-var _out := {}               # village seed -> true (its walkers are out: by day)
+var _peopled := {}           # village seed -> true
 var shop_of = null           # the keeper you're trading with (main state "shop")
 var stats := {}              # (counts for the tests)
 
@@ -27,7 +36,6 @@ func _init(g) -> void:
 func clear() -> void:
 	folk.clear()
 	_peopled.clear()
-	_out.clear()
 	shop_of = null
 
 ## every tick on the planet
@@ -54,6 +62,20 @@ func _at(c: float, row: float, up: float) -> Vector2:
 	var a := (c + 0.5) / float(Defs.NS) * TAU
 	return Vector2(cos(a), sin(a)) * (Defs.R_TOP - row - 0.5 + up)
 
+## the hour (0-24) at a point: noon when the sun is overhead
+func hour_at(p: Vector2) -> float:
+	var sun_a: float = game.spawn_angle - 1.1 + game.time / game.DAY_LEN * TAU
+	var d := wrapf(atan2(p.y, p.x) - sun_a, -PI, PI)
+	return fposmod(12.0 - d / TAU * 24.0, 24.0)
+
+## the clock (game.time) that makes it `hour` o'clock at a point (tests; nothing else turns the clock)
+func time_for_hour(p: Vector2, hour: float) -> float:
+	var sun_a := atan2(p.y, p.x) - (12.0 - hour) / 24.0 * TAU
+	return fposmod((sun_a - game.spawn_angle + 1.1) / TAU * game.DAY_LEN, game.DAY_LEN)
+
+static func is_night(hr: float) -> bool:
+	return hr >= 22.0 or hr < 6.0
+
 ## fill the villages near you, and empty the ones you've left
 func _people() -> void:
 	var pc := _col(game.player.pos)
@@ -63,51 +85,38 @@ func _people() -> void:
 		var mid := int(t["x0"]) + int(t["w"]) / 2
 		var d := _cdist(pc, mid)
 		var tk := int(t["seed"])
-		if d < NEAR:
-			if not _peopled.has(tk):
-				_peopled[tk] = true
-				_fill(t, true)
-			var day: bool = game._local_daylight(_at(mid, game.builds.ground_row(mid), 10.0)) > 0.3
-			if day and not _out.has(tk):
-				_out[tk] = true
-				_fill(t, false)
-			elif not day and _out.has(tk):
-				var any := false
-				for v0 in folk:
-					if v0.town["seed"] == tk and not v0.keeper and not v0.gone:
-						any = true
-				if not any:
-					_out.erase(tk)              # (all home for the night: out again in the morning)
+		if d < NEAR and not _peopled.has(tk):
+			_peopled[tk] = true
+			_fill(t)
 		elif d > FAR and _peopled.has(tk):
 			_peopled.erase(tk)
-			_out.erase(tk)
 			for v in folk:
-				if v.town["seed"] == tk:
+				if int(v.town["seed"]) == tk:
 					v.gone = true
 
-## a village's keepers (`keepers`), or its walkers
-func _fill(t: Dictionary, keepers: bool) -> void:
-	var walkers := 0
+## a village's keepers and residents, each put where the hour says they'd be
+func _fill(t: Dictionary) -> void:
 	var houses: Array = t["houses"]
+	var n := 0
+	var asker := asker_index(t)
 	for hi in houses.size():
 		var h: Dictionary = houses[hi]
 		if bool(h["ruined"]):
 			continue
 		var role := String(h["role"])
-		if keepers:
-			if Defs.SHOPS.has(role):
-				# the keeper, in the middle of the ground floor
-				var kc := float(int(h["x0"]) + int(h["w"]) / 2)
-				_add(t, h, hseed(t, hi, 0), role, true, _at(kc, float(h["floor"]), 9.0))
-			continue
-		for n in (2 if role == "home" else 1):
-			if walkers >= MAX_WALKERS:
+		if Defs.SHOPS.has(role):
+			var kc := float(int(h["x0"]) + int(h["w"]) / 2)
+			var kv = _add(t, h, STREET, hseed(t, hi, 0), role, true)
+			kv.pos = _at(kc, float(h["floor"]), 9.0)
+			kv.inside = h
+		for k in (2 if role == "home" else 1):
+			if n >= MAX_FOLK:
 				break
-			var c := float(int(t["x0"]) + 12 + randi() % maxi(1, int(t["w"]) - 24))
-			_add(t, h, hseed(t, hi, n + 1), "folk", false, _at(c, float(game.builds.ground_row(int(c))), 12.0))
-			walkers += 1
-	if not keepers:
-		return
+			var v = _add(t, h, STREET if role == "home" else h, hseed(t, hi, k + 1), "folk", false)
+			v.idx = n
+			v.asker = n == asker
+			_place(v, want_place(v, hour_at(_at(float(int(t["x0"]) + int(t["w"]) / 2), 0.0, 0.0))))
+			n += 1
 	stats["filled"] = int(stats.get("filled", 0)) + 1
 	var seen: Array = game.planet_state.get("towns_seen", [])
 	if not seen.has(int(t["seed"])):
@@ -115,72 +124,210 @@ func _fill(t: Dictionary, keepers: bool) -> void:
 		game.planet_state["towns_seen"] = seen
 		game.ui.toast("%s: a village. Talk to its folk (F), and trade at its shops." % t["name"], Color(0.95, 0.85, 0.6), 4.0)
 
+## how many residents a village has (MAX_FOLK at most)
+static func resident_count(t: Dictionary) -> int:
+	var n := 0
+	for h in t["houses"]:
+		if not bool(h["ruined"]):
+			n += 2 if String(h["role"]) == "home" else 1
+	return mini(n, MAX_FOLK)
+
 static func hseed(t: Dictionary, hi: int, n: int) -> int:
 	return posmod(hash([int(t["seed"]), hi, n]), 0x7FFFFFFF)
 
-func _add(t: Dictionary, h: Dictionary, fseed: int, role: String, keeper: bool, p: Vector2) -> void:
+func _add(t: Dictionary, h: Dictionary, job: Dictionary, fseed: int, role: String, keeper: bool) -> Variant:
 	var v = game.new_villager()
 	v.fseed = fseed
 	v.role = role if keeper else "folk"
 	v.keeper = keeper
 	v.town = t
 	v.house = h
+	v.job = job
 	v.name = FolkArt.name_for(fseed)
-	v.pos = p
 	v.w = 7.0
 	v.h = 17.0
 	v.step_h = 3
-	v.goal_c = float(_col(p))
 	v.idle_t = randi_range(30, 200)
 	v.facing = 1 if randf() < 0.5 else -1
 	folk.append(v)
+	return v
 
-## a villager's day: keepers stand at their counters (turning to you); the rest walk the street, idle,
-## turn at walls and drops, run from foes, and go home at night
+# ------------------------------------------------------------------ the day ---
+
+## where someone would be at an hour: a house (home, work, the tavern), or STREET
+func want_place(v, hr: float) -> Dictionary:
+	if is_night(hr):
+		return v.house                                       # (asleep at home)
+	if hr >= 17.5:
+		var tav := _house_of(v.town, "tavern")
+		if not tav.is_empty() and v.fseed % 3 != 0:
+			return tav                                       # (an evening at the tavern)
+		return v.house if v.fseed % 2 == 0 else STREET
+	if hr < 7.0 and v.fseed % 2 == 0:
+		return v.house                                       # (not up yet)
+	if not v.job.is_empty() and hr >= 9.0 and hr < 16.0 and v.fseed % 4 != 3:
+		return v.job                                         # (at work)
+	return STREET
+
+func _house_of(t: Dictionary, role: String) -> Dictionary:
+	for h in t["houses"]:
+		if String(h["role"]) == role and not bool(h["ruined"]):
+			return h
+	return {}
+
+## the house of a village over column c (its walls and a little round them), or {}
+func _house_at(t: Dictionary, c: float) -> Dictionary:
+	for h in t["houses"]:
+		var off := fposmod(c - float(int(h["x0"])) + 4.0, float(Defs.NS))
+		if off < float(int(h["w"])) + 8.0:
+			return h
+	return {}
+
+## put someone straight where they'd be (when a village is filled)
+func _place(v, where: Dictionary) -> void:
+	v.inside = where
+	if not where.is_empty():
+		v.pos = _spot_in(where)
+	else:
+		var t: Dictionary = v.town
+		for k in 8:
+			var c := float(int(t["x0"]) + 12 + randi() % maxi(1, int(t["w"]) - 24))
+			if _house_at(t, c).is_empty() or k == 7:
+				v.pos = _street_at(c)
+				break
+	v.goal_c = float(_col(v.pos))
+
+## a spot on a house's ground floor
+func _spot_in(h: Dictionary) -> Vector2:
+	var c := float(int(h["x0"]) + 7) + randf() * maxf(1.0, float(int(h["w"]) - 14))
+	return _at(c, float(h["floor"]), 9.0)
+
+## standing in the street over column c
+func _street_at(c: float) -> Vector2:
+	return _at(c, float(game.builds.ground_row(int(c))), 11.0)
+
+## just outside a house: on side `side` (-1 its start, 1 its end), or the side nearer p
+func _outside(h: Dictionary, side: float) -> Vector2:
+	var c := float(int(h["x0"])) - 8.0 if side < 0.0 else float(int(h["x0"]) + int(h["w"])) + 7.0
+	return _street_at(c)
+
+func _nearer_side(h: Dictionary, p: Vector2) -> float:
+	var x0 := float(int(h["x0"]))
+	return -1.0 if absf(_dc(x0, p)) < absf(_dc(x0 + float(int(h["w"])), p)) else 1.0
+
+## a day's walking: keepers stand at their counters (turning to you); the rest go where the hour says,
+## stepping through a house's side to go in, out, or past it, potter about where they are, and run from foes
 func _walk(v) -> void:
 	if v.say_t > 0:
 		v.say_t -= 1
+	if v.offer_t > 0:
+		v.offer_t -= 1
+		if v.offer_t == 0:
+			v.offer = {}
+	# stepping through a house's side: fade out, move, fade in
+	if v.fade > 0:
+		v.fade -= 1
+		if v.fade == FADE:
+			v.pos = v.fade_to
+			v.vx = 0.0
+			v.vy = 0.0
+			v.inside = v.fade_in
+			v.goal_c = float(_col(v.pos))
+			v.idle_t = randi_range(20, 120)
+			v.block_t = 0
+		return
 	if not game.in_grid(v.pos, 12.0):
-		return                                   # (outside the simulated neighbourhood: still)
-	var a := atan2(v.pos.y, v.pos.x)
-	var g: float = 0.17 * game.gravity_at(v.pos)
-	v.vy = minf(v.vy + g, 5.0)
+		# outside the simulated neighbourhood (and the view): no walking, but they still keep the hours
+		if not v.keeper and game.frame % 30 == v.fseed % 30:
+			var hr0 := hour_at(v.pos)
+			var pl0 := want_place(v, hr0)
+			if pl0 != v.inside:
+				if not pl0.is_empty():
+					v.pos = _spot_in(pl0)
+				elif not v.inside.is_empty():
+					v.pos = _outside(v.inside, _nearer_side(v.inside, game.player.pos))
+				v.inside = pl0
+				v.vx = 0.0
+				v.vy = 0.0
+				v.goal_c = float(_col(v.pos))
+				stats["moved_off"] = int(stats.get("moved_off", 0)) + 1
+			v.asleep = is_night(hr0) and not v.inside.is_empty() and v.inside == v.house
+		return
+	var p: Vector2 = v.pos
+	var a := atan2(p.y, p.x)
+	v.vy = minf(v.vy + 0.17 * game.gravity_at(p), 5.0)
 	var want := 0.0
-	var pd: float = v.pos.distance_to(game.player.pos)
+	v.asleep = false
 	if v.keeper:
-		if pd < 70.0:
-			v.facing = 1 if (game.player.pos - v.pos).dot(game.basis_r(a)) > 0.0 else -1
+		if p.distance_to(game.player.pos) < 70.0:
+			v.facing = 1 if (game.player.pos - p).dot(game.basis_r(a)) > 0.0 else -1
+		elif v.role == "smithy" and game.frame % 45 == v.fseed % 45 and p.distance_to(game.player.pos) < 320.0:
+			# the smith at the anvil, by day: a spray of sparks now and then
+			var hk := hour_at(p)
+			if hk > 8.0 and hk < 18.0:
+				var at: Vector2 = p + game.basis_r(a) * float(v.facing) * 6.0 + game.basis_d(a) * 1.0
+				for k in 7:
+					game._particle(at, game.basis_r(a) * (randf() - 0.5) * 1.8 - game.basis_d(a) * randf() * 1.3, 14 + randi() % 16,
+						Color(1.0, 0.75 + randf() * 0.2, 0.3), true, 0.06)
 	else:
-		var day: bool = game._local_daylight(v.pos) > 0.22
-		var foe = _foe_near(v.pos, 70.0)
+		var hr := hour_at(p)
+		var place := want_place(v, hr)
+		var foe = _foe_near(p, 70.0) if v.inside.is_empty() else null
 		if foe != null:
-			# run from it
-			want = -signf((foe.pos - v.pos).dot(game.basis_r(a))) * 1.25
+			want = -signf((foe.pos - p).dot(game.basis_r(a))) * 1.25
 			if v.say_t <= 0 and randf() < 0.01:
 				_say(v, ["Help!", "Run!", "Get away from me!"][randi() % 3], 90)
 			stats["fled"] = int(stats.get("fled", 0)) + 1
-		elif not day:
-			# home for the night: to the house, then indoors
-			var hc := float(int(v.house["x0"]) + int(v.house["w"]) / 2)
-			var dc := _dc(hc, v.pos)
-			if absf(dc) < 6.0:
-				v.gone = true
-				return
-			want = signf(dc) * WALK
 		elif v.talk_t > 0:
 			v.talk_t -= 1
-			v.facing = 1 if (game.player.pos - v.pos).dot(game.basis_r(a)) > 0.0 else -1
+			v.facing = 1 if (game.player.pos - p).dot(game.basis_r(a)) > 0.0 else -1
+		elif place != v.inside:
+			if not v.inside.is_empty():
+				# out of where they are first, on the side toward where they're going
+				var side := _nearer_side(v.inside, p)
+				if not place.is_empty():
+					side = signf(_dc(float(int(place["x0"]) + int(place["w"]) / 2), p))
+				_step(v, _outside(v.inside, side), STREET)
+				stats["went_out"] = int(stats.get("went_out", 0)) + 1
+				return
+			# to the house, and in through its side (or past any house in the way)
+			var mid := float(int(place["x0"]) + int(place["w"]) / 2)
+			var dc := _dc(mid, p)
+			var s := signf(dc)
+			if absf(dc) < float(int(place["w"])) * 0.5 + 4.0:
+				_step(v, _spot_in(place), place)
+				stats["went_in"] = int(stats.get("went_in", 0)) + 1
+				return
+			if v.hit_wall:
+				var hb := _house_at(v.town, float(_col(p)) + s * 8.0)
+				if hb == place:
+					_step(v, _spot_in(place), place)
+					stats["went_in"] = int(stats.get("went_in", 0)) + 1
+					return
+				if not hb.is_empty():
+					_step(v, _outside(hb, s), STREET)             # (through a neighbour's house)
+					stats["passed"] = int(stats.get("passed", 0)) + 1
+					return
+				v.block_t += 1
+				if v.on_ground and v.block_t % 25 == 1:
+					v.vy = -1.75                                 # (a ledge in the way: up it)
+				if v.block_t > 90:
+					_step(v, _spot_in(place), place)             # (stuck: they know another way)
+					stats["stuck"] = int(stats.get("stuck", 0)) + 1
+					return
+			want = -s * HURRY                                  # (basis_r points toward FEWER columns)
+		elif not v.inside.is_empty() and is_night(hr):
+			v.asleep = v.inside == v.house                    # (asleep where they live)
 		elif v.idle_t > 0:
 			v.idle_t -= 1
 		else:
-			var dc2 := _dc(v.goal_c, v.pos)
+			var dc2 := _dc(v.goal_c, p)
 			if absf(dc2) < 3.0:
 				v.idle_t = randi_range(60, 260)
 				_new_goal(v)
 			else:
-				want = signf(dc2) * WALK
-				# a wall, or a drop ahead: turn back
-				if v.hit_wall or _drop_ahead(v, signf(dc2)):
+				want = -signf(dc2) * WALK
+				if v.hit_wall or (v.inside.is_empty() and _drop_ahead(v, -signf(dc2))):
 					v.idle_t = randi_range(20, 90)
 					_new_goal(v, -signf(dc2))
 					want = 0.0
@@ -190,23 +337,42 @@ func _walk(v) -> void:
 		v.anim += absf(v.vx) * 0.16
 	game.move_body(v)
 
-## the column offset from p to column c (the short way round)
-func _dc(c: float, p: Vector2) -> float:
-	var d := fposmod(c - float(_col(p)) + Defs.NS * 0.5, float(Defs.NS)) - Defs.NS * 0.5
-	return d
+## step through a house's side: fade out here, come out (or in) at `to`
+func _step(v, to: Vector2, into: Dictionary) -> void:
+	v.fade = FADE * 2
+	v.fade_to = to
+	v.fade_in = into
 
-## somewhere else along the village to walk to (on one side, if `side` is given)
+## how visible someone is (fading through a house's side)
+static func alpha_of(v) -> float:
+	if v.fade <= 0:
+		return 1.0
+	if v.fade > FADE:
+		return float(v.fade - FADE) / float(FADE)
+	return 1.0 - float(v.fade) / float(FADE)
+
+## the column offset from p to column c (the short way round). Columns count with the angle, and a body's vx
+## runs along basis_r, toward FEWER columns: to walk toward c, want -sign(offset).
+func _dc(c: float, p: Vector2) -> float:
+	return fposmod(c - float(_col(p)) + Defs.NS * 0.5, float(Defs.NS)) - Defs.NS * 0.5
+
+## somewhere else to walk to: along the village, or across the room they're in (on one side, if given)
 func _new_goal(v, side := 0.0) -> void:
-	var t: Dictionary = v.town
-	var x0 := float(int(t["x0"]) + 8)
-	var x1 := float(int(t["x0"]) + int(t["w"]) - 8)
+	var x0: float
+	var x1: float
+	if not v.inside.is_empty():
+		x0 = float(int(v.inside["x0"]) + 6)
+		x1 = float(int(v.inside["x0"]) + int(v.inside["w"]) - 6)
+	else:
+		x0 = float(int(v.town["x0"]) + 8)
+		x1 = float(int(v.town["x0"]) + int(v.town["w"]) - 8)
 	var here := float(_col(v.pos))
 	for k in 6:
-		var c := randf_range(x0, x1)
+		var c := x0 + randf() * maxf(1.0, fposmod(x1 - x0, float(Defs.NS)))
 		if side == 0.0 or signf(_dc(c, v.pos)) == side:
 			v.goal_c = c
 			return
-	v.goal_c = here + side * randf_range(20.0, 60.0)
+	v.goal_c = here + side * randf_range(8.0, 30.0)
 
 func _drop_ahead(v, dir: float) -> bool:
 	var a := atan2(v.pos.y, v.pos.x)
@@ -229,22 +395,27 @@ func _say(v, text: String, ticks := 300) -> void:
 
 # ------------------------------------------------------------------ talking ---
 
-## F near someone: a keeper opens their shop; anyone else stops and says a word or a rumour
+## F near someone: a keeper takes a letter that's for them, or opens their shop; the asker offers their
+## request (a second F takes it) or takes it back done; anyone else stops for a word
 func talk(m) -> bool:
 	var best = null
 	var bd := TALK
 	for v in folk:
 		var d: float = v.pos.distance_to(m.pos)
-		if d < bd:
+		if d < bd and v.fade == 0:
 			bd = d
 			best = v
 	if best == null:
 		return false
 	if best.keeper:
+		if _deliver_to(best):
+			return true
 		open_shop(best)
 		return true
-	best.talks += 1
 	best.talk_t = 240
+	if best.asker and not best.asleep and _request_talk(best):
+		return true
+	best.talks += 1
 	_say(best, line_for(best), 330)
 	stats["talked"] = int(stats.get("talked", 0)) + 1
 	return true
@@ -252,10 +423,12 @@ func talk(m) -> bool:
 ## what someone says: a greeting, then (in turn, as you keep asking) a rumour about the nearest guardian, a
 ## dungeon, this world's ore, its danger, the village's shops, or just village talk
 func line_for(v) -> String:
+	if v.asleep:
+		return "Mmh... wha'? It's the middle of the night. Come back in the morning."
 	var r := RandomNumberGenerator.new()
 	r.seed = v.fseed + v.talks * 977
-	var day: float = game._local_daylight(v.pos)
-	var hello: String = (["Morning!", "Good day.", "Well met, mage."] if day > 0.5 else ["Evening.", "Late to be out."])[r.randi_range(0, 1)]
+	var hr := hour_at(v.pos)
+	var hello: String = (["Morning!", "Good day.", "Well met, mage."] if hr > 5.0 and hr < 17.0 else ["Evening.", "Late to be out."])[r.randi_range(0, 1)]
 	var topics := ["lair", "dungeon", "ore", "hazard", "shops", "chat"]
 	var topic: String = topics[(v.talks + r.randi_range(0, 5)) % topics.size()]
 	var said := ""
@@ -315,6 +488,178 @@ func _way(p: Vector2, q: Vector2) -> String:
 	var d := fposmod(atan2(q.y, q.x) - atan2(p.y, p.x) + PI, TAU) - PI
 	return "to the east" if d > 0.0 else "to the west"
 
+# ----------------------------------------------------------------- requests ---
+
+## which resident of a village has a request for you (it moves on to another as you finish them)
+func asker_index(t: Dictionary) -> int:
+	var rn: Dictionary = game.planet_state.get("req_n", {})
+	return posmod(hash([int(t["seed"]), int(rn.get(str(t["seed"]), 0))]), maxi(1, resident_count(t)))
+
+func requests() -> Array:
+	if not game.planet_state.has("requests"):
+		game.planet_state["requests"] = []
+	return game.planet_state["requests"]
+
+func active_from(v) -> Variant:
+	for rq in requests():
+		if int(rq["from"]) == int(v.fseed):
+			return rq
+	return null
+
+## the mark over an asker (overlay draws it): "offer" a request for you (a gold "!"), "wait" one you took and
+## haven't done (a grey "?"), "ready" done, to hand in (a gold "?"), "" nothing (asleep, or hands full)
+func mark_of(v) -> String:
+	if not v.asker or v.asleep or v.fade > 0:
+		return ""
+	var rq = active_from(v)
+	if rq != null:
+		return "ready" if _done(rq) else "wait"
+	return "offer" if requests().size() < Defs.MAX_REQUESTS else ""
+
+## the request a village's asker has, made from the village's seed and how many you've done there:
+## {kind, from (their seed), who, town (seed), town_name, text, reward, and per kind: mat/n, foe/n/got, to (a
+## village's seed)/to_name/to_role}
+func make_request(v, kind_pick := "") -> Dictionary:
+	var t: Dictionary = v.town
+	var rn: Dictionary = game.planet_state.get("req_n", {})
+	var r := RandomNumberGenerator.new()
+	r.seed = hash([int(t["seed"]), int(rn.get(str(t["seed"]), 0)), 7])
+	var rq := {"from": int(v.fseed), "who": String(v.name), "town": int(t["seed"]), "town_name": String(t["name"])}
+	var kinds := ["fetch", "fetch"]
+	var foes: Array = Defs.creatures_of(String(t.get("biome", "")))
+	if not foes.is_empty():
+		kinds.append("hunt")
+	var others := []
+	for t2 in game.builds.towns:
+		if bool(t2["living"]) and int(t2["seed"]) != int(t["seed"]) and (not _house_of(t2, "shop").is_empty() or not _house_of(t2, "tavern").is_empty()):
+			others.append(t2)
+	if not others.is_empty():
+		kinds.append("deliver")
+	var kind: String = kinds[r.randi_range(0, kinds.size() - 1)]
+	if kind_pick != "" and kinds.has(kind_pick):
+		kind = kind_pick
+	rq["kind"] = kind
+	match kind:
+		"fetch":
+			var f: Array = Defs.FETCH[r.randi_range(0, Defs.FETCH.size() - 1)]
+			rq["mat"] = int(f[0])
+			rq["n"] = int(f[1])
+			rq["reward"] = 15 + int(f[1]) / 2
+			rq["text"] = "Could you bring me %d %s? I'd pay you %d coins." % [int(f[1]), Defs.NAMES[int(f[0])], rq["reward"]]
+		"hunt":
+			var fid: String = foes[r.randi_range(0, foes.size() - 1)]
+			rq["foe"] = "c_" + fid
+			rq["n"] = r.randi_range(2, 4)
+			rq["got"] = 0
+			rq["reward"] = 25 + 10 * int(rq["n"])
+			rq["text"] = "%ss have been at our stores. Thin them out, %d of them, and %d coins are yours." % [String(Defs.CREATURES[fid]["name"]), rq["n"], rq["reward"]]
+		"deliver":
+			var t3: Dictionary = others[r.randi_range(0, others.size() - 1)]
+			var role := "shop" if not _house_of(t3, "shop").is_empty() else "tavern"
+			rq["to"] = int(t3["seed"])
+			rq["to_name"] = String(t3["name"])
+			rq["to_role"] = role
+			var dist := _cdist(int(t["x0"]), int(t3["x0"]))
+			rq["reward"] = 30 + dist / 60
+			rq["text"] = "Would you take this letter to the %s in %s? It's %s %s. %d coins when it's there." % [String(Defs.SHOPS[role]["title"]).to_lower(),
+				t3["name"], _far(float(dist)), _way(_at(float(int(t["x0"])), 0.0, 0.0), _at(float(int(t3["x0"])), 0.0, 0.0)), rq["reward"]]
+	return rq
+
+## the asker: offer a request (a second F takes it), remind you of one, or take it back done
+func _request_talk(v) -> bool:
+	var rq = active_from(v)
+	if rq != null:
+		if _done(rq):
+			_finish(rq, v)
+		else:
+			_say(v, _remind(rq), 300)
+		return true
+	if v.offer.is_empty():
+		if requests().size() >= Defs.MAX_REQUESTS:
+			return false
+		v.offer = make_request(v)
+		v.offer_t = 600
+		_say(v, String(v.offer["text"]) + "  [F: agree]", 600)
+		return true
+	take(v)
+	return true
+
+## a second F: the request is yours
+func take(v) -> void:
+	var taken: Dictionary = v.offer if not v.offer.is_empty() else make_request(v)
+	v.offer = {}
+	v.offer_t = 0
+	requests().append(taken)
+	_say(v, ["Thank you!", "Bless you, mage.", "I knew you'd help."][randi() % 3], 180)
+	game.ui.toast("Request taken: %s" % short(taken), Color(1, 0.9, 0.55), 3.5)
+	stats["taken"] = int(stats.get("taken", 0)) + 1
+
+func _done(rq: Dictionary) -> bool:
+	match String(rq["kind"]):
+		"fetch": return int(game.player.inv[int(rq["mat"])]) >= int(rq["n"])
+		"hunt": return int(rq["got"]) >= int(rq["n"])
+	return false
+
+func _remind(rq: Dictionary) -> String:
+	match String(rq["kind"]):
+		"fetch":
+			return "Still %d %s, if you can. You've %d." % [int(rq["n"]), Defs.NAMES[int(rq["mat"])], int(game.player.inv[int(rq["mat"])])]
+		"hunt":
+			return "%d of %d so far. Keep at it." % [int(rq["got"]), int(rq["n"])]
+		"deliver":
+			return "The letter's for the %s in %s." % [String(Defs.SHOPS[rq["to_role"]]["title"]).to_lower(), rq["to_name"]]
+	return ""
+
+## the reward: coins, and now and then a Healing Draught; the village's asker moves on to someone else
+func _finish(rq: Dictionary, v) -> void:
+	if String(rq["kind"]) == "fetch":
+		game.player.inv[int(rq["mat"])] -= int(rq["n"])
+	requests().erase(rq)
+	game.items["coins"] = int(game.items.get("coins", 0)) + int(rq["reward"])
+	var extra := ""
+	if posmod(hash([int(rq["from"]), int(rq["reward"])]), 3) == 0:
+		game.items["potion"] = int(game.items.get("potion", 0)) + 1
+		extra = " and a Healing Draught"
+	var rn: Dictionary = game.planet_state.get("req_n", {})
+	rn[str(rq["town"])] = int(rn.get(str(rq["town"]), 0)) + 1
+	game.planet_state["req_n"] = rn
+	for f in folk:
+		if int(f.town["seed"]) == int(rq["town"]) and not f.keeper:
+			f.asker = f.idx == asker_index(f.town)
+	if v != null:
+		_say(v, ["Wonderful, thank you!", "Just what I needed.", "You're a good sort, mage."][randi() % 3], 200)
+	game.audio.play("coin")
+	game.ui.toast("Request done: +%d coins%s" % [int(rq["reward"]), extra], Color(1, 0.85, 0.4), 3.5)
+	stats["done"] = int(stats.get("done", 0)) + 1
+	game.save_game()
+
+## a letter for this keeper? Then it's handed over
+func _deliver_to(k) -> bool:
+	for rq in requests():
+		if String(rq["kind"]) == "deliver" and int(rq["to"]) == int(k.town["seed"]) and String(rq["to_role"]) == String(k.role):
+			_say(k, "A letter? From %s in %s! Thank you." % [rq["who"], rq["town_name"]], 220)
+			_finish(rq, null)
+			return true
+	return false
+
+## a creature died: a hunt that wanted it counts it
+func on_kill(type: String) -> void:
+	for rq in requests():
+		if String(rq["kind"]) == "hunt" and String(rq["foe"]) == type and int(rq["got"]) < int(rq["n"]):
+			rq["got"] = int(rq["got"]) + 1
+			game.ui.toast(short(rq) + (" · done: back to %s" % rq["who"] if int(rq["got"]) >= int(rq["n"]) else ""), Color(1, 0.9, 0.55), 2.5)
+			return
+
+## a request in a few words (the HUD's list)
+func short(rq: Dictionary) -> String:
+	match String(rq["kind"]):
+		"fetch": return "%d %s for %s of %s" % [int(rq["n"]), Defs.NAMES[int(rq["mat"])], rq["who"], rq["town_name"]]
+		"hunt":
+			var nm := String(Defs.CREATURES.get(String(rq["foe"]).substr(2), {}).get("name", "creature"))
+			return "Hunt %s %d/%d for %s of %s" % [nm, int(rq["got"]), int(rq["n"]), rq["who"], rq["town_name"]]
+		"deliver": return "A letter to the %s in %s, from %s" % [String(Defs.SHOPS[rq["to_role"]]["title"]).to_lower(), rq["to_name"], rq["who"]]
+	return ""
+
 # ------------------------------------------------------------------ trading ---
 
 func open_shop(v) -> void:
@@ -335,27 +680,70 @@ func coins() -> int:
 	return int(game.items.get("coins", 0))
 
 func shop_def(v) -> Dictionary:
-	return Defs.SHOPS.get(v.role, {})
+	return shop_def_for(String(v.role), String(game.planet.get("kind", "temperate")), int(game.planet.get("seed", 0)))
+
+## a shop's stock on a kind of planet: Defs.SHOPS[role], plus KIND_TRADE's, plus (the smithy, on a world
+## with its own ore) an imported ore and a better price for the world's own
+static func shop_def_for(role: String, kind: String, pseed: int) -> Dictionary:
+	var sd: Dictionary = (Defs.SHOPS.get(role, {}) as Dictionary).duplicate(true)
+	if sd.is_empty():
+		return sd
+	for it in (Defs.KIND_TRADE.get(kind, {}) as Dictionary).get(role, []):
+		(sd["sell"] as Array).append(it)
+	if role == "smithy" and Defs.KIND_ORES.has(kind):
+		var own := int(Defs.KIND_ORES[kind]["mat"])
+		var others := []
+		for k2 in Defs.KIND_ORES:
+			if int(Defs.KIND_ORES[k2]["mat"]) != own:
+				others.append(int(Defs.KIND_ORES[k2]["mat"]))
+		var im: int = others[posmod(pseed * 7 + 3, others.size())]
+		(sd["sell"] as Array).append({"name": "Imported %s x%d" % [Defs.NAMES[im], Defs.IMPORT[0]], "price": Defs.IMPORT[1], "give": {im: Defs.IMPORT[0]}})
+		sd["own_ore"] = [own, Defs.OWN_ORE[0], Defs.OWN_ORE[1]]
+	return sd
 
 ## what the keeper pays for: [material, how many, coins]
 func buys(v) -> Array:
 	var sd := shop_def(v)
 	var out := []
+	var own := -1
+	if sd.has("own_ore"):
+		own = int(sd["own_ore"][0])
+		out.append([own, int(sd["own_ore"][1]), int(sd["own_ore"][2])])
 	var b: Dictionary = sd.get("buy", {})
 	for m in b:
 		out.append([int(m), int(b[m][0]), int(b[m][1])])
 	if sd.has("ores"):
 		for m2 in range(Defs.FIREOPAL, Defs.SILVER + 1):
-			out.append([m2, int(sd["ores"][0]), int(sd["ores"][1])])
+			if m2 != own:
+				out.append([m2, int(sd["ores"][0]), int(sd["ores"][1])])
 	return out
+
+## is a thing for sale one you already have (a ward, the Heat Ward, a spell)?
+func owned(it: Dictionary) -> bool:
+	if it.has("item"):
+		return game.items.has(String(it["item"]))
+	if it.has("heat_ward"):
+		return bool(game.heat_ward)
+	if it.has("spell"):
+		return game.known.has(String(it["spell"]))
+	return false
 
 ## buy the i-th thing the keeper sells
 func buy(v, i: int) -> bool:
 	var it: Dictionary = shop_def(v)["sell"][i]
 	var price := int(it["price"])
-	if coins() < price:
+	if coins() < price or owned(it):
 		return false
 	game.items["coins"] = coins() - price
+	grant(it)
+	game.audio.play("coin")
+	game.ui.toast("Bought: %s" % it["name"], Color(1, 0.85, 0.4), 2.0)
+	stats["bought"] = int(stats.get("bought", 0)) + 1
+	game.save_game()
+	return true
+
+## what a bought thing does
+func grant(it: Dictionary) -> void:
 	var m = game.player
 	if it.has("give"):
 		for mt in it["give"]:
@@ -370,11 +758,12 @@ func buy(v, i: int) -> bool:
 		game.sleep_till_morning()
 	if it.has("chart"):
 		_chart()
-	game.audio.play("coin")
-	game.ui.toast("Bought: %s" % it["name"], Color(1, 0.85, 0.4), 2.0)
-	stats["bought"] = int(stats.get("bought", 0)) + 1
-	game.save_game()
-	return true
+	if it.has("item"):
+		game.items[String(it["item"])] = true
+	if it.has("heat_ward"):
+		game.heat_ward = true
+	if it.has("spell") and not game.known.has(String(it["spell"])):
+		game.known.append(String(it["spell"]))
 
 ## sell what the keeper pays for, one lot
 func sell(v, mat: int) -> bool:
