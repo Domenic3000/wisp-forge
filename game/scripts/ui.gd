@@ -1008,6 +1008,8 @@ func _render_forge() -> void:
 	var cats := {}
 	var order := []
 	for r in game.recipes:
+		if game.recipe_hidden(r):
+			continue
 		if not cats.has(r["cat"]):
 			cats[r["cat"]] = []
 			order.append(r["cat"])

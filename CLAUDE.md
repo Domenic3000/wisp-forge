@@ -192,11 +192,18 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Each planet kind's own ore (`Defs.KIND_ORES`, materials 51-57: Fire Opal volcanic, Abyss Pearl ocean (seabed
   only, 30+ under the sea), Sunstone desert, Bog Iron marsh, Rime Crystal frozen, Amber wild, Silver realm; temperate
   has none): gen.comp `strata` lays it as veins in its host ground at its depths (P.p[126] = material + 3 hosts,
-  P.p[127] = depth from/to, threshold, 4th host + 1000 for seabed only; set in `gpu.build_surface`). Its gear
-  (recipes with "ore": Fire Opal Focus digs x1.5 via brush B.z, Pearl Lung breath x3, Sunstone Circlet +60 mana,
-  Bog Iron Mail x0.8 damage, Rime Lens dig radius 14, Amber Heart +40 health, Silver Sigil spells x0.75 mana) is
-  locked until you've held some (`items["found_<mat>"]`, set when first dug or from a hoard). Guardians' hoards hold
-  16 of the planet's ore, wardens' 6 (`_hoard_ore`), chests a little.
+  P.p[127] = depth from/to, threshold, 4th host + 1000 for seabed only; set in `gpu.build_surface`). Guardians'
+  hoards hold 16 of the planet's ore, wardens' 6 (`_hoard_ore`), chests a little.
+- Ore gear is DATA (`Defs.GEAR`, three pieces per ore; the forge's "Ore Gear" via `Defs.gear_recipes()`): each
+  piece's "mods" are stat -> multiplier (or an amount for `GEAR_ADD` stats), and main `gear(stat, m)` combines what
+  m owns; every stat is read in ONE place: dig_rate (excavation brush B.z), breath (`_apply_gear`), dmg_taken and
+  knock (`hurt`), mana_cost (`_cast`), lava_dmg, swim, speed, jump, levitate (`_update_player`), reach (`_reach`),
+  draught_heal (`_drink`), spell_spark/spell_fireball/spell_frost (`_impact`), undead_dmg (`_hurt_enemy`: skeletons,
+  archers, wardens), calm_wild (`calm_foe`: foe_ai `think` and contact damage skip an unprovoked creature; any hurt
+  sets `Enemy.provoked`), light (a light that goes with you). max_hp, max_mana, mana_regen and dig_r are applied once
+  in `craft`. A new piece needs only a GEAR entry (and a stat hook if its stat is new). `recipe_hidden`: a piece
+  stays out of the forge until its ore is found (`ore_found`: held some, or `items["found_<mat>"]`), except each
+  ore's first, shown locked with where it's found. Test: `_test_gear` ("gear").
 - Hazards (`Defs.HAZARDS`, CLIMATES keys "cold" frozen, "sun" desert, "miasma" marsh, "deep" ocean; main `_hazards`
   / `_hazard_level`, local player only, `hazard` = the one hurting you now): cold under the open sky (x1.6 at night,
   x1.6 in wind; a fire, torch or lava within ~14 cells, `_near_warmth`, keeps it off), sun under the open sky when
@@ -227,7 +234,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   draws it over the view), `sky_fx` (overlay `_draw_sky`: "streak" shooting stars, "bolt" lightning, "rocket"),
   `sky_wisps`, `sky_vent`, `sky_stats` (counts for the tests).
 - Doings: meteors (streaks; `meteor_fall(cells)`: PROJ "meteor" from high up, `_meteorite`: a blast, fire, a lump
-  of MAGMAROCK round a STARIRON heart, hurts anyone close), eruption (`_eruption_vent`: the highest of a few spots
+  of MAGMAROCK round a few cells of STARIRON (r 1: about 2; asteroids stay the real source), hurts anyone close), eruption (`_eruption_vent`: the highest of a few spots
   110-220 cells off; smoke, glow, rumbles, PROJ "lavabomb" (splat lava) every 22-45 ticks), squall (gale, rain,
   `lightning_strike(cells)`: a drawn bolt, fire, hurts within 12), sandstorm (gale, haze, blown sand), wisps (5
   drifting lights, shy of you; touching one gives 4 Wisp Ore and 30 mana), aurora (mana regen x2 under the open
@@ -445,7 +452,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "sky", "gear", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

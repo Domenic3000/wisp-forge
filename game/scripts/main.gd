@@ -57,6 +57,7 @@ class Chest extends Body:
 
 class Enemy extends Body:
 	var type := ""
+	var provoked := false        # it has been hurt (the Amber Totem keeps only unprovoked creatures calm)
 	var d: Dictionary
 	var hp := 10.0
 	var max_hp := 10.0
@@ -338,7 +339,7 @@ class Mage extends Body:
 
 var player := Mage.new()
 ## every Wisp Forge recipe: the fixed ones and the furniture from build mode's catalogue
-var recipes: Array = Defs.RECIPES + Build.furniture_recipes()
+var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Build.furniture_recipes()
 var players: Array = [player]
 
 # the local mage's state, by its old names (so the rest of the game reads naturally)
@@ -1843,6 +1844,9 @@ func _tick() -> void:
 	BossAI.update_clouds(self)
 	if player.items.has("lantern") and not player.dead:
 		lights.append([player.pos, 70.0, Color(0.55, 0.95, 0.85)])      # (the Glowcap Lantern)
+	var gl := gear("light")
+	if gl > 0.0 and not player.dead:
+		lights.append([player.pos, gl, Color(1.15, 0.9, 0.55)])          # (the Sun Lantern)
 	_update_chests()
 	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
@@ -1910,7 +1914,7 @@ func _update_player(m: Mage) -> void:
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
 	var fin: bool = m.items.has("tidefin")       # (Thalassor's relic: you swim as fast as you walk)
-	var speed := (1.5 if fin else 0.9) if p.in_liquid else 1.5
+	var speed := ((1.5 if fin else 0.9) * gear("swim", m)) if p.in_liquid else 1.5 * gear("speed", m)
 	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
 	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02:
@@ -1935,7 +1939,7 @@ func _update_player(m: Mage) -> void:
 	if m.jump_buf > 0:
 		m.jump_buf -= 1
 		if (m.ground_t <= 6 or p.in_liquid) and p.vy > -1.0:
-			p.vy = -2.3 if p.in_liquid else (-4.6 if m.items.has("boots") else -3.9)
+			p.vy = -2.3 if p.in_liquid else (-4.6 if m.items.has("boots") else -3.9) * sqrt(gear("jump", m))
 			m.jump_buf = 0
 			audio.play("jump", m.pos, 0.6)
 			m.ground_t = 99
@@ -1946,7 +1950,7 @@ func _update_player(m: Mage) -> void:
 		audio.play("levitate", p.pos, 0.35)
 		p.vy -= g + 0.28
 		p.vy = maxf(p.vy, -2.5)
-		m.mana -= 0.27 if m.items.has("roc") else 0.55
+		m.mana -= (0.27 if m.items.has("roc") else 0.55) * gear("levitate", m)
 		if randf() < 0.6:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
 	if p.in_liquid:
@@ -1982,7 +1986,7 @@ func _update_player(m: Mage) -> void:
 	# (Kragmor's relic, the Cinderheart: fire can't burn you, lava hurts far less, the deep heat none)
 	var cinder: bool = m.items.has("cinderheart")
 	if lava > 0:
-		hurt(m, (0.08 if m.heat_ward else 0.55) * (0.3 if cinder else 1.0) * mini(lava, 6), Vector2.ZERO, false)
+		hurt(m, (0.08 if m.heat_ward else 0.55) * (0.3 if cinder else 1.0) * gear("lava_dmg", m) * mini(lava, 6), Vector2.ZERO, false)
 	if fire > 0 and not cinder:
 		hurt(m, (0.02 if m.heat_ward else 0.08) * mini(fire, 6), Vector2.ZERO, false)
 	var sa: Vector4 = gpu.surf_at(a)
@@ -2033,14 +2037,14 @@ func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 		return
 	if m.items.has("ironbark"):
 		dmg *= 0.75
-	if m.items.has("bogmail"):
-		dmg *= 0.8
+	dmg *= gear("dmg_taken", m)
 	if hit:
 		if m.iframes > 0:
 			return
 		m.iframes = 40
-		m.vx += knock.x
-		m.vy += knock.y
+		var kk := gear("knock", m)
+		m.vx += knock.x * kk
+		m.vy += knock.y * kk
 	m.hp -= dmg
 	if m.local:
 		hurt_flash = minf(1.0, hurt_flash + (0.6 if hit else 0.05))
@@ -2083,7 +2087,7 @@ func _staff(m: Mage, aim: Vector2) -> Array:
 
 func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	var s: Dictionary = Defs.SPELLS[id]
-	var cost := float(s["mana"]) * (0.75 if m.items.has("silver") else 1.0)     # (the Silver Sigil)
+	var cost := float(s["mana"]) * gear("mana_cost", m)     # (the Silver Sigil)
 	if m.cast_cd > 0 or m.mana < cost:
 		return
 	m.cast_frame = frame
@@ -2152,8 +2156,9 @@ func _spawn_proj(type: String, p: Vector2, v: Vector2, owner: String) -> void:
 func _reach(m: Mage, aim: Vector2) -> Vector2:
 	var c := m.pos
 	var d := aim - c
-	if d.length() > REACH:
-		d = d.normalized() * REACH
+	var rl := REACH * gear("reach", m)
+	if d.length() > rl:
+		d = d.normalized() * rl
 	return c + d
 
 func _excavate(m: Mage, aim: Vector2) -> void:
@@ -2167,7 +2172,7 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 		_dig_open_t = 30
 		_try_open_chest()
 	# (the Fire Opal Focus digs half again as fast: brush.comp's rate)
-	brushes.append([p, m.dig_r, 1, 0, m.tier, 0.5 if m.items.has("opal") else 0.0, 0, m.slot])
+	brushes.append([p, m.dig_r, 1, 0, m.tier, gear("dig_rate", m) - 1.0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
 
 ## Shift + right mouse: take background tiles (a building's back walls, furniture, plants). It is how
@@ -2542,13 +2547,14 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 	match type:
 		"spark":
 			if e != null:
-				_hurt_enemy(e, pd["dmg"], kb, -0.6)
+				_hurt_enemy(e, float(pd["dmg"]) * gear("spell_spark"), kb, -0.6)
 				if items.has("rimefang"):
 					e.slow = maxi(e.slow, 150)
 			elif hit:
 				brushes.append([p, 2.4, 6, 0, tier, 0, 0])
 		"fireball":
-			_explode(p, 10.0, maxi(1, tier), 1, 38.0)
+			var fk := gear("spell_fireball")
+			_explode(p, 10.0 * fk, maxi(1, tier), 1, 38.0 * fk)
 		"quake":
 			_explode(p, 22.0, mini(3, tier + 1), 2, 70.0)
 		"starfall":
@@ -2558,10 +2564,11 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb * 2.0, -1.0)
 		"frost":
-			brushes.append([p, 10.0, 4, 0, 0, 0, 0])
+			var rk := gear("spell_frost")
+			brushes.append([p, 10.0 * rk, 4, 0, 0, 0, 0])
 			for en in enemies:
-				if en.pos.distance_to(p) < 13.0:
-					en.slow = 200
+				if en.pos.distance_to(p) < 13.0 * rk:
+					en.slow = int(200 * rk)
 			if e != null:
 				_hurt_enemy(e, pd["dmg"], kb, 0.0)
 		"arrow":
@@ -2630,9 +2637,16 @@ func spawn_enemy(type: String, p: Vector2) -> Enemy:
 	enemies.append(e)
 	return e
 
+## a wild creature the Amber Totem keeps calm toward m (until something hurts it)
+func calm_foe(e: Enemy, m: Mage) -> bool:
+	return not e.boss and not e.provoked and e.type.begins_with("c_") and gear("calm_wild", m) > 1.5
+
 func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
 	if items.has("sunidol"):
 		dmg *= 1.25
+	if e.type == "skeleton" or e.type == "archer" or e.d.get("warden", false):
+		dmg *= gear("undead_dmg")                       # (the Silverbane Charm)
+	e.provoked = true
 	e.hp -= dmg
 	e.flash = 6
 	audio.play("hit", e.pos, 0.7)
@@ -3106,9 +3120,10 @@ func _update_enemies() -> void:
 			var l2 := to_grid(e.pos)
 			if box_count(l2.x - e.w * 0.5, l2.y - e.h * 0.5, e.w, e.h, Defs.LAVA) > 0:
 				_hurt_enemy(e, 0.6, 0, 0)
-		if not tgt.dead and not e.under and absf(dx) < (e.w + tgt.w) * 0.5 and absf(dy) < (e.h + tgt.h) * 0.5:
+		var calm := calm_foe(e, tgt)
+		if not tgt.dead and not e.under and not calm and absf(dx) < (e.w + tgt.w) * 0.5 and absf(dy) < (e.h + tgt.h) * 0.5:
 			hurt(tgt, float(e.d["dmg"]), Vector2(signf(dx) * 2.2, -1.6), true)
-		if not tgt.dead and not e.under and not e.trail.is_empty() and e.awake:
+		if not tgt.dead and not e.under and not calm and not e.trail.is_empty() and e.awake:
 			# a serpent's body hurts too
 			for sk in e.trail.size():
 				if e.trail[sk].distance_to(tgt.pos) < BossArt.seg_radius(e.d["def"]["body"], sk) + 4.0:
@@ -3458,19 +3473,20 @@ func _sky_meteors() -> void:
 		_sky_next = randi_range(500, 900)
 		meteor_fall(randf_range(60.0, 200.0) * (1.0 if randf() < 0.5 else -1.0))
 
-## a meteorite comes down `cells` along the ground from you: a fiery rock from high up
-func meteor_fall(cells: float) -> void:
+## a meteorite comes down `cells` along the ground from you: a fiery rock from high up, `slant` cells
+## to one side of straight above
+func meteor_fall(cells: float, slant := 110.0) -> void:
 	var to := _ground_off(cells)
 	var upn := to.normalized()
 	var side := Vector2(upn.y, -upn.x) * (1.0 if randf() < 0.5 else -1.0)
-	var from := to + upn * 230.0 + side * 110.0
+	var from := to + upn * 230.0 + side * slant
 	_spawn_proj("meteor", from, (to - from).normalized() * float(Defs.PROJ["meteor"]["speed"]), "sky")
 	sky_stats["meteor_falls"] = int(sky_stats.get("meteor_falls", 0)) + 1
 
 ## where it lands: a blast, fire, and a lump of seared rock round a heart of star iron
 func _meteorite(p: Vector2) -> void:
 	_explode(p, 7.0, 2, 1, 30.0)
-	brushes.append([p, 1.4, 3, Defs.STARIRON, 0, 0, 0])
+	brushes.append([p, 1.0, 3, Defs.STARIRON, 0, 0, 0])      # (a few cells: asteroids stay the real source)
 	brushes.append([p, 3.3, 3, Defs.MAGMAROCK, 0, 0, 0])
 	shake = maxf(shake, 9.0)
 	for m in players:
@@ -3748,8 +3764,8 @@ func recipe_done(r: Dictionary) -> bool:
 		"ward": return heat_ward
 		"skiff": return items.has("skiff")
 		"drive": return skiff_reach() > int(planet.get("index", 0))
-		"rimelens": return dig_r >= 14.0
-	if r.has("ore") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam":
+		"rimelens": return items.has("rimelens") or dig_r >= 14.0
+	if r.has("gear") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam":
 		return items.has(String(r["id"]))
 	return false
 
@@ -3767,12 +3783,42 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier4": return tier == 3 and items.has("heart")
 		"drive": return tier >= 4 and items.has("skiff")
 		"engine", "beam": return items.has("skiff")
-		"rimelens": return dig_r >= 11.0 and (player.inv[Defs.RIMECRYSTAL] > 0 or items.has("found_%d" % Defs.RIMECRYSTAL))
-	if r.has("ore"):
-		# (gear from a planet kind's own ore: shown once you've found some)
-		var om := int(r["ore"])
-		return player.inv[om] > 0 or items.has("found_%d" % om)
+	if r.has("gear"):
+		# (gear from a planet kind's own ore: once you've found some, and what it builds on)
+		var need := String(Defs.GEAR[r["id"]].get("needs", ""))
+		if need == "wide" and dig_r < 11.0:
+			return false
+		return ore_found(int(r["ore"]))
 	return true
+
+func ore_found(om: int) -> bool:
+	return player.inv[om] > 0 or items.has("found_%d" % om)
+
+## Ore gear stays out of the forge's list until you've found its ore, but for the first piece of each
+## ore, which shows (locked) where that ore is found.
+func recipe_hidden(r: Dictionary) -> bool:
+	if not r.has("gear") or ore_found(int(r["ore"])):
+		return false
+	for id in Defs.GEAR:
+		if int(Defs.GEAR[id]["ore"]) == int(r["ore"]):
+			return id != r["id"]
+	return false
+
+## What the gear you own does to a stat (Defs.GEAR "mods"): multipliers multiply, the GEAR_ADD stats add
+## up. 1.0 (or 0.0 for an added one) with none.
+func gear(stat: String, m: Mage = null) -> float:
+	var who: Mage = m if m != null else player
+	var add: bool = Defs.GEAR_ADD.has(stat)
+	var v := 0.0 if add else 1.0
+	for id in Defs.GEAR:
+		var mods: Dictionary = Defs.GEAR[id]["mods"]
+		if mods.has(stat) and who.items.has(id):
+			v = v + float(mods[stat]) if add else v * float(mods[stat])
+	return v
+
+## what owning gear sets once (on forging and on loading): your breath
+func _apply_gear() -> void:
+	max_breath = 600.0 * gear("breath")
 
 func recipe_lock_text(r: Dictionary) -> String:
 	match r["id"]:
@@ -3783,9 +3829,8 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
 		"mend": return "Find the Scroll of Mending in a chest"
-		"rimelens":
-			if dig_r < 11.0:
-				return "Needs Wide Excavation"
+	if r.has("gear") and String(Defs.GEAR[r["id"]].get("needs", "")) == "wide" and dig_r < 11.0 and ore_found(int(r["ore"])):
+		return "Needs Wide Excavation"
 	if r.has("ore"):
 		var kd := Defs.ore_kind(int(r["ore"]))
 		return "%s is found only on %s worlds" % [Defs.NAMES[int(r["ore"])], kd]
@@ -3811,7 +3856,7 @@ func _drink(m: Mage) -> bool:
 		return false
 	items["potion"] = n - 1
 	m.potion_cd = Defs.POTION_CD
-	m.heal_left += Defs.POTION_HEAL
+	m.heal_left += Defs.POTION_HEAL * gear("draught_heal", m)
 	audio.play("water", m.pos, 0.5)
 	ui.toast("Healing Draught: %d left" % (n - 1), Color(0.6, 1.0, 0.65), 1.5)
 	return true
@@ -3861,27 +3906,25 @@ func craft(r: Dictionary) -> bool:
 			mana_regen = 0.32
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
-		"opal", "bogmail", "silver", "hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam":
+		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam":
 			items[String(r["id"])] = true
-		"pearlcharm":
-			items["pearlcharm"] = true
-			max_breath = 1800.0
-		"sunstone":
-			items["sunstone"] = true
-			max_mana += 60
-			mana_regen += 0.08
-		"rimelens":
-			dig_r = 14.0
-		"amber":
-			items["amber"] = true
-			max_hp += 40
-			hp += 40
 		"drive":
 			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
 			var nxt := String(Defs.make_planet(int(items["reach"]))["name"])
 			ui.toast("Core Drive fitted: your skiff can reach %s now. Fly up out of the sky and head for it." % nxt, Color(1, 0.85, 0.4), 6.0)
 			save_game()
 			return true
+	if r.has("gear"):
+		# ore gear: owned from now on; the saved numbers it raises are raised once, here
+		items[String(r["id"])] = true
+		var mods: Dictionary = Defs.GEAR[r["id"]]["mods"]
+		max_hp += float(mods.get("max_hp", 0.0))
+		hp += float(mods.get("max_hp", 0.0))
+		max_mana += float(mods.get("max_mana", 0.0))
+		mana_regen += float(mods.get("mana_regen", 0.0))
+		if mods.has("dig_r"):
+			dig_r = maxf(dig_r, float(mods["dig_r"]))
+		_apply_gear()
 	if not r.has("spell") and not r.has("give"):
 		ui.toast("%s forged!" % r["name"], Color(1, 0.82, 0.23), 4.0)
 	save_game()
@@ -5086,7 +5129,7 @@ func _apply_save(s: Dictionary) -> void:
 	mana_regen = float(s.get("mana_regen", 0.22))
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
-	max_breath = 1800.0 if items.has("pearlcharm") else 600.0
+	_apply_gear()
 	if int(s.get("cnt", 0)) < 2:
 		# (before the GPU's counters moved, digging what the staff couldn't cut counted as star iron)
 		player.inv[Defs.STARIRON] = 0

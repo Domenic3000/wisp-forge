@@ -44,6 +44,11 @@ static func think(g, e, tgt, dist: float) -> void:
 		e.see = false
 		e.alert_t = 0
 		return
+	if g.calm_foe(e, tgt):
+		# (the Amber Totem: a wild creature leaves you be until you strike it)
+		e.see = false
+		e.alert_t = 0
+		return
 	var ai: Dictionary = e.d.get("ai", {})
 	var sight: float = ai.get("sight", SIGHT)
 	e.look_t -= 1

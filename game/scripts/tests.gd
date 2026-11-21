@@ -44,12 +44,120 @@ func _cell_pos(col: int, row: int, ax := -1, aw := 1) -> Vector2:
 		return Vector2(cos(a), sin(a)) * (Defs.R_TOP - (float(row) + 0.5))
 	return Defs.stamp_pos(row, ax, aw, Defs.k_of(col, ax))
 
+## Ore gear (Defs.GEAR): each piece is hidden at the forge until its ore is found (but for the first of
+## each ore, shown locked), then forged with its cost and does what its "mods" say (main `gear`); and a few
+## of them tried for real: the Silver Sigil's cheaper spells, the Bog Iron Spade's reach, the Amber Totem's
+## calm creatures. Everything is put back as it was afterwards.
+func _test_gear() -> void:
+	var ge_items0: Dictionary = g.items.duplicate(true)
+	var ge_vals0 := [g.max_hp, g.max_mana, g.mana_regen, g.dig_r, g.hp]
+	var ge_inv0: PackedInt32Array = g.player.inv.duplicate()
+	for ge_k in g.items.keys():
+		if String(ge_k).begins_with("found_"):
+			g.items.erase(ge_k)
+	for ge_om in range(Defs.FIREOPAL, Defs.SILVER + 1):
+		g.player.inv[ge_om] = 0
+	# hidden: all but the first piece of each ore, until it's found
+	var ge_hid := 0
+	var ge_first := 0
+	for ge_r in g.recipes:
+		if ge_r.has("gear"):
+			if g.recipe_hidden(ge_r):
+				ge_hid += 1
+			elif not g.recipe_unlocked(ge_r):
+				ge_first += 1
+	var ge_hide_ok := ge_first == Defs.KIND_ORES.size() and ge_hid == Defs.GEAR.size() - Defs.KIND_ORES.size()
+	# forge each, and check its stats
+	g.dig_r = maxf(g.dig_r, 11.0)                 # (the Rime Lens builds on Wide Excavation)
+	var ge_bad := []
+	for ge_id in Defs.GEAR:
+		var ge_d: Dictionary = Defs.GEAR[ge_id]
+		var ge_rec: Dictionary = {}
+		for ge_r2 in g.recipes:
+			if ge_r2["id"] == ge_id:
+				ge_rec = ge_r2
+		var ge_mods: Dictionary = ge_d["mods"]
+		var ge_before := {}
+		for ge_st in ge_mods:
+			ge_before[ge_st] = g.gear(ge_st)
+		var ge_hp0: float = g.max_hp
+		var ge_mana0: float = g.max_mana
+		for ge_c in ge_d["cost"]:
+			g.player.inv[int(ge_c)] += int(ge_d["cost"][ge_c])
+		var ge_made: bool = g.craft(ge_rec) and g.recipe_done(ge_rec)
+		var ge_good := ge_made
+		for ge_st2 in ge_mods:
+			var ge_v := float(ge_mods[ge_st2])
+			match String(ge_st2):
+				"max_hp": ge_good = ge_good and absf(g.max_hp - ge_hp0 - ge_v) < 0.01
+				"max_mana": ge_good = ge_good and absf(g.max_mana - ge_mana0 - ge_v) < 0.01
+				"mana_regen": pass
+				"dig_r": ge_good = ge_good and g.dig_r >= ge_v
+				_:
+					var ge_want: float = float(ge_before[ge_st2]) + ge_v if Defs.GEAR_ADD.has(ge_st2) else float(ge_before[ge_st2]) * ge_v
+					ge_good = ge_good and absf(g.gear(ge_st2) - ge_want) < 0.001
+		if not ge_good:
+			ge_bad.append(ge_id)
+	var ge_breath: float = g.max_breath
+	# the Silver Sigil: a Spark Bolt costs a quarter less
+	g.player.mana = g.player.max_mana
+	g.player.cast_cd = 0
+	var ge_m0: float = g.player.mana
+	g._cast(g.player, "spark", g.player.pos + g.player.pos.normalized() * 40.0)
+	var ge_spent: float = ge_m0 - g.player.mana
+	# the Bog Iron Spade: digging reaches further
+	var ge_reach: float = g._reach(g.player, g.player.pos + g.player.pos.normalized().orthogonal() * 500.0).distance_to(g.player.pos)
+	# the Amber Totem: a wild creature beside you leaves you be, until you strike it
+	var ge_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 30, 70, 50, 4)
+	var ge_a: float = (float(ge_st.x) + 10.5) / float(Defs.NS) * TAU
+	var ge_b: float = (float(ge_st.x) + 40.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(ge_a), sin(ge_a)) * (g.gpu.surf_at(ge_a).x + 10.0))
+	await _frames(30)
+	for ge_e in g.enemies.duplicate():
+		if not ge_e.boss and ge_e.guard_id < 0:
+			g.enemies.erase(ge_e)
+	var ge_god0: bool = g.test_god
+	g.test_god = false
+	g.spawn_timer = 999999
+	g.player.hp = g.player.max_hp
+	var ge_cr = g.spawn_enemy("c_boar", Vector2(cos(ge_b), sin(ge_b)) * (g.gpu.surf_at(ge_b).x + 9.0))
+	var ge_calm := true
+	for ge_f in 120:
+		await _frames(1)
+		if ge_cr.see or ge_cr.alert_t > 0:
+			ge_calm = false
+	var ge_hp1: float = g.player.hp
+	g._hurt_enemy(ge_cr, 1.0, 0.0, 0.0)
+	var ge_roused := false
+	for ge_f2 in 60:
+		await _frames(1)
+		if ge_cr.see or ge_cr.alert_t > 0:
+			ge_roused = true
+	g.enemies.erase(ge_cr)
+	g.test_god = ge_god0
+	g.spawn_timer = 600
+	# (everything back as it was)
+	g.items.clear()
+	for ge_k2 in ge_items0:
+		g.items[ge_k2] = ge_items0[ge_k2]
+	g.max_hp = ge_vals0[0]
+	g.max_mana = ge_vals0[1]
+	g.mana_regen = ge_vals0[2]
+	g.dig_r = ge_vals0[3]
+	g.player.hp = minf(float(ge_vals0[4]), g.max_hp)
+	for ge_i in ge_inv0.size():
+		g.player.inv[ge_i] = ge_inv0[ge_i]
+	g._apply_gear()
+	_ok("ore gear: hidden until its ore is found, forged, and each piece does what it says", ge_hide_ok and ge_bad.is_empty() and absf(ge_spent - 3.0) < 0.01 and absf(ge_reach - g.REACH * 1.4) < 0.5 and ge_calm and ge_hp1 >= g.player.max_hp - 0.01 and ge_roused and ge_breath > 1700.0,
+		"%d first pieces shown locked, %d hidden (of %d); forged all but %s; a Spark Bolt cost %.2f mana with the Silver Sigil; the spade reaches %.1f; breath %.0f; the boar beside you with the Amber Totem: calm %s (your health %.0f of %.0f), struck: it hunts %s" % [ge_first, ge_hid, Defs.GEAR.size(), str(ge_bad), ge_spent, ge_reach, ge_breath, ge_calm, ge_hp1, g.max_hp, ge_roused])
+
 ## Sky events: each started on its own for a few seconds (they never start by themselves in test mode),
 ## at night for the night ones, on a clear stretch of open ground, with a picture of each
 ## (saves/shots/sky_<id>.png). main's `sky_stats` counts what each did.
 func _test_sky() -> void:
 	var sk_god0: bool = g.test_god
 	g.test_god = true
+	g.spawn_timer = 999999
 	var sk_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 60, 80, 6)
 	var sk_a: float = (float(sk_st.x) + 8.5) / float(Defs.NS) * TAU
 	var sk_at: Vector2 = Vector2(cos(sk_a), sin(sk_a)) * (g.gpu.surf_at(sk_a).x + 12.0)
@@ -78,7 +186,7 @@ func _test_sky() -> void:
 		var sk_tint := 0.0
 		if sk_id == "meteors":
 			g._sky_next = 9999
-			g.meteor_fall(44.0)
+			g.meteor_fall(44.0, 0.0)          # (straight down: on a slant it can meet a building first)
 		if sk_id == "hail":
 			g.test_god = false
 			g.player.hp = g.player.max_hp
@@ -140,6 +248,7 @@ func _test_sky() -> void:
 		g.end_sky_event()
 	g.time = sk_time0
 	g.test_god = sk_god0
+	g.spawn_timer = 600
 	var sk_all := true
 	var sk_bad := []
 	for sk_k in sk_ok:
@@ -413,6 +522,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_sky()
+		elif only == "gear":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_gear()
 		elif only == "mines":
 			for mi_info in g.builds.infos:
 				if mi_info["meta"].has("mine") and int(mi_info.get("unsound", 0)) > 0:
@@ -2362,6 +2475,7 @@ func run() -> void:
 			g.enemies.erase(hz_e)
 	var hz_god0: bool = g.test_god
 	var hz_time0: float = g.time
+	g.spawn_timer = 999999                     # (no foe wanders in and muddles the sums)
 	g.test_god = false
 	await _frames(8)
 	var hz_open: bool = g.exposed
@@ -2385,6 +2499,7 @@ func run() -> void:
 		g.clim[hz_k] = 0.0
 		hz_res[hz_k] = [hz_bare, hz_ward, hz_was]
 	g.time = hz_time0
+	g.spawn_timer = 600
 	# (and digging what the staff can't cut no longer counts as star iron: the GPU's counters moved)
 	var hz_si0: int = g.player.inv[Defs.STARIRON]
 	var hz_up: Vector2 = g.player.pos.normalized()
@@ -2535,7 +2650,12 @@ func run() -> void:
 		for k in wide["cost"]:
 			g.player.inv[int(k)] += int(wide["cost"][k])
 		crafted = g.craft(wide) and g.dig_r >= 11.0
-	_ok("the Wisp Forge lists recipes and crafts", cards == g.recipes.size() and crafted, "%d of %d recipe cards, crafting %s" % [cards, g.recipes.size(), "works" if crafted else "failed"])
+	var shown := 0
+	for r2 in g.recipes:
+		if not g.recipe_hidden(r2):
+			shown += 1
+	await _test_gear()
+	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
 
 	# ---- a building left hanging comes down as a whole once you dig at any part of it ----
 	# (a stone box with a plank back wall, stamped in the air the way the generator stamps buildings:

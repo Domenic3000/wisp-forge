@@ -665,6 +665,47 @@ const KIND_ORES := {
 }
 const DRIVE_ORE := 12
 
+## Gear forged from each kind of planet's own ore (the Wisp Forge's "Ore Gear"; `gear_recipes`). What a
+## piece does is its "mods": stat -> a multiplier, or for the stats in GEAR_ADD an amount added; main
+## `gear(stat)` combines what you own, and each stat is used in one place (dig_rate: the excavation brush;
+## breath; dmg_taken and knock: `hurt`; mana_cost: `_cast`; lava_dmg; swim; speed; jump; levitate;
+## reach: `_reach`; draught_heal: `_drink`; spell_spark / spell_fireball / spell_frost: their impacts;
+## undead_dmg: `_hurt_enemy`; calm_wild: foe_ai `think`; light: a light that goes with you). max_hp, max_mana,
+## mana_regen and dig_r are applied once, when it's forged (they are saved numbers). A piece shows at the
+## forge once you've held some of its ore; the first of each ore shows sooner, locked, saying where it's found.
+const GEAR_ADD := ["light", "max_hp", "max_mana", "mana_regen"]
+const GEAR := {
+	"opal": {"name": "Fire Opal Focus", "ore": FIREOPAL, "cost": {FIREOPAL: 14, OBSIDIAN: 6, GLASS: 4}, "mods": {"dig_rate": 1.5}, "desc": "Your staff digs half again as fast."},
+	"opalflame": {"name": "Opal Flamecore", "ore": FIREOPAL, "cost": {FIREOPAL: 10, EMBER: 8, COAL: 10}, "mods": {"spell_fireball": 1.5}, "desc": "Fireball blasts half again as wide and hard."},
+	"firetreads": {"name": "Firewalker Treads", "ore": FIREOPAL, "cost": {FIREOPAL: 12, OBSIDIAN: 8, PLANK: 4}, "mods": {"lava_dmg": 0.15}, "desc": "Lava hurts you far less."},
+	"pearlcharm": {"name": "Pearl Lung", "ore": ABYSSPEARL, "cost": {ABYSSPEARL: 12, GLASS: 4, COPPER: 6}, "mods": {"breath": 3.0}, "desc": "Your breath lasts three times as long."},
+	"pearlfins": {"name": "Pearl Fins", "ore": ABYSSPEARL, "cost": {ABYSSPEARL: 10, LEAF: 10, GLASS: 2}, "mods": {"swim": 1.6}, "desc": "You swim much faster."},
+	"pearlvial": {"name": "Pearl Vial", "ore": ABYSSPEARL, "cost": {ABYSSPEARL: 8, GLASS: 6, CRYSTAL: 1}, "mods": {"draught_heal": 1.6}, "desc": "Your Healing Draughts heal 60% more."},
+	"sunstone": {"name": "Sunstone Circlet", "ore": SUNSTONE, "cost": {SUNSTONE: 12, COPPER: 8, CRYSTAL: 2}, "mods": {"max_mana": 60.0, "mana_regen": 0.08}, "desc": "+60 max mana, and it comes back faster."},
+	"sunlantern": {"name": "Sun Lantern", "ore": SUNSTONE, "cost": {SUNSTONE: 8, GLASS: 6, COPPER: 4}, "mods": {"light": 44.0}, "desc": "A warm light goes with you, in caves and at night."},
+	"sunspark": {"name": "Sunspark Focus", "ore": SUNSTONE, "cost": {SUNSTONE: 12, COPPER: 10, WISP: 4}, "mods": {"spell_spark": 1.6}, "desc": "Your Spark Bolts hit 60% harder."},
+	"bogmail": {"name": "Bog Iron Mail", "ore": BOGIRON, "cost": {BOGIRON: 16, COPPER: 8, PLANK: 6}, "mods": {"dmg_taken": 0.8}, "desc": "You take a fifth less damage."},
+	"bogshield": {"name": "Bog Iron Bulwark", "ore": BOGIRON, "cost": {BOGIRON: 14, PLANK: 6, COPPER: 4}, "mods": {"knock": 0.3}, "desc": "Blows barely knock you about."},
+	"bogspade": {"name": "Bog Iron Spade", "ore": BOGIRON, "cost": {BOGIRON: 12, WOOD: 10, COPPER: 4}, "mods": {"reach": 1.4}, "desc": "You dig from further away."},
+	"rimelens": {"name": "Rime Lens", "ore": RIMECRYSTAL, "cost": {RIMECRYSTAL: 12, GLASS: 6, WISP: 4}, "mods": {"dig_r": 14.0}, "needs": "wide", "desc": "A still wider excavation (radius 11 to 14). Needs Wide Excavation."},
+	"rimeheart": {"name": "Rime Heart", "ore": RIMECRYSTAL, "cost": {RIMECRYSTAL: 10, FROST: 8, SNOW: 12}, "mods": {"spell_frost": 1.6}, "desc": "Frostbite freezes wider and slows foes longer."},
+	"rimewings": {"name": "Rime Wings", "ore": RIMECRYSTAL, "cost": {RIMECRYSTAL: 12, GLASS: 4, LEAF: 8}, "mods": {"levitate": 0.5}, "desc": "Levitating costs half the mana."},
+	"amber": {"name": "Amber Heart", "ore": AMBER, "cost": {AMBER: 12, SHROOM: 8, LEAF: 10}, "mods": {"max_hp": 40.0}, "desc": "+40 max health."},
+	"ambertotem": {"name": "Amber Totem", "ore": AMBER, "cost": {AMBER: 10, WOOD: 12, LEAF: 8}, "mods": {"calm_wild": 2.0}, "desc": "Wild creatures leave you be unless you strike them first."},
+	"amberanklet": {"name": "Amber Anklet", "ore": AMBER, "cost": {AMBER: 8, COPPER: 6, LEAF: 6}, "mods": {"speed": 1.15}, "desc": "You run a little faster."},
+	"silver": {"name": "Silver Sigil", "ore": SILVER, "cost": {SILVER: 14, CRYSTAL: 2, WISP: 6}, "mods": {"mana_cost": 0.75}, "desc": "Your spells cost a quarter less mana."},
+	"silverbane": {"name": "Silverbane Charm", "ore": SILVER, "cost": {SILVER: 10, BRICK: 6, WISP: 4}, "mods": {"undead_dmg": 2.0}, "desc": "Your spells hurt the dead (skeletons, archers and wardens) twice as hard."},
+	"silverthread": {"name": "Silver-Thread Cloak", "ore": SILVER, "cost": {SILVER: 12, LEAF: 10, PLANK: 4}, "mods": {"jump": 1.2}, "desc": "You jump higher."},
+}
+
+## the forge's recipes for the ore gear (main appends them to its `recipes`)
+func gear_recipes() -> Array:
+	var out := []
+	for id in GEAR:
+		var gd: Dictionary = GEAR[id]
+		out.append({"id": id, "cat": "Ore Gear", "name": gd["name"], "cost": gd["cost"], "ore": gd["ore"], "desc": gd["desc"], "gear": true})
+	return out
+
 ## a planet's own ore (KIND_ORES), or -1 (a temperate world has none of its own)
 func kind_ore(pl: Dictionary) -> int:
 	var ko: Dictionary = KIND_ORES.get(String(pl.get("kind", "temperate")), {})
@@ -953,14 +994,6 @@ const RECIPES := [
 	{"id": "ward", "cat": "Staff & Body", "name": "Heat Ward", "cost": {EMBER: 15, FROST: 10, OBSIDIAN: 6}, "desc": "Survive the mantle heat."},
 	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISP: 6}, "desc": "Staff tier 3: Obsidian and Magma Rock."},
 	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISP: 15}, "desc": "Staff tier 4: harvest the Planet Core. Needs the Ember Heart."},
-	# gear from each kind of planet's own ore (locked until you've found some: recipe_unlocked)
-	{"id": "opal", "cat": "Staff & Body", "name": "Fire Opal Focus", "cost": {FIREOPAL: 14, OBSIDIAN: 6, GLASS: 4}, "ore": FIREOPAL, "desc": "Your staff digs half again as fast."},
-	{"id": "pearlcharm", "cat": "Staff & Body", "name": "Pearl Lung", "cost": {ABYSSPEARL: 12, GLASS: 4, COPPER: 6}, "ore": ABYSSPEARL, "desc": "Your breath lasts three times as long."},
-	{"id": "sunstone", "cat": "Staff & Body", "name": "Sunstone Circlet", "cost": {SUNSTONE: 12, COPPER: 8, CRYSTAL: 2}, "ore": SUNSTONE, "desc": "+60 max mana, and it comes back faster."},
-	{"id": "bogmail", "cat": "Staff & Body", "name": "Bog Iron Mail", "cost": {BOGIRON: 16, COPPER: 8, PLANK: 6}, "ore": BOGIRON, "desc": "You take a fifth less damage."},
-	{"id": "rimelens", "cat": "Staff & Body", "name": "Rime Lens", "cost": {RIMECRYSTAL: 12, GLASS: 6, WISP: 4}, "ore": RIMECRYSTAL, "desc": "A still wider excavation (radius 11 to 14). Needs Wide Excavation."},
-	{"id": "amber", "cat": "Staff & Body", "name": "Amber Heart", "cost": {AMBER: 12, SHROOM: 8, LEAF: 10}, "ore": AMBER, "desc": "+40 max health."},
-	{"id": "silver", "cat": "Staff & Body", "name": "Silver Sigil", "cost": {SILVER: 14, CRYSTAL: 2, WISP: 6}, "ore": SILVER, "desc": "Your spells cost a quarter less mana."},
 	# wards: each bears one kind of planet's hazard (HAZARDS); a guardian's relic can do it instead
 	{"id": "hearth", "cat": "Wards", "name": "Hearth Charm", "cost": {EMBER: 10, COAL: 16, COPPER: 6}, "desc": "Keeps a frozen world's cold off you under the open sky."},
 	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPER: 6}, "desc": "Shades you from a desert world's midday sun."},
