@@ -216,6 +216,25 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   across the view as particles. Prism Crystal is rarer (gen.comp thresholds, chest loot), and so are draughts in
   chests (0.1 + rare x 0.3).
 
+## Sky events (main.gd `_update_sky_events`; user, 20 Nov: "weather and sky events for each kind of planet")
+- `Defs.SKY_EVENTS`: meteors, eruption, squall, sandstorm, wisps, aurora, hail, bloodmoon, fireworks, each with a
+  weight per planet kind ("kinds"), "when" (night/day/any), "dur" and a message. Every `SKY_EVENT_EVERY` ticks a
+  `SKY_EVENT_CHANCE` roll picks one (`_pick_sky_event`; never in test mode); `start_sky_event(id)` /
+  `end_sky_event()` (also in `_make_world`); `sky_ramp()` fades it in and out over 5 s; `sky_level(id)` is the
+  GPU's share (P.p[125].y aurora, .z blood moon: render.comp `skyColor` draws the aurora's curtains by screen row
+  and reddens the night and the moon). State: `sky_ev`, `sky_t`, `sky_dur`, `_sky_next` (ticks to its next
+  meteor, bomb, strike, rocket, hail sting), `sky_wind` (added to the climate's wind target), `sky_tint` (overlay
+  draws it over the view), `sky_fx` (overlay `_draw_sky`: "streak" shooting stars, "bolt" lightning, "rocket"),
+  `sky_wisps`, `sky_vent`, `sky_stats` (counts for the tests).
+- Doings: meteors (streaks; `meteor_fall(cells)`: PROJ "meteor" from high up, `_meteorite`: a blast, fire, a lump
+  of MAGMAROCK round a STARIRON heart, hurts anyone close), eruption (`_eruption_vent`: the highest of a few spots
+  110-220 cells off; smoke, glow, rumbles, PROJ "lavabomb" (splat lava) every 22-45 ticks), squall (gale, rain,
+  `lightning_strike(cells)`: a drawn bolt, fire, hurts within 12), sandstorm (gale, haze, blown sand), wisps (5
+  drifting lights, shy of you; touching one gives 4 Wisp Ore and 30 mana), aurora (mana regen x2 under the open
+  sky), hail (pellets; a sting every 35-70 ticks in the open), bloodmoon (`spawn_mult` 2.5, up to 12 foes),
+  fireworks (rockets that burst into coloured particles). The HUD's weather shows the event, then " · <hazard>!".
+  Test: `_test_sky` ("sky").
+
 ## Music (scripts/audio.gd)
 - Tracks in game/audio/music/ by name: mood (surface_day, surface_night, underground, deep, boss, space, title) or
   kind + "_" + mood (`track_key`: "volcanic_surface_day.mp3"); `_pick` tries this planet kind's own, then the common

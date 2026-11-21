@@ -399,6 +399,25 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 		}
 	}
 
+	// sky events (main `sky_level`): an aurora's curtains (P.p[125].y) and a blood moon's red night (.z),
+	// both only in the dark and below space
+	float night = clamp(1.0 - day * 1.8, 0.0, 1.0) * (1.0 - space);
+	float aur = P.p[125].y * night;
+	if (aur > 0.01) {
+		float u = px.x + P.p[121].w * 160.0;
+		float yv = px.y - P.p[123].w;                      // (rows from the top of the screen)
+		float wave = sin(u * 0.009 + TIME * 0.003) * 0.08 + sin(u * 0.023 - TIME * 0.005) * 0.04;
+		float hem = P.p[2].y * (0.42 + wave);              // the curtain's lower hem, waving
+		float hang = clamp(1.0 - (yv - hem * 0.15) / max(hem, 1.0), 0.0, 1.0) * (1.0 - smoothstep(hem - 10.0, hem + 6.0, yv));
+		float rays = 0.45 + 0.55 * pow(0.5 + 0.5 * sin(u * 0.15 + sin(u * 0.037 + TIME * 0.012) * 5.0), 2.0);
+		float band = 0.5 + 0.5 * sin(u * 0.006 + TIME * 0.002);
+		vec3 ac = mix(vec3(0.25, 1.0, 0.55), vec3(0.55, 0.35, 1.0), band * (1.0 - smoothstep(0.0, max(hem, 1.0), yv)));
+		float bright = smoothstep(hem - 26.0, hem - 2.0, yv) * 0.5 + 0.5;   // (brightest along its hem)
+		col = mix(col, ac, clamp(aur * hang * rays * bright * 0.75, 0.0, 0.8));
+	}
+	float bm = P.p[125].z * night;
+	if (bm > 0.01) col = mix(col, col * vec3(1.9, 0.45, 0.42) + vec3(0.06, 0.0, 0.0), bm * 0.8);
+
 	// sun and moon next, also behind hills and clouds
 	{
 		float camDay = dot(normalize(P.p[1].xy), sd);
@@ -412,7 +431,7 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 		if (camDay < 0.15) {
 			vec2 mcn = P.p[2].xy * 0.5 + P.p[123].zw - vec2(dot(sd, camR()), dot(sd, camD())) * P.p[2].y * 0.42;
 			vec2 dm = px - mcn;
-			if (dot(dm, dm) < 17.0) col = vec3(dm.x + dm.y > 2.0 ? 0.64 : 0.88);
+			if (dot(dm, dm) < 17.0) col = vec3(dm.x + dm.y > 2.0 ? 0.64 : 0.88) * mix(vec3(1.0), vec3(1.3, 0.35, 0.3), clamp(P.p[125].z, 0.0, 1.0));
 		}
 	}
 	float zoom = P.p[1].w;

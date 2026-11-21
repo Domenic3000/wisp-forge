@@ -430,6 +430,17 @@ var _heat_t := 0
 var hazard := ""               # the planet's hazard hurting you right now (Defs.HAZARDS), "" for none
 var _hz_t := {}                # (hazard -> ticks until its warning is shown again)
 var _warm := false             # a fire, torch or lava close by (it keeps a frozen world's cold off)
+var sky_ev := ""               # the sky event going on (Defs.SKY_EVENTS), "" for none
+var sky_t := 0                 # (ticks since it began)
+var sky_dur := 0
+var sky_stats := {}            # (what each sky event has done: the tests read it)
+var sky_wind := 0.0            # a squall's or sandstorm's gale, on top of the climate's wind
+var sky_tint := Color(0, 0, 0, 0)   # over the whole view (overlay.gd): a sandstorm's haze, an eruption's glow
+var sky_wisps := []            # will-o'-wisps: {"pos", "vel", "home", "ph"}
+var sky_fx := []               # what the overlay draws for them: {"kind": "streak"/"bolt"/"rocket", ...}
+var sky_vent := Vector2.ZERO   # an eruption's vent
+var _sky_roll := 0
+var _sky_next := 0             # (ticks to the event's next meteor, bomb, strike, rocket...)
 var weather_timer := 1800
 var flash := 0.0
 
@@ -803,7 +814,7 @@ func _write_frame_params() -> void:
 	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0) | (4 if cellpic else 0)
 	gpu.setp(123, Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
 	# the climate the shaders need: open water icing over (react.comp), ground fog (inc/clouds.comp)
-	gpu.setp(125, Vector4(0.0008 * float(clim.get("freeze", 0.0)), 0.0, 0.0, float(clim.get("fog", 0.0))))
+	gpu.setp(125, Vector4(0.0008 * float(clim.get("freeze", 0.0)), sky_level("aurora"), sky_level("bloodmoon"), float(clim.get("fog", 0.0))))
 	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
 	gpu.setp(122, _p122)
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
@@ -1847,6 +1858,7 @@ func _tick() -> void:
 	prof_add("shots and particles", Time.get_ticks_usec() - tq)
 	_update_weather()
 	_update_climate()
+	_update_sky_events()
 	_try_spawn()
 	_update_guards()
 	_check_chest_hint()
@@ -1996,7 +2008,11 @@ func _update_player(m: Mage) -> void:
 		m.breath = minf(m.max_breath, m.breath + 4.0)
 	if m.iframes > 0:
 		m.iframes -= 1
-	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	var regen: float = m.mana_regen
+	if sky_ev == "aurora" and m.local and exposed and m.mana < m.max_mana:
+		regen *= 2.0                                   # (under the aurora)
+		sky_stats["aurora_mana"] = float(sky_stats.get("aurora_mana", 0.0)) + m.mana_regen
+	m.mana = minf(m.max_mana, m.mana + regen)
 	# no health comes back by itself: only a draught or Mending, a little each frame
 	if m.heal_left > 0.0 and not m.dead:
 		var hh := minf(m.heal_left, Defs.HEAL_RATE)
@@ -2561,6 +2577,8 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 				hurt(hit_m, float(pd["dmg"]) * (0.6 if hit_m.heat_ward else 1.0), Vector2(signf(randf() - 0.5) * 1.5, -1.0), true)
 			else:
 				brushes.append([p, 1.8, 3, Defs.FIRE, 0, 0, 0])
+		"meteor":
+			_meteorite(p)
 		_:
 			# the guardians' shots: they hurt you, or leave their matter where they land
 			if hit_m != null:
@@ -2569,6 +2587,8 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 				hurt(hit_m, float(pd["dmg"]), Vector2(signf(hv.dot(basis_r(hha))) * 1.8, -1.2), true)
 			elif pd.has("splat") and hit:
 				brushes.append([p, 2.2, 3, int(pd["splat"]), 0, 0, 0])
+			if type == "lavabomb":
+				sky_stats["bomb_hits"] = int(sky_stats.get("bomb_hits", 0)) + 1
 	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else pd.get("col", Color(1, 0.35, 0.12))
 	for k in 10:
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.8) * 1.5, 14 + randi() % 10, col, true, 0.05)
@@ -3107,12 +3127,12 @@ func _try_spawn() -> void:
 	spawn_timer -= 1
 	if spawn_timer > 0 or dead:
 		return
-	spawn_timer = int(90.0 / maxf(float(clim.get("wild", 1.0)), 0.3))
+	spawn_timer = int(90.0 / (maxf(float(clim.get("wild", 1.0)), 0.3) * spawn_mult()))
 	var count := 0
 	for e in enemies:
 		if not e.boss:
 			count += 1
-	if count >= 7:
+	if count >= (12 if sky_ev == "bloodmoon" else 7):
 		return
 	var a := atan2(player.pos.y, player.pos.x)
 	var sa: Vector4 = gpu.surf_at(a)
@@ -3289,7 +3309,7 @@ func _update_weather() -> void:
 func _update_climate() -> void:
 	var cw: float = float(clim.get("wind", 0.0))
 	var gust := 0.6 + 0.4 * sin(time * 0.0031) * sin(time * 0.00071 + 1.3)
-	wind += (cw * (0.3 + 0.7 * rain) * gust * _wind_dir - wind) * 0.01
+	wind += (cw * (0.3 + 0.7 * rain) * gust * _wind_dir + sky_wind * gust - wind) * 0.01
 	if frame % 4 == 0:
 		exposed = _open_sky(player.pos)
 	if player.dead or not exposed:
@@ -3321,6 +3341,307 @@ func _update_climate() -> void:
 		var wp: Vector2 = screen_to_world(sp)
 		var v: Vector2 = br * (wind * 2.6 + (randf() - 0.5) * 0.3) + bd * (fall + (randf() - 0.5) * 0.15)
 		_particle(wp, v, 50 + randi() % 50, flake, lit, grav)
+
+# ============================================================ sky events ====
+## Now and then something happens in the sky (Defs.SKY_EVENTS), picked by the planet's kind and the
+## time of day: a meteor shower, an eruption, a squall, a great sandstorm, will-o'-wisps, an aurora, hail,
+## a blood moon, fireworks. Each runs for a while (fading in and out) and has its own doings below.
+func _update_sky_events() -> void:
+	sky_tint = Color(0, 0, 0, 0)
+	sky_wind = 0.0
+	for k in range(sky_fx.size() - 1, -1, -1):
+		var fx: Dictionary = sky_fx[k]
+		fx["life"] = int(fx["life"]) - 1
+		if fx.has("vel"):
+			fx["pos"] = (fx["pos"] as Vector2) + (fx["vel"] as Vector2)
+		if fx["kind"] == "rocket" and int(fx["life"]) <= 0:
+			_firework_burst(fx["pos"], fx["col"])
+		if int(fx["life"]) <= 0:
+			sky_fx.remove_at(k)
+	if space.active or player == null or state != "play":
+		return
+	if sky_ev == "":
+		_sky_roll += 1
+		if _sky_roll >= Defs.SKY_EVENT_EVERY:
+			_sky_roll = 0
+			if randf() < Defs.SKY_EVENT_CHANCE and not testing:
+				var id := _pick_sky_event()
+				if id != "":
+					start_sky_event(id)
+		return
+	sky_t += 1
+	_sky_next -= 1
+	var ramp := sky_ramp()
+	match sky_ev:
+		"meteors": _sky_meteors()
+		"eruption": _sky_eruption(ramp)
+		"squall": _sky_squall(ramp)
+		"sandstorm": _sky_sandstorm(ramp)
+		"wisps": _sky_wisps()
+		"hail": _sky_hail(ramp)
+		"bloodmoon": sky_tint = Color(0.5, 0.02, 0.02, 0.07 * ramp)
+		"fireworks": _sky_fireworks()
+	if sky_t >= sky_dur:
+		end_sky_event()
+
+## how far in it is: rising from 0 to 1 over its first 5 s, falling back over its last 5 s
+func sky_ramp() -> float:
+	if sky_ev == "":
+		return 0.0
+	return clampf(minf(float(sky_t), float(sky_dur - sky_t)) / 300.0, 0.0, 1.0)
+
+## (the GPU's share of it: P.p[125].y the aurora, .z the blood moon)
+func sky_level(id: String) -> float:
+	return sky_ramp() if sky_ev == id else 0.0
+
+func spawn_mult() -> float:
+	return 2.5 if sky_ev == "bloodmoon" else 1.0
+
+func _pick_sky_event() -> String:
+	var kind := String(planet.get("kind", "temperate"))
+	var day := _local_daylight(player.pos)
+	var tot := 0.0
+	var opts := []
+	for id in Defs.SKY_EVENTS:
+		var ev: Dictionary = Defs.SKY_EVENTS[id]
+		var w := float((ev["kinds"] as Dictionary).get(kind, 0.0))
+		var when := String(ev["when"])
+		if w <= 0.0 or (when == "night" and day > 0.3) or (when == "day" and day < 0.6):
+			continue
+		opts.append([id, w])
+		tot += w
+	var r := randf() * tot
+	for o in opts:
+		r -= float(o[1])
+		if r <= 0.0:
+			return String(o[0])
+	return ""
+
+func start_sky_event(id: String) -> void:
+	end_sky_event()
+	var ev: Dictionary = Defs.SKY_EVENTS[id]
+	sky_ev = id
+	sky_t = 0
+	sky_dur = randi_range(int(ev["dur"][0]), int(ev["dur"][1]))
+	_sky_next = 120
+	ui.toast("%s. %s" % [ev["name"], ev["msg"]], Color(0.85, 0.85, 1.0), 6.0)
+	match id:
+		"eruption":
+			sky_vent = _eruption_vent()
+			audio.play("rumble", sky_vent, 1.0)
+			shake = maxf(shake, 6.0)
+		"wisps":
+			_spawn_sky_wisps(5)
+	sky_stats[id] = int(sky_stats.get(id, 0)) + 1
+
+func end_sky_event() -> void:
+	sky_ev = ""
+	sky_t = 0
+	sky_wisps.clear()
+
+## a point on the ground about `cells` along the surface from where you are (either side)
+func _ground_off(cells: float) -> Vector2:
+	var a := atan2(player.pos.y, player.pos.x) + cells / Defs.RS0
+	return Vector2(cos(a), sin(a)) * gpu.surf_at(a).x
+
+## meteors: shooting stars streak across the sky, and every so often one comes down not far off
+func _sky_meteors() -> void:
+	var up: Vector2 = player.pos.normalized()
+	var high: bool = player.pos.length() > gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - 10.0
+	if high and randf() < 0.12:
+		var sp := Vector2(randf() * float(VW), randf() * float(VH) * 0.4)
+		var wp: Vector2 = screen_to_world(sp)
+		if wp.length() > gpu.surf_at(atan2(wp.y, wp.x)).x + 50.0:
+			var dir: Vector2 = (basis_r(atan2(up.y, up.x)) * (1.0 if randf() < 0.5 else -1.0) - up * randf_range(0.2, 0.6)).normalized()
+			sky_fx.append({"kind": "streak", "pos": wp, "vel": dir * randf_range(5.0, 9.0), "life": 14 + randi() % 10, "col": Color(0.85, 0.92, 1.0)})
+	if _sky_next <= 0:
+		_sky_next = randi_range(500, 900)
+		meteor_fall(randf_range(60.0, 200.0) * (1.0 if randf() < 0.5 else -1.0))
+
+## a meteorite comes down `cells` along the ground from you: a fiery rock from high up
+func meteor_fall(cells: float) -> void:
+	var to := _ground_off(cells)
+	var upn := to.normalized()
+	var side := Vector2(upn.y, -upn.x) * (1.0 if randf() < 0.5 else -1.0)
+	var from := to + upn * 230.0 + side * 110.0
+	_spawn_proj("meteor", from, (to - from).normalized() * float(Defs.PROJ["meteor"]["speed"]), "sky")
+	sky_stats["meteor_falls"] = int(sky_stats.get("meteor_falls", 0)) + 1
+
+## where it lands: a blast, fire, and a lump of seared rock round a heart of star iron
+func _meteorite(p: Vector2) -> void:
+	_explode(p, 7.0, 2, 1, 30.0)
+	brushes.append([p, 1.4, 3, Defs.STARIRON, 0, 0, 0])
+	brushes.append([p, 3.3, 3, Defs.MAGMAROCK, 0, 0, 0])
+	shake = maxf(shake, 9.0)
+	for m in players:
+		var d: float = m.pos.distance_to(p)
+		if not m.dead and d < 14.0:
+			hurt(m, 18.0 * (1.0 - d / 14.0) + 4.0, (m.pos - p).normalized() * 2.0, true)
+	sky_stats["meteorites"] = int(sky_stats.get("meteorites", 0)) + 1
+	sky_stats["meteor_at"] = p
+	if int(sky_stats["meteorites"]) == 1 or randf() < 0.3:
+		var side := "east" if (p - player.pos).dot(basis_r(atan2(player.pos.y, player.pos.x))) > 0.0 else "west"
+		ui.toast("A meteorite came down to the %s: there's star iron in its heart" % side, Color(1.0, 0.85, 0.6), 4.0)
+
+## an eruption's vent: the highest ground of a few spots a little way off
+func _eruption_vent() -> Vector2:
+	var best := Vector2.ZERO
+	for k in 8:
+		var q := _ground_off(randf_range(110.0, 220.0) * (1.0 if k % 2 == 0 else -1.0))
+		if best == Vector2.ZERO or q.length() > best.length():
+			best = q
+	return best
+
+func _sky_eruption(ramp: float) -> void:
+	var up: Vector2 = sky_vent.normalized()
+	var r := basis_r(atan2(up.y, up.x))
+	sky_tint = Color(0.9, 0.25, 0.05, 0.10 * ramp)
+	lights.append([sky_vent + up * 10.0, 90.0 * ramp, Color(1.6, 0.6, 0.2)])
+	for k in 3:
+		_particle(sky_vent + up * randf_range(2.0, 10.0) + r * randf_range(-5.0, 5.0), up * randf_range(0.6, 1.6) + r * (randf() - 0.5) * 0.5,
+			60 + randi() % 60, Color(0.25, 0.22, 0.22) if k > 0 else Color(1.0, 0.5, 0.15), k == 0, -0.004)
+	if sky_t % 90 == 0:
+		audio.play("rumble", sky_vent, 0.8)
+		shake = maxf(shake, 3.0)
+	if _sky_next <= 0 and ramp > 0.3:
+		_sky_next = randi_range(22, 45)
+		var v: Vector2 = up * randf_range(3.6, 5.2) + r * randf_range(-1.4, 1.4)
+		_spawn_proj("lavabomb", sky_vent + up * 6.0, v, "sky")
+		sky_stats["bombs"] = int(sky_stats.get("bombs", 0)) + 1
+
+## is surface column c within `pad` columns of a generated structure?
+func _near_structure(c: int, pad: int) -> bool:
+	for inf in builds.infos:
+		var d := posmod(c - int(inf["x0"]) + pad, Defs.NS)
+		if d < int(inf["w"]) + 2 * pad:
+			return true
+	return false
+
+## a squall: a gale, rain, and lightning striking the ground near you
+func _sky_squall(ramp: float) -> void:
+	sky_wind = 0.9 * _wind_dir * ramp
+	rain_target = maxf(rain_target, 0.95)
+	rain = minf(1.0, rain + 0.004)
+	if _sky_next <= 0:
+		_sky_next = randi_range(150, 330)
+		lightning_strike(randf_range(30.0, 160.0) * (1.0 if randf() < 0.5 else -1.0))
+
+## lightning out of the sky onto the ground `cells` along from you: a jagged bolt, fire where it lands,
+## and it hurts anyone close
+func lightning_strike(cells: float) -> void:
+	# (never into a town: it picks open ground away from any structure when it can)
+	var pc := cells
+	for k in 6:
+		var ca := atan2(player.pos.y, player.pos.x) + pc / Defs.RS0
+		if not _near_structure(int(fposmod(ca, TAU) / TAU * Defs.NS), 30):
+			break
+		pc = randf_range(30.0, 200.0) * (1.0 if randf() < 0.5 else -1.0)
+	var to := _ground_off(pc)
+	var up := to.normalized()
+	var side := Vector2(up.y, -up.x)
+	var pts := PackedVector2Array()
+	var from := to + up * 200.0 + side * randf_range(-30.0, 30.0)
+	for k in 12:
+		var q := from.lerp(to, float(k) / 11.0)
+		pts.append(q + side * (randf_range(-7.0, 7.0) if k > 0 and k < 11 else 0.0))
+	sky_fx.append({"kind": "bolt", "pts": pts, "life": 9})
+	flash = 1.2
+	shake = maxf(shake, 6.0)
+	audio.play("boom", to, 1.0, 0.8)
+	brushes.append([to + up * 1.5, 1.8, 3, Defs.FIRE, 0, 0, 0])     # (a scorch: fire in the air where it hit)
+	lights.append([to, 80.0, Color(1.3, 1.4, 1.8)])
+	for m in players:
+		if not m.dead and m.pos.distance_to(to) < 12.0:
+			hurt(m, 14.0, (m.pos - to).normalized() * 2.0, true)
+	sky_stats["strikes"] = int(sky_stats.get("strikes", 0)) + 1
+
+## a great sandstorm: a gale, the view hazed with blowing sand
+func _sky_sandstorm(ramp: float) -> void:
+	sky_wind = 1.0 * _wind_dir * ramp
+	var under: bool = player.pos.length() < gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - 14.0
+	sky_tint = Color(0.78, 0.6, 0.36, (0.08 if under else 0.3) * ramp)
+	if under:
+		return
+	var a := atan2(player.pos.y, player.pos.x)
+	for k in int(5.0 * ramp):
+		var wp: Vector2 = screen_to_world(Vector2(randf() * float(VW), randf() * float(VH)))
+		_particle(wp, basis_r(a) * (wind * 3.5 + (randf() - 0.5) * 0.4) + basis_d(a) * (randf() - 0.4) * 0.3, 40 + randi() % 40, Color(0.86, 0.72, 0.48), false, 0.0)
+
+## will-o'-wisps: lights drifting a little above the ground, shy of you; catch one for its wisp ore
+func _spawn_sky_wisps(n: int) -> void:
+	for k in n:
+		var g := _ground_off(randf_range(50.0, 190.0) * (1.0 if k % 2 == 0 else -1.0))
+		var hp: Vector2 = g + g.normalized() * randf_range(8.0, 24.0)
+		sky_wisps.append({"pos": hp, "vel": Vector2.ZERO, "home": hp, "ph": randf() * TAU})
+
+func _sky_wisps() -> void:
+	for k in range(sky_wisps.size() - 1, -1, -1):
+		var w: Dictionary = sky_wisps[k]
+		var p: Vector2 = w["pos"]
+		var v: Vector2 = w["vel"]
+		v += Vector2(randf() - 0.5, randf() - 0.5) * 0.06 + ((w["home"] as Vector2) - p) * 0.0006
+		var away: Vector2 = p - player.pos
+		if away.length() < 45.0:
+			v += away.normalized() * 0.02
+		var gr: float = gpu.surf_at(atan2(p.y, p.x)).x
+		if p.length() < gr + 5.0:
+			v += p.normalized() * 0.05                   # (never into the ground)
+		v = v.limit_length(0.75)
+		p += v
+		w["pos"] = p
+		w["vel"] = v
+		w["ph"] = float(w["ph"]) + 0.05
+		lights.append([p, 22.0 + 4.0 * sin(float(w["ph"]) * 3.0), Color(0.45, 0.8, 1.5)])
+		if randf() < 0.3:
+			_particle(p + Vector2(randf() - 0.5, randf() - 0.5) * 2.0, -v * 0.3, 20 + randi() % 15, Color(0.6, 0.9, 1.0), true, -0.002)
+		if p.distance_to(player.pos) < 9.0 and not player.dead:
+			player.inv[Defs.WISP] += 4
+			player.mana = minf(player.max_mana, player.mana + 30.0)
+			audio.play("rare", p, 0.7)
+			for q in 16:
+				_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 1.6, 20 + randi() % 20, Color(0.6, 0.9, 1.0), true, 0.0)
+			ui.toast("You caught a will-o'-wisp: +4 Wisp Ore, and your mana", Color(0.6, 0.9, 1.0), 3.0)
+			sky_stats["caught"] = int(sky_stats.get("caught", 0)) + 1
+			sky_wisps.remove_at(k)
+
+## hail: pellets of ice racing down; out in the open now and then one stings
+func _sky_hail(ramp: float) -> void:
+	sky_wind = 0.3 * _wind_dir * ramp
+	if not exposed:
+		return
+	var a := atan2(player.pos.y, player.pos.x)
+	for k in int(4.0 * ramp):
+		var wp: Vector2 = screen_to_world(Vector2(randf() * float(VW), randf() * float(VH) * 0.8))
+		_particle(wp, basis_d(a) * randf_range(2.2, 3.2) + basis_r(a) * wind, 22 + randi() % 12, Color(0.88, 0.95, 1.0), false, 0.0)
+	if _sky_next <= 0:
+		_sky_next = randi_range(35, 70)
+		hurt(player, 1.5, Vector2.ZERO, true)
+		audio.play("hit", player.pos, 0.35, 1.6)
+		sky_stats["hail_hits"] = int(sky_stats.get("hail_hits", 0)) + 1
+		if int(sky_stats["hail_hits"]) == 1:
+			ui.toast("Hail stings you: get under a roof", Color(0.8, 0.9, 1.0), 2.5)
+
+## fireworks: rockets rise from the land round you and burst in colour
+func _sky_fireworks() -> void:
+	if _sky_next <= 0:
+		_sky_next = randi_range(25, 60)
+		var g := _ground_off(randf_range(-150.0, 150.0))
+		var up := g.normalized()
+		var cols := [Color(1.0, 0.35, 0.3), Color(0.4, 0.8, 1.0), Color(1.0, 0.85, 0.3), Color(0.6, 1.0, 0.5), Color(0.9, 0.5, 1.0), Color(1.0, 1.0, 1.0)]
+		var rv: Vector2 = up * randf_range(2.0, 2.6) + Vector2(up.y, -up.x) * randf_range(-0.3, 0.3)
+		sky_fx.append({"kind": "rocket", "pos": g + up * 2.0, "vel": rv, "life": 30 + randi() % 16, "col": cols[randi() % cols.size()]})
+	for fx in sky_fx:
+		if fx["kind"] == "rocket" and randf() < 0.7:
+			_particle(fx["pos"], Vector2.ZERO, 12 + randi() % 8, Color(1.0, 0.8, 0.5), true, 0.004)
+
+func _firework_burst(p: Vector2, col: Color) -> void:
+	for k in 72:
+		var d := Vector2.from_angle(TAU * float(k) / 72.0 + randf() * 0.08)
+		var c2: Color = col if k % 4 != 0 else Color(1, 1, 1)
+		_particle(p, d * randf_range(0.75, 1.2), 34 + randi() % 22, c2, true, 0.006)
+	lights.append([p, 90.0, Color(col.r * 1.6, col.g * 1.6, col.b * 1.6)])
+	audio.play("boom", p, 0.45, 1.8)
+	sky_stats["bursts"] = int(sky_stats.get("bursts", 0)) + 1
 
 ## nothing over this point up to 70 cells (a roof, a cave's ceiling, an overhang: leaves don't count)
 func _open_sky(p: Vector2) -> bool:
@@ -4354,6 +4675,8 @@ func _make_world(index: int, arriving: bool) -> void:
 	planet = Defs.make_planet(index)
 	clim = Defs.climate(planet)
 	_refresh_recipes()
+	end_sky_event()
+	sky_fx.clear()
 	wind = 0.0
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))

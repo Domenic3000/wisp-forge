@@ -44,6 +44,111 @@ func _cell_pos(col: int, row: int, ax := -1, aw := 1) -> Vector2:
 		return Vector2(cos(a), sin(a)) * (Defs.R_TOP - (float(row) + 0.5))
 	return Defs.stamp_pos(row, ax, aw, Defs.k_of(col, ax))
 
+## Sky events: each started on its own for a few seconds (they never start by themselves in test mode),
+## at night for the night ones, on a clear stretch of open ground, with a picture of each
+## (saves/shots/sky_<id>.png). main's `sky_stats` counts what each did.
+func _test_sky() -> void:
+	var sk_god0: bool = g.test_god
+	g.test_god = true
+	var sk_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 60, 80, 6)
+	var sk_a: float = (float(sk_st.x) + 8.5) / float(Defs.NS) * TAU
+	var sk_at: Vector2 = Vector2(cos(sk_a), sin(sk_a)) * (g.gpu.surf_at(sk_a).x + 12.0)
+	var sk_time0: float = g.time
+	var sk_day: float = fposmod((sk_a - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+	var sk_night: float = fposmod((sk_a + PI - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+	var sk_dir: String = g._real_save_dir().path_join("shots")
+	g.sky_stats = {}
+	var sk_ok := {}
+	var sk_txt := []
+	for sk_id in ["meteors", "eruption", "squall", "sandstorm", "wisps", "aurora", "hail", "bloodmoon", "fireworks"]:
+		for sk_e in g.enemies.duplicate():
+			if not sk_e.boss and sk_e.guard_id < 0:
+				g.enemies.erase(sk_e)
+		g.time = sk_night if String(Defs.SKY_EVENTS[sk_id]["when"]) == "night" else sk_day
+		_go(sk_at)
+		await _frames(10)
+		g.start_sky_event(sk_id)
+		g.sky_t = 300                     # (straight to its full strength)
+		g._sky_next = 10
+		var sk_frames := {"meteors": 170, "eruption": 260, "squall": 200, "sandstorm": 150, "wisps": 30, "aurora": 120, "hail": 200, "bloodmoon": 60, "fireworks": 220}
+		var sk_n: int = sk_frames[sk_id]
+		var sk_hp0: float = g.player.hp
+		var sk_w0: int = g.player.inv[Defs.WISP]
+		var sk_wind := 0.0
+		var sk_tint := 0.0
+		if sk_id == "meteors":
+			g._sky_next = 9999
+			g.meteor_fall(44.0)
+		if sk_id == "hail":
+			g.test_god = false
+			g.player.hp = g.player.max_hp
+			sk_hp0 = g.player.hp
+		if sk_id == "aurora":
+			g.player.mana = 0.0
+		for sk_f in sk_n:
+			if sk_id == "wisps" and not g.sky_wisps.is_empty():
+				g.player.pos = g.sky_wisps[0]["pos"]
+			await _frames(1)
+			sk_wind = maxf(sk_wind, absf(g.wind))
+			sk_tint = maxf(sk_tint, g.sky_tint.a)
+			if sk_f == int(sk_n * 0.6):
+				g.get_viewport().get_texture().get_image().save_png(sk_dir.path_join("sky_%s.png" % sk_id))
+		var st: Dictionary = g.sky_stats
+		match sk_id:
+			"meteors":
+				var sk_si := 0
+				var sk_mr := 0
+				if st.has("meteor_at"):
+					await _frames(12)
+					var sk_p: Vector2 = st["meteor_at"]
+					var sk_c := int(fposmod(atan2(sk_p.y, sk_p.x), TAU) / TAU * Defs.NS)
+					var sk_r: int = Defs.row_at(sk_p.length())
+					var sk_rr: Dictionary = g.gpu.read_rect(sk_c - 16, sk_r - 16, 32, 32, sk_c - 16, 32)
+					for sk_v in sk_rr["fg"]:
+						if (sk_v & 255) == Defs.STARIRON:
+							sk_si += 1
+						elif (sk_v & 255) == Defs.MAGMAROCK:
+							sk_mr += 1
+				sk_ok[sk_id] = int(st.get("meteorites", 0)) >= 1 and sk_si >= 1 and sk_mr >= 6
+				sk_txt.append("meteors: %d fell, %d landed, star iron %d and seared rock %d where it hit" % [int(st.get("meteor_falls", 0)), int(st.get("meteorites", 0)), sk_si, sk_mr])
+			"eruption":
+				sk_ok[sk_id] = int(st.get("bombs", 0)) >= 3 and int(st.get("bomb_hits", 0)) >= 1 and sk_tint > 0.05
+				sk_txt.append("eruption: %d lava bombs, %d landed, glow %.2f" % [int(st.get("bombs", 0)), int(st.get("bomb_hits", 0)), sk_tint])
+			"squall":
+				sk_ok[sk_id] = int(st.get("strikes", 0)) >= 1 and sk_wind > 0.1
+				sk_txt.append("squall: %d lightning strikes, wind up to %.2f" % [int(st.get("strikes", 0)), sk_wind])
+			"sandstorm":
+				sk_ok[sk_id] = sk_tint > 0.2 and sk_wind > 0.1
+				sk_txt.append("sandstorm: haze %.2f, wind up to %.2f" % [sk_tint, sk_wind])
+			"wisps":
+				sk_ok[sk_id] = int(st.get("caught", 0)) >= 1 and g.player.inv[Defs.WISP] > sk_w0
+				sk_txt.append("wisps: caught %d, wisp ore %d -> %d" % [int(st.get("caught", 0)), sk_w0, g.player.inv[Defs.WISP]])
+			"aurora":
+				sk_ok[sk_id] = float(st.get("aurora_mana", 0.0)) > 1.0 and g.sky_level("aurora") > 0.5
+				sk_txt.append("aurora: %.1f extra mana under it (open sky %s)" % [float(st.get("aurora_mana", 0.0)), g.exposed])
+			"hail":
+				sk_ok[sk_id] = int(st.get("hail_hits", 0)) >= 1 and g.player.hp < sk_hp0
+				sk_txt.append("hail: %d stings, health %.0f -> %.0f" % [int(st.get("hail_hits", 0)), sk_hp0, g.player.hp])
+				g.test_god = true
+				g.player.hp = g.player.max_hp
+			"bloodmoon":
+				sk_ok[sk_id] = g.spawn_mult() > 2.0 and g.sky_level("bloodmoon") > 0.5
+				sk_txt.append("blood moon: creatures x%.1f" % g.spawn_mult())
+			"fireworks":
+				sk_ok[sk_id] = int(st.get("bursts", 0)) >= 2
+				sk_txt.append("fireworks: %d bursts" % int(st.get("bursts", 0)))
+		g.end_sky_event()
+	g.time = sk_time0
+	g.test_god = sk_god0
+	var sk_all := true
+	var sk_bad := []
+	for sk_k in sk_ok:
+		if not bool(sk_ok[sk_k]):
+			sk_all = false
+			sk_bad.append(sk_k)
+	_ok("sky events: each kind of planet's meteors, eruptions, squalls, sandstorms, wisps, auroras, hail, blood moons and fireworks", sk_all and sk_ok.size() == 9,
+		"; ".join(sk_txt) + ("" if sk_all else " (not working: %s)" % ", ".join(sk_bad)))
+
 func _go(p: Vector2) -> void:
 	# (a check that left you dead would leave every check after it running on the death screen: say so
 	# in the log, and carry on alive)
@@ -304,6 +409,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_creatures()
+		elif only == "sky":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_sky()
 		elif only == "mines":
 			for mi_info in g.builds.infos:
 				if mi_info["meta"].has("mine") and int(mi_info.get("unsound", 0)) > 0:
@@ -2293,6 +2402,7 @@ func run() -> void:
 	_ok("a planet's cold and midday sun hurt you in the open, but not with their wards; too-hard digging gives no star iron", hz_ok,
 		"in the open %s; the cold: -%.1f health in 2.5 s bare (%s), -%.1f with the Hearth Charm; the sun overhead: -%.1f bare (%s), -%.1f with the Sun Veil; digging stone with no power: blocked %s, star iron %d -> %d" % [hz_open,
 		float(hz_res["cold"][0]), hz_res["cold"][2], float(hz_res["cold"][1]), float(hz_res["sun"][0]), hz_res["sun"][2], float(hz_res["sun"][1]), hz_blk, hz_si0, hz_si1])
+	await _test_sky()
 	# ---- health doesn't come back by itself; a draught and Mending bring it back over a moment ----
 	# (nothing about to bite: a wild creature wandering by would muddle the sums)
 	for hl_e in g.enemies.duplicate():

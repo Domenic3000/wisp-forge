@@ -803,6 +803,10 @@ func update_hud(g) -> void:
 			wn = "Underground"
 		elif g.rain > 0.15 and b["weather"] != "clear":
 			wn = {"rain": "Rain", "snow": "Snowfall", "ash": "Ashfall"}[b["weather"]]
+		if g.sky_ev != "" and depth <= 14:
+			wn = String(Defs.SKY_EVENTS[g.sky_ev]["name"])
+		if g.hazard != "":
+			wn += " · " + String(Defs.HAZARDS[g.hazard]["name"]) + "!"
 		var tiers := ["", "I · Stone", "II · Copper", "III · Obsidian", "IV · Core Siphon"]
 		var extra := ""
 		if g.heat_ward:

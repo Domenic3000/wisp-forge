@@ -394,7 +394,42 @@ func _draw() -> void:
 		return                       # (the map draws its own markers: map_view.gd)
 	var t_draw := Time.get_ticks_usec()
 	_draw_all()
+	if not game.space.active:
+		_draw_sky()
 	game.prof_add("drawing sprites", Time.get_ticks_usec() - t_draw)
+
+## the sky events' own pictures (main `sky_fx`, `sky_wisps`): shooting stars, lightning bolts, rockets,
+## will-o'-wisps, and a tint over the whole view (a sandstorm's haze, an eruption's glow)
+func _draw_sky() -> void:
+	var z: float = game.zoom
+	for fx in game.sky_fx:
+		match String(fx["kind"]):
+			"streak":
+				var a: Vector2 = game.world_to_screen(fx["pos"])
+				var b: Vector2 = game.world_to_screen((fx["pos"] as Vector2) - (fx["vel"] as Vector2) * 3.0)
+				var c: Color = fx["col"]
+				var fl := clampf(float(fx["life"]) / 10.0, 0.0, 1.0)
+				draw_line(b, a, Color(c.r, c.g, c.b, 0.25 * fl), 2.0)
+				draw_line(b.lerp(a, 0.5), a, Color(c.r, c.g, c.b, 0.9 * fl), 1.0)
+			"bolt":
+				var spts := PackedVector2Array()
+				for q in fx["pts"]:
+					spts.append(game.world_to_screen(q))
+				var la := float(fx["life"]) / 9.0
+				draw_polyline(spts, Color(0.55, 0.7, 1.0, 0.35 * la), 3.0)
+				draw_polyline(spts, Color(1.0, 1.0, 1.0, 0.95 * la), 1.0)
+			"rocket":
+				var rp: Vector2 = game.world_to_screen(fx["pos"])
+				draw_rect(Rect2(rp.floor(), Vector2.ONE), Color(1.0, 0.92, 0.7))
+	for w in game.sky_wisps:
+		var wp: Vector2 = game.world_to_screen(w["pos"])
+		var pul := 0.75 + 0.25 * sin(float(w["ph"]) * 3.0)
+		draw_circle(wp, 3.5 / maxf(z, 0.5), Color(0.45, 0.8, 1.0, 0.18 * pul))
+		draw_circle(wp, 1.8 / maxf(z, 0.5), Color(0.7, 0.92, 1.0, 0.5 * pul))
+		draw_rect(Rect2(wp.floor(), Vector2.ONE), Color(1.0, 1.0, 1.0, 0.95))
+	var t: Color = game.sky_tint
+	if t.a > 0.003:
+		draw_rect(Rect2(0, 0, game.VW, game.VH), t)
 
 func _draw_all() -> void:
 	var z: float = game.zoom

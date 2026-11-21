@@ -623,6 +623,33 @@ const HAZARDS := {
 		"msg": "The deep sea of %s crushes you: forge the Tide Charm, or stay nearer the surface"},
 }
 
+## Sky events (main `_update_sky_events`): now and then something happens in the sky, picked by the
+## planet's kind ("kinds": a weight per kind; a kind not listed never has it) and the time of day ("when":
+## night, day or any). dur: how long, in ticks [from, to]. "msg" is shown as it begins.
+const SKY_EVENTS := {
+	"meteors": {"name": "Meteor shower", "when": "night", "dur": [2400, 3600],
+		"kinds": {"temperate": 3.0, "desert": 1.5, "wild": 1.0, "realm": 1.0, "frozen": 1.0, "ocean": 0.6, "marsh": 0.6, "volcanic": 0.6},
+		"msg": "Shooting stars streak across the sky. Some come down nearby: a meteorite carries a little star iron."},
+	"eruption": {"name": "Eruption", "when": "any", "dur": [1500, 2400], "kinds": {"volcanic": 4.0},
+		"msg": "The ground shakes: a volcano nearby is erupting. Lava bombs are falling, so take cover."},
+	"squall": {"name": "Squall", "when": "any", "dur": [1800, 3000], "kinds": {"ocean": 4.0, "marsh": 0.8, "temperate": 0.5},
+		"msg": "A squall sweeps in: gales, and lightning striking the ground."},
+	"sandstorm": {"name": "Great sandstorm", "when": "day", "dur": [1800, 3000], "kinds": {"desert": 4.0},
+		"msg": "A great sandstorm rolls in. It pushes you about and hides what's far off: wait it out in shelter."},
+	"wisps": {"name": "Will-o'-wisps", "when": "night", "dur": [3000, 4200], "kinds": {"marsh": 4.0, "wild": 0.6, "temperate": 0.4},
+		"msg": "Will-o'-wisps drift through the dark. Catch one and it leaves its wisp ore behind."},
+	"aurora": {"name": "Aurora", "when": "night", "dur": [3600, 5400], "kinds": {"frozen": 4.0, "temperate": 0.5, "realm": 0.4},
+		"msg": "An aurora lights the night. Under the open sky your mana comes back twice as fast."},
+	"hail": {"name": "Hailstorm", "when": "any", "dur": [1200, 2000], "kinds": {"frozen": 2.0, "temperate": 0.3},
+		"msg": "Hail is falling, and it stings in the open: find a roof."},
+	"bloodmoon": {"name": "Blood moon", "when": "night", "dur": [4800, 6000], "kinds": {"wild": 4.0, "volcanic": 0.4},
+		"msg": "A blood moon rises. The wild things are restless tonight: far more of them are about."},
+	"fireworks": {"name": "Fireworks", "when": "night", "dur": [2400, 3600], "kinds": {"realm": 4.0},
+		"msg": "Fireworks burst over the kingdom: a festival tonight."},
+}
+const SKY_EVENT_EVERY := 600       # ticks between chances of one starting
+const SKY_EVENT_CHANCE := 0.035    # (about one a day)
+
 ## Each kind of planet's own ore: where gen.comp lays it (`hosts`: the ground it forms in, `depth`: cells
 ## under the surface, `thr`: the vein noise's threshold, higher = rarer; `sea`: only in the seabed, well
 ## under the sea). The Core Drive that leaves a planet needs some of its ore (`drive_ore`), and so does the
@@ -895,6 +922,9 @@ const PROJ := {
 	"sandball": {"speed": 3.4, "g": 0.07, "life": 160, "dmg": 9.0, "light": 0.0, "col": Color(0.93, 0.8, 0.5), "splat": SAND},
 	"spore": {"speed": 1.6, "g": 0.0, "life": 260, "dmg": 9.0, "light": 16.0, "col": Color(0.8, 0.5, 1.0), "home": 0.03},
 	"surge": {"speed": 3.2, "g": 0.03, "life": 180, "dmg": 11.0, "light": 10.0, "col": Color(0.4, 0.8, 1.0), "splat": WATER},
+	# sky events' (main `_update_sky_events`): a meteorite coming down, an eruption's lava bombs
+	"meteor": {"speed": 4.5, "g": 0.02, "life": 260, "dmg": 22.0, "light": 44.0, "col": Color(1.0, 0.75, 0.4)},
+	"lavabomb": {"speed": 4.0, "g": 0.06, "life": 260, "dmg": 14.0, "light": 26.0, "col": Color(1.0, 0.4, 0.1), "splat": LAVA},
 }
 
 # ---------------------------------------------------------------- recipes ---
