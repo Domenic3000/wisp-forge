@@ -23,6 +23,7 @@
 extends RefCounted
 
 const FoeAI := preload("res://scripts/foe_ai.gd")
+const Ecology := preload("res://scripts/ecology.gd")
 const WAKE := 110.0            # (you have to come into its lair to wake it)
 # how high it leaps (cells), whatever the planet's pull: the jump speed is worked out from it, so a
 # leap always stays on screen
@@ -34,15 +35,26 @@ const CLIMB := 24.0            # the tallest thing it jumps over; anything talle
 static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow_f: float) -> void:
 	var bd: Dictionary = e.d["def"]
 	var go: String = bd["go"]
+	# a frog crouches a moment before it hops (Ecology.hop): the crouch plays out, then the hop
+	if e.crouch_t > 0:
+		e.crouch_t -= 1
+		e.vx *= 0.3
+		if e.crouch_t == 0:
+			e.vx = e.hop_v.x
+			e.vy = e.hop_v.y
+		e.vy += gacc
+		return
 	if not e.boss:
-		# a wild creature: it hunts while it sees you or remembers where you were (foe_ai.gd's
-		# think, run just before this), and wanders about where it lives otherwise
-		# (a burrower feels you through the ground: it needs no line of sight)
-		if tgt.dead or not (e.see or e.alert_t > 0 or (go == "burrow" and dist < 120.0)):
-			if e.act == "":
-				_wander(g, e, gacc, go, float(bd["speed"]) * slow_f)
-				_swim_hold(g, e, bd, gacc)
-				return
+		# a wild creature: its life in the world (ecology.gd) decides whether it's after you; it hunts
+		# while it sees you or remembers where you were (foe_ai.gd's think, run just before this)
+		var life: int = Ecology.tick(g, e, tgt, dist, gacc, slow_f)
+		if life == Ecology.DONE:
+			_swim_hold(g, e, bd, gacc)
+			return
+		if life == Ecology.WANDER:
+			_wander(g, e, gacc, go, float(bd["speed"]) * slow_f)
+			_swim_hold(g, e, bd, gacc)
+			return
 	elif not e.awake:
 		var in_arena: bool = e.arena > 0.0 and absf(_off(g, e, tgt.pos)) < e.arena and absf((tgt.pos - e.home).dot(e.home.normalized())) < e.ceil
 		if (dist < WAKE or in_arena) and not tgt.dead and not g.test_calm and (not e.d.get("warden", false) or _in_hall(g, e, tgt)):
@@ -124,9 +136,8 @@ static func _wander(g, e, gacc: float, go: String, spd: float) -> void:
 		"hop":
 			if footed:
 				e.vx *= 0.7
-				if int(e.t) % 80 == 0 and absf(d) > 6.0:
-					e.vy = -sqrt(2.0 * gacc * HOP_H * 0.6)
-					e.vx = clampf(d * 0.03, -spd, spd)
+				if int(e.t) % 80 == 0 and absf(d) > 6.0 and e.crouch_t == 0:
+					Ecology.hop(e, clampf(d * 0.03, -spd, spd), -sqrt(2.0 * gacc * HOP_H * 0.6))
 					e.facing = 1 if d > 0.0 else -1
 		"fly", "slither":
 			var up: Vector2 = e.home.normalized()
@@ -206,11 +217,10 @@ static func _nav_around(g, e, tgt, dx: float, gacc: float, spd: float, go: Strin
 			e.pace_t = mini(e.pace_t, 20)      # there (or as near as it gets): another side soon
 	else:
 		e.vx *= 0.7
-		if nd != 0.0 and int(e.t) % (55 if e.boss else 24) == 0:
+		if nd != 0.0 and int(e.t) % (55 if e.boss else 24) == 0 and e.off_t == 0:
 			var vy0 := sqrt(2.0 * gacc * HOP_H * (1.0 if e.boss else 0.6))
 			var air := 2.0 * vy0 / maxf(gacc, 0.01)
-			e.vx = nd * clampf((absf(e.nav_dx) + 4.0) / air, 0.4, spd * 2.2)
-			e.vy = -vy0
+			Ecology.hop(e, nd * clampf((absf(e.nav_dx) + 4.0) / air, 0.4, spd * 2.2), -vy0)
 		elif nd == 0.0:
 			e.pace_t = mini(e.pace_t, 20)
 	return true
@@ -288,8 +298,7 @@ static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: floa
 				if int(e.t) % 55 == 0 and absf(d) > 6.0:
 					var vy0 := sqrt(2.0 * gacc * HOP_H)
 					var air := 2.0 * vy0 / maxf(gacc, 0.01)
-					e.vx = clampf(d / air, -spd * 2.2, spd * 2.2)
-					e.vy = -vy0
+					Ecology.hop(e, clampf(d / air, -spd * 2.2, spd * 2.2), -vy0)
 		"fly", "slither":
 			# circle above you (a serpent weaves wider and lower), within its lair and under its roof
 			var up: Vector2 = tgt.pos.normalized()
@@ -302,13 +311,10 @@ static func _get_around(g, e, tgt, dx: float, dy: float, dist: float, gacc: floa
 			_steer(g, e, _lair_point(g, e, want), spd, 0.08)
 		"burrow":
 			# under the ground toward the spot under you (within its lair)
+			# (through soft ground only, never the air: it waits at the edge of rock, a floor or water;
+			# Ecology.burrow_toward)
 			e.under = true
-			var below: Vector2 = _lair_point(g, e, tgt.pos)
-			below = below.normalized() * (tgt.pos.length() - (26.0 if e.boss else 16.0))
-			var to: Vector2 = below - e.pos
-			if to.length() > 1.0:
-				e.pos += to.normalized() * minf(spd, to.length())
-			e.facing = -1 if dx < 0 else 1
+			Ecology.burrow_toward(g, e, _lair_point(g, e, tgt.pos), spd, Ecology.depth(e))
 			_rumble(g, e)
 
 ## a point brought inside its lair: along the ground within its tether, no higher than its roof
@@ -422,16 +428,21 @@ static func _begin(g, e, tgt, dx: float, dy: float, dist: float) -> void:
 	for k in ms.size():
 		e.mi = (e.mi + 1) % ms.size()
 		var mv: String = ms[e.mi]
+		if kind_of(mv) == "breach" and not Ecology.diggable_under(g, tgt.pos):
+			continue                     # (you're over rock, a floor or water: it can't come up under you)
 		if _suits(e, kind_of(mv), dx, dy, dist):
 			e.move = mv
 			e.moves_done += 1
 			var wt := {"charge": 40, "slam": 30, "spit": 26, "rain": 45, "erupt": 45, "roar": 32, "summon": 30,
-				"cloud": 30, "dive": 30, "gust": 30, "breach": 50}
+				"cloud": 30, "dive": 30, "gust": 30, "breach": 50, "tongue": 14}
 			FoeAI.start(e, "windup", int(float(wt.get(kind_of(mv), 30)) * (0.75 if e.raged else 1.0)))
 			e.hit_done = false
 			e.spot = tgt.pos
-			if kind_of(mv) == "erupt" or kind_of(mv) == "breach":
+			if kind_of(mv) == "erupt":
 				e.spot = _ground_under(g, tgt.pos)
+			elif kind_of(mv) == "breach":
+				var over := Ecology.surface_under(g, e.pos, Ecology.depth(e) + 20.0, 40.0)
+				e.spot = over if over.is_finite() else _ground_under(g, tgt.pos)
 			return
 
 static func _suits(e, k: String, dx: float, dy: float, dist: float) -> bool:
@@ -449,6 +460,8 @@ static func _suits(e, k: String, dx: float, dy: float, dist: float) -> bool:
 			return dist < 200.0
 		"roar", "gust":
 			return dist < 120.0
+		"tongue":
+			return dist < 34.0 and absf(dy) < 18.0
 		"summon":
 			return true
 	return dist < 230.0
@@ -490,7 +503,9 @@ static func _run(g, e, tgt, dx: float, dy: float, dist: float, gacc: float, spd:
 				if e.act_t > BREACH_TELL:
 					_get_around(g, e, tgt, dx, dy, dist, gacc, spd * 1.4, "burrow")
 					_rumble(g, e)
-					e.spot = _ground_under(g, tgt.pos)
+					var over := Ecology.surface_under(g, e.pos, Ecology.depth(e) + 20.0, 40.0)
+					if over.is_finite():
+						e.spot = over             # (it bursts out of the ground right over it)
 				else:
 					_boil(g, e)
 			if e.act_t <= 0:
@@ -581,14 +596,28 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			g.audio.play("roar", e.pos, 0.7)
 		"breach":
 			# out of the ground where it showed it would: a crater, a burst of sand, then an arc back down
+			# (out of the ground right over it: e.spot is the surface over the burrower, never the air)
 			var ground: Vector2 = e.spot
-			e.pos = ground - up * 4.0
+			var gup: Vector2 = ground.normalized()
+			e.pos = ground + gup * (e.h * 0.25)
 			_burst(g, ground, 11.0, 2, Color(0.9, 0.78, 0.5), e.boss)
 			if tgt.pos.distance_to(ground) < 20.0:
 				g.hurt(tgt, float(e.d["dmg"]) * 1.3, Vector2(signf(dx) * 2.0, -3.8), true)
 			e.under = false
-			e.gvel = up * sqrt(2.0 * 0.17 * float(g.gravity_at(e.pos)) * BREACH_H * _sz(e)) + g.basis_r(atan2(e.pos.y, e.pos.x)) * signf(dx) * 1.0
+			# a lunge: a guardian's high, a creature's low, toward you and down past you
+			var gs: float = 0.17 * float(g.gravity_at(e.pos))
+			var vy0 := sqrt(2.0 * gs * BREACH_H * (1.0 if e.boss else 0.3))
+			var air: float = 2.0 * vy0 / maxf(gs, 0.01)
+			var br2: Vector2 = g.basis_r(atan2(ground.y, ground.x))
+			var lim := 2.2 if e.boss else 1.6
+			e.gvel = gup * vy0 + br2 * clampf((tgt.pos - ground).dot(br2) * 1.3 / air, -lim, lim)
 			FoeAI.start(e, "go", 120)
+			e.hit_done = false
+		"tongue":
+			# a frog's tongue: out at you and back
+			e.aim = (tgt.pos - Ecology._mouth(g, e)).normalized()
+			e.tongue = 0.0
+			FoeAI.start(e, "go", 14)
 			e.hit_done = false
 
 ## a move under way
@@ -674,10 +703,23 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				e.hit_done = true
 				g.hurt(tgt, float(e.d["dmg"]), Vector2(signf(dx) * 3.0, -3.0), true)
 			var kd: int = Defs.KIND[g.type_at(e.pos)]
-			if (e.gvel.dot(e.pos.normalized()) < 0.0 and (kd == Defs.K_SOLID or kd == Defs.K_POWDER) and e.act_t < 100) or e.act_t <= 0:
+			if (e.gvel.dot(e.pos.normalized()) < 0.0 and (kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID) and e.act_t < 100) or e.act_t <= 0:
 				_burst(g, e.pos, 7.0, 2, Color(0.9, 0.78, 0.5), e.boss)
-				e.under = true
+				Ecology.dig_in(g, e)            # (into the soft ground it lands on, or back down its hole)
 				FoeAI.start(e, "recover", 40)
+		"tongue":
+			var tk := 1.0 - float(e.act_t) / 14.0
+			var reach := minf(36.0, tgt.pos.distance_to(e.pos) + 4.0)
+			e.tongue = sin(PI * clampf(tk, 0.0, 1.0)) * reach
+			e.vx *= 0.5
+			var tip: Vector2 = Ecology._mouth(g, e) + e.aim * e.tongue
+			if not e.hit_done and tip.distance_to(tgt.pos) < tgt.w * 0.5 + 4.0:
+				e.hit_done = true
+				# it stings, and pulls you in a little
+				g.hurt(tgt, float(e.d["dmg"]), Vector2(-signf(dx) * 2.2, -1.4), true)
+			if e.act_t <= 0:
+				e.tongue = 0.0
+				FoeAI.start(e, "recover", 22)
 
 ## is it touching you (its body box grown by `pad`)?
 static func _touching(g, e, tgt, pad: float) -> bool:

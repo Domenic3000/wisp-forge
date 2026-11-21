@@ -51,6 +51,8 @@ static func think(g, e, tgt, dist: float) -> void:
 		return
 	var ai: Dictionary = e.d.get("ai", {})
 	var sight: float = ai.get("sight", SIGHT)
+	if e.asleep:
+		sight *= 0.4                     # (asleep, it only notices you close by)
 	e.look_t -= 1
 	if e.look_t <= 0:
 		e.look_t = LOOK_EVERY

@@ -166,12 +166,18 @@ static func frames(id: String, b: Dictionary) -> Dictionary:
 				out["%s_walk%d" % [id, k]] = _beast(b, sd, {"phase": float(k) / 4.0, "bob": 1.0 if k % 2 == 1 else 0.0})
 			out[id + "_wind"] = _beast(b, sd, {"lower": 1.0, "crouch": 0.6, "mouth": 1.0})
 			out[id + "_air"] = _beast(b, sd, {"tuck": 1.0, "mouth": 1.0})
+			# its daily life (ecology.gd): head down to the grass or the water, and asleep, lying down
+			out[id + "_graze"] = _beast(b, sd, {"graze": 1.0, "crouch": 0.15})
+			out[id + "_sleep"] = _beast(b, sd, {"crouch": 1.0, "lie": 1.0, "graze": 0.5, "shut": 1.0})
 		"toad":
 			out[id] = _toad(b, sd, {})
 			for k in 4:
 				out["%s_walk%d" % [id, k]] = _toad(b, sd, {"squash": [0.15, 0.0, -0.12, 0.0][k]})
 			out[id + "_wind"] = _toad(b, sd, {"squash": 0.3, "sac": 1.0})
 			out[id + "_air"] = _toad(b, sd, {"squash": -0.25, "legs": 1.0})
+			out[id + "_croak"] = _toad(b, sd, {"sac": 1.0})
+			out[id + "_crouch"] = _toad(b, sd, {"squash": 0.22})
+			out[id + "_sleep"] = _toad(b, sd, {"squash": 0.18, "shut": 1.0})
 		"fungus":
 			out[id] = _fungus(b, sd, {})
 			for k in 4:
@@ -184,6 +190,8 @@ static func frames(id: String, b: Dictionary) -> Dictionary:
 			out[id] = out[id + "_fly0"]
 			out[id + "_wind"] = _bird(b, sd, {"flap": 1.25, "talons": 1.0})
 			out[id + "_dive"] = _bird(b, sd, {"flap": 0.0, "swept": 1.0, "talons": 1.0})
+			out[id + "_perch"] = _bird(b, sd, {"fold": 1.0, "talons": 1.0})
+			out[id + "_sleep"] = _bird(b, sd, {"fold": 1.0, "talons": 1.0, "shut": 1.0})
 		"serpent":
 			out[id + "_head"] = _serpent_head(b, sd, false)
 			out[id + "_head_open"] = _serpent_head(b, sd, true)
@@ -192,6 +200,13 @@ static func frames(id: String, b: Dictionary) -> Dictionary:
 				out["%s_seg%d" % [id, k]] = _segment(b, sd, seg_radius(b, k), k)
 			out[id] = out[id + "_head"]
 	return out
+
+## how far below its picture's middle a bird's perched talons reach (cells): where it stands on a branch
+static func bird_feet(b: Dictionary) -> float:
+	var L: float = b["len"]
+	var S: float = b["span"]
+	var H := int(S * 1.4 + 16.0)
+	return float(H) * 0.58 + L * 0.18 + 8.0 - float(int(float(H) * 0.5))
 
 ## a serpent's k-th segment radius (cells): full behind the head, thinning to the tail
 static func seg_radius(b: Dictionary, k: int) -> float:
@@ -248,7 +263,7 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	# room for the tail behind: both sides grow alike, so the body keeps its place in the frame
 	var pad := maxf(0.0, ceilf(tl + (3.0 if tail == "tuft" else 1.0) - 6.0))
 	var W := int(L + hd * 3.0 + 14.0 + pad * 2.0)
-	var H := int(leg + T + neck + hd * 2.0 + (ant * 5) + 8.0)
+	var H := int(leg + T + neck + hd * 2.0 + (ant * 5) + 8.0 + (hd if b.get("long_ears", false) else 0.0))
 	var c := Canvas.new(W, H, sd)
 	var ph: float = pose.get("phase", 0.0)
 	var crouch: float = pose.get("crouch", 0.0)
@@ -256,7 +271,9 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var tuck: float = pose.get("tuck", 0.0)
 	var bob: float = pose.get("bob", 0.0)
 	var ground := float(H) - 2.0
-	var lg := leg * (1.0 - 0.3 * crouch) * (1.0 - 0.35 * tuck)
+	var lie: float = pose.get("lie", 0.0)
+	var graze: float = pose.get("graze", 0.0)
+	var lg := leg * (1.0 - 0.3 * crouch) * (1.0 - 0.35 * tuck) * (1.0 - 0.75 * lie)
 	var cx := 6.0 + pad + L * 0.5 + 2.0
 	var cy := ground - lg - T * 0.42 + bob - tuck * leg * 0.25
 	# the legs on the far side first, darker
@@ -312,6 +329,7 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var nb := Vector2(cx + L * 0.36, cy - T * 0.12)
 	var hp := Vector2(cx + L * 0.5 + hd * 0.55, cy - T * 0.4 - neck)
 	hp = hp.lerp(Vector2(cx + L * 0.5 + hd * 0.9, cy + T * 0.05), lower)
+	hp = hp.lerp(Vector2(cx + L * 0.5 + hd * 0.75, ground - hd * 0.55), graze)    # (nose to the ground)
 	if b.get("mane", false):
 		c.blob(hp.x - hd * 0.5, hp.y + hd * 0.25, hd * 1.15, hd * 1.2, acc, "fur", acc.darkened(0.3))
 	c.limb(nb, hp, T * 0.34, hd * 0.45, base, skin, acc)
@@ -337,9 +355,20 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 			var q := hc + Vector2(cos(aa), sin(aa)) * rr
 			c.line(prev, q, belly.darkened(0.25), 2.0 if k5 < 6 else 1.0)
 			prev = q
-	if b.get("ears", false) or b.get("mane", false):
+	if b.get("long_ears", false):
+		# a hare's: long, laid back a little, the far one darker
+		for side3 in [1, 0]:
+			var eb := hp + Vector2(-hd * (0.2 + 0.2 * side3), -hd * 0.3)
+			var tip3 := eb + Vector2(-hd * (0.55 + 0.15 * side3), -hd * 1.7)
+			c.limb(eb, tip3, 1.3, 0.9, base.darkened(0.25 * side3))
+			if side3 == 0:
+				c.line(eb + Vector2(0.0, -1.0), tip3 + Vector2(0.5, 1.0), belly.lerp(Color(0.95, 0.7, 0.7), 0.4))
+	elif b.get("ears", false) or b.get("mane", false):
 		c.poly(PackedVector2Array([hp + Vector2(-hd * 0.45, -hd * 0.3), hp + Vector2(-hd * 0.2, -hd * 1.0), hp + Vector2(hd * 0.05, -hd * 0.35)]), base)
-	c.eye(hp.x + hd * 0.12, hp.y - hd * 0.2, cs[4])
+	if pose.get("shut", 0.0) > 0.0:
+		c.line(Vector2(hp.x + hd * 0.02, hp.y - hd * 0.15), Vector2(hp.x + hd * 0.3, hp.y - hd * 0.15), dark)
+	else:
+		c.eye(hp.x + hd * 0.12, hp.y - hd * 0.2, cs[4])
 	# antlers: a beam each side, tines off it, moss and leaves hanging on them
 	var sides: Array = [0, 1] if ant > 0 else []
 	for side2 in sides:
@@ -391,7 +420,10 @@ static func _toad(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 		var ex := cx + rx * (0.3 + 0.28 * k)
 		var ey := cy - ry * (0.78 - 0.08 * k)
 		c.blob(ex, ey, 3.6, 3.0, cs[0].darkened(0.1 * k))
-		c.eye(ex - 0.5, ey - 1.0, cs[4])
+		if pose.get("shut", 0.0) > 0.0:
+			c.line(Vector2(ex - 2.0, ey - 0.5), Vector2(ex + 1.0, ey - 0.5), cs[3])
+		else:
+			c.eye(ex - 0.5, ey - 1.0, cs[4])
 	c.line(Vector2(cx + rx * 0.2, cy + ry * 0.12), Vector2(cx + rx * 0.98, cy - ry * 0.05), cs[3], 1.0)
 	c.outline(Color(0.05, 0.05, 0.03))
 	return c.img
@@ -458,7 +490,9 @@ static func _bird(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 		pts.append(root + back * 8.0)
 		c.poly(pts, cs[0].darkened(dark_by))
 		c.line(root, tip, cs[1].darkened(dark_by + 0.1))
-	wing.call(0.35, 0.25)
+	var fold: float = pose.get("fold", 0.0)
+	if fold <= 0.0:
+		wing.call(0.35, 0.25)
 	c.poly(PackedVector2Array([Vector2(cx - L * 0.4, cy), Vector2(cx - L * 0.75, cy - 5.0), Vector2(cx - L * 0.8, cy + 4.0), Vector2(cx - L * 0.7, cy + 7.0)]), cs[0].darkened(0.1))
 	c.blob(cx, cy, L * 0.42, L * 0.22, cs[0], b.get("skin", ""), cs[2])
 	c.blob(cx + 2.0, cy + L * 0.08, L * 0.3, L * 0.12, cs[1], "fur")
@@ -475,8 +509,16 @@ static func _bird(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 		c.poly(PackedVector2Array([hp + Vector2(-2.0 - k3 * 2.0, -L * 0.1), hp + Vector2(-6.0 - k3 * 3.0, -L * 0.25 - k3), hp + Vector2(-k3 * 2.0, -L * 0.13)]), cs[2])
 	var bk := hp + Vector2(L * 0.13, 0.0)
 	c.poly(PackedVector2Array([bk + Vector2(0, -2.5), bk + Vector2(7.0, 0.5), bk + Vector2(5.0, 4.0), bk + Vector2(0, 2.0)]), cs[2])
-	c.eye(hp.x + 1.0, hp.y - 1.5, cs[4])
-	wing.call(0.0, 0.0)
+	if pose.get("shut", 0.0) > 0.0:
+		c.line(Vector2(hp.x - 0.5, hp.y - 1.0), Vector2(hp.x + 2.0, hp.y - 1.0), cs[3])
+	else:
+		c.eye(hp.x + 1.0, hp.y - 1.5, cs[4])
+	if fold > 0.0:
+		# perched: the wing folded along its side, its tip over the tail
+		c.blob(cx - 2.0, cy - 1.0, L * 0.4, L * 0.17, cs[0].darkened(0.18), b.get("skin", ""), cs[2])
+		c.line(Vector2(cx + L * 0.15, cy - 2.0), Vector2(cx - L * 0.6, cy + 2.0), cs[1].darkened(0.2))
+	else:
+		wing.call(0.0, 0.0)
 	c.outline(Color(0.05, 0.04, 0.04))
 	return c.img
 

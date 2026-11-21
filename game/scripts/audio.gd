@@ -33,7 +33,7 @@ var _mood := ""
 var _fade := 1.0
 
 const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak": 50, "rumble": 25, "land": 8,
-	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8}
+	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8, "croak": 18, "chirp": 10}
 
 func _ready() -> void:
 	for k in 10:
@@ -258,6 +258,9 @@ func _build_sfx() -> void:
 	# a soft, earthy scoop: dark noise with a gentle start and a low thump under it
 	sfx["dig"] = _wav(_lowpass(_mix(_noise(0.16, 0.06, 20.0, 0.75), _sweep(0.12, 120.0, 70.0, "sine", 26.0, 0.22)), 0.35))
 	sfx["step"] = _wav(_noise(0.06, 0.12, 60.0, 0.5))
+	# a frog's croak: a low buzzing saw falling in pitch, softened; a startled bird's chirp
+	sfx["croak"] = _wav(_lowpass(_mix(_sweep(0.16, 210.0, 130.0, "saw", 11.0, 0.2), _sweep(0.12, 420.0, 260.0, "saw", 16.0, 0.06)), 0.35))
+	sfx["chirp"] = _wav(_mix(_sweep(0.07, 2400.0, 3300.0, "sine", 22.0, 0.09), _sweep(0.06, 3000.0, 2500.0, "sine", 26.0, 0.06)))
 	sfx["land"] = _wav(_mix(_noise(0.12, 0.08, 30.0, 0.9), _sweep(0.1, 120.0, 60.0, "sine", 30.0, 0.4)))
 	sfx["jump"] = _wav(_sweep(0.12, 260.0, 520.0, "sine", 14.0, 0.28))
 	sfx["levitate"] = _wav(_mix(_noise(0.25, 0.05, 6.0, 0.25), _sweep(0.25, 600.0, 640.0, "sine", 8.0, 0.06)))

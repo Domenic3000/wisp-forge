@@ -340,6 +340,44 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   kind + "_" + mood (`track_key`: "volcanic_surface_day.mp3"); `_pick` tries this planet kind's own, then the common
   one, then the fallbacks. A new kind of planet counts as a new mood (crossfade). The user makes tracks with Suno.
 
+## Wild life (scripts/ecology.gd; user, 21 Nov: "make the worlds more realistic, like the enemies fit into the world")
+- Every wild creature's life outside a fight. boss_ai.gd's `tick` calls `Ecology.tick` first for a creature (not a
+  guardian): HUNT (0: it's after you, boss_ai's moves as before), DONE (1: ecology moved it), WANDER (2: boss_ai's
+  `_wander`). Data per `Defs.CREATURES` entry: "temper" (predator: hunts you on sight; territorial: `warn_t` faces you
+  and growls (pose "wind") within `TERR` + its width, charges after `WARN` frames; neutral: only once `provoked`; prey:
+  never fights, runs from you and its hunters, a herd runs together), "eats" (creature ids it hunts: `_find_prey`,
+  `_chase` at `CHASE` x speed (prey runs at `FLEE` x), `_bite`, `slay` leaves a carcass in `main.eco_carcasses` drawn
+  on its back by overlay `_draw_carcasses`; it eats there, `eat_t`; a predator busy with prey ignores you past 50
+  cells unless provoked), "scavenge" (vultures circle a carcass, then land and eat), "active" (day/night/any: out of
+  its hours it goes to its `den` (spawn point; birds a perch) and sleeps, `asleep`, pose "sleep", "z"s; wakes to you
+  within 30, a spell, digging (`brushes`) or a blast), "idle" (weights over wander, graze, sniff, rest, drink
+  (`find_water`), sit, croak (sfx "croak"), flick (a frog's tongue at a fly), hop, perch (`find_perch`: a tree's
+  crown, collision grid bg 3), circle, soar, coil, lurk, roost (`find_ceiling`), bask, follow (pack/herd `leader`,
+  set in `_try_spawn`); `_idle_of` has defaults per plan), "habitat" (water: `habitat_ok` needs water within ~240
+  columns by the surface table; soft: burrowers; trees; ceiling), "fireproof".
+- Reacting to the world: `_sense` every `SENSE_EVERY` frames (fire within ~16 cells via `box_count` FIRE -> runs;
+  `storm` = rain > 0.45 or a squall/hail/sandstorm under the open sky -> `find_shelter` (an overhang, a roof or a tree
+  over it) and it huddles; birds perch), `Ecology.scare` from main `_explode` and `lightning_strike` (prey and the
+  neutral run; the rest flinch), wounded below a quarter health run (not predators), `guard_lava` (main, before
+  `move_body`) stops walkers stepping into lava. `harmful(e)` (main's contact damage): prey, unroused neutral or
+  territorial ones and sleepers don't hurt to touch.
+- Spawning (`main._wild_pick`): weighed by `spawn_weight` (habitat, and out of its hours 0.3: met asleep, `on_spawn`);
+  prey counts apart (3 at most) from the rest. A burrower only spawns over soft ground.
+- Burrowers (user, 21 Nov: "the holes they pop out of are floating way above the ground"): under the ground they're
+  always IN soft ground (`soft`: dirt, grass, sand, mud, gravel, snow, ash, sandstone, litter, mycelium, dry grass):
+  `burrow_toward` follows the surface (`surface_under`) at `depth` (6, a guardian 14) and stops at rock, floors,
+  water or the air; `keep_under` sinks one found in the open (a creature with no soft ground near is gone); a
+  breach's `spot` is the surface over the burrower, only begun over `diggable_under` ground, a creature's lunge
+  low (0.3 of `BREACH_H`) toward you; `dig_in` back into the ground where it lands or down its hole.
+- Frogs (user: "glitchy, flicker between jump and not jumping"): `Enemy.off_t` (frames off the ground, main after
+  `move_body`) picks "_air" only past 3 frames; `Ecology.hop` crouches 6 frames first (boss_ai `tick` plays
+  `crouch_t` out, frame "_crouch"), `land_t` squashes on landing; a frog never shows walk frames. They float in
+  water (`_fall`). Move "tongue" (boss_ai: out at you and back, stings and pulls; `e.tongue` along `e.aim`, drawn by
+  overlay `_eco_marks`). New frames: beast "_graze", "_sleep"; toad "_croak", "_crouch", "_sleep"; bird "_perch",
+  "_sleep" (`BossArt.bird_feet` puts it on its branch). Bats roost on cave roofs (`main._bat_roost`, "bat_hang").
+- Prey creatures: hare (forest, savanna, mountain), snowhare, deer (a herd of 3), skink, reedfrog. Test: `_test_ecology`
+  ("ecology").
+
 ## Pathfinding (scripts/nav.gd)
 - `shaders/navmap.comp` runs after grid.comp: one byte per 4 x 4 grid cells per mage (bit 0 blocks, 1 platform, 2
   liquid, 3 all blocked, 4 a door), read back in the same buffer as the grids (`gpu.nav_off`, `NG` blocks a side,
@@ -551,7 +589,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

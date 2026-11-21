@@ -10,6 +10,7 @@ const Overlay := preload("res://scripts/overlay.gd")
 const MapView := preload("res://scripts/map_view.gd")
 const Space := preload("res://scripts/space.gd")
 const BossAI := preload("res://scripts/boss_ai.gd")
+const Ecology := preload("res://scripts/ecology.gd")
 const BossArt := preload("res://scripts/boss_art.gd")
 const Skiff := preload("res://scripts/skiff.gd")
 const Buildings := preload("res://scripts/buildings.gd")
@@ -179,6 +180,32 @@ class Enemy extends Body:
 	var breach_hits := 0       # (how many holes this breach has blasted)
 	var nav_dx := 0.0          # (grid cells across to the next point of its way)
 	var arena := 0.0           # a guardian's arena: how far either side of its middle (it wakes when you come in)
+	# its life in the world (scripts/ecology.gd)
+	var pose := ""             # a frame of its daily life ("graze", "sleep", "croak", "perch", "wind")
+	var asleep := false
+	var doing := ""            # what it's doing with itself ("wander", "graze", "drink", "perch"...)
+	var doing_t := 0
+	var goal_p := Vector2.ZERO # where that takes it (world; ZERO: nowhere in particular)
+	var fear_t := 0            # frames it keeps running from `fear_from`
+	var fear_from := Vector2.ZERO
+	var prey = null            # the creature it's hunting
+	var chase_t := 0
+	var hunger_t := 0          # frames before it hunts (or scavenges) again
+	var eat_t := 0             # frames eating at a kill
+	var bite_t := 0
+	var leader = null          # (a pack's or a herd's: followers keep to it)
+	var follow_off := 0.0
+	var warn_t := 0            # (territorial: frames you've stood too close)
+	var was_prov := false
+	var sense_t := 0
+	var storm := false         # (in the open in a storm: it goes for shelter)
+	var den := Vector2.ZERO    # where it sleeps (where it was first met)
+	var den_t := 0
+	var off_t := 0             # frames off the ground (its pose reads this, never one frame's on_ground)
+	var land_t := 0            # frames since it landed (a frog's squash)
+	var crouch_t := 0          # a frog crouching to hop, and the hop it's about to make
+	var hop_v := Vector2.ZERO
+	var tongue := 0.0          # a frog's tongue, out this far (cells) along `aim`
 
 var gpu
 var ui
@@ -257,6 +284,7 @@ var _cam_prev := 0.0
 var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed", "view": "world"}
 var boss_info := Vector4.ZERO
 var boss_clouds := []          # the Mycelord's spore clouds (boss_ai.gd update_clouds)
+var eco_carcasses := []        # creatures killed by others, lying a while (ecology.gd): {pos, type, facing, t, h}
 var scale_px := 4
 var VW := 480
 var VH := 270
@@ -1809,18 +1837,42 @@ func _biome_name_at(a: float) -> String:
 	var names: Array = planet.get("biomes", ["forest"])
 	return String(names[clampi(int(gpu.surf_at(a).y), 0, names.size() - 1)])
 
-## a wild creature of a place ("forest", "cave2"...), or "" if none lives there or enough are about
+## A wild creature of a place ("forest", "cave2"...), or "" if none lives there or enough are about.
+## Each is weighed by where it lives and when it's out (ecology.gd `spawn_weight`: frogs only near water,
+## the creatures of the night more rarely by day, met asleep); prey has its own count, so the hunters
+## and the hunted are both about.
 func _wild_pick(where: String, most: int) -> String:
 	var ids: Array = Defs.creatures_of(where)
 	if ids.is_empty() or test_no_wild:
 		return ""
 	var wild := 0
+	var prey := 0
 	for e in enemies:
 		if e.d.get("creature", false):
-			wild += 1
-	if wild >= most:
+			if Ecology.temper(e) == "prey":
+				prey += 1
+			else:
+				wild += 1
+	var a := atan2(player.pos.y, player.pos.x)
+	var ws := []
+	var tot := 0.0
+	for id in ids:
+		var w := Ecology.spawn_weight(self, id, a, player.pos)
+		if Defs.CREATURES[id].get("temper", "") == "prey":
+			if prey >= 3:
+				w = 0.0
+		elif wild >= most:
+			w = 0.0
+		ws.append(w)
+		tot += w
+	if tot <= 0.0:
 		return ""
-	return "c_" + String(ids[randi() % ids.size()])
+	var r := randf() * tot
+	for k in ids.size():
+		r -= float(ws[k])
+		if r <= 0.0 and float(ws[k]) > 0.0:
+			return "c_" + String(ids[k])
+	return ""
 
 func _biome_at(a: float) -> Dictionary:
 	var bi := int(gpu.surf_at(a).y)
@@ -1901,6 +1953,7 @@ func _tick() -> void:
 	var tq := Time.get_ticks_usec()
 	_update_enemies()
 	BossAI.update_clouds(self)
+	Ecology.update_world(self)
 	if player.items.has("lantern") and not player.dead:
 		lights.append([player.pos, 70.0, Color(0.55, 0.95, 0.85)])      # (the Glowcap Lantern)
 	var gl := gear("light")
@@ -2671,6 +2724,7 @@ func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 	audio.play("boom", p, clampf(r / 14.0, 0.4, 1.2), 1.3 - clampf(r / 40.0, 0.0, 0.5))
 	vfx.blast(p, r, kind)
 	shake = maxf(shake, r * 0.6)
+	Ecology.scare(self, p, r)            # (the wild runs from a blast)
 	if dmg > 0:
 		for e in enemies:
 			var d: float = e.pos.distance_to(p)
@@ -2694,8 +2748,32 @@ func spawn_enemy(type: String, p: Vector2) -> Enemy:
 	e.t = 30.0 + randf() * 60.0
 	e.phase = randf() * 6.0
 	e.home = p
+	e.den = p
+	e.sense_t = 1 + randi() % 12
 	enemies.append(e)
 	return e
+
+## A bat with nothing to hunt: up to the cave roof over it and hanging there, asleep (true while it's
+## roosting or on its way; false with no roof near).
+func _bat_roost(e: Enemy) -> bool:
+	if e.goal_p == Vector2.ZERO:
+		if e.doing_t > 0:
+			e.doing_t -= 1
+			return false
+		e.goal_p = Ecology.find_ceiling(self, e)
+		if e.goal_p == Vector2.ZERO:
+			e.doing_t = 120                   # (no roof over it: it looks again in a while)
+			return false
+	if e.pos.distance_to(e.goal_p) < 2.5 or e.pose == "hang":
+		e.pos = e.goal_p
+		e.vx = 0.0
+		e.vy = 0.0
+		e.pose = "hang"
+		e.asleep = true
+		return true
+	e.phase += 0.12
+	Ecology.fly_to(self, e, e.goal_p, 1.0, 0.1)
+	return true
 
 ## a wild creature the Amber Totem keeps calm toward m (until something hurts it)
 func calm_foe(e: Enemy, m: Mage) -> bool:
@@ -3093,22 +3171,28 @@ func _update_enemies() -> void:
 						e.vx *= 0.8
 				e.vy += g * 0.3 if e.in_liquid else g
 			"bat":
-				e.phase += 0.12
-				if not FoeAI.swoop(self, e, tgt, dx, dy, dist):
-					if gl != Vector2.ZERO:
-						# it circles above you, waiting for its moment to dive
-						var bwant := Vector2(gl.x, gl.y - (26.0 if e.see else 0.0) + sin(e.phase) * 14.0)
-						var bw := _flier_steer(e, bwant)
-						e.vx += bw.x * 0.12
-						e.vy += bw.y * 0.11
-					else:
-						e.vx += (randf() - 0.5) * 0.1
-						e.vy += (randf() - 0.5) * 0.1
-					var sp := 1.6 * slow_f
-					e.vx = clampf(e.vx, -sp, sp)
-					e.vy = clampf(e.vy, -sp, sp)
-					if e.hit_wall and e.path_key == "":
-						e.vy -= 0.3              # (no way about yet: up over what it hit)
+				# with nothing to hunt it hangs from the cave roof, asleep, till something comes by
+				if gl == Vector2.ZERO and e.act == "" and _bat_roost(e):
+					pass
+				else:
+					e.pose = ""
+					e.asleep = false
+					e.phase += 0.12
+					if not FoeAI.swoop(self, e, tgt, dx, dy, dist):
+						if gl != Vector2.ZERO:
+							# it circles above you, waiting for its moment to dive
+							var bwant := Vector2(gl.x, gl.y - (26.0 if e.see else 0.0) + sin(e.phase) * 14.0)
+							var bw := _flier_steer(e, bwant)
+							e.vx += bw.x * 0.12
+							e.vy += bw.y * 0.11
+						else:
+							e.vx += (randf() - 0.5) * 0.1
+							e.vy += (randf() - 0.5) * 0.1
+						var sp := 1.6 * slow_f
+						e.vx = clampf(e.vx, -sp, sp)
+						e.vy = clampf(e.vy, -sp, sp)
+						if e.hit_wall and e.path_key == "":
+							e.vy -= 0.3              # (no way about yet: up over what it hit)
 			"imp":
 				# keeps its distance and throws fire that leads you; close in and it blinks away
 				e.phase += 0.05
@@ -3162,7 +3246,18 @@ func _update_enemies() -> void:
 			e.vx = 0.0                     # (under the ground, or flung out of it: boss_ai moves it)
 			e.vy = 0.0
 		else:
+			Ecology.guard_lava(self, e)
 			move_body(e)
+			# (frames off the ground: a pose reads this, so a frog sitting on a curved slope doesn't
+			# flicker into its leap)
+			if e.on_ground or (e.pose == "perch") or (e.doing == "roost" and e.vx == 0.0 and e.vy == 0.0):
+				if e.off_t > 4:
+					e.land_t = 6
+				e.off_t = 0
+			else:
+				e.off_t += 1
+			if e.land_t > 0:
+				e.land_t -= 1
 			# (how long it has been pressed against a wall: its way about gives up on that way)
 			e.wall_t = e.wall_t + 1 if e.hit_wall and (e.on_ground or e.d["fly"]) else 0
 		e.anim += absf(e.vx) * 0.2 + 0.02
@@ -3183,7 +3278,7 @@ func _update_enemies() -> void:
 			var l2 := to_grid(e.pos)
 			if box_count(l2.x - e.w * 0.5, l2.y - e.h * 0.5, e.w, e.h, Defs.LAVA) > 0:
 				_hurt_enemy(e, 0.6, 0, 0)
-		var calm := calm_foe(e, tgt)
+		var calm := calm_foe(e, tgt) or not Ecology.harmful(e)
 		if not tgt.dead and not e.under and not calm and absf(dx) < (e.w + tgt.w) * 0.5 and absf(dy) < (e.h + tgt.h) * 0.5:
 			hurt(tgt, float(e.d["dmg"]), Vector2(signf(dx) * 2.2, -1.6), true)
 		if not tgt.dead and not e.under and not calm and not e.trail.is_empty() and e.awake:
@@ -3276,11 +3371,17 @@ func _try_spawn() -> void:
 			var gp := Vector2(cos(ga), sin(ga)) * (gs.x + float(d["h"]) * 0.5 + 1.0)
 			if absf((gp - player.pos).dot(basis_d(a))) > 80.0:
 				continue                      # a cliff far above or below: not where you'd meet it
-			spawn_enemy(type, gp)
-			# (a pack comes together, a few strides apart)
+			if go == "burrow" and in_grid(gp, 8.0) and not Ecology.diggable_under(self, gp):
+				continue                      # (a burrower lives in soft ground: not under rock or a floor)
+			var first := spawn_enemy(type, gp)
+			if d.has("def"):
+				Ecology.on_spawn(self, first)
+			# (a pack or a herd comes together, a few strides apart, following the first)
 			for pk in pack - 1:
 				var pa := ga + side * float(pk + 1) * (float(d["w"]) + 6.0) / maxf(gs.x, 1.0)
-				spawn_enemy(type, Vector2(cos(pa), sin(pa)) * (gpu.surf_at(pa).x + float(d["h"]) * 0.5 + 1.0))
+				var mate := spawn_enemy(type, Vector2(cos(pa), sin(pa)) * (gpu.surf_at(pa).x + float(d["h"]) * 0.5 + 1.0))
+				mate.leader = first
+				mate.asleep = first.asleep
 			return
 		return
 	# underground: in open cave space inside the simulated area, but outside the view
@@ -3296,7 +3397,9 @@ func _try_spawn() -> void:
 			var sp := from_grid(Vector2(lx, ly))
 			if r > sa.x - 14.0 and not swim and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
 				continue                      # (a bird of the surface comes in through the air, not a cave)
-			spawn_enemy(type, sp)
+			var cfirst := spawn_enemy(type, sp)
+			if d.has("def"):
+				Ecology.on_spawn(self, cfirst)
 			# bats often hunt in pairs
 			if type == "bat" and randf() < 0.5 and not box_solid(lx + 6.0 - d["w"] * 0.5, ly - 4.0 - d["h"] * 0.5, d["w"], d["h"]):
 				spawn_enemy(type, from_grid(Vector2(lx + 6.0, ly - 4.0)))
@@ -3631,6 +3734,7 @@ func lightning_strike(cells: float) -> void:
 	audio.play("boom", to, 1.0, 0.8)
 	brushes.append([to + up * 1.5, 1.8, 3, Defs.FIRE, 0, 0, 0])     # (a scorch: fire in the air where it hit)
 	lights.append([to, 80.0, Color(1.3, 1.4, 1.8)])
+	Ecology.scare(self, to, 10.0)
 	for m in players:
 		if not m.dead and m.pos.distance_to(to) < 12.0:
 			hurt(m, 14.0, (m.pos - to).normalized() * 2.0, true)
@@ -4950,6 +5054,7 @@ func _make_world(index: int, arriving: bool) -> void:
 				skiff.load_cells(sk["cells"])     # (as it was: whatever was built in it too)
 	enemies.clear()
 	boss_clouds.clear()
+	eco_carcasses.clear()
 	_guards_alive.clear()
 	projs.clear()
 	parts.clear()

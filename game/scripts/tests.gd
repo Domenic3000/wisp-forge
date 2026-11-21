@@ -2,6 +2,7 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
+const Ecology := preload("res://scripts/ecology.gd")
 const Skiff := preload("res://scripts/skiff.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important
@@ -366,6 +367,31 @@ func _test_ui() -> void:
 		out.blend_rect(big, Rect2i(Vector2i.ZERO, big.get_size()), Vector2i(ox, 4 + sh - big.get_height()))
 		ox += big.get_width() + 8
 	out.save_png(dir.path_join("beasts.png"))
+	# every creature's daily-life poses (ecology.gd), 3x, in rows: saves/shots/poses.png
+	var pz := []
+	for pc in Defs.CREATURES:
+		var pfr: Dictionary = BA.frames("c_" + pc, Defs.CREATURES[pc]["body"])
+		for suf in ["", "_graze", "_sleep", "_croak", "_crouch", "_perch"]:
+			if pfr.has("c_" + pc + suf):
+				pz.append(pfr["c_" + pc + suf])
+	var prow_w := 1800
+	var pimg := Image.create(prow_w, 900, false, Image.FORMAT_RGBA8)
+	pimg.fill(Color(0.35, 0.5, 0.62))
+	var px0 := 4
+	var py0 := 4
+	var prow_h := 0
+	for im4 in pz:
+		var big2: Image = (im4 as Image).duplicate()
+		big2.resize(big2.get_width() * 3, big2.get_height() * 3, Image.INTERPOLATE_NEAREST)
+		if px0 + big2.get_width() > prow_w:
+			px0 = 4
+			py0 += prow_h + 6
+			prow_h = 0
+		if py0 + big2.get_height() < 900:
+			pimg.blend_rect(big2, Rect2i(Vector2i.ZERO, big2.get_size()), Vector2i(px0, py0))
+		px0 += big2.get_width() + 6
+		prow_h = maxi(prow_h, big2.get_height())
+	pimg.save_png(dir.path_join("poses.png"))
 	for k in g.player.inv.size():
 		g.player.inv[k] = int(inv0[k])
 	g.known = known0
@@ -992,6 +1018,27 @@ func _go(p: Vector2) -> void:
 	g.player.grid_g = p
 	g.player.grid_a = atan2(p.y, p.x)
 
+## a clear stretch (as `_clear_stretch`) whose ground is soft right through its top cells (dirt, sand,
+## snow...: ecology.gd `soft`), so a burrower can live under it; the nearest found, else any clear one
+func _soft_stretch(from: int, w: int, h: int, level := 3) -> Vector2i:
+	var at := from
+	for k in 14:
+		var st := _clear_stretch(at, w, h, level)
+		var soft_ok := true
+		for c in [st.x + 4, st.x + w / 4, st.x + w / 2, st.x + 3 * w / 4, st.x + w - 4]:
+			var gr: int = g.builds.ground_row(c)
+			var rr: Dictionary = g.gpu.read_rect(c, gr, 1, 10)
+			for v in rr["fg"]:
+				if not Ecology.soft(int(v) & 255):
+					soft_ok = false
+					break
+			if not soft_ok:
+				break
+		if soft_ok:
+			return st
+		at = st.x + w + 60
+	return _clear_stretch(from, w, h, level)
+
 ## counts inside a structure's box: solid built blocks, loose (unsupported) blocks, treasure
 ## background plant cells (leaves, wood, cactus, coal from charred trees, snow on pines) in a
 ## 120-column window from 100 rows above the ground at the middle down to 10 below
@@ -1236,6 +1283,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_creatures()
+		elif only == "ecology":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_ecology()
 		elif only == "sky":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3512,6 +3563,7 @@ func run() -> void:
 	await _test_wardens()
 
 	await _test_creatures()
+	await _test_ecology()
 
 	await _test_climb()
 	await _test_nav()
@@ -3977,12 +4029,13 @@ func _test_creatures() -> void:
 			cr_none.append(cr_w)
 	var cr_ids := []
 	for cr_k0 in Defs.CREATURES:
-		if not Defs.CREATURES[cr_k0].get("swim", false):
-			cr_ids.append(cr_k0)            # (swimmers are tried in the sea: _test_far_biomes)
+		if not Defs.CREATURES[cr_k0].get("swim", false) and Defs.CREATURES[cr_k0].get("temper", "") != "prey":
+			cr_ids.append(cr_k0)            # (swimmers are tried in the sea: _test_far_biomes; prey never
+			                                # fights: _test_ecology)
 	# (on the ground: the test before this one leaves you up in the orbit band)
 	var cr_orig: Vector2 = g.player.pos
 	# (on a clear, level stretch: spawned inside a tower, a creature can't come after you at all)
-	var cr_st := _clear_stretch(Build.cell_of(g.player.pos).x - 85, 170, 50, 30)
+	var cr_st := _soft_stretch(Build.cell_of(g.player.pos).x - 85, 170, 50, 30)    # (soft ground: a burrower lives in it)
 	var cr_a0: float = (float(cr_st.x) + 85.5) / float(Defs.NS) * TAU
 	_go(Vector2(cos(cr_a0), sin(cr_a0)) * (g.gpu.surf_at(cr_a0).x + 14.0))
 	await _frames(60)
@@ -4003,6 +4056,7 @@ func _test_creatures() -> void:
 			var cr_e = g.spawn_enemy("c_" + cr_id, cr_at)
 			cr_e.alert_t = 240             # (it has heard you: a wall between mustn't fail the test)
 			cr_e.seen_pos = cr_home
+			cr_e.provoked = true           # (the neutral and the territorial fight once roused)
 			cr_group.append([cr_id, cr_e, cr_at, 0.0, 0.0, 9999.0, cr_e.pos])
 		for cr_f in 170:
 			await _frames(1)
@@ -4031,6 +4085,272 @@ func _test_creatures() -> void:
 	await _frames(30)
 	_ok("every biome and depth has creatures that come after you, attack, stay on screen and keep moving",
 		cr_none.is_empty() and cr_bad.is_empty(), "%d creatures; places without any: %s; %s" % [cr_ids.size(), str(cr_none), "; ".join(cr_rows)])
+
+## The wild's own lives (ecology.gd): prey runs, a hunter runs prey down and eats, sleepers sleep in
+## their off hours and wake to you, the territorial warn first, the neutral only fight back, fire and
+## blasts scare them, frogs hop without flickering, burrowers never leave the ground, a storm sends
+## them to shelter, water-dwellers are only met near water.
+func _test_ecology() -> void:
+	var ec_god0: bool = g.test_god
+	var ec_time0: float = g.time
+	g.test_god = true
+	for ec_e0 in g.enemies.duplicate():
+		if not ec_e0.boss:
+			g.enemies.erase(ec_e0)
+	g.spawn_timer = 999999
+	var ec_orig: Vector2 = g.player.pos
+	var ec_st := _soft_stretch(Build.cell_of(g.player.pos).x - 130, 260, 50, 8)
+	var ec_a0: float = (float(ec_st.x) + 130.5) / float(Defs.NS) * TAU
+	var ec_r0: float = g.gpu.surf_at(ec_a0).x
+	var ec_br: Vector2 = g.basis_r(ec_a0)
+	_go(Vector2(cos(ec_a0), sin(ec_a0)) * (ec_r0 + 14.0))
+	await _frames(40)
+	g.time = g.towns.time_for_hour(g.player.pos, 13.0)          # (midday)
+	var ec_ground := func(off: float) -> Vector2:
+		var aa: float = ec_a0 + off / ec_r0
+		var p0: Vector2 = Vector2(cos(aa), sin(aa)) * (g.gpu.surf_at(aa).x + 12.0)
+		var sf: Vector2 = Ecology.surface_under(g, p0, 30.0, 60.0)
+		return sf if sf.is_finite() else Vector2(cos(aa), sin(aa)) * g.gpu.surf_at(aa).x
+	var ec_spawn := func(t: String, off: float):
+		var gp: Vector2 = ec_ground.call(off)
+		var dd: Dictionary = Defs.enemy_def(t)
+		return g.spawn_enemy(t, gp + gp.normalized() * (float(dd["h"]) * 0.5 + 1.0))
+	var ec_stand := func(off: float) -> void:
+		var gp2: Vector2 = ec_ground.call(off)
+		_go(gp2 + gp2.normalized() * 12.0)
+	var ec_along := func(p: Vector2) -> float:
+		return (p - ec_ground.call(0.0)).dot(ec_br)
+	var ec_rows := []
+	var ec_good := true
+
+	# ---- prey runs from you ----
+	ec_stand.call(-60.0)
+	await _frames(20)
+	var ec_deer = ec_spawn.call("c_deer", -20.0)
+	var ec_d0: float = absf(ec_along.call(ec_deer.pos) - ec_along.call(g.player.pos))
+	var ec_feared := false
+	for ec_f in 150:
+		await _frames(1)
+		ec_feared = ec_feared or ec_deer.fear_t > 0
+	var ec_d1: float = absf(ec_along.call(ec_deer.pos) - ec_along.call(g.player.pos))
+	var ec_ok1: bool = ec_feared and ec_d1 > ec_d0 + 20.0 and ec_deer.moves_done == 0
+	ec_rows.append("%sa deer ran from you: %.0f -> %.0f cells off" % ["" if ec_ok1 else "(!) ", ec_d0, ec_d1])
+	ec_good = ec_good and ec_ok1
+	ec_deer.dead = true
+
+	# ---- a hunter runs its prey down and eats it ----
+	ec_stand.call(-110.0)
+	await _frames(20)
+	var ec_wolf = ec_spawn.call("c_frostwolf", 0.0)
+	var ec_hare = ec_spawn.call("c_snowhare", 36.0)
+	ec_wolf.prey = ec_hare
+	var ec_ran := false
+	var ec_ate := false
+	var ec_hunt_f := 0
+	for ec_f2 in 700:
+		# (you keep a little way behind the hunt: far enough that the wolf keeps to its prey, near enough
+		# that both stay in the simulated ground round you)
+		if ec_f2 % 10 == 0:
+			ec_stand.call(-ec_along.call(ec_wolf.pos) - 80.0)      # (along runs the other way to the offsets)
+		await _frames(1)
+		ec_ran = ec_ran or ec_hare.fear_t > 0
+		ec_ate = ec_ate or ec_wolf.eat_t > 0
+		ec_hunt_f = ec_f2
+		if ec_ate:
+			await _frames(20)
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("eco_hunt.png"))
+			break
+	var ec_ok2: bool = ec_hare.dead and ec_ate and ec_ran and not g.eco_carcasses.is_empty()
+	ec_rows.append("%sa wolf ran a hare down%s in %.1f s and ate (carcasses %d)" % ["" if ec_ok2 else "(!) ", "" if ec_ran else " (it never ran)", ec_hunt_f / 60.0, g.eco_carcasses.size()])
+	ec_good = ec_good and ec_ok2
+	ec_wolf.dead = true
+	ec_hare.dead = true
+
+	# ---- a creature of the night sleeps by day, and wakes to you beside it ----
+	ec_stand.call(-90.0)
+	await _frames(20)
+	var ec_hy = ec_spawn.call("c_hyena", 30.0)
+	Ecology.on_spawn(g, ec_hy)
+	var ec_slept: bool = ec_hy.asleep
+	for ec_f3 in 60:
+		await _frames(1)
+		ec_slept = ec_slept and ec_hy.asleep
+	ec_stand.call(-12.0)
+	await _frames(20)          # (the ground round you is read back afresh after a jump like that)
+	ec_slept = ec_slept and ec_hy.asleep
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("eco_sleep.png"))
+	ec_stand.call(26.0)
+	var ec_woke := -1
+	for ec_f4 in 60:
+		await _frames(1)
+		if not ec_hy.asleep and ec_woke < 0:
+			ec_woke = ec_f4
+	var ec_ok3: bool = ec_slept and ec_woke >= 0
+	ec_rows.append("%sa hyena asleep by day %s, woke %d frames after you came by" % ["" if ec_ok3 else "(!) ", ec_slept, ec_woke])
+	ec_good = ec_good and ec_ok3
+	ec_hy.dead = true
+
+	# ---- the territorial warn you off first, then charge ----
+	ec_stand.call(-30.0)
+	await _frames(20)
+	var ec_ram = ec_spawn.call("c_ram", -4.0)
+	var ec_warned := false
+	var ec_charge := -1
+	for ec_f5 in 240:
+		await _frames(1)
+		ec_stand.call(-30.0)
+		if ec_ram.warn_t > 0 and not ec_ram.provoked:
+			ec_warned = true
+		if ec_ram.provoked and ec_charge < 0:
+			ec_charge = ec_f5
+	var ec_ok4: bool = ec_warned and ec_charge >= 50
+	ec_rows.append("%sa ram warned you (%s), then charged after %d frames" % ["" if ec_ok4 else "(!) ", ec_warned, ec_charge])
+	ec_good = ec_good and ec_ok4
+	ec_ram.dead = true
+
+	# ---- the neutral leave you be until struck ----
+	ec_stand.call(-30.0)
+	await _frames(20)
+	var ec_frog = ec_spawn.call("c_redfrog", -8.0)
+	var ec_calm := true
+	for ec_f6 in 120:
+		await _frames(1)
+		ec_calm = ec_calm and ec_frog.moves_done == 0
+		if ec_f6 == 100:
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("eco_frog.png"))
+	g._hurt_enemy(ec_frog, 1.0, 0.0, 0.0)
+	for ec_f7 in 240:
+		await _frames(1)
+		ec_stand.call(-30.0)
+		if ec_frog.moves_done >= 1:
+			break
+	var ec_ok5: bool = ec_calm and ec_frog.moves_done >= 1
+	ec_rows.append("%san ember frog calm %s, %d moves once struck" % ["" if ec_ok5 else "(!) ", ec_calm, ec_frog.moves_done])
+	ec_good = ec_good and ec_ok5
+	ec_frog.dead = true
+
+	# ---- fire and blasts scare them ----
+	ec_stand.call(-120.0)
+	await _frames(20)
+	var ec_ram2 = ec_spawn.call("c_ram", 20.0)
+	await _frames(20)
+	var ec_burnt := false
+	for ec_f8 in 90:
+		if ec_f8 < 8:
+			g.brushes.append([ec_ram2.pos + ec_br * 8.0, 2.5, 3, Defs.FIRE, 0, 0, 0])
+		await _frames(1)
+		ec_burnt = ec_burnt or ec_ram2.fear_t > 0
+	var ec_puff = ec_spawn.call("c_sporepuff", -60.0)
+	await _frames(10)
+	var ec_pa0: float = ec_along.call(ec_puff.pos)
+	Ecology.scare(g, ec_puff.pos + ec_br * 8.0, 5.0)
+	var ec_blasted: bool = ec_puff.fear_t > 0
+	await _frames(90)
+	var ec_pa1: float = ec_along.call(ec_puff.pos)
+	var ec_ok6: bool = ec_burnt and ec_blasted and ec_pa1 < ec_pa0 - 3.0
+	ec_rows.append("%sfire scared a ram %s; a blast sent a spore puff %.0f cells off" % ["" if ec_ok6 else "(!) ", ec_burnt, ec_pa0 - ec_pa1])
+	ec_good = ec_good and ec_ok6
+	ec_ram2.dead = true
+	ec_puff.dead = true
+	await _frames(60)
+
+	# ---- frogs hop without flickering into their leap ----
+	ec_stand.call(-70.0)
+	await _frames(20)
+	var ec_rf = ec_spawn.call("c_reedfrog", -10.0)
+	var ec_runs := 0
+	var ec_short := 0
+	var ec_run := 0
+	for ec_f9 in 300:
+		await _frames(1)
+		if ec_rf.dead:
+			break
+		var ec_air: bool = String(g.overlay._boss_frame(ec_rf)).ends_with("_air")
+		if ec_air:
+			ec_run += 1
+		elif ec_run > 0:
+			ec_runs += 1
+			if ec_run < 3:
+				ec_short += 1
+			ec_run = 0
+	var ec_ok7: bool = ec_runs >= 2 and ec_short == 0
+	ec_rows.append("%sa reed frog hopped %d times, %d flickers" % ["" if ec_ok7 else "(!) ", ec_runs, ec_short])
+	ec_good = ec_good and ec_ok7
+	ec_rf.dead = true
+
+	# ---- a burrower never leaves the ground, even with you up in the air ----
+	ec_stand.call(-40.0)
+	await _frames(20)
+	var ec_worm = ec_spawn.call("c_sandviper", 20.0)
+	ec_worm.provoked = true
+	var ec_in_air := 0
+	var ec_bad_hole := 0
+	var ec_holes := 0
+	var ec_last_act := ""
+	for ec_f10 in 420:
+		if ec_f10 < 200:
+			var ec_hover: Vector2 = ec_ground.call(-40.0)
+			_go(ec_hover + ec_hover.normalized() * 40.0)
+		await _frames(1)
+		if ec_worm.dead:
+			break
+		var ec_wk: int = Defs.KIND[g.type_at(ec_worm.pos)]
+		if ec_worm.under and ec_wk != Defs.K_SOLID and ec_wk != Defs.K_POWDER:
+			ec_in_air += 1
+		if ec_worm.move.begins_with("breach") and ec_worm.act == "go" and ec_last_act != "go":
+			ec_holes += 1
+			var ec_sk: int = Defs.KIND[g.type_at(ec_worm.spot - ec_worm.spot.normalized() * 1.5)]
+			if ec_sk != Defs.K_SOLID and ec_sk != Defs.K_POWDER:
+				ec_bad_hole += 1
+		ec_last_act = ec_worm.act
+	var ec_ok8: bool = ec_in_air == 0 and ec_bad_hole == 0 and ec_holes >= 1 and not ec_worm.dead
+	ec_rows.append("%sa sand viper: %d frames in the open while under, %d of %d holes not on the ground" % ["" if ec_ok8 else "(!) ", ec_in_air, ec_bad_hole, ec_holes])
+	ec_good = ec_good and ec_ok8
+	ec_worm.dead = true
+
+	# ---- a storm sends them to shelter ----
+	ec_stand.call(-120.0)
+	await _frames(20)
+	var ec_rain0: float = g.rain
+	var ec_rt0: float = g.rain_target
+	g.rain = 1.0
+	g.rain_target = 1.0
+	var ec_deer2 = ec_spawn.call("c_deer", 10.0)
+	var ec_shelter := false
+	for ec_f11 in 60:
+		await _frames(1)
+		ec_shelter = ec_shelter or (ec_deer2.storm and ec_deer2.doing == "shelter")
+	g.rain = ec_rain0
+	g.rain_target = ec_rt0
+	ec_rows.append("%sa deer in the rain went for shelter %s" % ["" if ec_shelter else "(!) ", ec_shelter])
+	ec_good = ec_good and ec_shelter
+	ec_deer2.dead = true
+
+	# ---- water-dwellers only where there's water ----
+	var ec_wet := NAN
+	var ec_dry := NAN
+	for ec_k in 720:
+		var ec_aa: float = float(ec_k) / 720.0 * TAU
+		var ec_sb: Vector4 = g.gpu.surf_b(ec_aa)
+		if is_nan(ec_wet) and ec_sb.y > g.gpu.surf_at(ec_aa).x and int(ec_sb.z) == Defs.WATER:
+			ec_wet = ec_aa
+		if is_nan(ec_dry) and not Ecology.habitat_ok(g, "reedfrog", ec_aa):
+			ec_dry = ec_aa
+	var ec_ok9: bool = not is_nan(ec_dry) and (is_nan(ec_wet) or Ecology.habitat_ok(g, "reedfrog", ec_wet))
+	ec_rows.append("%sreed frogs near water only (wet at %s, dry at %s)" % ["" if ec_ok9 else "(!) ", str(ec_wet), str(ec_dry)])
+	ec_good = ec_good and ec_ok9
+
+	g.time = ec_time0
+	g.test_god = ec_god0
+	g.spawn_timer = 600
+	g.eco_carcasses.clear()
+	for ec_e1 in g.enemies.duplicate():
+		if not ec_e1.boss:
+			g.enemies.erase(ec_e1)
+	_go(ec_orig)
+	await _frames(30)
+	_ok("creatures live in the world: prey runs, hunters hunt, sleepers sleep, the territorial warn, fire and blasts scare, frogs hop cleanly, burrowers stay in the ground",
+		ec_good, "; ".join(ec_rows))
 
 ## every game grows a system of its own: the rules for many seeds, and one random planet made for real
 func _test_worlds() -> void:
@@ -4317,6 +4637,7 @@ func _test_far_biomes() -> void:
 			var fb_e = g.spawn_enemy("c_" + String(fb_ids[fb_n]), _cell_pos(fb_col - 6 - fb_n * 14, fb_wr + 20))
 			fb_e.alert_t = 9999
 			fb_e.seen_pos = g.player.pos
+			fb_e.provoked = true
 			fb_foes.append([fb_ids[fb_n], fb_e, 0, 0.0, 9999.0, fb_e.pos, {}])
 		for fb_f in 300:
 			await _frames(1)

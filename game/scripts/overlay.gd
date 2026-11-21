@@ -7,6 +7,7 @@ const MageRig := preload("res://scripts/mage_rig.gd")
 const BossArt := preload("res://scripts/boss_art.gd")
 const FolkArt := preload("res://scripts/folk_art.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
+const Ecology := preload("res://scripts/ecology.gd")
 
 var game
 var tex := {}
@@ -17,6 +18,10 @@ var _boss_made := {}          # guardians whose frames have been grown (boss_art
 func _ready() -> void:
 	for k in Defs.SPRITES:
 		tex[k] = Defs.sprite_texture(k)
+	# a bat asleep under a cave roof: its first frame upside down
+	var bh: Image = tex["bat1"].get_image()
+	bh.flip_y()
+	tex["bat_hang"] = ImageTexture.create_from_image(bh)
 	tex["door_open"] = ImageTexture.create_from_image(_door_open_image(30))
 
 func _draw_build_preview() -> void:
@@ -116,6 +121,8 @@ func _foe_frame(e) -> String:
 	var key: String = e.d["spr"]
 	match e.type:
 		"bat":
+			if e.pose == "hang":
+				return "bat_hang"
 			return "bat1" if int(e.phase * 2.0) % 2 == 0 else "bat2"
 		"slime":
 			return "slime2" if (not e.on_ground or int(e.anim * 3.0) % 2 == 1) else "slime"
@@ -138,6 +145,51 @@ func _foe_frame(e) -> String:
 				return key + "2"
 	return key
 
+## A creature's life (ecology.gd) shown over it: a frog's tongue out, the "z"s of a sleeper.
+func _eco_marks(e) -> void:
+	if e.under:
+		return
+	if e.tongue > 0.5:
+		var m: Vector2 = Ecology._mouth(game, e)
+		var a0: Vector2 = game.world_to_screen(m)
+		var a1: Vector2 = game.world_to_screen(m + e.aim * e.tongue)
+		var lc := _lit(a0)
+		var n := int(ceil(a0.distance_to(a1))) + 1
+		for k in n + 1:
+			var q := a0.lerp(a1, float(k) / float(n)).floor()
+			draw_rect(Rect2(q, Vector2.ONE), Color(0.92, 0.42, 0.5) * lc)
+		draw_rect(Rect2(a1.floor() - Vector2(1, 1), Vector2(2, 2)), Color(0.98, 0.55, 0.62) * lc)
+	if e.asleep and e.pose != "hang":
+		var a := atan2(e.pos.y, e.pos.x)
+		var px: float = float(game.scale_px)
+		var u: int = game.ui.U
+		var fb: Font = PixelFont.make(true)
+		for k2 in 2:
+			var ph := fposmod(float(game.frame) * 0.008 + float(k2) * 0.5 + e.phase, 1.0)
+			var zp: Vector2 = game.world_to_screen(e.pos - game.basis_d(a) * (e.h * 0.5 + 2.0 + ph * 8.0) + game.basis_r(a) * float(e.facing) * (e.w * 0.3 + ph * 3.0))
+			draw_set_transform(zp.round(), 0.0, Vector2.ONE / px)
+			draw_string(fb, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, PixelFont.SIZE * u, Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.7))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## creatures killed by others (ecology.gd): on their backs, darkened, fading as they go
+func _draw_carcasses() -> void:
+	for cc in game.eco_carcasses:
+		var key: String = cc["type"]
+		if not tex.has(key):
+			continue
+		var t: Texture2D = tex[key]
+		var sp: Vector2 = game.world_to_screen(cc["pos"])
+		if sp.x < -60 or sp.y < -60 or sp.x > game.VW + 60 or sp.y > game.VH + 60:
+			continue
+		var z: float = game.zoom
+		var ts := t.get_size()
+		var mod := _lit(sp) * Color(0.62, 0.55, 0.52)
+		mod.a = clampf(float(cc["t"]) / 300.0, 0.0, 1.0)
+		# (flipped top to bottom: its back on the ground, the empty margin over its head sunk into it)
+		draw_set_transform(sp.round(), 0.0, Vector2(-1.0 if int(cc["facing"]) < 0 else 1.0, -1.0) / z)
+		draw_texture(t, Vector2(-floorf(ts.x * 0.5), -floorf(ts.y - float(cc["h"]) - 3.0)), mod)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 ## a guardian's frame for what it's doing (boss_art.gd names them)
 func _boss_frame(e) -> String:
 	var id: String = e.type
@@ -147,6 +199,8 @@ func _boss_frame(e) -> String:
 			return id + "_dive"
 		if e.act == "windup":
 			return id + "_wind"
+		if e.pose != "" and tex.has(id + "_" + e.pose):
+			return id + "_" + e.pose            # (perched in a tree, asleep there)
 		return "%s_fly%d" % [id, int(float(game.frame) * 0.16 + e.phase) % 4]
 	if plan == "serpent":
 		return id + "_head"
@@ -154,8 +208,17 @@ func _boss_frame(e) -> String:
 		return id
 	if e.act == "windup":
 		return id + "_wind"
-	if e.leaping or not e.on_ground:
+	# its daily life (ecology.gd): grazing, asleep, croaking, growling at you
+	if e.act == "" and e.pose != "" and e.off_t <= 3 and tex.has(id + "_" + e.pose):
+		return id + "_" + e.pose
+	# off the ground for more than a moment (one frame's on_ground flickers on a curved slope)
+	if e.leaping or e.off_t > 3:
 		return id + "_air"
+	if plan == "toad":
+		# a frog sits or hops, it never walks: it crouches before a hop and squashes as it lands
+		if (e.crouch_t > 0 or e.land_t > 0) and tex.has(id + "_crouch"):
+			return id + "_crouch"
+		return id
 	if absf(e.vx) > 0.1:
 		return "%s_walk%d" % [id, int(e.anim * 0.6) % 4]
 	return id
@@ -541,6 +604,7 @@ func _draw_all() -> void:
 		else:
 			_folk_mark(v2)
 
+	_draw_carcasses()
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	for e in game.enemies:
 		var tl: float = FoeAI.tell(e)
@@ -557,8 +621,10 @@ func _draw_all() -> void:
 				continue
 			if plan == "bird":
 				_sprite_mid(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, tint)
+				_eco_marks(e)
 				continue
-		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground, 1.0, sq, tint)
+		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground or e.off_t <= 3, 1.0, sq, tint)
+		_eco_marks(e)
 	# projectiles
 	for pr in game.projs:
 		if pr["type"] == "arrow":
