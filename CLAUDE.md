@@ -324,6 +324,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   gem, pearl/orb, ingot, log, leaf, shroom, cactus, torch, door, pane, rune), `spell(id)` (`SPELL_ART`, 11 x 11),
   `item(key)` (`ITEM_ART`/`ITEM_COL`: potion, coin, letter, chair, heart, drop, bubble, skull, book); outlined
   and cached.
+- Weights (user, 21 Nov: "the new font is a little thick"): buttons and 1x headings use the regular face; the bold
+  face only for headings at 2x and up (`_head`). The title (title_screen.gd): a main menu of Play / Settings / Quit
+  (`MENU_W`, one width), Play opens the journeys panel (`show_slots`; Back or Esc `show_main`): a card per save slot
+  (`CARD_W`) and its Delete (`DEL_W`), an empty slot's card the whole row, so every row lines up. Test: `_test_ui` checks both and saves
+  `ui_slots.png`.
 - The satchel is a grid of `_slot`s (icon at 2x, count), the spell bar slots with glyphs, their number, the
   cooldown and a red wash when mana is short (`_draw_slot_over`), the chosen spell's name over it; the forge
   fills the screen (`show_forge`: 3-5 columns), with a tab per category (jumps the list) and cost chips
@@ -531,7 +536,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (skeleton lunge + blade reach), `ranged` (archers' arrows, imps' fire; `shoot` leads the target and allows for
   drop), `swoop` (bats), `blink` (imps). Every wind-up is a tell: overlay.gd tints the foe (`FoeAI.tell`).
   Foes with `ai.doors` open doors by walking into them (`move_body` -> `_door_bump`, `door_t` stops them turning
-  back). Archers are a third of structure guards (picked by position in `_guard`); the dead walk at night.
+  back). Archers are a third of structure guards (hooded, cloaked, a quiver and a long bow; sprite "archer_draw" while
+  winding up, picked by overlay `_foe_frame` for any `<spr>_draw`; their arrows are drawn bone-pale with red fletching
+  and a spectral green head, wake and faint light; picked by position in `_guard`); the dead walk at night.
   Other levels (`FoeAI.climb`, used by skeletons/archers, slimes/mimics and wild walking/hopping creatures, never
   guardians): when its goal is well above or below and not far to the side, a foe looks about (`_plan_up`: tops within
   `CLIMB_LOOK` columns and its jump; `_plan_down`: the platform it stands on, or a gap/edge wide enough) at most every
@@ -569,6 +576,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   obstacles with main's `_flier_steer`. Leaps are worked out from the planet's pull to rise `SLAM_H`/`HOP_H`/
   `BREACH_H` cells, and gravity always applies to walkers (it used to be off for a slam: they flew off screen). New enemy projectiles in `Defs.PROJ` (venom, mudball, ice, rock, sandball,
   spore) with "col", "splat" (matter left where they land) and "home" (spores drift after you); `boss_clouds`.
+  A beast's tail (`_tail_len`, `_tail`) is sized to its body and drawn as a tapering, curving chain, and the frame
+  is padded on both sides to hold it (it used to be a fixed length, so small beasts' tails were cut square at the
+  picture's edge); `_test_ui` checks no beast frame touches its edge.
   Lairs: buildings.gd `_lairs` runs LAST in `plan`, with its own RNG (so adding lairs moved no other structure:
   several tests depend on the layout near the start), one per biome: spots deep inside the biome first; an open
   arena (`_lair`: dry, level enough, `LAIR_W` 440 wide (360 at a pinch), levelled and paved, ramping to the land,

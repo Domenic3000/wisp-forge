@@ -311,7 +311,61 @@ func _test_ui() -> void:
 	ui.show_title(true)
 	await _frames(30)
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_title.png"))
+	# the main menu's buttons share one width; Play opens the journeys, whose rows line up
+	var mw := {}
+	for mb in ui.title.box.get_children():
+		mw[int(ui._on_screen(mb).size.x)] = true
+	if mw.size() != 1:
+		bad.append("the main menu's buttons differ in width (%s)" % str(mw.keys()))
+	ui.title.show_slots()
+	await _frames(20)
+	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_slots.png"))
+	var xs := {}
+	var ws := {}
+	for sbn in ui.title.slot_btns:
+		var r: Rect2 = ui._on_screen(sbn)
+		var rr: Rect2 = ui._on_screen(sbn.get_parent().get_child(sbn.get_parent().get_child_count() - 1))
+		xs[int(r.position.x)] = true
+		ws[int(rr.end.x)] = true
+	if xs.size() != 1 or ws.size() != 1 or ui.title.box.visible:
+		bad.append("the journeys don't line up (lefts %s, rights %s)" % [str(xs.keys()), str(ws.keys())])
+	ui.title.show_main()
 	ui.title.visible = false
+	# every beast's frames have a clear edge: nothing (a tail) cut off by the picture's border
+	var BA = load("res://scripts/boss_art.gd")
+	var beasts := {}
+	var sheet := []
+	for cid in Defs.CREATURES:
+		beasts["c_" + cid] = Defs.CREATURES[cid]["body"]
+	for bid in Defs.BOSSES:
+		beasts["boss_" + bid] = Defs.BOSSES[bid]["body"]
+	for bk in beasts:
+		var bd: Dictionary = beasts[bk]
+		if String(bd["plan"]) != "beast":
+			continue
+		var frs: Dictionary = BA.frames(bk, bd)
+		sheet.append(frs[bk + "_walk1"])
+		for fk in frs:
+			var im: Image = frs[fk]
+			for y in im.get_height():
+				if im.get_pixel(0, y).a > 0.5 or im.get_pixel(im.get_width() - 1, y).a > 0.5:
+					bad.append("%s is cut off at its picture's edge" % fk)
+					break
+	# a sheet of every beast (walking), 4x, on the sky's colour: saves/shots/beasts.png
+	var sw := 0
+	var sh := 0
+	for im2 in sheet:
+		sw += (im2 as Image).get_width() * 4 + 8
+		sh = maxi(sh, (im2 as Image).get_height() * 4)
+	var out := Image.create(maxi(sw, 1), sh + 8, false, Image.FORMAT_RGBA8)
+	out.fill(Color(0.35, 0.5, 0.62))
+	var ox := 4
+	for im3 in sheet:
+		var big: Image = (im3 as Image).duplicate()
+		big.resize(big.get_width() * 4, big.get_height() * 4, Image.INTERPOLATE_NEAREST)
+		out.blend_rect(big, Rect2i(Vector2i.ZERO, big.get_size()), Vector2i(ox, 4 + sh - big.get_height()))
+		ox += big.get_width() + 8
+	out.save_png(dir.path_join("beasts.png"))
 	for k in g.player.inv.size():
 		g.player.inv[k] = int(inv0[k])
 	g.known = known0

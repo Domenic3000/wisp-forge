@@ -132,6 +132,8 @@ func _foe_frame(e) -> String:
 				return ["golem", "golem2", "golem", "golem3"][int(e.anim * 0.7) % 4]
 			return "golem"
 		_:
+			if e.act == "windup" and tex.has(key + "_draw"):
+				return key + "_draw"         # (an archer drawing its bow)
 			if tex.has(key + "2") and absf(e.vx) > 0.1 and int(e.anim) % 2 == 1:
 				return key + "2"
 	return key
@@ -560,15 +562,26 @@ func _draw_all() -> void:
 	# projectiles
 	for pr in game.projs:
 		if pr["type"] == "arrow":
-			# a shaft three cells long along its flight, with a pale head
+			# a skeleton's arrow (user, 21 Nov: hard to see): a bone-pale shaft five cells long with red
+			# fletching and a spectral green head and wake, which stay visible in the dark
 			var av: Vector2 = pr["vel"]
 			var ap: Vector2 = pr["pos"]
-			var a0: Vector2 = game.world_to_screen(ap)
-			var a1: Vector2 = game.world_to_screen(ap - av.normalized() * 3.0)
-			var lc := _lit(a0)
-			for k in 4:
-				var q := a1.lerp(a0, float(k) / 3.0).floor()
-				draw_rect(Rect2(q, Vector2.ONE), (Color(0.85, 0.82, 0.72) if k == 3 else Color(0.55, 0.38, 0.22)) * lc)
+			var dn := av.normalized()
+			var lc: Color = _lit(game.world_to_screen(ap))
+			lc = Color(maxf(lc.r, 0.6), maxf(lc.g, 0.6), maxf(lc.b, 0.6))
+			for k in 6:
+				var q: Vector2 = game.world_to_screen(ap - dn * float(5 + k * 2)).floor()
+				draw_rect(Rect2(q, Vector2.ONE), Color(0.45, 1.0, 0.5, 0.32 * (1.0 - float(k) / 6.0)))
+			for k in 6:
+				var q2: Vector2 = game.world_to_screen(ap - dn * float(k)).floor()
+				var col2 := Color(0.93, 0.9, 0.8) * lc
+				if k == 0:
+					col2 = Color(0.55, 1.0, 0.45)
+				elif k >= 4:
+					col2 = Color(0.95, 0.3, 0.22) * lc
+				draw_rect(Rect2(q2, Vector2.ONE), col2)
+			var side: Vector2 = game.world_to_screen(ap - dn * 5.0 + dn.orthogonal() * 1.0).floor()
+			draw_rect(Rect2(side, Vector2.ONE), Color(0.95, 0.3, 0.22) * lc)
 			continue
 		if Defs.SPELL_FX.has(pr["type"]):
 			continue                  # (vfx.gd draws the spells, with their glow)

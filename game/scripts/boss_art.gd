@@ -203,6 +203,33 @@ static func _cols(b: Dictionary) -> Array:
 	return [Color(b["base"]), Color(b["belly"]), Color(b["accent"]), Color(b["dark"]), Color(b["eye"])]
 
 # ---------------------------------------------------------------- beast ---
+## how far a beast's tail reaches behind its rump (cells)
+static func _tail_len(kind: String, L: float) -> float:
+	match kind:
+		"long":
+			return clampf(L * 0.75, 9.0, 22.0)
+		"tuft":
+			return clampf(L * 0.5, 7.0, 13.0)
+	return clampf(L * 0.28, 4.0, 7.0)
+
+## A tail from its root `a`, `len` cells back: a chain of short tapering limbs along a curve, leaving at
+## `lift` (radians above straight back; negative droops) and turning up by `bend` along its length, swaying
+## with the walk; its radius runs from r0 to a point. Returns the tip.
+static func _tail(c, a: Vector2, tlen: float, r0: float, lift: float, bend: float, ph: float, bob: float, base: Color, skin: String, acc: Color) -> Vector2:
+	var n := maxi(3, int(tlen / 2.5))
+	var sway := sin(TAU * ph) * 0.25
+	var prev := a
+	var ang := PI + lift                      # (screen y is down: PI + x points back and up)
+	for k in n:
+		var t1 := float(k + 1) / float(n)
+		var seg := tlen / float(n)
+		ang += (bend + sway) / float(n)
+		var p := prev + Vector2(cos(ang), sin(ang)) * seg + Vector2(0.0, -bob * t1 * 0.5)
+		var ra := lerpf(r0, 0.5, float(k) / float(n))
+		var rb := lerpf(r0, 0.5, t1)
+		c.limb(prev, p, ra, rb, base, skin, acc)
+		prev = p
+	return prev
 static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var cs := _cols(b)
 	var base: Color = cs[0]
@@ -216,7 +243,11 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var neck: float = b["neck"]
 	var skin: String = b.get("skin", "")
 	var ant: int = int(b.get("antlers", 0))
-	var W := int(L + hd * 3.0 + 14.0)
+	var tail := String(b.get("tail", "short"))
+	var tl := _tail_len(tail, L)
+	# room for the tail behind: both sides grow alike, so the body keeps its place in the frame
+	var pad := maxf(0.0, ceilf(tl + (3.0 if tail == "tuft" else 1.0) - 6.0))
+	var W := int(L + hd * 3.0 + 14.0 + pad * 2.0)
 	var H := int(leg + T + neck + hd * 2.0 + (ant * 5) + 8.0)
 	var c := Canvas.new(W, H, sd)
 	var ph: float = pose.get("phase", 0.0)
@@ -226,7 +257,7 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var bob: float = pose.get("bob", 0.0)
 	var ground := float(H) - 2.0
 	var lg := leg * (1.0 - 0.3 * crouch) * (1.0 - 0.35 * tuck)
-	var cx := 6.0 + L * 0.5 + 2.0
+	var cx := 6.0 + pad + L * 0.5 + 2.0
 	var cy := ground - lg - T * 0.42 + bob - tuck * leg * 0.25
 	# the legs on the far side first, darker
 	var hips := [Vector2(cx - L * 0.32, cy + T * 0.18), Vector2(cx + L * 0.3, cy + T * 0.18)]
@@ -243,19 +274,18 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 			c.limb(hip, knee, T * 0.26, T * 0.17, lc, skin, acc)
 			c.limb(knee, foot, T * 0.17, T * 0.12, lc, skin, acc)
 			c.blob(foot.x + 1.0, foot.y - 0.5, T * 0.16, 1.5, dark)
-	# the tail
-	var tb := Vector2(cx - L * 0.5, cy - T * 0.15)
-	match String(b.get("tail", "short")):
+	# the tail: sized to the body, curving and tapering to a point (it used to be a fixed length, so a small
+	# beast's ran off the picture's edge and was cut square)
+	var tb := Vector2(cx - L * 0.5 + 1.0, cy - T * 0.15)
+	var tr0 := clampf(T * 0.3, 1.2, 3.0)
+	match tail:
 		"short":
-			# a stub that tapers up and back (a 3-cell blob read as a square block)
-			c.limb(tb + Vector2(1.0, 0.0), tb + Vector2(-5.0, -2.5 - bob), 2.0, 0.9, base, skin, acc)
-			c.px(int(tb.x - 5.0), int(tb.y - 2.5 - bob), base.darkened(0.25))
+			_tail(c, tb, tl, tr0, 0.6, 0.0, ph, bob, base, skin, acc)
 		"long":
-			c.limb(tb, tb + Vector2(-9.0, 4.0 - bob), 3.0, 2.0, base, skin, acc)
-			c.limb(tb + Vector2(-9.0, 4.0 - bob), tb + Vector2(-15.0, 1.0), 2.0, 1.5, base, skin, acc)
+			_tail(c, tb, tl, tr0, -0.25, 0.7, ph, bob, base, skin, acc)
 		"tuft":
-			c.limb(tb, tb + Vector2(-10.0, 7.0 - bob * 2.0), 1.6, 1.0, base)
-			c.blob(tb.x - 11.0, tb.y + 7.5 - bob * 2.0, 2.6, 2.6, acc, "fur")
+			var tip := _tail(c, tb, tl, tr0 * 0.6, -0.7, 0.6, ph, bob, base, "", acc)
+			c.blob(tip.x - 0.5, tip.y + 0.5, 2.6, 2.6, acc, "fur")
 	# the body
 	c.blob(cx, cy, L * 0.5, T * 0.5, base, skin, acc)
 	c.blob(cx + 1.0, cy + T * 0.24, L * 0.36, T * 0.2, belly, skin, acc)

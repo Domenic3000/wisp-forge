@@ -5,11 +5,17 @@ extends Control
 
 var ui                       # the UI layer (for buttons and styles)
 var game
-var box: VBoxContainer       # the menu (New Journey, Continue, Settings, Quit)
+var box: VBoxContainer       # the main menu (Play, Settings, Quit)
 var _col: VBoxContainer
 var _sub: Label
 var slots_box: VBoxContainer   # one row per save slot
 var slot_btns := []             # the slots' buttons (click: continue that journey, or start one)
+var slot_panel: PanelContainer  # the journeys screen (Play opens it, Back or Esc closes it)
+var play_btn: Button
+var back_btn: Button
+const MENU_W := 170             # the main menu's buttons (UI pixels)
+const CARD_W := 250             # a journey's card
+const DEL_W := 46               # its Delete (an empty slot's card takes its place, so every row lines up)
 var _del_armed := -1            # a slot whose Delete was clicked once (click again to erase it)
 const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 var _bg: ColorRect
@@ -302,7 +308,7 @@ func _ready() -> void:
 	_fx.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fx.draw.connect(_draw_fx)
 	add_child(_fx)
-	# the menu, under the logo
+	# the menu, under the logo: Play / Settings / Quit, all one width; Play opens the journeys (save slots)
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -319,8 +325,6 @@ func _ready() -> void:
 	col.add_child(spacer)
 	var sub: Label = ui._label("A mage. A wisp. A round planet made of every last grain.", 17, Color(0.86, 0.80, 1.0))
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_color_override("font_outline_color", Color(0.04, 0.02, 0.08))
-	sub.add_theme_constant_override("outline_size", 5)
 	col.add_child(sub)
 	_sub = sub
 	var gap := Control.new()
@@ -329,25 +333,45 @@ func _ready() -> void:
 	box = VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	col.add_child(box)
-	slots_box = VBoxContainer.new()
-	slots_box.add_theme_constant_override("separation", 4)
-	box.add_child(slots_box)
-	refresh_slots()
+	play_btn = ui._button("Play", true)
+	play_btn.pressed.connect(show_slots)
 	var sb: Button = ui._button("Settings", true)
 	sb.pressed.connect(func(): ui.toggle_settings())
-	box.add_child(sb)
 	var qb: Button = ui._button("Quit", true)
 	qb.pressed.connect(func(): game.quit_game())
-	box.add_child(qb)
+	for b in [play_btn, sb, qb]:
+		b.custom_minimum_size = Vector2(MENU_W, 22)
+		box.add_child(b)
+	# the journeys: a framed panel of its own, every row the same width so the boxes line up
+	slot_panel = PanelContainer.new()
+	slot_panel.add_theme_stylebox_override("panel", ui._frame(Color(0.05, 0.04, 0.1, 0.9), ui.TRIM, 8, 10))
+	slot_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	slot_panel.visible = false
+	col.add_child(slot_panel)
+	var sv := VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 4)
+	slot_panel.add_child(sv)
+	var head: Label = ui._head("Choose a journey", 17)
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sv.add_child(head)
+	var rule: Control = ui._rule(CARD_W + 4 + DEL_W)
+	sv.add_child(rule)
+	slots_box = VBoxContainer.new()
+	slots_box.add_theme_constant_override("separation", 4)
+	sv.add_child(slots_box)
+	back_btn = ui._button("Back", true)
+	back_btn.custom_minimum_size = Vector2(CARD_W + 4 + DEL_W, 18)
+	back_btn.pressed.connect(show_main)
+	sv.add_child(back_btn)
+	refresh_slots()
 	var foot: Label = ui._label("Controls are in Settings (Esc while playing)   ·   Wisp Forge, early build", 12, Color(0.62, 0.6, 0.78))
 	foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	foot.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	foot.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	foot.position.y -= 7
 	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	foot.add_theme_color_override("font_outline_color", Color(0.04, 0.02, 0.08))
-	foot.add_theme_constant_override("outline_size", 4)
 	add_child(foot)
 
 ## The save slots: a saved journey shows where it is and when it was saved (click to carry on); an
@@ -361,29 +385,28 @@ func refresh_slots() -> void:
 	for n in range(1, game.SLOTS + 1):
 		var info: Dictionary = game.slot_info(n)
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 3)
-		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 4)
 		var b: Button = ui._button("", true)
-		b.custom_minimum_size = Vector2(230, 0)
+		b.custom_minimum_size = Vector2(CARD_W, 30)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true
 		if info.is_empty():
-			b.text = "Slot %d  ·  Empty\nStart a new journey" % n
+			b.text = "Journey %d  ·  empty\nStart a new journey" % n
 		else:
-			b.text = "Slot %d  ·  %s  ·  Staff %s, %d spells\n%s played  ·  saved %s" % [n, info["planet"], ["I", "II", "III", "IV", "V"][clampi(int(info["tier"]) - 1, 0, 4)],
+			b.text = "Journey %d  ·  %s  ·  Staff %s, %d spells\n%s played  ·  saved %s" % [n, info["planet"], ["I", "II", "III", "IV", "V"][clampi(int(info["tier"]) - 1, 0, 4)],
 				int(info["spells"]), _hours(float(info["played"])), _when(float(info["saved"]))]
 		b.pressed.connect(game.start_slot.bind(n))
 		row.add_child(b)
 		slot_btns.append(b)
 		if not info.is_empty():
 			var d: Button = ui._button("Sure?" if _del_armed == n else "Delete")
-			d.custom_minimum_size = Vector2(42, 0)
+			d.custom_minimum_size = Vector2(DEL_W, 30)
 			if _del_armed == n:
 				d.add_theme_color_override("font_color", Color(1, 0.5, 0.45))
 			d.pressed.connect(_on_delete.bind(n))
 			row.add_child(d)
 		else:
-			var pad := Control.new()
-			pad.custom_minimum_size = Vector2(42, 0)
-			row.add_child(pad)
+			b.custom_minimum_size.x = CARD_W + 4 + DEL_W    # (nothing to delete: the card fills the row)
 		slots_box.add_child(row)
 
 func _on_delete(n: int) -> void:
@@ -413,12 +436,35 @@ static func _when(unix: float) -> String:
 
 ## Hides the menu (while a planet loads, the scene keeps playing behind the loading panel).
 func set_menu_visible(on: bool) -> void:
-	box.visible = on
 	_sub.visible = on
+	if on:
+		show_main()
+	else:
+		box.visible = false
+		slot_panel.visible = false
+
+## The main menu (Play, Settings, Quit).
+func show_main() -> void:
+	_del_armed = -1
+	box.visible = true
+	slot_panel.visible = false
+
+## The journeys: one card per save slot.
+func show_slots() -> void:
+	refresh_slots()
+	box.visible = false
+	slot_panel.visible = true
+
+func _unhandled_input(ev: InputEvent) -> void:
+	if visible and slot_panel != null and slot_panel.visible and ev is InputEventKey and ev.pressed and not ev.echo \
+			and (ev as InputEventKey).keycode == KEY_ESCAPE:
+		show_main()
+		get_viewport().set_input_as_handled()
 
 ## Replaces the menu with a message (used when the GPU simulation can't start).
 func show_message(head: String, msg: String) -> void:
 	box.visible = false
+	slot_panel.visible = false
 	var h: Label = ui._head(head, 24, Color(1, 0.62, 0.52))
 	h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_col.add_child(h)

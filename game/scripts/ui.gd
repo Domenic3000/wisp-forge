@@ -5,7 +5,7 @@ extends CanvasLayer
 ## A pixel-art UI (user, 21 Nov): everything is laid out in UI pixels, and the whole UI is drawn at a whole
 ## number of screen pixels each (`U`, from the screen's height: 2 at 1080p and 1440p, 4 at 2160p), so frames,
 ## icons and text all share one pixel grid. Text is the game's own bitmap font (pixel_font.gd: regular for
-## text, bold for headings and buttons) at a whole multiple of its size (`fsize`). Frames are small 9-slice
+## text and buttons, bold for headings) at a whole multiple of its size (`fsize`). Frames are small 9-slice
 ## pixel textures made in code (dark ink outline, a trim, a darker inner trim, studs at the corners); icons
 ## come from icons.gd (every material, spell and item). Sizes in this file are UI pixels.
 
@@ -267,10 +267,11 @@ func _label(txt: String, size: int, col: Color) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
-## A heading: the bold face, its shadow violet
+## A heading: its shadow violet; the bold face only at 2x and up (at 1x it read too heavy)
 func _head(txt: String, size: int, col := CREAM) -> Label:
 	var l := _label(txt, size, col)
-	l.add_theme_font_override("font", font_b)
+	if fsize(size) > PixelFont.SIZE:
+		l.add_theme_font_override("font", font_b)
 	l.add_theme_color_override("font_shadow_color", Color(0.22, 0.1, 0.36, 1))
 	return l
 
@@ -298,7 +299,7 @@ func _button(txt: String, big := false) -> Button:
 	b.add_theme_stylebox_override("hover", _frame(Color(0.24, 0.17, 0.36, 0.97), GOLD, py, px))
 	b.add_theme_stylebox_override("pressed", _frame(Color(0.07, 0.05, 0.12, 0.97), GOLD, py + 1, px))
 	b.add_theme_stylebox_override("disabled", _frame(Color(0.07, 0.07, 0.1, 0.9), Color(0.3, 0.3, 0.36), py, px))
-	b.add_theme_font_override("font", font_b)
+	b.add_theme_font_override("font", font)      # (the regular face: the bold one read too heavy on buttons)
 	b.add_theme_font_size_override("font_size", PixelFont.SIZE)
 	b.add_theme_color_override("font_color", CREAM)
 	b.add_theme_color_override("font_hover_color", Color(1, 0.98, 0.88))

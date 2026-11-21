@@ -2577,7 +2577,8 @@ func _update_projectiles() -> void:
 			projs.remove_at(k)
 			continue
 		if pr["type"] == "arrow":
-			continue                  # an arrow neither glows nor sparks
+			lights.append([pos, float(pd["light"]), pd["col"] * 0.85])
+			continue                  # an arrow glows faintly (spectral green) but doesn't spark
 		var col: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else pd.get("col", Color(1, 0.35, 0.12))
 		if float(pd["light"]) > 0.0:
 			lights.append([pos, float(pd["light"]), col * 0.85])
