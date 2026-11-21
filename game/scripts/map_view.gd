@@ -27,6 +27,15 @@ func _draw_planet() -> void:
 		_house(g.world_to_screen(_cell_world(0.5 * (float(bx[0]) + float(bx[2])), float(bx[3]))), Color(1.0, 0.82, 0.35))
 	if g.skiff != null and g.skiff.pos.length() < Defs.R_SPACE:
 		_glyph_skiff(g.world_to_screen(g.skiff.pos), Color(0.7, 0.9, 1.0))
+	# villages you've been to, and the lairs and dungeons a tavern's rumours charted (towns.gd)
+	var seen: Array = g.planet_state.get("towns_seen", [])
+	for t in g.builds.towns:
+		if bool(t["living"]) and seen.has(int(t["seed"])):
+			var tc := float(int(t["x0"]) + int(t["w"]) / 2)
+			_dot(g.world_to_screen(_cell_world(tc, float(g.builds.ground_row(int(tc))) - 6.0)), Color(0.95, 0.85, 0.6), String(t["name"]))
+	for ch in g.planet_state.get("charted", []):
+		var cp := Vector2(float(ch["pos"][0]), float(ch["pos"][1]))
+		_dot(g.world_to_screen(cp), Color(1.0, 0.45, 0.4) if ch["kind"] == "lair" else Color(0.75, 0.6, 1.0), String(ch["name"]))
 	for m in g.players:
 		if m == g.player:
 			continue

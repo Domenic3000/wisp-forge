@@ -34,6 +34,9 @@ var chest_list := []             # {pos (world centre), ruined}: treasure chests
 var door_list := []              # {pos (world centre), w, h, side}: doors (closed cells; the game opens and closes them)
 var lair_why := {}                # biome -> why no lair fitted (candidates, and what turned them down)
 var lair_list := []               # {biome, pos (the arena floor's middle), name}: the guardians' lairs
+var towns := []                   # villages: {x0, w, name, ruined, living, seed, houses: [{role, x0, w, floor, ruined}]}
+                                  # (main's towns.gd peoples the living ones; floor = the ground floor's row)
+var _house := {}                  # (the house `_cottage` just made, for `_town`)
 ## the dungeon wardens: {key ("warden_<seed>_<col>": its foe type), pos (its hall floor's middle),
 ## def (wardens.gd), tether, ceil, ward (the stamp rectangle of the reliquary's warded door), name}
 var warden_list := []
@@ -305,6 +308,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	chest_list.clear()
 	door_list.clear()
 	lair_list.clear()
+	towns.clear()
 	warden_list.clear()
 	lair_why.clear()
 	_lair_cols.clear()
@@ -1685,6 +1689,7 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 	if aw > 0:
 		_furnish(bp, left if aside < 0 else ox + w - th, aw, th, lb, 1, "hut" if role != "home" else "home", ruined)
 	_dress_yard(bp, left, full, role, ruined)
+	_house = {"role": role, "x0": posmod(bp.x0 + ox, N0), "w": w, "floor": bp.y0 + lb, "ruined": ruined}
 	if label:
 		_claim(x0, tw, ("Ruined " if ruined else "Abandoned ") + ("Cottage" if b != "desert" else "Dwelling"), bp.y0, base + 2)
 	else:
@@ -1721,11 +1726,15 @@ func _town(x: int, b: String, ruined: bool, build: bool) -> bool:
 		return false
 	var cx := x - span / 2
 	var made := 0
+	var houses := []
 	for k in n:
 		var w: int = widths[k]
 		var tw := w + 2 * YARD + 4
+		_house = {}
 		if _cottage(cx + tw / 2, b, ruined and rng.randf() < 0.8, build, false, w, roles[k]):
 			made += 1
+			if not _house.is_empty():
+				houses.append(_house)
 		cx += tw
 		# the open ground before the next house: sometimes a well, a market stall, lamps, flowers
 		var gap: int = gaps[k]
@@ -1734,9 +1743,25 @@ func _town(x: int, b: String, ruined: bool, build: bool) -> bool:
 		cx += gap
 	if made == 0:
 		return false
-	labels.append({"x0": posmod(x - span / 2, N0), "w": span, "ymin": ground_row(x) - 170, "ymax": ground_row(x) + 4,
-		"name": ("Ruins of a Village" if ruined else "Deserted Village")})
+	# a village that stands is lived in (towns.gd), and has a name of its own (from its own rng: naming
+	# it moves nothing else)
+	var tseed := posmod(hash([_seed, posmod(x, N0), 41]), 0x7FFFFFFF)
+	var tname := "Ruins of a Village" if ruined else town_name(tseed)
+	towns.append({"x0": posmod(x - span / 2, N0), "w": span, "name": tname, "ruined": ruined, "living": not ruined, "seed": tseed,
+		"biome": b, "houses": houses})
+	labels.append({"x0": posmod(x - span / 2, N0), "w": span, "ymin": ground_row(x) - 170, "ymax": ground_row(x) + 4, "name": tname})
 	return true
+
+const TOWN_A := ["Ash", "Brook", "Clay", "Dun", "Elder", "Fern", "Glen", "Hollow", "Ivy", "Kettle", "Lark", "Mill", "Nether",
+	"Oak", "Pebble", "Quill", "Rush", "Stone", "Thorn", "Umber", "Vale", "Willow", "Wren", "Yarrow", "Bright", "Cold", "High", "Low", "Red", "Green"]
+const TOWN_B := ["ford", "bury", "wick", "stead", "ton", "dale", "mere", "field", "holm", "by", "well", "brook", "cross", "hythe", "worth", "combe"]
+const TOWN_C := ["", "", "", " Village", " Hamlet", " Market"]
+
+## a village's name from parts (its own seed)
+static func town_name(tseed: int) -> String:
+	var nr := RandomNumberGenerator.new()
+	nr.seed = tseed
+	return String(TOWN_A[nr.randi_range(0, TOWN_A.size() - 1)]) + String(TOWN_B[nr.randi_range(0, TOWN_B.size() - 1)]) + String(TOWN_C[nr.randi_range(0, TOWN_C.size() - 1)])
 
 func _tower(x: int, b: String, ruined: bool, build: bool) -> bool:
 	var w := rng.randi_range(32, 38)

@@ -99,7 +99,9 @@ func _test_gear() -> void:
 		if not ge_good:
 			ge_bad.append(ge_id)
 	var ge_breath: float = g.max_breath
-	# the Silver Sigil: a Spark Bolt costs a quarter less
+	var ge_cost_k: float = g.gear("mana_cost")
+	var ge_reach_k: float = g.gear("reach")
+	# the Silver Sigil (and the alloys' cheaper spells): a Spark Bolt costs less
 	g.player.mana = g.player.max_mana
 	g.player.cast_cd = 0
 	var ge_m0: float = g.player.mana
@@ -148,14 +150,100 @@ func _test_gear() -> void:
 	for ge_i in ge_inv0.size():
 		g.player.inv[ge_i] = ge_inv0[ge_i]
 	g._apply_gear()
-	_ok("ore gear: hidden until its ore is found, forged, and each piece does what it says", ge_hide_ok and ge_bad.is_empty() and absf(ge_spent - 3.0) < 0.01 and absf(ge_reach - g.REACH * 1.4) < 0.5 and ge_calm and ge_hp1 >= g.player.max_hp - 0.01 and ge_roused and ge_breath > 1700.0,
-		"%d first pieces shown locked, %d hidden (of %d); forged all but %s; a Spark Bolt cost %.2f mana with the Silver Sigil; the spade reaches %.1f; breath %.0f; the boar beside you with the Amber Totem: calm %s (your health %.0f of %.0f), struck: it hunts %s" % [ge_first, ge_hid, Defs.GEAR.size(), str(ge_bad), ge_spent, ge_reach, ge_breath, ge_calm, ge_hp1, g.max_hp, ge_roused])
+	_ok("ore gear: hidden until its ore is found, forged, and each piece does what it says", ge_hide_ok and ge_bad.is_empty() and absf(ge_spent - 4.0 * ge_cost_k) < 0.01 and ge_cost_k < 0.76 and absf(ge_reach - g.REACH * ge_reach_k) < 0.5 and ge_reach_k > 1.39 and ge_calm and ge_hp1 >= g.player.max_hp - 0.01 and ge_roused and ge_breath > 1700.0,
+		"%d first pieces shown locked, %d hidden (of %d); forged all but %s; a Spark Bolt cost %.2f mana with the Silver Sigil and the alloys; the spade reaches %.1f; breath %.0f; the boar beside you with the Amber Totem: calm %s (your health %.0f of %.0f), struck: it hunts %s" % [ge_first, ge_hid, Defs.GEAR.size(), str(ge_bad), ge_spent, ge_reach, ge_breath, ge_calm, ge_hp1, g.max_hp, ge_roused])
+
+## Living towns: a village that stands fills with its folk as you come; they walk its street by day and
+## keep to it, one stops to talk when you press F, and a keeper trades: buying for coins, selling for coins.
+## (A picture: saves/shots/town.png.)
+func _test_towns() -> void:
+	var tn_god0: bool = g.test_god
+	g.test_god = true
+	g.spawn_timer = 999999
+	var tn_t = null
+	for tn_c in g.builds.towns:
+		if not bool(tn_c["living"]):
+			continue
+		for tn_h in tn_c["houses"]:
+			if Defs.SHOPS.has(tn_h["role"]) and not bool(tn_h["ruined"]) and tn_t == null:
+				tn_t = tn_c
+	if tn_t == null:
+		_ok("living towns: folk walk the village, talk, and keepers trade", false, "no living village with a shop on this planet (%d villages)" % g.builds.towns.size())
+		g.test_god = tn_god0
+		g.spawn_timer = 600
+		return
+	var tn_mid := int(tn_t["x0"]) + int(tn_t["w"]) / 2
+	var tn_a: float = (float(tn_mid) + 0.5) / float(Defs.NS) * TAU
+	var tn_time0: float = g.time
+	g.time = fposmod((tn_a - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)      # (midday there)
+	for tn_e in g.enemies.duplicate():
+		if not tn_e.boss and tn_e.guard_id < 0:
+			g.enemies.erase(tn_e)
+	_go(_cell_pos(tn_mid, g.builds.ground_row(tn_mid) - 14))
+	await _frames(60)
+	var tn_walk := []
+	var tn_keep := []
+	for tn_v in g.towns.folk:
+		if tn_v.town["seed"] == tn_t["seed"]:
+			(tn_keep if tn_v.keeper else tn_walk).append(tn_v)
+	# they keep to the village and to the ground for a few seconds
+	var tn_out := 0
+	var tn_moved := 0.0
+	var tn_p0 := {}
+	for tn_v2 in tn_walk:
+		tn_p0[tn_v2] = tn_v2.pos
+	for tn_f in 240:
+		await _frames(1)
+		if tn_f == 150:
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town.png"))
+		for tn_v3 in tn_walk:
+			if tn_v3.gone:
+				continue
+			var tn_c3 := int(fposmod(atan2(tn_v3.pos.y, tn_v3.pos.x), TAU) / TAU * Defs.NS)
+			var tn_off := posmod(tn_c3 - int(tn_t["x0"]) + 30, Defs.NS)
+			var tn_gr: float = g.gpu.surf_at(atan2(tn_v3.pos.y, tn_v3.pos.x)).x
+			if tn_off > int(tn_t["w"]) + 60 or tn_v3.pos.length() < tn_gr - 40.0 or tn_v3.pos.length() > tn_gr + 80.0:
+				tn_out += 1
+	for tn_v4 in tn_walk:
+		tn_moved = maxf(tn_moved, (tn_v4.pos as Vector2).distance_to(tn_p0[tn_v4]))
+	# talk to one
+	var tn_said := ""
+	if not tn_walk.is_empty():
+		g.player.pos = tn_walk[0].pos + tn_walk[0].pos.normalized() * 2.0
+		if g.towns.talk(g.player):
+			tn_said = tn_walk[0].say
+	# trade with a keeper
+	var tn_shop := false
+	var tn_buy := false
+	var tn_sold := false
+	var tn_c0: int = int(g.items.get("coins", 0))
+	if not tn_keep.is_empty():
+		var tn_k = tn_keep[0]
+		g.player.pos = tn_k.pos
+		tn_shop = g.towns.talk(g.player) and g.state == "shop"
+		g.items["coins"] = 100
+		var tn_first: Dictionary = g.towns.shop_def(tn_k)["sell"][0]
+		tn_buy = g.towns.buy(tn_k, 0) and int(g.items["coins"]) == 100 - int(tn_first["price"])
+		var tn_b: Array = g.towns.buys(tn_k)[0]
+		g.player.inv[int(tn_b[0])] += int(tn_b[1])
+		var tn_cb: int = int(g.items["coins"])
+		tn_sold = g.towns.sell(tn_k, int(tn_b[0])) and int(g.items["coins"]) == tn_cb + int(tn_b[2])
+		await _frames(10)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("shop.png"))
+		g.towns.close_shop()
+	g.items["coins"] = tn_c0
+	g.time = tn_time0
+	g.test_god = tn_god0
+	g.spawn_timer = 600
+	_ok("living towns: folk walk the village, talk, and keepers trade", tn_walk.size() >= 2 and not tn_keep.is_empty() and tn_out == 0 and tn_moved > 4.0 and tn_said != "" and tn_shop and tn_buy and tn_sold and g.state == "play",
+		"%s: %d walking, %d keepers (%s); none strayed from the village or the ground (%d strays), furthest one walked %.0f cells; one said \"%s\"; the shop opened %s, bought %s, sold %s" % [tn_t["name"], tn_walk.size(), tn_keep.size(), ", ".join(tn_keep.map(func(kk): return "%s the %s" % [kk.name, kk.role])), tn_out, tn_moved, tn_said, tn_shop, tn_buy, tn_sold])
 
 ## Sky events: each started on its own for a few seconds (they never start by themselves in test mode),
 ## at night for the night ones, on a clear stretch of open ground, with a picture of each
 ## (saves/shots/sky_<id>.png). main's `sky_stats` counts what each did.
 func _test_sky() -> void:
 	var sk_god0: bool = g.test_god
+	var sk_from: Vector2 = g.player.pos
 	g.test_god = true
 	g.spawn_timer = 999999
 	var sk_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 60, 80, 6)
@@ -247,6 +335,8 @@ func _test_sky() -> void:
 				sk_txt.append("fireworks: %d bursts" % int(st.get("bursts", 0)))
 		g.end_sky_event()
 	g.time = sk_time0
+	_go(sk_from)                              # (back where it found you: its lava and fires stay there)
+	await _frames(20)
 	g.test_god = sk_god0
 	g.spawn_timer = 600
 	var sk_all := true
@@ -526,6 +616,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_gear()
+		elif only == "towns":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_towns()
 		elif only == "mines":
 			for mi_info in g.builds.infos:
 				if mi_info["meta"].has("mine") and int(mi_info.get("unsound", 0)) > 0:
@@ -2524,6 +2618,8 @@ func run() -> void:
 		if not hl_e.boss and hl_e.guard_id < 0:
 			g.enemies.erase(hl_e)
 	g.spawn_timer = 600
+	var hl_god0: bool = g.test_god
+	g.test_god = true                         # (nothing may hurt you while it counts the healing)
 	g.hp = 40.0
 	g.player.heal_left = 0.0
 	await _frames(120)
@@ -2544,6 +2640,7 @@ func run() -> void:
 	await _frames(90)
 	var hp_mended: float = g.hp
 	g.known.erase("mend")
+	g.test_god = hl_god0
 	_ok("health only comes back from a draught or Mending", hp_idle == 40.0 and drank and absf(hp_drunk - 40.0 - Defs.POTION_HEAL) < 1.0 and not again and int(g.items.get("potion", 0)) == 0 and absf(hp_mended - 40.0 - Defs.MEND_HEAL) < 1.0 and mana_after < g.max_mana - 50.0,
 		"idle 2 s: %.1f; drank %s: %.1f; another: %s; Mending: %.1f (mana %.0f of %.0f)" % [hp_idle, drank, hp_drunk, again, hp_mended, mana_after, g.max_mana])
 	g.hp = g.max_hp
@@ -2655,6 +2752,7 @@ func run() -> void:
 		if not g.recipe_hidden(r2):
 			shown += 1
 	await _test_gear()
+	await _test_towns()
 	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
 
 	# ---- a building left hanging comes down as a whole once you dig at any part of it ----

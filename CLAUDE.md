@@ -203,7 +203,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   sets `Enemy.provoked`), light (a light that goes with you). max_hp, max_mana, mana_regen and dig_r are applied once
   in `craft`. A new piece needs only a GEAR entry (and a stat hook if its stat is new). `recipe_hidden`: a piece
   stays out of the forge until its ore is found (`ore_found`: held some, or `items["found_<mat>"]`), except each
-  ore's first, shown locked with where it's found. Test: `_test_gear` ("gear").
+  ore's first, shown locked with where it's found. ALLOYS: a GEAR entry whose "ore" is a list of two (bound with
+  6 Star Iron; `Defs.gear_ores(id)`; the forge's "Alloys"), shown locked once either ore is found. Test: `_test_gear`
+  ("gear").
 - Hazards (`Defs.HAZARDS`, CLIMATES keys "cold" frozen, "sun" desert, "miasma" marsh, "deep" ocean; main `_hazards`
   / `_hazard_level`, local player only, `hazard` = the one hurting you now): cold under the open sky (x1.6 at night,
   x1.6 in wind; a fire, torch or lava within ~14 cells, `_near_warmth`, keeps it off), sun under the open sky when
@@ -234,13 +236,31 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   draws it over the view), `sky_fx` (overlay `_draw_sky`: "streak" shooting stars, "bolt" lightning, "rocket"),
   `sky_wisps`, `sky_vent`, `sky_stats` (counts for the tests).
 - Doings: meteors (streaks; `meteor_fall(cells)`: PROJ "meteor" from high up, `_meteorite`: a blast, fire, a lump
-  of MAGMAROCK round a few cells of STARIRON (r 1: about 2; asteroids stay the real source), hurts anyone close), eruption (`_eruption_vent`: the highest of a few spots
+  of MAGMAROCK round a few cells of STARIRON at the crater's bottom (so it rests on ground and no chunk carries it off; about 4: asteroids stay the real source), hurts anyone close), eruption (`_eruption_vent`: the highest of a few spots
   110-220 cells off; smoke, glow, rumbles, PROJ "lavabomb" (splat lava) every 22-45 ticks), squall (gale, rain,
   `lightning_strike(cells)`: a drawn bolt, fire, hurts within 12), sandstorm (gale, haze, blown sand), wisps (5
   drifting lights, shy of you; touching one gives 4 Wisp Ore and 30 mana), aurora (mana regen x2 under the open
   sky), hail (pellets; a sting every 35-70 ticks in the open), bloodmoon (`spawn_mult` 2.5, up to 12 foes),
   fireworks (rockets that burst into coloured particles). The HUD's weather shows the event, then " · <hazard>!".
   Test: `_test_sky` ("sky").
+
+## Living towns (scripts/towns.gd, folk_art.gd; user, 20 Nov: "towns with people walking around and shops")
+- buildings.gd `_town` records each village in `towns` ({x0, w, name, ruined, living (not ruined), seed, biome,
+  houses: [{role, x0, w, floor (the ground floor's row), ruined}]}; `_cottage` leaves its house in `_house`); a
+  standing village gets a name from parts (`town_name`, its own seed: nothing else moves) instead of "Deserted".
+- towns.gd (main `towns`, ticked on the planet): `_people` every 30 ticks: a living village within `NEAR` columns
+  gets its keepers (one per shop/smithy/tavern/inn, in the middle of its ground floor, always there) and by day its
+  walkers (two per home, one per shop, `MAX_WALKERS`); past `FAR` they're dropped. main `Villager` (a Body): seed
+  -> look (folk_art.gd `frames`: a 13 x 21 figure from parts; overlay caches "folk_<seed>_stand/walk0/walk1") and
+  name (`name_for`). `_walk`: keepers stand and face you; walkers pick spots along the village, idle, turn at walls
+  and drops (`_drop_ahead`), run from foes, and at night walk to their house and go in (`gone`). F (main
+  `_interact`, after chests): `talk` — a keeper opens the shop (state "shop", the game waits; ui.gd `show_shop`,
+  F/Esc leave), anyone else says `line_for` (a greeting and a rumour: the nearest living guardian and its lair, a
+  crypt, this world's ore, its hazard and ward, the village's shops, or village talk), drawn as a speech bubble
+  (overlay `_bubble`). Trade: `Defs.SHOPS[role]` "sell" (give/potion/meal/rest/chart) and "buy" (material ->
+  [how many, coins]; the smithy also buys every world's ore); `buy`/`sell`; coins in `items["coins"]` (from chests,
+  guardians 60, wardens 30, and selling). "chart" puts the lairs and crypts in `planet_state["charted"]`, which the
+  map draws; villages you've been to (`planet_state["towns_seen"]`) are on the map too. Test: `_test_towns` ("towns").
 
 ## Music (scripts/audio.gd)
 - Tracks in game/audio/music/ by name: mood (surface_day, surface_night, underground, deep, boss, space, title) or
@@ -452,7 +472,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "sky", "gear", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "sky", "gear", "towns", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

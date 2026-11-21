@@ -650,6 +650,37 @@ const SKY_EVENTS := {
 const SKY_EVENT_EVERY := 600       # ticks between chances of one starting
 const SKY_EVENT_CHANCE := 0.035    # (about one a day)
 
+## Living towns (scripts/towns.gd): what each kind of shop in a village sells and buys, by its keeper's
+## role. "sell": what you can buy ({"name", "price" in coins, and one of "give": {material: how many},
+## "potion": draughts, "meal": health now, "rest": a night's sleep (full health, morning), "chart": the
+## planet's guardian lairs and dungeons marked on your map}); "buy": material -> [how many, coins paid].
+## "ores": the smith also buys every world's own ore, [how many, coins].
+const SHOPS := {
+	"shop": {"title": "General Store", "sell": [
+			{"name": "Healing Draught", "price": 40, "potion": 1},
+			{"name": "Torches x6", "price": 6, "give": {TORCH: 6}},
+			{"name": "Glass x6", "price": 8, "give": {GLASS: 6}},
+			{"name": "Planks x10", "price": 6, "give": {PLANK: 10}}],
+		"buy": {WOOD: [8, 2], LEAF: [10, 1], SHROOM: [4, 2], SAND: [12, 1], CACTUS: [6, 1]}},
+	"smithy": {"title": "Smithy", "sell": [
+			{"name": "Bricks x8", "price": 10, "give": {BRICK: 8}},
+			{"name": "Stone Blocks x8", "price": 8, "give": {MASONRY: 8}},
+			{"name": "Copper Ore x10", "price": 18, "give": {COPPER: 10}},
+			{"name": "Coal x10", "price": 10, "give": {COAL: 10}}],
+		"buy": {COPPER: [5, 2], COAL: [5, 2], STONE: [20, 1], DEEPSTONE: [10, 3], OBSIDIAN: [4, 3], EMBER: [2, 3], FROST: [2, 3]}, "ores": [2, 5]},
+	"tavern": {"title": "Tavern", "sell": [
+			{"name": "Hearty Meal (30 health)", "price": 10, "meal": 30.0},
+			{"name": "Rumours: the lairs and dungeons, on your map", "price": 30, "chart": true}],
+		"buy": {SHROOM: [4, 3], LEAF: [10, 2], WATER: [20, 2]}},
+	"inn": {"title": "Inn", "sell": [
+			{"name": "A night's rest (full health, till morning)", "price": 15, "rest": true},
+			{"name": "Hearty Meal (30 health)", "price": 12, "meal": 30.0}],
+		"buy": {PLANK: [10, 3], WOOD: [8, 2]}},
+}
+const FOLK_FIRST := ["Ada", "Bram", "Cora", "Dell", "Edda", "Finn", "Gwen", "Hob", "Ida", "Jory", "Kit", "Lene", "Mags", "Ned",
+	"Orla", "Pip", "Rosk", "Sela", "Tam", "Una", "Vik", "Wynn", "Yara", "Zeb", "Bess", "Col", "Dov", "Ena", "Hale", "Moll"]
+const FOLK_LAST := ["Miller", "Thatcher", "Brook", "Ashdown", "Fletcher", "Cooper", "Hale", "Reed", "Marsh", "Stone", "Wright", "Farrow", "Tanner", "Shaw"]
+
 ## Each kind of planet's own ore: where gen.comp lays it (`hosts`: the ground it forms in, `depth`: cells
 ## under the surface, `thr`: the vein noise's threshold, higher = rarer; `sea`: only in the seabed, well
 ## under the sea). The Core Drive that leaves a planet needs some of its ore (`drive_ore`), and so does the
@@ -696,14 +727,29 @@ const GEAR := {
 	"silver": {"name": "Silver Sigil", "ore": SILVER, "cost": {SILVER: 14, CRYSTAL: 2, WISP: 6}, "mods": {"mana_cost": 0.75}, "desc": "Your spells cost a quarter less mana."},
 	"silverbane": {"name": "Silverbane Charm", "ore": SILVER, "cost": {SILVER: 10, BRICK: 6, WISP: 4}, "mods": {"undead_dmg": 2.0}, "desc": "Your spells hurt the dead (skeletons, archers and wardens) twice as hard."},
 	"silverthread": {"name": "Silver-Thread Cloak", "ore": SILVER, "cost": {SILVER: 12, LEAF: 10, PLANK: 4}, "mods": {"jump": 1.2}, "desc": "You jump higher."},
+	# alloys: two worlds' ores bound in star iron ("ore" is then a list; the forge's "Alloys")
+	"steamheart": {"name": "Steamheart Focus", "ore": [FIREOPAL, RIMECRYSTAL], "cost": {FIREOPAL: 10, RIMECRYSTAL: 10, STARIRON: 6}, "mods": {"spell_fireball": 1.3, "spell_frost": 1.3, "mana_cost": 0.9}, "desc": "Fire and frost in one stone: Fireball and Frostbite a third stronger, every spell a tenth cheaper."},
+	"solarlens": {"name": "Solar Forge Lens", "ore": [FIREOPAL, SUNSTONE], "cost": {FIREOPAL: 10, SUNSTONE: 10, STARIRON: 6}, "mods": {"dig_rate": 1.35, "spell_spark": 1.3, "light": 24.0}, "desc": "Your staff digs faster, your Spark Bolts hit harder, and its tip glows."},
+	"diverharness": {"name": "Diver's Harness", "ore": [ABYSSPEARL, BOGIRON], "cost": {ABYSSPEARL: 10, BOGIRON: 10, STARIRON: 6}, "mods": {"swim": 1.4, "breath": 2.0, "knock": 0.6}, "desc": "Swim faster, hold your breath twice as long, and stand firm against blows."},
+	"tidefrost": {"name": "Tidefrost Mantle", "ore": [ABYSSPEARL, RIMECRYSTAL], "cost": {ABYSSPEARL: 10, RIMECRYSTAL: 10, STARIRON: 6}, "mods": {"levitate": 0.6, "swim": 1.3, "draught_heal": 1.3}, "desc": "Levitate cheaper, swim faster, and draughts heal more."},
+	"sunsilver": {"name": "Sunsilver Crown", "ore": [SUNSTONE, SILVER], "cost": {SUNSTONE: 10, SILVER: 10, STARIRON: 6}, "mods": {"max_mana": 80.0, "mana_cost": 0.85}, "desc": "+80 max mana, and spells cost less."},
+	"ironbarkplate": {"name": "Ironwood Plate", "ore": [AMBER, BOGIRON], "cost": {AMBER: 10, BOGIRON: 10, STARIRON: 6}, "mods": {"dmg_taken": 0.75, "max_hp": 30.0}, "desc": "You take a quarter less damage, and +30 max health."},
+	"moonsilver": {"name": "Moonsilver Charm", "ore": [SILVER, AMBER], "cost": {SILVER: 10, AMBER: 10, STARIRON: 6}, "mods": {"undead_dmg": 1.6, "speed": 1.1, "jump": 1.1}, "desc": "Hunt the dead harder, and move quicker on your feet."},
+	"emberamber": {"name": "Emberamber Heart", "ore": [FIREOPAL, AMBER], "cost": {FIREOPAL: 10, AMBER: 10, STARIRON: 6}, "mods": {"max_hp": 30.0, "lava_dmg": 0.5}, "desc": "+30 max health, and lava hurts you half as much."},
 }
+
+## the ores a piece of gear is made from (one, or two for an alloy)
+func gear_ores(id: String) -> Array:
+	var o = GEAR[id]["ore"]
+	return o if typeof(o) == TYPE_ARRAY else [o]
 
 ## the forge's recipes for the ore gear (main appends them to its `recipes`)
 func gear_recipes() -> Array:
 	var out := []
 	for id in GEAR:
 		var gd: Dictionary = GEAR[id]
-		out.append({"id": id, "cat": "Ore Gear", "name": gd["name"], "cost": gd["cost"], "ore": gd["ore"], "desc": gd["desc"], "gear": true})
+		var ores := gear_ores(id)
+		out.append({"id": id, "cat": "Ore Gear" if ores.size() == 1 else "Alloys", "name": gd["name"], "cost": gd["cost"], "ore": ores[0], "ores": ores, "desc": gd["desc"], "gear": true})
 	return out
 
 ## a planet's own ore (KIND_ORES), or -1 (a temperate world has none of its own)

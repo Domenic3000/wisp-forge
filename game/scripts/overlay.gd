@@ -5,6 +5,7 @@ const FoeAI := preload("res://scripts/foe_ai.gd")
 
 const MageRig := preload("res://scripts/mage_rig.gd")
 const BossArt := preload("res://scripts/boss_art.gd")
+const FolkArt := preload("res://scripts/folk_art.gd")
 
 var game
 var tex := {}
@@ -398,6 +399,43 @@ func _draw() -> void:
 		_draw_sky()
 	game.prof_add("drawing sprites", Time.get_ticks_usec() - t_draw)
 
+## a speech bubble over someone's head: a rounded box with a little tail, the words wrapped to a width
+func _bubble(wpos: Vector2, text: String, alpha: float) -> void:
+	var px: float = float(game.scale_px)
+	var head: Vector2 = game.world_to_screen(wpos - game.basis_d(atan2(wpos.y, wpos.x)) * 13.0)
+	var f := ThemeDB.fallback_font
+	var sz := 14
+	var maxw := 300.0
+	# wrap the words into lines no wider than maxw (in screen pixels)
+	var lines := []
+	var cur := ""
+	for word in text.split(" "):
+		var tryl := word if cur == "" else cur + " " + word
+		if f.get_string_size(tryl, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x > maxw and cur != "":
+			lines.append(cur)
+			cur = word
+		else:
+			cur = tryl
+	if cur != "":
+		lines.append(cur)
+	var wmax := 0.0
+	for ln in lines:
+		wmax = maxf(wmax, f.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x)
+	var lh := float(sz) + 3.0
+	var bw := (wmax + 14.0) / px
+	var bh := (lh * lines.size() + 8.0) / px
+	var x0 := clampf(head.x - bw * 0.5, 2.0, float(game.VW) - bw - 2.0)
+	var y0 := head.y - bh - 4.0 / px
+	var bg := Color(0.98, 0.96, 0.9, 0.92 * alpha)
+	var edge := Color(0.18, 0.14, 0.1, 0.9 * alpha)
+	draw_rect(Rect2(x0 - 1.0 / px, y0 - 1.0 / px, bw + 2.0 / px, bh + 2.0 / px), edge)
+	draw_rect(Rect2(x0, y0, bw, bh), bg)
+	draw_colored_polygon(PackedVector2Array([Vector2(head.x - 3.0 / px * 2.0, y0 + bh), Vector2(head.x + 3.0 / px * 2.0, y0 + bh), Vector2(head.x, y0 + bh + 5.0 / px * 2.0)]), bg)
+	draw_set_transform(Vector2(x0, y0), 0.0, Vector2.ONE / px)
+	for li in lines.size():
+		draw_string(f, Vector2(7.0, 4.0 + float(sz) + li * lh), lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0.15, 0.11, 0.08, alpha))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 ## the sky events' own pictures (main `sky_fx`, `sky_wisps`): shooting stars, lightning bolts, rockets,
 ## will-o'-wisps, and a tint over the whole view (a sandstorm's haze, an eruption's glow)
 func _draw_sky() -> void:
@@ -485,6 +523,24 @@ func _draw_all() -> void:
 			draw_texture(c.tex_b, c.img_origin, cm)
 			draw_texture(c.tex_f, c.img_origin, cm)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# the villagers (towns.gd), and what they're saying
+	for v in game.towns.folk:
+		var vsp: Vector2 = game.world_to_screen(v.pos)
+		if vsp.x < -30 or vsp.y < -40 or vsp.x > game.VW + 30 or vsp.y > game.VH + 40:
+			continue
+		var fk := "folk_%d" % v.fseed
+		if not tex.has(fk + "_stand"):
+			var fr: Dictionary = FolkArt.frames(v.fseed, v.role)
+			for fn in fr:
+				tex[fk + "_" + fn] = ImageTexture.create_from_image(fr[fn])
+		var walking: bool = absf(v.vx) > 0.08
+		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
+		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground)
+	for v2 in game.towns.folk:
+		if v2.say_t > 0 and v2.say != "":
+			_bubble(v2.pos, v2.say, clampf(float(v2.say_t) / 30.0, 0.0, 1.0))
+		elif v2.keeper and (v2.pos as Vector2).distance_to(game.player.pos) < 60.0:
+			_bubble(v2.pos, "%s · %s  [F]" % [v2.name, Defs.SHOPS[v2.role]["title"]], 0.75)
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	for e in game.enemies:
 		var tl: float = FoeAI.tell(e)

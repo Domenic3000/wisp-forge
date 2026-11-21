@@ -17,6 +17,7 @@ const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
 const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
+const Towns := preload("res://scripts/towns.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
 const Audio := preload("res://scripts/audio.gd")
@@ -54,6 +55,25 @@ class Chest extends Body:
 		w = float(Defs.CHEST_W)
 		h = float(Defs.CHEST_H)
 		step_h = 0
+
+## A villager (towns.gd): walks the street, or keeps a shop (`keeper`, its `role` a Defs.SHOPS key)
+class Villager extends Body:
+	var fseed := 0
+	var name := ""
+	var role := "folk"
+	var keeper := false
+	var town: Dictionary
+	var house: Dictionary
+	var goal_c := 0.0
+	var idle_t := 0
+	var talk_t := 0
+	var talks := 0
+	var say := ""
+	var say_t := 0
+	var gone := false
+
+func new_villager() -> Villager:
+	return Villager.new()
 
 class Enemy extends Body:
 	var type := ""
@@ -143,6 +163,7 @@ var gpu
 var ui
 var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
+var towns                 # the living villages' folk, talk and trade (towns.gd)
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
 var view_rect: TextureRect
@@ -455,6 +476,7 @@ func _ready() -> void:
 	# orbit band)
 	space = Space.new()
 	space.game = self
+	towns = Towns.new(self)
 	pix.add_child(space)
 	view_rect = TextureRect.new()
 	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -564,13 +586,13 @@ func _process(delta: float) -> void:
 			_gpu_frame(true, 1)
 		ui.update_hud(self)
 		map_view.queue_redraw()
-	if state == "play" or state == "dead" or state == "forge":
+	if state == "play" or state == "dead" or state == "forge" or state == "shop":
 		tp = Time.get_ticks_usec()
 		if (space.active and not space.live) or travelling:
 			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
 			lights.clear()
 		else:
-			_gpu_frame(state == "forge", steps)
+			_gpu_frame(state == "forge" or state == "shop", steps)
 		prof_add("GPU submit", Time.get_ticks_usec() - tp)
 		tp = Time.get_ticks_usec()
 		ui.update_hud(self)
@@ -1232,6 +1254,8 @@ func _interact() -> void:
 	if not _chest_in_reach().is_empty():
 		_try_open_chest()
 		return
+	if towns.talk(player):                # (a villager: a word, or a keeper's shop)
+		return
 	if _try_home(player, 12):            # a bed right beside you comes before a door
 		return
 	var d := _door_near(player.pos, 22.0)
@@ -1348,6 +1372,9 @@ func _try_open_chest() -> void:
 	c.open_t = 0
 	audio.play("chest_open", centre)
 	_roll_loot(7, 1.6)
+	var cn := int(randi_range(4, 14) * float(planet.get("rich", 1.0)) * (1.0 + rare))
+	items["coins"] = int(items.get("coins", 0)) + cn
+	ui.toast("+%d coins" % cn, Color(1, 0.85, 0.4), 2.5)
 	# now and then a Healing Draught (the deeper and grander the place, the likelier)
 	if randf() < 0.1 + rare * 0.3:
 		items["potion"] = int(items.get("potion", 0)) + 1
@@ -1863,6 +1890,8 @@ func _tick() -> void:
 	_update_weather()
 	_update_climate()
 	_update_sky_events()
+	if not space.active:
+		towns.tick()
 	_try_spawn()
 	_update_guards()
 	_check_chest_hint()
@@ -2722,6 +2751,7 @@ func _guardian_falls(e: Enemy) -> void:
 	for mt in loot:
 		player.inv[int(mt)] += int(loot[mt])
 	_hoard_ore(16)
+	items["coins"] = int(items.get("coins", 0)) + 60
 	_roll_loot(4, 1.5)
 	shake = 16.0
 	audio.play("rare")
@@ -2755,6 +2785,7 @@ func _warden_falls(e: Enemy) -> void:
 		player.inv[int(mt)] += int(loot[mt])
 	items["potion"] = int(items.get("potion", 0)) + 1
 	_hoard_ore(6)
+	items["coins"] = int(items.get("coins", 0)) + 30
 	_roll_loot(3, 1.4)
 	for wl in builds.warden_list:
 		if wl["key"] != key:
@@ -3486,8 +3517,10 @@ func meteor_fall(cells: float, slant := 110.0) -> void:
 ## where it lands: a blast, fire, and a lump of seared rock round a heart of star iron
 func _meteorite(p: Vector2) -> void:
 	_explode(p, 7.0, 2, 1, 30.0)
-	brushes.append([p, 1.0, 3, Defs.STARIRON, 0, 0, 0])      # (a few cells: asteroids stay the real source)
-	brushes.append([p, 3.3, 3, Defs.MAGMAROCK, 0, 0, 0])
+	# the lump lies at the bottom of its crater (resting on the ground, not hanging in the blast's middle)
+	var lump := p - p.normalized() * 4.0
+	brushes.append([lump, 1.15, 3, Defs.STARIRON, 0, 0, 0])      # (a few cells: asteroids stay the real source)
+	brushes.append([lump, 3.3, 3, Defs.MAGMAROCK, 0, 0, 0])
 	shake = maxf(shake, 9.0)
 	for m in players:
 		var d: float = m.pos.distance_to(p)
@@ -3736,6 +3769,14 @@ func sun_overhead(wp: Vector2) -> float:
 	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
 	return wp.normalized().dot(Vector2(cos(sun_a), sin(sun_a)))
 
+## a night's rest at an inn: the clock runs on to the next morning where you are
+func sleep_till_morning() -> void:
+	var pa := atan2(player.pos.y, player.pos.x)
+	var want := fposmod((pa - 1.2 - spawn_angle + 1.1) / TAU * DAY_LEN, DAY_LEN)
+	var now := fposmod(time, DAY_LEN)
+	time += fposmod(want - now, DAY_LEN)
+	ui.toast("You sleep soundly, and wake with the sun.", Color(1, 0.9, 0.6), 3.0)
+
 ## The Core Drive that leaves this planet wants some of its own ore (if it has one): its recipe is
 ## rewritten for each planet.
 func _refresh_recipes() -> void:
@@ -3788,7 +3829,10 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		var need := String(Defs.GEAR[r["id"]].get("needs", ""))
 		if need == "wide" and dig_r < 11.0:
 			return false
-		return ore_found(int(r["ore"]))
+		for om in r["ores"]:
+			if not ore_found(int(om)):
+				return false
+		return true
 	return true
 
 func ore_found(om: int) -> bool:
@@ -3796,11 +3840,17 @@ func ore_found(om: int) -> bool:
 
 ## Ore gear stays out of the forge's list until you've found its ore, but for the first piece of each
 ## ore, which shows (locked) where that ore is found.
+## (An alloy shows, locked, once you've found either of its ores.)
 func recipe_hidden(r: Dictionary) -> bool:
-	if not r.has("gear") or ore_found(int(r["ore"])):
+	if not r.has("gear"):
+		return false
+	var ores: Array = r["ores"]
+	if ores.size() > 1:
+		return not (ore_found(int(ores[0])) or ore_found(int(ores[1])))
+	if ore_found(int(r["ore"])):
 		return false
 	for id in Defs.GEAR:
-		if int(Defs.GEAR[id]["ore"]) == int(r["ore"]):
+		if Defs.gear_ores(id).size() == 1 and int(Defs.gear_ores(id)[0]) == int(r["ore"]):
 			return id != r["id"]
 	return false
 
@@ -3831,9 +3881,13 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"mend": return "Find the Scroll of Mending in a chest"
 	if r.has("gear") and String(Defs.GEAR[r["id"]].get("needs", "")) == "wide" and dig_r < 11.0 and ore_found(int(r["ore"])):
 		return "Needs Wide Excavation"
-	if r.has("ore"):
-		var kd := Defs.ore_kind(int(r["ore"]))
-		return "%s is found only on %s worlds" % [Defs.NAMES[int(r["ore"])], kd]
+	if r.has("ores"):
+		var parts := []
+		for om in r["ores"]:
+			if not ore_found(int(om)):
+				parts.append("%s (%s worlds)" % [Defs.NAMES[int(om)], Defs.ore_kind(int(om))])
+		if not parts.is_empty():
+			return "Needs " + " and ".join(parts)
 	return "Locked"
 
 func recipe_affordable(r: Dictionary) -> bool:
@@ -3944,6 +3998,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 				return
 		if state == "map":
 			_map_key(k)
+			return
+		if state == "shop":
+			if k == KEY_ESCAPE or k == KEY_F:
+				towns.close_shop()
 			return
 		if k == KEY_ESCAPE and state == "play":
 			ui.toggle_settings()
@@ -4578,6 +4636,8 @@ func _migrate_old_saves() -> void:
 
 ## Esc menu: save everything and go back to the title (to pick another slot).
 func quit_to_title() -> void:
+	if state == "shop":
+		towns.close_shop()
 	if not (state == "play" or state == "forge" or state == "dead"):
 		return
 	if build_on:
@@ -4720,6 +4780,8 @@ func _make_world(index: int, arriving: bool) -> void:
 	_refresh_recipes()
 	end_sky_event()
 	sky_fx.clear()
+	if towns != null:
+		towns.clear()
 	wind = 0.0
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))
@@ -5275,7 +5337,7 @@ func _notification(what: int) -> void:
 
 ## Closing the window saves your progress and the whole world, then quits.
 func quit_game() -> void:
-	if state == "play" or state == "forge" or state == "dead":
+	if state == "play" or state == "forge" or state == "dead" or state == "shop":
 		print("[Wisp Forge] saving before quitting...")
 		save_game()
 		save_world(true)

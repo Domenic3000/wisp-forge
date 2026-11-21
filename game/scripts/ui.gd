@@ -35,6 +35,11 @@ var map_bar: PanelContainer
 var map_title: Label
 var map_hint: Label
 var forge_list: VBoxContainer
+var shop: PanelContainer         # a village keeper's shop (towns.gd)
+var shop_list: VBoxContainer
+var shop_title: Label
+var shop_coins: Label
+var _shop_v = null
 var title
 var death: Control
 var loading: Control
@@ -77,6 +82,7 @@ func _ready() -> void:
 	add_child(root)
 	_build_hud()
 	_build_forge()
+	_build_shop()
 	_build_map_bar()
 	_build_screens()
 
@@ -465,6 +471,100 @@ func _build_forge() -> void:
 	forge_list.add_theme_constant_override("separation", 6)
 	scroll.add_child(forge_list)
 
+## A village keeper's shop: what they sell (for coins) and what they buy (for coins), by their trade
+## (Defs.SHOPS); towns.gd does the trading.
+func _build_shop() -> void:
+	shop = _panel(Color(0.06, 0.045, 0.03, 0.97), TRIM, 14)
+	shop.set_anchors_preset(Control.PRESET_CENTER)
+	shop.custom_minimum_size = Vector2(760, 540)
+	shop.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	shop.grow_vertical = Control.GROW_DIRECTION_BOTH
+	shop.visible = false
+	root.add_child(shop)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	shop.add_child(v)
+	var head := HBoxContainer.new()
+	v.add_child(head)
+	shop_title = _head("Shop", 24, CREAM)
+	shop_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(shop_title)
+	var close := _button("Leave  [F]")
+	close.pressed.connect(func(): game.towns.close_shop())
+	head.add_child(close)
+	shop_coins = _label("", 14, Color(1, 0.85, 0.4))
+	v.add_child(shop_coins)
+	var r := _rule(720)
+	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(r)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	shop_list = VBoxContainer.new()
+	shop_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shop_list.add_theme_constant_override("separation", 6)
+	scroll.add_child(shop_list)
+
+func show_shop(vk) -> void:
+	_shop_v = vk
+	_render_shop()
+	shop.visible = true
+
+func hide_shop() -> void:
+	shop.visible = false
+	_shop_v = null
+
+func _render_shop() -> void:
+	if _shop_v == null:
+		return
+	var tw = game.towns
+	var sd: Dictionary = tw.shop_def(_shop_v)
+	shop_title.text = "%s's %s · %s" % [_shop_v.name, sd.get("title", "Shop"), _shop_v.town["name"]]
+	shop_coins.text = "Your coins: %d" % tw.coins()
+	for c in shop_list.get_children():
+		c.queue_free()
+	shop_list.add_child(_head("For sale", 17, Color(0.95, 0.8, 0.5)))
+	var sell: Array = sd.get("sell", [])
+	for i in sell.size():
+		var it: Dictionary = sell[i]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		var l := _label(String(it["name"]), 14, CREAM)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		row.add_child(_label("%d coins" % int(it["price"]), 14, Color(1, 0.85, 0.4)))
+		var b := _button("Buy")
+		b.disabled = tw.coins() < int(it["price"])
+		b.pressed.connect(func():
+			tw.buy(_shop_v, i)
+			_render_shop())
+		row.add_child(b)
+		shop_list.add_child(row)
+	shop_list.add_child(_head("They'll buy", 17, Color(0.95, 0.8, 0.5)))
+	for bb in tw.buys(_shop_v):
+		var mat: int = bb[0]
+		var have: int = game.inv[mat]
+		if mat >= Defs.FIREOPAL and have <= 0:
+			continue                              # (a far world's ore: only shown once you have some)
+		var row2 := HBoxContainer.new()
+		row2.add_theme_constant_override("separation", 10)
+		var sw := ColorRect.new()
+		sw.color = Defs.COLOR[mat]
+		sw.custom_minimum_size = Vector2(10, 10)
+		sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row2.add_child(sw)
+		var l2 := _label("%d %s for %d coins   (you have %d)" % [int(bb[1]), Defs.NAMES[mat], int(bb[2]), have], 14, CREAM if have >= int(bb[1]) else DIM)
+		l2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row2.add_child(l2)
+		var b2 := _button("Sell")
+		b2.disabled = have < int(bb[1])
+		b2.pressed.connect(func():
+			tw.sell(_shop_v, mat)
+			_render_shop())
+		row2.add_child(b2)
+		shop_list.add_child(row2)
+
 ## A full-screen overlay with a framed panel in the middle; the panel's VBox is in meta "box".
 func _screen(dim := Color(0.02, 0.015, 0.05, 0.86), trim := TRIM) -> Control:
 	var c := ColorRect.new()
@@ -822,7 +922,7 @@ func update_hud(g) -> void:
 				nrel += 1
 		if nrel > 0:
 			extra += " · %d guardian relic%s" % [nrel, "" if nrel == 1 else "s"]
-		info.text = "%s · %s\n%s · %s · %s\nStaff %s%s\n%d FPS" % [g.planet["name"], g.region_name(), depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, Engine.get_frames_per_second()]
+		info.text = "%s · %s\n%s · %s · %s\nStaff %s%s\n%d coins · %d FPS" % [g.planet["name"], g.region_name(), depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, int(g.items.get("coins", 0)), Engine.get_frames_per_second()]
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
 			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]
