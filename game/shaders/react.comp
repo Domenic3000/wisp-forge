@@ -118,6 +118,11 @@ void main() {
 		if (nLava) { setc(i, c, M_STEAM, 60u + uint(R * 60.0)); return; }
 		bool nFrost = tu == M_FROST || td == M_FROST || tl == M_FROST || tr == M_FROST;
 		if (nFrost && R < 0.02) { setc(i, c, M_ICE, 0u); return; }
+		// on a frozen world (P.p[125].x) open water ices over from the top: lakes you can walk on
+		if (tu == 0u && R < P.p[125].x) {
+			vec2 p = cellCenter(s, y, x);
+			if (length(p) > surfA(angleOf(p)).x - 60.0) { setc(i, c, M_ICE, 0u); return; }
+		}
 		// thin puddles soak into soil
 		if (tu == 0u && (td == M_DIRT || td == M_GRASS || td == M_SAND) && R < 0.002) { setc(i, c, 0u, 0u); return; }
 		if (life == 1u) {

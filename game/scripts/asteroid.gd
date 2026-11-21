@@ -4,7 +4,8 @@
 ## sometimes drawn out long), bites taken out of its edge as craters, then its matter by depth and
 ## noise: a crust of loose regolith, a body of stone or ice, and veins and pockets of ore that
 ## depend on its kind (KINDS: stony rocks carry copper, coal and prism crystal; icy ones frost and
-## ice; dark metallic ones deepstone and wisp ore, which a better staff is needed for).
+## ice; dark metallic ones deepstone and wisp ore, which a better staff is needed for, and in their
+## hearts star iron, which no planet has: the Core Drive that takes the skiff to the next planet needs it).
 ##
 ## You mine it with the staff (space.gd `mine`): cells within reach come out into the satchel at the
 ## same pace and by the same hardness rules as digging on a planet. A rock cut through drifts apart
@@ -96,6 +97,8 @@ func _grow(sd: int, radius: float, knd: String) -> void:
 				m = Defs.DEEPSTONE if bn > -0.35 else Defs.STONE
 				if d3 < 2.0:
 					m = Defs.GRAVEL
+				elif bn > 0.42 and d3 > radius * 0.3:
+					m = Defs.STARIRON                      # (star iron: found nowhere else)
 				elif vn < 0.045 and d3 > radius * 0.25:
 					m = Defs.WISP
 				elif vn < 0.08:
@@ -109,6 +112,8 @@ func _grow(sd: int, radius: float, knd: String) -> void:
 					m = Defs.COAL
 				elif bn < -0.62 and d3 > radius * 0.35:
 					m = Defs.CRYSTAL
+				elif bn > 0.48 and d3 > radius * 0.45:
+					m = Defs.STARIRON                      # (a speck now and then in a stony one too)
 		cells[k3] = m
 		vars[k3] = rng.randi() & 3
 	_trim()

@@ -422,6 +422,11 @@ var spawn_timer := 0
 # weather
 var rain := 0.0
 var rain_target := 0.0
+var clim := {}                 # the planet's climate (Defs.climate): storms, wind, fog, heat, frost, dust, creatures
+var wind := 0.0                # the wind now (+ blows toward screen right), gusting harder in a storm
+var _wind_dir := 1.0
+var exposed := false           # you're out under the open sky (the wind reaches you; a volcanic world's air scorches)
+var _heat_t := 0
 var weather_timer := 1800
 var flash := 0.0
 
@@ -794,6 +799,8 @@ func _write_frame_params() -> void:
 	# orbit band, where space.gd draws the stars under the picture)
 	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0) | (4 if cellpic else 0)
 	gpu.setp(123, Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
+	# the climate the shaders need: open water icing over (react.comp), ground fog (inc/clouds.comp)
+	gpu.setp(125, Vector4(0.0008 * float(clim.get("freeze", 0.0)), 0.0, 0.0, float(clim.get("fog", 0.0))))
 	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
 	gpu.setp(122, _p122)
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
@@ -883,7 +890,7 @@ var _smash_warned := false
 
 func _loot_table() -> Array:
 	var deep: float = clampf((gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - player.pos.length()) / 300.0, 0.0, 1.0)
-	return [[Defs.COPPER, 6.0, 4], [Defs.COAL, 5.0, 4], [Defs.CRYSTAL, 3.0, 3], [Defs.FROST, 2.0 + deep * 2.0, 3],
+	return [[Defs.COPPER, 6.0, 4], [Defs.COAL, 5.0, 4], [Defs.CRYSTAL, 1.5, 2], [Defs.FROST, 2.0 + deep * 2.0, 3],
 		[Defs.EMBER, 1.0 + deep * 3.0, 3], [Defs.WISP, 1.0 + deep * 3.0, 2], [Defs.OBSIDIAN, 0.5 + deep * 2.0, 2],
 		[Defs.GLASS, 2.0, 4], [Defs.TORCH, 2.0, 3], [Defs.MASONRY, 1.5, 6]]
 
@@ -1323,7 +1330,7 @@ func _try_open_chest() -> void:
 	audio.play("chest_open", centre)
 	_roll_loot(7, 1.6)
 	# now and then a Healing Draught (the deeper and grander the place, the likelier)
-	if randf() < 0.2 + rare * 0.45:
+	if randf() < 0.1 + rare * 0.3:
 		items["potion"] = int(items.get("potion", 0)) + 1
 		ui.toast("+1 Healing Draught (H to drink)", Color(0.6, 1.0, 0.65), 3.0)
 	_rare_find(rare)
@@ -1832,6 +1839,7 @@ func _tick() -> void:
 	_update_particles()
 	prof_add("shots and particles", Time.get_ticks_usec() - tq)
 	_update_weather()
+	_update_climate()
 	_try_spawn()
 	_update_guards()
 	_check_chest_hint()
@@ -1886,6 +1894,8 @@ func _update_player(m: Mage) -> void:
 	var speed := (1.5 if fin else 0.9) if p.in_liquid else 1.5
 	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
+	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02:
+		p.vx += wind * (0.02 if p.on_ground else 0.04)      # (the wind, out in the open)
 	var jump: bool = m.input.jump
 	if p.on_ground:
 		m.air_time = 0
@@ -1959,6 +1969,13 @@ func _update_player(m: Mage) -> void:
 	var sa: Vector4 = gpu.surf_at(a)
 	if p.pos.length() < sa.w + 20.0 and not m.heat_ward and not cinder:
 		hurt(m, 0.05, Vector2.ZERO, false)
+	# a volcanic world's air scorches you under the open sky (the Heat Ward or the Cinderheart bear it)
+	if m.local and exposed and float(clim.get("heat", 0.0)) > 0.0 and not m.heat_ward and not cinder and not p.in_liquid:
+		hurt(m, 0.012 * float(clim["heat"]), Vector2.ZERO, false)
+		_heat_t -= 1
+		if _heat_t <= 0:
+			_heat_t = 1200
+			ui.toast("The air of %s scorches you under the open sky: forge the Heat Ward, or keep to the caves" % planet.get("name", ""), Color(1.0, 0.6, 0.4), 4.0)
 	# under water, or above the air: holding your breath
 	if (Defs.KIND[head_t] == Defs.K_LIQUID and not m.items.has("pearl")) or p.pos.length() > Defs.R_TOP + 4.0:
 		m.breath -= 1.0
@@ -3064,7 +3081,7 @@ func _try_spawn() -> void:
 	spawn_timer -= 1
 	if spawn_timer > 0 or dead:
 		return
-	spawn_timer = 90
+	spawn_timer = int(90.0 / maxf(float(clim.get("wild", 1.0)), 0.3))
 	var count := 0
 	for e in enemies:
 		if not e.boss:
@@ -3230,14 +3247,65 @@ func _update_weather() -> void:
 	weather_timer -= 1
 	if weather_timer <= 0:
 		var raining := rain_target > 0
-		rain_target = 0.0 if raining else (0.4 + randf() * 0.6 if randf() < 0.55 else 0.0)
+		rain_target = 0.0 if raining else (0.4 + randf() * 0.6 if randf() < minf(0.92, 0.55 * float(clim.get("storm", 1.0))) else 0.0)
 		weather_timer = int(60 * (40 + randf() * 70))
+		_wind_dir = 1.0 if randf() < 0.5 else -1.0        # (each spell of weather blows its own way)
 	rain += (rain_target - rain) * 0.002
 	flash *= 0.85
 	var b := _biome_at(atan2(player.pos.y, player.pos.x))
-	if b["weather"] == "rain" and rain > 0.6 and randf() < 0.0012:
+	if b["weather"] == "rain" and rain > 0.6 and randf() < 0.0012 * float(clim.get("storm", 1.0)):
 		flash = 1.2
 		shake = 5.0
+
+## The planet's climate (Defs.climate): a wind that gusts harder in a storm and turns with each spell of
+## weather, pushing you about in the open air; what it blows across the view (snow on a frozen world, sand in
+## a dust storm, embers rising off a volcanic one); and whether you're out under the open sky.
+func _update_climate() -> void:
+	var cw: float = float(clim.get("wind", 0.0))
+	var gust := 0.6 + 0.4 * sin(time * 0.0031) * sin(time * 0.00071 + 1.3)
+	wind += (cw * (0.3 + 0.7 * rain) * gust * _wind_dir - wind) * 0.01
+	if frame % 4 == 0:
+		exposed = _open_sky(player.pos)
+	if player.dead or not exposed:
+		return
+	var a := atan2(player.pos.y, player.pos.x)
+	var br := basis_r(a)
+	var bd := basis_d(a)
+	var b := _biome_at(a)
+	var flake := Color(0.95, 0.97, 1.0)
+	var n := 0.0
+	var fall := 0.25
+	var grav := 0.0
+	var lit := false
+	if float(clim.get("dust", 0.0)) > 0.0 and b["weather"] == "clear" and rain > 0.2:
+		flake = Color(0.9, 0.76, 0.5)                    # a dust storm
+		n = rain * float(clim["dust"]) * 3.0
+		fall = 0.05
+	elif float(clim.get("heat", 0.0)) > 0.0:
+		flake = Color(1.0, 0.55, 0.2) if randf() < 0.7 else Color(1.0, 0.8, 0.35)
+		n = 0.35 * float(clim["heat"])                   # embers drifting up off a volcanic world
+		fall = -0.35
+		grav = -0.002
+		lit = true
+	elif b["weather"] == "snow" and absf(wind) > 0.25:
+		n = absf(wind) * 2.2                             # a blizzard
+		fall = 0.4
+	for k in int(n) + (1 if randf() < n - floorf(n) else 0):
+		var sp := Vector2(randf() * float(VW), randf() * float(VH))
+		var wp: Vector2 = screen_to_world(sp)
+		var v: Vector2 = br * (wind * 2.6 + (randf() - 0.5) * 0.3) + bd * (fall + (randf() - 0.5) * 0.15)
+		_particle(wp, v, 50 + randi() % 50, flake, lit, grav)
+
+## nothing over this point up to 70 cells (a roof, a cave's ceiling, an overhang: leaves don't count)
+func _open_sky(p: Vector2) -> bool:
+	if p.length() < gpu.surf_at(atan2(p.y, p.x)).x - 8.0:
+		return false
+	var up := p.normalized()
+	for k in range(6, 72, 3):
+		var t := type_at(p + up * float(k))
+		if t != Defs.AIR and Defs.KIND[t] == Defs.K_SOLID and t != Defs.LEAF:
+			return false
+	return true
 
 # ============================================================= crafting ====
 func recipe_done(r: Dictionary) -> bool:
@@ -3252,7 +3320,13 @@ func recipe_done(r: Dictionary) -> bool:
 		"mana": return items.has("mana_crystal") or (max_mana >= 170 and not items.has("circlet"))
 		"ward": return heat_ward
 		"skiff": return items.has("skiff")
+		"drive": return skiff_reach() > int(planet.get("index", 0))
 	return false
+
+## the furthest planet (by index) the skiff can fly to: one more for every Core Drive fitted (a planet's
+## heart, harvested with the Core Siphon, bound in star iron from the asteroids)
+func skiff_reach() -> int:
+	return int(items.get("reach", 0))
 
 func recipe_unlocked(r: Dictionary) -> bool:
 	if r.has("scroll") and not items.has(r["scroll"]):
@@ -3261,14 +3335,14 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier2": return tier == 1
 		"tier3": return tier == 2
 		"tier4": return tier == 3 and items.has("heart")
-		"gate": return tier >= 4
+		"drive": return tier >= 4 and items.has("skiff")
 	return true
 
 func recipe_lock_text(r: Dictionary) -> String:
 	match r["id"]:
 		"tier3": return "Needs Copper Focus"
 		"tier4": return "Needs Obsidian Focus + the Ember Heart"
-		"gate": return "Needs the Core Siphon"
+		"drive": return "Needs the Core Siphon and the Wisp Skiff"
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
 		"mend": return "Find the Scroll of Mending in a chest"
@@ -3344,8 +3418,11 @@ func craft(r: Dictionary) -> bool:
 			mana_regen = 0.32
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
-		"gate":
-			travel_next()
+		"drive":
+			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
+			var nxt := String(Defs.make_planet(int(items["reach"]))["name"])
+			ui.toast("Core Drive fitted: your skiff can reach %s now. Fly up out of the sky and head for it." % nxt, Color(1, 0.85, 0.4), 6.0)
+			save_game()
 			return true
 	if not r.has("spell") and not r.has("give"):
 		ui.toast("%s forged!" % r["name"], Color(1, 0.82, 0.23), 4.0)
@@ -4138,6 +4215,8 @@ func _make_world(index: int, arriving: bool) -> void:
 	gen_times.clear()
 	_gt0 = Time.get_ticks_usec()
 	planet = Defs.make_planet(index)
+	clim = Defs.climate(planet)
+	wind = 0.0
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))
 		gpu.cleanup()
@@ -4441,22 +4520,9 @@ func _respawn() -> void:
 	dead = false
 	iframes = 90
 
-func travel_next() -> void:
-	toggle_forge()
-	state = "loading"
-	ui.show_loading("The World Gate folds space…")
-	save_world(true)
-	await get_tree().process_frame
-	await get_tree().process_frame
-	player.inv[Defs.CORE] = 0
-	_enter_planet(int(planet["index"]) + 1)
-	ui.hide_loading()
-	state = "play"
-	save_game()
-
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 35            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 36            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
@@ -4558,6 +4624,12 @@ func _apply_save(s: Dictionary) -> void:
 	mana_regen = float(s.get("mana_regen", 0.22))
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
+	# (how far the skiff reaches: a journey from before the Core Drive keeps every planet it had been to)
+	var rch := maxi(int(items.get("reach", 0)), int(s.get("planet", 0)))
+	for wi in 25:
+		if FileAccess.file_exists(_world_path(wi)):
+			rch = maxi(rch, wi)
+	items["reach"] = rch
 	mat = int(s.get("mat", Defs.DIRT))
 	played = float(s.get("played", 0.0))
 	player.furn = []

@@ -41,4 +41,19 @@ float cloudHigh(vec2 pos) {
 	return clamp((n - cover) * 5.0, 0.0, 1.0) * edge;
 }
 
-float cloudDensity(vec2 pos) { return max(cloudLow(pos), cloudHigh(pos)); }
+// Ground fog (a marsh world's: P.p[125].w): low wisps lying in the lowlands, below the mean surface and a
+// little above it, drifting slowly; never thick enough to hide the way.
+float groundFog(vec2 pos) {
+	float f = P.p[125].w;
+	if (f <= 0.0) return 0.0;
+	float hgt = length(pos) - RS0;
+	if (hgt < -70.0 || hgt > 46.0) return 0.0;
+	float wnd = P.p[121].y * 0.5;
+	float cw = cos(wnd), sw = sin(wnd);
+	vec2 q = vec2(pos.x * cw - pos.y * sw, pos.x * sw + pos.y * cw);
+	float n = fbm(q / 38.0, 4251, 3);
+	float edge = 1.0 - smoothstep(14.0, 46.0, hgt);
+	return clamp((n - 0.44) * 2.6, 0.0, 0.5) * edge * f;
+}
+
+float cloudDensity(vec2 pos) { return max(max(cloudLow(pos), cloudHigh(pos)), groundFog(pos)); }

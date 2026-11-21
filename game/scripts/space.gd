@@ -278,7 +278,8 @@ func _landing(p: Vector2, v: Vector2) -> bool:
 	return p.length() < Defs.R_SPACE - 10.0 and v.dot(p.normalized()) < 0.0
 
 ## A planet that isn't ready (one that isn't home, or any while one is being made) keeps you HOLD
-## above its orbit band: `p` pushed back out, and a skiff's speed toward it taken away.
+## above its orbit band: `p` pushed back out, and a skiff's speed toward it taken away. One beyond the
+## skiff's reach (main.skiff_reach: a Core Drive for each planet further) never gets ready.
 func _hold(p: Vector2, sk) -> Vector2:
 	for b in bodies:
 		if int(b["index"]) == home and not game.travelling:
@@ -291,13 +292,20 @@ func _hold(p: Vector2, sk) -> Vector2:
 			if sk != null and sk.vel.dot(n) < 0.0:
 				sk.vel -= n * sk.vel.dot(n)
 			if game.frame % 120 == 0:
-				game.ui.toast("Approaching %s… %d%%" % [b["name"], int(game.travel_progress * 100.0)], Color(0.75, 0.9, 1.0), 2.0)
+				if not reachable(int(b["index"])):
+					game.ui.toast("%s is beyond your skiff's reach: fit a Core Drive at the Wisp Forge (a Planet Core bound in star iron from the asteroids)" % b["name"], Color(1.0, 0.8, 0.55), 3.0)
+				else:
+					game.ui.toast("Approaching %s… %d%%" % [b["name"], int(game.travel_progress * 100.0)], Color(0.75, 0.9, 1.0), 2.0)
 			p = c + n * lim
 	return p
 
+## can the skiff go to planet i? (home and any planet up to its reach; on foot, only home)
+func reachable(i: int) -> bool:
+	return i == home or i <= game.skiff_reach()
+
 ## Clearly nearer to another planet than to home: make it in the background, then move over to it.
 func _maybe_travel(p: Vector2) -> void:
-	if game.travelling or target >= 0 or int(near["index"]) == home:
+	if game.travelling or target >= 0 or int(near["index"]) == home or not reachable(int(near["index"])):
 		return
 	if (p - centre).length() < NEARER * p.length():
 		travel(int(near["index"]))
@@ -468,7 +476,10 @@ func _draw() -> void:
 	# where the planets are when they're off screen: a marker at the edge, pointing the way
 	for b2 in bodies:
 		var hc := Color(0.6, 1.0, 0.7) if int(b2["index"]) == home else Color(0.85, 0.85, 1.0)
-		_marker(xf, b2["pos"], b2["top"], String(b2["name"]), hc)
+		var bi := int(b2["index"])
+		if not reachable(bi):
+			hc = Color(0.62, 0.6, 0.66)
+		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " (needs a Core Drive)"), hc)
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
 		_marker(xf, nr.pos, nr.reach(), "Asteroid", Color(0.95, 0.82, 0.62))

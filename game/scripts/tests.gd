@@ -45,6 +45,14 @@ func _cell_pos(col: int, row: int, ax := -1, aw := 1) -> Vector2:
 	return Defs.stamp_pos(row, ax, aw, Defs.k_of(col, ax))
 
 func _go(p: Vector2) -> void:
+	# (a check that left you dead would leave every check after it running on the death screen: say so
+	# in the log, and carry on alive)
+	if g.state == "dead" or g.player.dead:
+		print("[test] you were dead (health %.0f) on the way to the next check: carrying on alive" % g.hp)
+		g.ui.hide_death()
+		g.player.dead = false
+		g.player.hp = g.player.max_hp
+		g.state = "play"
 	g.player.pos = p
 	g.player.vx = 0.0
 	g.player.vy = 0.0
@@ -1171,6 +1179,10 @@ func run() -> void:
 				if g.chunks.list.is_empty():
 					break
 				await _frames(1)
+			# (one still rocking where it leans after that is set down where it lies, as saving would)
+			var still_moving: int = g.chunks.list.size()
+			if still_moving > 0:
+				g.chunks.settle_all()
 			await _frames(30)
 			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("felled_tree.png"))
 			var rw1: PackedByteArray = g.gpu.read_world()
@@ -1181,7 +1193,7 @@ func run() -> void:
 			# lands on: a cottage wall crushes more of it than open ground; reported, not judged)
 			var tidy := bits1.x - bits0.x < 40
 			_ok("a felled tree topples whole and lies where it fell", whole and tidy,
-				"it came away as %d piece(s); wood around: %d before, %d after (the tree had %d); loose specks %d -> %d; leaves %d -> %d (its own %d); the game's longest frame %.1f ms (%s [%s, %s, %s, %s], %s, %s)" % [max_chunks, wood0, wood1, own_wood, bits0.x, bits1.x, bits0.y, bits1.y, own_leaves, g.hitch_us / 1000.0, _peak("lifting pieces out"), _peak("lift: read"), _peak("lift: find"), _peak("lift: make"), _peak("lift: clear"), _peak("falling pieces"), _peak("read back")])
+				("(still moving after 400 frames: %d, set down) " % still_moving if still_moving > 0 else "") + "it came away as %d piece(s); wood around: %d before, %d after (the tree had %d); loose specks %d -> %d; leaves %d -> %d (its own %d); the game's longest frame %.1f ms (%s [%s, %s, %s, %s], %s, %s)" % [max_chunks, wood0, wood1, own_wood, bits0.x, bits1.x, bits0.y, bits1.y, own_leaves, g.hitch_us / 1000.0, _peak("lifting pieces out"), _peak("lift: read"), _peak("lift: find"), _peak("lift: make"), _peak("lift: clear"), _peak("falling pieces"), _peak("read back")])
 			if not (before_n > 50 and after_n < before_n / 10):
 				cut_txt += " (before: %s; after: %s)" % [z0, z1]
 		else:
@@ -2197,6 +2209,43 @@ func run() -> void:
 		await _frames(25)
 	await _frames(60)
 	_ok("digging a pit under yourself doesn't hurt", g.hp >= hp1, "health %.0f -> %.0f" % [hp1, g.hp])
+	# ---- a frozen world's open water ices over from the top (tried here with the planet's frost turned
+	# on: a basin dug and filled, then left out in the cold) ----
+	# (you stand on the same clear stretch, well to the side of the basin, and can't come to harm: a
+	# spot picked blind once left you somewhere you died, and the checks after it ran with you dead)
+	var fz_god0: bool = g.test_god
+	g.test_god = true
+	var fz_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 160, 80, 60, 4, 30)
+	var fz_c: int = fz_st.x + 20
+	var fz_a: float = (float(fz_c) + 0.5) / float(Defs.NS) * TAU
+	var fz_up := Vector2(cos(fz_a), sin(fz_a))
+	var fz_g: float = g.gpu.surf_at(fz_a).x
+	var fz_ya: float = (float(fz_st.x) + 66.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(fz_ya), sin(fz_ya)) * (g.gpu.surf_at(fz_ya).x + 12.0))
+	await _frames(30)
+	g.brushes.append([fz_up * (fz_g - 5.0), 9.0, 1, 0, 9, 0, 0, 0])
+	await _frames(20)
+	g.brushes.append([fz_up * (fz_g - 6.0), 7.5, 5, Defs.WATER, 0, 400, 0])
+	await _frames(90)
+	var fz_count := func() -> Vector2i:
+		var fz_rr: Dictionary = g.gpu.read_rect(fz_c - 14, fz_st.y - 20, 28, 40)
+		var fz_w := 0
+		var fz_i := 0
+		for fz_v in fz_rr["fg"]:
+			if (fz_v & 255) == Defs.WATER:
+				fz_w += 1
+			elif (fz_v & 255) == Defs.ICE:
+				fz_i += 1
+		return Vector2i(fz_w, fz_i)
+	var fz0: Vector2i = fz_count.call()
+	var fz_was: float = float(g.clim.get("freeze", 0.0))
+	g.clim["freeze"] = 5.0
+	await _frames(600)
+	g.clim["freeze"] = fz_was
+	g.test_god = fz_god0
+	var fz1: Vector2i = fz_count.call()
+	_ok("on a frozen world, open water ices over from the top", fz0.x >= 20 and fz0.y == 0 and fz1.y >= 8 and fz1.x > 0,
+		"the basin: water %d, ice %d; 10 s in the frost: water %d, ice %d (the ice on top, the water under it); you: health %.0f, %s" % [fz0.x, fz0.y, fz1.x, fz1.y, g.hp, g.state])
 	# ---- health doesn't come back by itself; a draught and Mending bring it back over a moment ----
 	# (nothing about to bite: a wild creature wandering by would muddle the sums)
 	for hl_e in g.enemies.duplicate():
@@ -2675,7 +2724,9 @@ func run() -> void:
 	for sf_k in sf_rec.get("cost", {}):
 		g.player.inv[int(sf_k)] += int(sf_rec["cost"][sf_k])
 	var sf_forged: bool = not sf_rec.is_empty() and g.craft(sf_rec) and g.items.has("skiff")
-	var sf_ang: float = g.spawn_angle + 0.03
+	# (on a clear, level stretch: set down on a slope or loose ground, it once slid on after settling)
+	var sf_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 40, 200, 70, 4)
+	var sf_ang: float = (float(sf_st.x) + 100.5) / float(Defs.NS) * TAU
 	_go(Vector2(cos(sf_ang), sin(sf_ang)) * (g.gpu.surf_at(sf_ang).x + 12.0))
 	g.time = fposmod(sf_ang - g.spawn_angle + 1.1, TAU) / TAU * 25200.0
 	await _frames(40)
@@ -2785,8 +2836,35 @@ func run() -> void:
 		if g.space.active:
 			tv_in = tvk1
 			break
-	# (most of the way there at once: the planet is made as you cover the rest)
 	var tv_to: Vector2 = Defs.planet_pos(1) - Defs.planet_pos(0)
+	# ---- first with no Core Drive: Cindrel is beyond the skiff's reach, and you're held off it; then the
+	# drive is forged (a Planet Core bound in star iron), and it isn't ----
+	var tv_reach0: int = g.skiff_reach()
+	g.items["reach"] = 0
+	var tv_lim: float = float(Defs.make_planet(1)["radius"]) + Defs.ATMO + Defs.ORBIT_ROWS + 3000.0
+	sf_sk.pos = tv_to - tv_to.normalized() * (tv_lim + 900.0)
+	sf_sk.vel = tv_to.normalized() * 30.0
+	g.cam_c = sf_sk.pos
+	var tv_lk_travel := false
+	var tv_lk_min := 1e12
+	for tvl in 240:
+		g.test_aim = Defs.planet_pos(1) - Defs.planet_pos(g.space.home) + Vector2(0.5, 0.5)
+		await _frames(1)
+		tv_lk_travel = tv_lk_travel or g.travelling or g.space.home != 0
+		tv_lk_min = minf(tv_lk_min, (sf_sk.pos - tv_to).length())
+	var tv_locked: bool = not tv_lk_travel and tv_lk_min > tv_lim - 60.0
+	g.tier = 4
+	g.items["heart"] = true
+	var tv_rec: Dictionary = {}
+	for tv_r in g.recipes:
+		if tv_r["id"] == "drive":
+			tv_rec = tv_r
+	for tv_k in tv_rec.get("cost", {}):
+		g.player.inv[int(tv_k)] += int(tv_rec["cost"][tv_k])
+	var tv_drive: bool = not tv_rec.is_empty() and g.craft(tv_rec) and g.skiff_reach() == 1
+	_ok("without a Core Drive the skiff can't reach the next planet; with one it can", tv_locked and tv_drive,
+		"held off Cindrel %s (closest %.0f, hold at %.0f, travel started %s); Core Drive forged %s (reach %d, was %d)" % [not tv_lk_travel, tv_lk_min, tv_lim, tv_lk_travel, tv_drive, g.skiff_reach(), tv_reach0])
+	# (most of the way there at once: the planet is made as you cover the rest)
 	sf_sk.pos = tv_to * 0.7
 	sf_sk.vel = tv_to.normalized() * 35.0
 	g.cam_c = sf_sk.pos
@@ -2989,7 +3067,7 @@ func _test_worlds() -> void:
 			for wd_k2 in range(wd_k1 + 1, 5):
 				if (wd_pos[wd_k1] as Vector2).distance_to(wd_pos[wd_k2]) < 25000.0:
 					wd_bad.append("seed %d: planets %d and %d %.0f apart" % [wd_s, wd_k1, wd_k2, (wd_pos[wd_k1] as Vector2).distance_to(wd_pos[wd_k2])])
-	var wd_rules_ok := wd_bad.is_empty() and wd_names.size() > 120 and wd_kinds.size() >= 6
+	var wd_rules_ok := wd_bad.is_empty() and wd_names.size() > 120 and wd_kinds.size() >= 7 and wd_kinds.has("realm")
 	_ok("every game grows a system of its own (40 seeds: a temperate world first, sound biomes, seas, names, places)", wd_rules_ok,
 		"%d names among 200 planets; kinds %s; radius %.0f-%.0f; guardians on the first planet %.1f, on the others %.1f; %s" % [wd_names.size(), str(wd_kinds),
 		wd_rmin, wd_rmax, float(wd_g0) / 40.0, wd_gl / 160.0, "; ".join(wd_bad.slice(0, 6)) if not wd_bad.is_empty() else "all sound"])
@@ -3009,7 +3087,7 @@ func _test_worlds() -> void:
 	var wd_match := true
 	for wd_b3 in wd_lb:
 		wd_match = wd_match and wd_want.has(wd_b3)
-	var wd_made_ok: bool = g.builds.infos.size() >= 20 and wd_match and wd_lb.size() >= wd_want.size() - 1 and wd_lb.size() >= 1
+	var wd_made_ok: bool = g.builds.infos.size() >= 12 and wd_match and wd_lb.size() >= wd_want.size() - 1 and wd_lb.size() >= 1
 	_ok("a new game's planet is made from its own seed, with guardians only where it says", wd_made_ok,
 		"%s (%s, radius %.0f): %s; %d structures; guardians wanted %s, lairs %s (no room: %s); made in %d ms (%s)" % [wd_pl["name"], wd_pl["kind"], float(wd_pl["radius"]),
 		wd_pl["desc"], g.builds.infos.size(), str(wd_want), str(wd_lb), str(g.builds.lair_why), wd_ms, str(g.gen_times)])
@@ -3084,6 +3162,31 @@ func _test_far_biomes() -> void:
 	g.ui.title.visible = false
 	await _frames(60)
 	await _test_guardians(["ashland"])
+	# its air scorches you under the open sky, unless you have the Heat Ward (or the Cinderheart, which
+	# the guardian's test has just given you: put aside for this)
+	var fh_cind: bool = g.player.items.has("cinderheart")
+	g.player.items.erase("cinderheart")
+	var fh_ward0: bool = g.player.heat_ward
+	g.player.heat_ward = false
+	var fh_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) - 20, 40, 80, 6)
+	var fh_a: float = (float(fh_st.x) + 20.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(fh_a), sin(fh_a)) * (g.gpu.surf_at(fh_a).x + 12.0))
+	await _frames(40)
+	g.test_god = false
+	g.player.hp = g.player.max_hp
+	await _frames(150)
+	var fh_burnt: float = g.player.max_hp - g.player.hp
+	var fh_open: bool = g.exposed
+	g.player.heat_ward = true
+	g.player.hp = g.player.max_hp
+	await _frames(150)
+	var fh_warded: float = g.player.max_hp - g.player.hp
+	g.test_god = true
+	g.player.heat_ward = fh_ward0
+	if fh_cind:
+		g.player.items["cinderheart"] = true
+	_ok("Cindrel's air scorches you under the open sky, but not with the Heat Ward", fh_open and fh_burnt > 0.8 and fh_warded < 0.05,
+		"out in the open %s; 2.5 s without the ward: -%.1f health, with it: -%.1f" % [fh_open, fh_burnt, fh_warded])
 	g._enter_planet(2)
 	g.ui.title.visible = false
 	await _frames(60)

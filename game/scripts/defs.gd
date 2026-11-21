@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 50
+const NM := 51
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -63,6 +63,7 @@ const MYCELIUM := 47      # fungal ground (the Mirecap Grove)
 const DRYGRASS := 48      # golden savanna grass: the ground's top and the tall tufts on it
 const ROOT := 49          # a tree's roots (background): they give way to every other part of a tree, and
                           # building over them is fine (it can't fell the tree); dug up they give Wood
+const STARIRON := 50      # star iron: found only in asteroids (the metallic ones, deep in), for the Core Drive
 ## The back walls a piece of furniture can stand in front of (see behind_index). 0 is none.
 const BEHIND := [0, PLANK, WOOD, MASONRY, BRICK, SANDSTONE, GLASS, MOSSBLOCK, STONE, TILE, OBSIDIAN,
 	RUNESTONE, DRYGRASS, CAP, STALK, DIRT, DEEPSTONE, ICE, LEAF, SCAFFOLD]
@@ -73,7 +74,7 @@ const MAT_NAMES := {
 	16: "EMBER", 17: "FROST", 18: "WISP", 19: "MUD", 20: "ICE", 21: "MAGMAROCK", 22: "CORE",
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
-	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT",
+	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -204,12 +205,15 @@ func _init() -> void:
 	_def(MYCELIUM, "Mycelium", K_SOLID, ["#4a3a58", "#5e4a70", "#7a6290", "#3a2c46"], {"glow": Vector3(0.004, 0.002, 0.008)})
 	_def(DRYGRASS, "Dry Grass", K_SOLID, ["#9a7a2a", "#c8a040", "#e0c060", "#7a5a1e"], {"fuel": 30, "ign": 0.06})
 	_def(ROOT, "Roots", K_SOLID, ["#4a2e18", "#5a3820", "#6a4428", "#3e2614"], {"fuel": 110, "ign": 0.03})
+	# star iron: no planet has it; it comes from the hearts of metallic asteroids
+	_def(STARIRON, "Star Iron", K_SOLID, ["#8fa4c8", "#c4d4ee", "#64789e", "#eef4ff"], {"hard": 2, "self": 1, "glow": Vector3(0.25, 0.32, 0.5)})
 	# warded stone: the walls of dungeons, carved with faintly glowing runes. Too hard for any staff
 	# but the Core Siphon, so a dungeon is explored through its halls, not dug around.
 	_def(RUNESTONE, "Warded Stone", K_SOLID, ["#2c3044", "#353a52", "#3f4560", "#24283a"], {"hard": 4, "glow": Vector3(0.025, 0.045, 0.06)})
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
+	PLACE[STARIRON] = 0          # (never put into the world: its id is the GPU's "too hard" counter)
 	# structural strength: how many cells a solid can reach sideways (or hang) from something
 	# (a chest reaches further than its 8-cell width, so it never breaks in pieces: any part
 	# resting on something holds the whole chest, and with nothing under it, it drops whole)
@@ -541,11 +545,38 @@ var _planet_cache := {}
 ## 1304 before PLANET_SCALE).
 const PLANETS := [
 	{"name": "Verdance", "radius": 1304.0, "desc": "A temperate cradle world of woods, bogs and peaks.", "biomes": ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove"], "magmaR": 600.0, "sea": -1.0, "rich": 1.0, "lava": 1.0, "sky": Color(1, 1, 1)},
-	{"name": "Cindrel", "radius": 1100.0, "desc": "A volcanic world. The mantle is close to the surface.", "biomes": ["ashland", "mountain", "desert", "ashland", "ashland"], "magmaR": 780.0, "sea": -1.0, "rich": 1.4, "lava": 2.6, "sky": Color(1.25, 0.78, 0.7)},
-	{"name": "Thalassa", "radius": 1600.0, "desc": "A water world: scattered islands over drowned shelves.", "biomes": ["ocean", "forest", "ocean", "marsh", "ocean", "tundra", "ocean"], "magmaR": 580.0, "sea": 26.0, "rich": 1.2, "lava": 0.8, "sky": Color(0.85, 1.05, 1.15)},
-	{"name": "Sere", "radius": 1450.0, "desc": "An endless desert world baked under twin suns.", "biomes": ["desert", "mountain", "desert", "desert", "ashland"], "magmaR": 640.0, "sea": -1.0, "rich": 1.5, "lava": 1.5, "sky": Color(1.15, 1.0, 0.8)},
-	{"name": "Fenhollow", "radius": 950.0, "desc": "A drowned marsh world with deep black lakes.", "biomes": ["marsh", "grove", "marsh", "tundra", "marsh", "jungle"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
+	{"name": "Cindrel", "radius": 1100.0, "desc": "A volcanic world. The mantle is close to the surface, and the air scorches.", "biomes": ["ashland", "mountain", "desert", "ashland", "ashland"], "magmaR": 780.0, "sea": -1.0, "rich": 1.4, "lava": 2.6, "sky": Color(1.25, 0.78, 0.7)},
+	{"name": "Thalassa", "radius": 1600.0, "desc": "A water world: scattered islands over drowned shelves, and storms.", "biomes": ["ocean", "forest", "ocean", "marsh", "ocean", "tundra", "ocean"], "magmaR": 580.0, "sea": 26.0, "rich": 1.2, "lava": 0.8, "sky": Color(0.85, 1.05, 1.15)},
+	{"name": "Sere", "radius": 1450.0, "desc": "An endless desert world baked under twin suns, swept by dust storms.", "biomes": ["desert", "mountain", "desert", "desert", "ashland"], "magmaR": 640.0, "sea": -1.0, "rich": 1.5, "lava": 1.5, "sky": Color(1.15, 1.0, 0.8)},
+	{"name": "Fenhollow", "radius": 950.0, "desc": "A drowned marsh world with deep black lakes under the fog.", "biomes": ["marsh", "grove", "marsh", "tundra", "marsh", "jungle"], "magmaR": 600.0, "sea": 18.0, "rich": 1.6, "lava": 1.0, "sky": Color(0.85, 1.0, 0.85)},
 ]
+
+## What each kind of planet is like to be on (Defs.climate): how often storms come ("storm", x the
+## temperate chance), the wind ("wind", 0-1: gusts that push you in the air and blow snow, sand or
+## embers across the view), ground fog ("fog"), scorching air ("heat": hurts under the open sky without
+## the Heat Ward or the Cinderheart), lakes that ice over ("freeze"), dust storms instead of rain
+## ("dust"), and how many wild creatures roam ("wild"). And how settled it is: "settle" scales how many
+## structures it has (towns and the rest), "towns" how many of those are towns and castles, "ruin" how
+## many more of them lie in ruins.
+const CLIMATES := {
+	"temperate": {"settle": 0.5, "towns": 0.6},
+	"volcanic": {"storm": 0.6, "wind": 0.3, "heat": 1.0, "settle": 0.25, "towns": 0.2, "ruin": 0.3},
+	"ocean": {"storm": 1.8, "wind": 0.5, "settle": 0.35, "towns": 0.5},
+	"desert": {"storm": 0.8, "wind": 0.7, "dust": 1.0, "settle": 0.35, "towns": 0.3, "ruin": 0.25},
+	"marsh": {"storm": 1.3, "fog": 1.0, "settle": 0.3, "towns": 0.3, "ruin": 0.15},
+	"frozen": {"storm": 1.4, "wind": 0.8, "freeze": 1.0, "settle": 0.3, "towns": 0.5},
+	"wild": {"wild": 1.7, "settle": 0.3, "towns": 0.4, "ruin": 0.2},
+	"realm": {"storm": 0.9, "settle": 1.35, "towns": 3.0, "ruin": -0.2},
+}
+
+## a planet's climate and settlement (see CLIMATES), every key filled in
+func climate(pl: Dictionary) -> Dictionary:
+	var out := {"storm": 1.0, "wind": 0.0, "fog": 0.0, "heat": 0.0, "freeze": 0.0, "dust": 0.0, "wild": 1.0,
+		"settle": 1.0, "towns": 1.0, "ruin": 0.0}
+	var c: Dictionary = CLIMATES.get(String(pl.get("kind", "temperate")), {})
+	for k in c:
+		out[k] = c[k]
+	return out
 
 ## The kinds of planet a system grows (sizes before PLANET_SCALE; magma: the mantle's top as a share
 ## of the radius; sea: its level in cells under the mean surface, -1 for none; must: biomes it always
@@ -572,8 +603,12 @@ const PLANET_KINDS := {
 	"wild": {"pool": {"forest": 1, "jungle": 1, "marsh": 1, "tundra": 1, "mountain": 1, "savanna": 1, "desert": 1, "grove": 1, "ashland": 1, "ocean": 1},
 		"n": [6, 8], "must": [], "radius": [1200, 1600], "sea": [-1, -1], "lava": [0.9, 1.6], "rich": [1.3, 1.6],
 		"magma": [0.42, 0.55], "sky": Color(1.05, 0.95, 1.1), "adj": ["strange", "wild", "patchwork"]},
+	# a world of kingdoms: towns, castles and keeps on every good stretch of land (CLIMATES "realm")
+	"realm": {"pool": {"forest": 3, "savanna": 3, "mountain": 2, "tundra": 1, "desert": 1, "grove": 1},
+		"n": [5, 7], "must": ["forest", "savanna"], "radius": [1300, 1550], "sea": [-1, -1], "lava": [0.8, 1.1], "rich": [1.2, 1.4],
+		"magma": [0.42, 0.5], "sky": Color(1.04, 1.0, 0.95), "adj": ["settled", "crowded", "kingdom", "old"]},
 }
-const PLANET_ORDER := ["volcanic", "ocean", "desert", "marsh", "frozen", "wild"]
+const PLANET_ORDER := ["volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm"]
 const BIOME_WORDS := {"forest": "woods", "jungle": "jungle", "marsh": "bogs", "tundra": "snowfields", "mountain": "peaks",
 	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas"}
 const NAME_A := ["Ver", "Cin", "Thal", "Ser", "Fen", "Ar", "Bel", "Cor", "Dra", "El", "Gal", "Hal", "Ith", "Kel", "Lor", "Mor",
@@ -807,7 +842,7 @@ const RECIPES := [
 	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISP: 6}, "desc": "Staff tier 3: Obsidian and Magma Rock."},
 	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISP: 15}, "desc": "Staff tier 4: harvest the Planet Core. Needs the Ember Heart."},
 	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISP: 10, COPPER: 8}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
-	{"id": "gate", "cat": "World Gate", "name": "Forge the World Gate", "cost": {CORE: 40, WISP: 20}, "desc": "Travel to the next planet. Needs the Core Siphon."},
+	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it can reach the next planet of the system. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids."},
 ]
 
 # ---------------------------------------------------------------- sprites ---

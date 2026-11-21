@@ -274,9 +274,12 @@ var _gmf := PackedInt32Array()      # per biome: top material, its depth, the on
 var _span := PackedInt32Array()     # Defs.SPAN, our own copy
 var plan_times := {}     # ms per step of the last plan (the test mode prints it)
 
+var _clim := {}            # the planet's climate and settlement (Defs.climate): how many structures, how many towns
+
 func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, boss_angle: float, build: bool) -> void:
 	N0 = Defs.NS
 	surf = surface
+	_clim = Defs.climate(planet)
 	rng.seed = int(planet["seed"]) * 31 + 7
 	_seed = int(planet["seed"])
 	biome_names = []
@@ -321,8 +324,9 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 
 	plan_times["first"] = (Time.get_ticks_usec() - pt) / 1000
 	pt = Time.get_ticks_usec()
-	# (as many to the column as on a round of 8192: a bigger planet has more of everything)
-	var target := 26 * N0 / 8192
+	# (as many to the column as on a round of 8192: a bigger planet has more of everything; how settled
+	# the planet is scales it: towns aren't everywhere, unless it's a world of kingdoms)
+	var target := maxi(4, int(round(26.0 * float(N0) / 8192.0 * float(_clim["settle"]))))
 	var placed := 0
 	for tries in 900:
 		if placed >= target:
@@ -381,6 +385,12 @@ func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
 		"savanna": w = {"town": 2.5, "cottage": 3, "tower": 1, "mine": 1.5, "catacomb": 1}
 		"grove": w = {"cottage": 3, "town": 1.5, "tower": 1.5, "catacomb": 2}
 		_: w = {"cottage": 1}
+	# (towns and castles as common as the planet is settled: a few on most worlds, everywhere on a realm)
+	for tk in ["town", "castle"]:
+		if w.has(tk):
+			w[tk] = float(w[tk]) * float(_clim["towns"])
+	if float(_clim["towns"]) > 1.5 and not w.has("town") and b != "marsh" and b != "ocean":
+		w["town"] = 2.0 * float(_clim["towns"])
 	if near_spawn:
 		w = {"cottage": 2, "tower": 2} if b != "desert" else {"temple": 1}
 		if b == "marsh":
@@ -391,6 +401,7 @@ func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
 		"castle", "temple", "catacomb": ruin_p = 0.7
 		"town": ruin_p = 0.3
 		"mine": ruin_p = 0.6
+	ruin_p = clampf(ruin_p + float(_clim["ruin"]), 0.05, 0.95)
 	if near_spawn:
 		ruin_p = 0.75
 	var ruined := rng.randf() < ruin_p
@@ -2168,7 +2179,10 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 		return false
 	var floor_row := _median_ground(x0 + LAIR_RAMP, W - 2 * LAIR_RAMP)
 	var top := floor_row - LAIR_UP
-	var bot := floor_row + 16
+	# (down to the land at its ends too: on a mountainside the ground under a rim pillar can lie well
+	# below the floor, and a pillar whose foot was past the blueprint's bottom stood on nothing and was
+	# cut away whole)
+	var bot := maxi(floor_row + 16, _ground_range(x0, W).y + 6)
 	var bp := BP.new(x0, top, W, bot - top + 1)
 	var fl := floor_row - top                     # the floor's top row, in the blueprint
 	var wall: int = bd["wall"]

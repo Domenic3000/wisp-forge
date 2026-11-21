@@ -166,6 +166,28 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   transform (`_draw_mage(..., place)`), so they sit and turn with it. Air drag 0.97 a tick below `R_TOP` (none above);
   coming back from space it sheds its speed to 8 a tick, and glows coming down fast through the air.
 
+## Progression and climate (user, 20 Nov: fewer towns unless it's that kind of planet; the progression pass)
+- Settlement: `Defs.CLIMATES[kind]` "settle" scales buildings.gd's structure count (26 per 8192 columns x settle:
+  Verdance 0.5, a "realm" world of kingdoms 1.35), "towns" multiplies town and castle weights in `_try_place` (and
+  gives a realm towns in biomes that had none), "ruin" shifts how many lie in ruins. `Defs.climate(pl)` fills every
+  key (buildings `_clim`, main `clim`). Planet kinds: `PLANET_ORDER` (volcanic, ocean, desert, marsh, frozen,
+  wild, realm); the classic five are temperate, volcanic, ocean, desert, marsh.
+- Travel is gated: `main.skiff_reach()` (`items["reach"]`, saved; a save from before keeps every planet it has a
+  world file for) is the highest planet index the skiff can fly to. The Core Drive (recipe "drive": 30 Planet
+  Core, 12 Star Iron, 10 Wisp; needs the Core Siphon, tier 4, which needs Vulkhar's Ember Heart, and the skiff)
+  raises it to this planet's index + 1. space.gd `reachable(i)`: `_maybe_travel` never starts for a planet out of
+  reach, so `_hold` keeps you HOLD above it (a toast says why); its edge marker says "(needs a Core Drive)".
+  STAR IRON (material 50, `PLACE` 0: its id is the GPU's "too hard" counter, so it must never be put into the
+  world) is only in asteroids (asteroid.gd: metallic rocks' hearts, a speck in stony ones).
+- Climate per kind (`CLIMATES`): "storm" (how often it rains, lightning), "wind" (main `wind`, gusting with the
+  storm, turning with each spell of weather; pushes you while `exposed`, i.e. `_open_sky`: nothing solid 6-72
+  cells over you, above the ground), "heat" (volcanic: the open air hurts 0.012 a tick without the Heat Ward or the
+  Cinderheart), "freeze" (frozen: P.p[125].x, react.comp ices open water over from the top near the surface),
+  "fog" (marsh: P.p[125].w, clouds.comp `groundFog` in the lowlands), "dust" (desert: dust storms in clear-weather
+  biomes), "wild" (wild: creatures spawn more often). `_update_climate` blows snow (a blizzard), sand or embers
+  across the view as particles. Prism Crystal is rarer (gen.comp thresholds, chest loot), and so are draughts in
+  chests (0.1 + rare x 0.3).
+
 ## Pathfinding (scripts/nav.gd)
 - `shaders/navmap.comp` runs after grid.comp: one byte per 4 x 4 grid cells per mage (bit 0 blocks, 1 platform, 2
   liquid, 3 all blocked, 4 a door), read back in the same buffer as the grids (`gpu.nav_off`, `NG` blocks a side,
