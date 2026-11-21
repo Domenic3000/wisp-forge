@@ -9,6 +9,7 @@ const FolkArt := preload("res://scripts/folk_art.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
 const Ecology := preload("res://scripts/ecology.gd")
 
+var _gaps := {}             # empty rows under each sprite frame's feet (`_gap_under`)
 var game
 var tex := {}
 var _door_keys := []          # pictures of damaged open doors made so far (oldest first)
@@ -317,13 +318,19 @@ func _lit(sp: Vector2) -> Color:
 ## so it can't flicker a pixel up and down against the terrain while the camera eases (with
 ## an odd body height the centre sits right on a half pixel, and rounding it flipped back and
 ## forth). Returns [drawn position, unsnapped position].
-func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
+func _feet(wpos: Vector2, body_h: float, grounded: bool, body_w := 0.0) -> Array:
 	var up := wpos.normalized()
 	var feet := wpos - up * (body_h * 0.5)
 	var raw: Vector2 = game.world_to_screen(feet)
 	if grounded:
-		# cell rows are whole numbers of radius (R_TOP is a whole number)
-		feet = up * roundf(feet.length())
+		# on the top of the very cell it stands on, as the terrain draws it (the body rests on the collision
+		# grid, which is laid out round you: its rows sit a fraction of a cell off the world's far out);
+		# else to the nearest cell row (rows are whole numbers of radius: R_TOP is a whole number)
+		var gt: float = game.ground_top(feet, body_w) if body_w > 0.0 else -1.0
+		if gt > 0.0 and absf(gt - feet.length()) < 1.2:
+			feet = up * gt
+		else:
+			feet = up * roundf(feet.length())
 	var sp: Vector2 = game.world_to_screen(feet)
 	if game.close_view() or absf(wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)) < 0.02:
 		sp = _snap(sp)
@@ -337,9 +344,9 @@ func _snap(p: Vector2) -> Vector2:
 	var k := float(game.scale_px)
 	return (p * k).round() / k
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false) -> void:
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false, body_w := 0.0) -> void:
 	var t: Texture2D = tex[key]
-	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
+	var sp: Vector2 = _feet(wpos, body_h, grounded, body_w)[0]
 	# upright in the close view (crisp pixels: turned a few degrees they'd go jagged); turned with the
 	# planet's curve in the round map view. `turn`: always turned with the world under it (an open door
 	# stands with its house, which leans with the curve: upright it seemed to turn as you walked)
@@ -351,10 +358,40 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	draw_set_transform(sp, rot, sc)
 	var mod := Color(4, 4, 4) if white else _lit(game.world_to_screen(wpos)) * tint
 	mod.a = alpha
-	# feet (last opaque row, above the outline) rest on the bottom of the body box
+	# feet (the last opaque row above the outline) rest on the bottom of the body box, wherever they are in
+	# the frame: a frame with empty rows under its feet (most of the grown creatures had one or two, a
+	# small one four) stood that much over the ground (user, 21 Nov: "look more like their feet are on
+	# the ground"); and a walk frame with a leg lifted lowers the body onto the other. (Not a door or chest,
+	# `turn`: a door with its bottom burnt off still hangs where it hung.)
 	var ts := t.get_size()
-	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
+	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0 + (0.0 if turn else _gap_under(key, t))), mod)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## how many empty rows a frame has under its lowest opaque row (its feet's outline), cached by key
+func _gap_under(key: String, t: Texture2D) -> float:
+	if _gaps.has(key):
+		return _gaps[key]
+	var gap := 0
+	var img := t.get_image()
+	if img != null:
+		if img.is_compressed():
+			img.decompress()
+		var w := img.get_width()
+		var hh := img.get_height()
+		gap = hh
+		for yy in range(hh - 1, -1, -1):
+			var any := false
+			for xx in w:
+				if img.get_pixel(xx, yy).a > 0.5:
+					any = true
+					break
+			if any:
+				gap = hh - 1 - yy
+				break
+		if gap >= hh:
+			gap = 0
+	_gaps[key] = float(gap)
+	return float(gap)
 
 ## A mage: the frame, plus the parts mage_rig.gd simulates (the scarf behind him; the hat's tip,
 ## the beard's end and the staff in front), all in the sprite's own pixels and transform.
@@ -377,7 +414,7 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	if not _masks.has(key):
 		_masks[key] = MageRig.body_mask(key)
 	var t: Texture2D = tex[key]
-	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground)[0]
+	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground, m.w)[0]
 	var rot := 0.0 if game.close_view() else wrapf((game.view_angle() if game.space.active else atan2(game.cam_c.y, game.cam_c.x)) - a, -PI, PI)
 	# (out in space the view zooms far out: the mage stays big enough to see)
 	var zs: float = minf(game.zoom, 2.0) if game.space.active else game.zoom
@@ -631,11 +668,16 @@ func _draw_all() -> void:
 					_draw_mound(e)
 				_draw_serpent(e, tint)
 				continue
+			if plan == "bird" and e.on_ground and not e.under:
+				# (standing on the ground: feet on it, as the walkers)
+				_sprite(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, true, 1.0, 1.0, tint, false, e.w)
+				_eco_marks(e)
+				continue
 			if plan == "bird":
 				_sprite_mid(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, tint)
 				_eco_marks(e)
 				continue
-		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground or e.off_t <= 3, 1.0, sq, tint)
+		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground or e.off_t <= 3, 1.0, sq, tint, false, e.w)
 		_eco_marks(e)
 	# projectiles
 	for pr in game.projs:
@@ -806,4 +848,4 @@ func _draw_folk() -> void:
 			continue
 		var walking: bool = absf(v.vx) > 0.08
 		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
-		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v))
+		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), false, v.w)

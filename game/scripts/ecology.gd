@@ -246,6 +246,9 @@ static func wake(g, e, tgt) -> void:
 static func scare_one(e, from: Vector2, t: int) -> void:
 	if e.boss:
 		return
+	if e.fear_t <= 0:
+		e.flee_lock = 0                     # (a fresh fright: which way is worked out anew)
+		e.flee_chk = Vector2.ZERO
 	e.fear_t = maxi(e.fear_t, t)
 	e.fear_from = from
 	e.asleep = false
@@ -330,11 +333,17 @@ static func walk_to(g, e, p: Vector2, spd: float, gacc: float, near := 4.0) -> b
 	e.facing = 1 if dirx > 0.0 else -1
 	if footed:
 		e.vx += (dirx * spd - e.vx) * 0.14
-	if e.hit_wall and footed:
-		var need: int = g._wall_height(e, dirx, 24.0)
+	# a wall it can clear (only from the ground: jumping again at the top of a jump walked it up walls)
+	if e.hit_wall and (e.on_ground or e.in_liquid):
+		var need: int = g._wall_height(e, dirx, jump_reach(e))
 		if need >= 0:
 			e.vy = -sqrt(2.0 * gacc * (float(need) + 4.0))
 	return false
+
+## how high a creature can jump a wall: about its own height and a bit (a deer clears a fence, a hare
+## a tuft; none goes up the side of a house)
+static func jump_reach(e) -> float:
+	return clampf(e.h * 1.3 + 2.0, 4.0, 24.0)
 
 ## a frog's way about: hop after hop toward a point. True once there.
 static func hop_to(g, e, p: Vector2, spd: float, gacc: float, big := 1.0) -> bool:
@@ -394,11 +403,37 @@ static func _flee(g, e, gacc: float, spd: float) -> void:
 	if side == 0.0:
 		side = float(e.facing)
 	var fast := spd * FLEE
+	if e.flee_lock > 0:
+		e.flee_lock -= 1
+		side = float(e.flee_dir)
+	if e.flee_cd > 0:
+		e.flee_cd -= 1
+	if go == "walk" or go == "hop":
+		# cornered (a wall it can't clear, or no headway for most of a second): it doubles back, past
+		# whatever chased it there, and keeps that way a while instead of turning back into the corner
+		# each time it looks round at you (user, 21 Nov: prey chased into a wall kept running at it)
+		var stuck: bool = e.hit_wall and e.on_ground and g._wall_height(e, side, jump_reach(e)) < 0
+		e.flee_chk_t += 1
+		if e.flee_chk_t >= 40:
+			if e.flee_chk != Vector2.ZERO and e.pos.distance_to(e.flee_chk) < 4.0 and not e.in_liquid:
+				stuck = true
+			e.flee_chk = e.pos
+			e.flee_chk_t = 0
+		if stuck and e.flee_cd <= 0:
+			side = -side
+			e.flee_dir = int(side)
+			e.flee_lock = 150 + randi() % 90
+			e.flee_cd = 25
+			e.flee_chk = e.pos
+			e.flee_chk_t = 0
+			e.facing = int(side)
+			if e.on_ground and e.fear_from.distance_to(e.pos) < 45.0:
+				# bolting back past you: a leap as it goes
+				e.vy = -sqrt(2.0 * gacc * minf(jump_reach(e), e.h + 4.0))
+				e.vx = side * fast
 	match go:
 		"walk":
 			walk_to(g, e, e.pos + br * side * 80.0, fast, gacc, 0.0)
-			if e.hit_wall and (e.on_ground or absf(e.vy) < 0.25) and g._wall_height(e, side, 24.0) < 0:
-				e.fear_from = e.pos + br * side * 10.0   # (a wall: it turns and runs the other way)
 		"hop":
 			var wp: Vector2 = e.goal_p if e.doing == "to_water" else Vector2.ZERO
 			if e.in_liquid:

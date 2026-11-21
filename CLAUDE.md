@@ -377,6 +377,12 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   water (`_fall`). Move "tongue" (boss_ai: out at you and back, stings and pulls; `e.tongue` along `e.aim`, drawn by
   overlay `_eco_marks`). New frames: beast "_graze", "_sleep"; toad "_croak", "_crouch", "_sleep"; bird "_perch",
   "_sleep" (`BossArt.bird_feet` puts it on its branch). Bats roost on cave roofs (`main._bat_roost`, "bat_hang").
+- Cornered (user, 21 Nov: prey chased into a wall kept running at it, some went up a house wall): `_flee` turns a
+  walker or hopper round when it meets a wall it can't clear (`jump_reach`: about its own height, at most 24) or
+  makes no headway for 40 frames, and keeps that way (`flee_dir`, `flee_lock` 150-240 frames, `flee_cd`) so it
+  bolts back past you (a leap if you're close) instead of turning back into the corner at each look round.
+  `walk_to` jumps a wall only from the ground (jumping again at the top of each jump walked it up walls).
+  Test: `_test_corner` (in "ecology": a course in open air with a 56-high wall).
 - Prey creatures: hare (forest, savanna, mountain), snowhare, deer (a herd of 3), skink, reedfrog. Test: `_test_ecology`
   ("ecology").
 - Sizes true to life (user, 21 Nov: "accurate to size compared to the player"): a cell is about 10 cm (the mage's
@@ -691,6 +697,14 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (light), never from 0.
 - Chests at rest only fall after CHEST_LET_GO frames with nothing found up to 3.5 cells under them (the
   collision grid tilts with the planet's curve as the mage walks, so a single check flickered).
+- Standing on the curved world through the flat grid (user, 21 Nov: foes bobbed as you walked): far from you the
+  grid's rows sit up to half a cell off the world's, and that drifts as you walk, so a body resting on the grid is
+  up to half a cell into or over the ground's top. `move_body`: `_unsink` first takes a body out of a sliver it sank
+  into (it used to be lifted a whole cell, by a step "up" or the unstick, then fell back for frames), a fall ends
+  right on the row it met (`_rest_on`), and a body standing last frame is put straight down on ground up to 1.05
+  below (`was_ground`). Drawing: overlay `_feet` puts a grounded body's feet on the top of the world cell the grid
+  has under it (`main.ground_top`), and `_sprite` hangs a frame by its lowest opaque row (`_gap_under`, not doors
+  or chests), so frames with empty rows under the feet don't float; birds on the ground are drawn by their feet.
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 

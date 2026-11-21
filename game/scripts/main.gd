@@ -188,6 +188,11 @@ class Enemy extends Body:
 	var goal_p := Vector2.ZERO # where that takes it (world; ZERO: nowhere in particular)
 	var fear_t := 0            # frames it keeps running from `fear_from`
 	var fear_from := Vector2.ZERO
+	var flee_dir := 0          # cornered while fleeing: the way it doubled back, kept `flee_lock` frames
+	var flee_lock := 0
+	var flee_cd := 0
+	var flee_chk := Vector2.ZERO  # where it was when headway was last checked (`flee_chk_t` frames ago)
+	var flee_chk_t := 0
 	var prey = null            # the creature it's hunting
 	var chase_t := 0
 	var hunger_t := 0          # frames before it hunts (or scavenges) again
@@ -1679,6 +1684,19 @@ func gsolid(ix: int, iy: int) -> bool:
 	var k: int = Defs.KIND[t]
 	return k == Defs.K_SOLID or k == Defs.K_POWDER
 
+## The top of the ground a body stands on (its feet at `feet`, `w` wide): the radius of the top of the
+## world cell the collision grid has under it (drawn feet go there), or -1 if there's none right there.
+func ground_top(feet: Vector2, w: float) -> float:
+	var l := to_grid(feet)
+	var x0 := int(floor(l.x - w * 0.5 + 0.01))
+	var x1 := int(floor(l.x + w * 0.5 - 0.01))
+	for yy in range(int(floor(l.y - 0.5)), int(floor(l.y + 0.6)) + 1):
+		for xx in range(x0, x1 + 1):
+			if gsolid(xx, yy) or gtype(xx, yy) == Defs.SCAFFOLD:
+				var c := from_grid(Vector2(float(xx) + 0.5, float(yy) + 0.5))
+				return float(Defs.R_TOP) - floorf(float(Defs.R_TOP) - c.length())
+	return -1.0
+
 func type_at(p: Vector2) -> int:
 	var l := to_grid(p)
 	return gtype(int(floor(l.x)), int(floor(l.y)))
@@ -1723,6 +1741,33 @@ func box_solid(x: float, y: float, w: float, h: float) -> bool:
 				return true
 	return false
 
+## Sunk into the ground by a fraction of a cell: the grid is laid out round you, so as you walk the ground
+## under a body far off shifts against it by a hair. It comes out just that much (up, or off a wall).
+## Lifted a whole cell, it dropped back over the next frames, and every foe bobbed as you walked
+## (user, 21 Nov). Returns where it goes (x, y), the same if it isn't a sliver.
+func _unsink(e: Body, x: float, y: float) -> Vector2:
+	var bot := y + e.h
+	var pen := bot - floorf(bot - 0.001)
+	if pen > 0.001 and pen < 0.5 and not box_solid(x, y - pen, e.w, e.h):
+		e.on_ground = true
+		e.vy = minf(e.vy, 0.0)
+		return Vector2(x, y - pen)
+	var pr := (x + e.w) - floorf(x + e.w - 0.001)
+	if pr > 0.001 and pr < 0.5 and not box_solid(x - pr, y, e.w, e.h):
+		return Vector2(x - pr, y)
+	var pl := ceilf(x) - x
+	if pl > 0.001 and pl < 0.5 and not box_solid(x + pl, y, e.w, e.h):
+		return Vector2(x + pl, y)
+	return Vector2(x, y)
+
+## Settling onto what stopped a fall: the body's bottom put right on the top of the cell row it met
+## (stopped a step short, it hung up to half a cell over the ground, more or less as the grid shifted).
+func _rest_on(x: float, y: float, st: float, w: float, h: float) -> float:
+	var top := floorf(y + st + h - 0.001) - h
+	if top > y and top < y + st + 0.001 and not box_solid(x, top, w, h):
+		return top
+	return y
+
 func box_count(x: float, y: float, w: float, h: float, m: int) -> int:
 	var n := 0
 	for yy in range(int(floor(y)), int(floor(y + h - 0.001)) + 1):
@@ -1736,6 +1781,12 @@ func move_body(e: Body) -> void:
 	var x := l.x - e.w * 0.5
 	var y := l.y - e.h * 0.5
 	e.hit_wall = false
+	# (first out of a sliver of ground it sank into as the grid moved under it, or a step "up" would
+	# lift it a whole cell before the rest of this saw it)
+	if box_solid(x, y, e.w, e.h):
+		var un0 := _unsink(e, x, y)
+		x = un0.x
+		y = un0.y
 	var walker := e.step_h > 0
 	# horizontal: climb small steps (bigger on the ground, a little in the air)
 	var dx := e.vx
@@ -1764,6 +1815,7 @@ func move_body(e: Body) -> void:
 						(e as Enemy).door_t = 40
 				break
 		dx -= st
+	var was_ground := e.on_ground and not e.on_platform
 	e.on_ground = false
 	e.on_platform = false
 	if e.drop_t > 0:
@@ -1793,19 +1845,30 @@ func move_body(e: Body) -> void:
 			if not nudged:
 				if st2 > 0:
 					e.on_ground = true
+					y = _rest_on(x, y, st2, e.w, e.h)
 				e.vy = 0.0
 				break
 		dy -= st2
-	if not e.on_ground and e.vy >= 0 and box_solid(x, y + 0.6, e.w, e.h):
+	# standing, it stays standing: when the grid under it moves a row down (the grid is laid out round
+	# you, so far off its rows sit up to half a cell above or below the world's, and that changes as you
+	# walk), or it walks off a one-cell step, it's put straight down on it instead of falling for frames
+	var reach := 1.05 if was_ground else 0.6
+	if not e.on_ground and e.vy >= 0 and box_solid(x, y + reach, e.w, e.h):
 		e.on_ground = true
+		y = _rest_on(x, y, reach, e.w, e.h)
 	if not e.on_ground and e.vy >= 0 and e.drop_t <= 0 and platform_below(x, y + e.h - 0.05, y + e.h + 0.6, e.w):
 		e.on_ground = true
 		e.on_platform = true
 	# pushed into terrain (sand piled on, something placed): find the nearest free spot
 	if box_solid(x, y, e.w, e.h):
 		var freed := false
-		for off in [Vector2(0, -1), Vector2(0, -2), Vector2(1, 0), Vector2(-1, 0), Vector2(0, -3), Vector2(2, 0), Vector2(-2, 0),
-				Vector2(1, -1), Vector2(-1, -1), Vector2(0, -4), Vector2(3, 0), Vector2(-3, 0), Vector2(0, -5), Vector2(0, -6), Vector2(0, 1)]:
+		var un := _unsink(e, x, y)
+		if un != Vector2(x, y):
+			x = un.x
+			y = un.y
+			freed = true
+		for off in ([] if freed else [Vector2(0, -1), Vector2(0, -2), Vector2(1, 0), Vector2(-1, 0), Vector2(0, -3), Vector2(2, 0), Vector2(-2, 0),
+				Vector2(1, -1), Vector2(-1, -1), Vector2(0, -4), Vector2(3, 0), Vector2(-3, 0), Vector2(0, -5), Vector2(0, -6), Vector2(0, 1)]):
 			if not box_solid(x + off.x, y + off.y, e.w, e.h):
 				x += off.x
 				y += off.y

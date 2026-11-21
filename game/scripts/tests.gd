@@ -410,8 +410,19 @@ func _test_ui() -> void:
 	for im6 in lu:
 		var big3: Image = (im6 as Image).duplicate()
 		big3.convert(Image.FORMAT_RGBA8)
+		# (as the game draws them: the lowest opaque row on the line, overlay `_gap_under`)
+		var lgap := 0
+		for lyy in range(big3.get_height() - 1, -1, -1):
+			var lany := false
+			for lxx in big3.get_width():
+				if big3.get_pixel(lxx, lyy).a > 0.5:
+					lany = true
+					break
+			if lany:
+				lgap = big3.get_height() - 1 - lyy
+				break
 		big3.resize(big3.get_width() * 4, big3.get_height() * 4, Image.INTERPOLATE_NEAREST)
-		limg.blend_rect(big3, Rect2i(Vector2i.ZERO, big3.get_size()), Vector2i(lx, 4 + lh - big3.get_height()))
+		limg.blend_rect(big3, Rect2i(Vector2i.ZERO, big3.get_size()), Vector2i(lx, 4 + lh - big3.get_height() + lgap * 4))
 		lx += big3.get_width() + 4
 	limg.save_png(dir.path_join("lineup.png"))
 	for k in g.player.inv.size():
@@ -4073,6 +4084,20 @@ func _test_creatures() -> void:
 			var cr_id: String = cr_ids[cr_k]
 			var cr_d: Dictionary = Defs.creature_enemy("c_" + cr_id)
 			var cr_off := (30.0 + 14.0 * float(cr_k - cr_g0)) * (1.0 if (cr_k - cr_g0) % 2 == 0 else -1.0)
+			if cr_d["def"]["go"] == "burrow":
+				# (a burrower waits at the edge of soft ground: start it where the ground is soft all the way
+				# to you, or a buried stone between can keep it off you for the whole check)
+				for cr_try in [30.0, -30.0, 22.0, -22.0, 40.0, -40.0, 50.0, -50.0]:
+					var cr_soft := true
+					for cr_s in range(0, int(absf(cr_try)) + 1, 3):
+						var cr_p: Vector2 = cr_home + cr_side * (float(cr_s) * signf(cr_try)) + cr_up * 4.0
+						var cr_sf: Vector2 = Ecology.surface_under(g, cr_p, 10.0, 60.0)
+						if not cr_sf.is_finite() or not Ecology.diggable(g, cr_sf, 9.0):
+							cr_soft = false
+							break
+					if cr_soft:
+						cr_off = cr_try
+						break
 			var cr_at: Vector2 = cr_home + cr_side * cr_off + cr_up * (20.0 if cr_d["fly"] and cr_d["def"]["go"] != "burrow" else 4.0)
 			cr_at = g.free_spot(cr_at, float(cr_d["w"]), float(cr_d["h"]), 20)
 			var cr_e = g.spawn_enemy("c_" + cr_id, cr_at)
@@ -4301,9 +4326,19 @@ func _test_ecology() -> void:
 	ec_rf.dead = true
 
 	# ---- a burrower never leaves the ground, even with you up in the air ----
-	ec_stand.call(-40.0)
+	# (where both it and you are over soft ground: a stretch of the full run's start had rock or water in it)
+	var ec_wo := 20.0
+	for ec_try in range(-100, 101, 10):
+		var ec_ty := float(ec_try)
+		var ec_gw: Vector2 = ec_ground.call(ec_ty)
+		var ec_gy: Vector2 = ec_ground.call(ec_ty - 60.0)
+		if Ecology.diggable_under(g, ec_gw + ec_gw.normalized() * 4.0) and Ecology.diggable_under(g, ec_gy + ec_gy.normalized() * 4.0) \
+				and Ecology.diggable(g, ec_gw, 10.0):
+			ec_wo = ec_ty
+			break
+	ec_stand.call(ec_wo - 60.0)
 	await _frames(20)
-	var ec_worm = ec_spawn.call("c_sandviper", 20.0)
+	var ec_worm = ec_spawn.call("c_sandviper", ec_wo)
 	ec_worm.provoked = true
 	var ec_in_air := 0
 	var ec_bad_hole := 0
@@ -4311,13 +4346,13 @@ func _test_ecology() -> void:
 	var ec_last_act := ""
 	for ec_f10 in 420:
 		if ec_f10 < 200:
-			var ec_hover: Vector2 = ec_ground.call(-40.0)
+			var ec_hover: Vector2 = ec_ground.call(ec_wo - 60.0)
 			_go(ec_hover + ec_hover.normalized() * 40.0)
 		await _frames(1)
 		if ec_worm.dead:
 			break
 		var ec_wk: int = Defs.KIND[g.type_at(ec_worm.pos)]
-		if ec_worm.under and ec_wk != Defs.K_SOLID and ec_wk != Defs.K_POWDER:
+		if ec_f10 >= 4 and ec_worm.under and ec_wk != Defs.K_SOLID and ec_wk != Defs.K_POWDER:
 			ec_in_air += 1
 		if ec_worm.move.begins_with("breach") and ec_worm.act == "go" and ec_last_act != "go":
 			ec_holes += 1
@@ -4362,6 +4397,10 @@ func _test_ecology() -> void:
 	ec_rows.append("%sreed frogs near water only (wet at %s, dry at %s)" % ["" if ec_ok9 else "(!) ", str(ec_wet), str(ec_dry)])
 	ec_good = ec_good and ec_ok9
 
+	var ec_cn: Array = await _test_corner()
+	ec_rows.append_array(ec_cn[1])
+	ec_good = ec_good and bool(ec_cn[0])
+
 	g.time = ec_time0
 	g.test_god = ec_god0
 	g.spawn_timer = 600
@@ -4373,6 +4412,103 @@ func _test_ecology() -> void:
 	await _frames(30)
 	_ok("creatures live in the world: prey runs, hunters hunt, sleepers sleep, the territorial warn, fire and blasts scare, frogs hop cleanly, burrowers stay in the ground",
 		ec_good, "; ".join(ec_rows))
+
+## On a course in open air (a floor 200 long, a wall 56 high at its left end): a creature standing still
+## stays on the ground's top as you walk to and fro far off (it used to bob a cell: user, 21 Nov), and a
+## deer chased into the wall doubles back past you instead of running at it or up it. [ok, rows]
+func _test_corner() -> Array:
+	var cn_rows := []
+	var cn_ok := true
+	var cn_a := atan2(g.player.pos.y, g.player.pos.x) - 0.18
+	var cn_up := Vector2(cos(cn_a), sin(cn_a))
+	var cn_c: Vector2i = Build.cell_of(cn_up * (g.gpu.surf_at(cn_a).x + 200.0))
+	var CNW := 200
+	var CNH := 60
+	var cn_d := PackedInt32Array()
+	cn_d.resize(CNW * CNH)
+	cn_d.fill(0xFFFF)
+	var cn_clear := PackedInt32Array()
+	cn_clear.resize(CNW * CNH)
+	cn_clear.fill(0xFFFF)
+	for cn_j in CNH:
+		for cn_i in CNW:
+			if cn_j >= 56 or cn_i < 4:
+				cn_d[cn_j * CNW + cn_i] = Defs.STONE | 0xFF00 | 0x20000
+				cn_clear[cn_j * CNW + cn_i] = Defs.AIR | 0xFF00
+	g.stamps.append({"x0": cn_c.x, "y0": cn_c.y, "w": CNW, "h": CNH, "data": cn_d, "ax": cn_c.x, "aw": CNW})
+	var cn_floor: float = Defs.R_TOP - float(cn_c.y + 56)
+	var cn_at := func(ati: int) -> Vector2:
+		var q: Vector2 = _cell_pos(cn_c.x + ati, cn_c.y + 55, cn_c.x, CNW)
+		return q.normalized() * (cn_floor + 0.01)
+	var cn_side: Vector2 = (cn_at.call(10) - cn_at.call(0)).normalized()     # (from the wall out)
+	var cn_col := func(p: Vector2) -> float:
+		return (p - cn_at.call(0)).dot(cn_side)
+	var cn_stand := func(sti: float) -> void:
+		var q2: Vector2 = cn_at.call(int(sti))
+		g.player.pos = q2 + q2.normalized() * (g.player.h * 0.5 + 0.2)
+		g.player.vx = 0.0
+		g.player.vy = 0.0
+	_go(cn_at.call(30) + cn_up * 12.0)
+	await _frames(30)
+
+	# ---- standing still while you walk to and fro 80 cells off ----
+	var cn_dd: Dictionary = Defs.enemy_def("c_deer")
+	var cn_sl = g.spawn_enemy("c_deer", cn_at.call(120) + cn_up * (float(cn_dd["h"]) * 0.5 + 1.0))
+	cn_sl.asleep = true
+	cn_sl.den = cn_sl.pos
+	await _frames(40)
+	var cn_lo := 1e9
+	var cn_hi := -1e9
+	var cn_tops := {}
+	var cn_gr := 0
+	for cn_f in 240:
+		cn_stand.call(10.0 + 20.0 * (0.5 - 0.5 * cos(float(cn_f) / 240.0 * TAU * 2.0)))
+		await _frames(1)
+		cn_sl.asleep = true
+		if cn_f < 20:
+			continue
+		var cn_fr: float = cn_sl.pos.length() - float(cn_sl.h) * 0.5
+		cn_lo = minf(cn_lo, cn_fr)
+		cn_hi = maxf(cn_hi, cn_fr)
+		var cn_gt: float = g.ground_top(cn_sl.pos - cn_sl.pos.normalized() * (float(cn_sl.h) * 0.5), float(cn_sl.w))
+		cn_tops[cn_gt] = true
+		if cn_sl.on_ground:
+			cn_gr += 1
+	# (its body may sit up to half a cell off the ground's top as the grid moves round you: what counts is
+	# that it never leaves the ground and is always drawn on the same row)
+	var cn_ok1: bool = cn_tops.size() == 1 and cn_gr >= 219 and not cn_tops.has(-1.0)
+	cn_rows.append("%sstill on the ground as you walk to and fro: body %.2f..%.2f over the floor, drawn on %d row(s), grounded %d/220" % [
+		"" if cn_ok1 else "(!) ", cn_lo - cn_floor, cn_hi - cn_floor, cn_tops.size(), cn_gr])
+	cn_ok = cn_ok and cn_ok1
+	cn_sl.dead = true
+
+	# ---- cornered against the wall ----
+	cn_stand.call(90.0)
+	await _frames(10)
+	var cn_dr = g.spawn_enemy("c_deer", cn_at.call(45) + cn_up * (float(cn_dd["h"]) * 0.5 + 1.0))
+	await _frames(10)
+	var cn_you := 90.0
+	var cn_past := false
+	var cn_top := 0.0
+	var cn_atw := false
+	for cn_f2 in 600:
+		cn_you = maxf(cn_you - 0.5, 16.0)           # (you walk on at it, toward the wall)
+		cn_stand.call(cn_you)
+		await _frames(1)
+		var cn_dc: float = cn_col.call(cn_dr.pos)
+		cn_top = maxf(cn_top, cn_dr.pos.length() - float(cn_dr.h) * 0.5 - cn_floor)
+		cn_atw = cn_atw or cn_dc < 22.0
+		if cn_atw and cn_dc > cn_col.call(g.player.pos) + 10.0:
+			cn_past = true
+			break
+	var cn_ok2: bool = cn_past and cn_top < 26.0
+	cn_rows.append("%sa deer chased into a wall %sdoubled back past you (it rose at most %.0f cells; the wall is 56)" % [
+		"" if cn_ok2 else "(!) ", "" if cn_past else "never ", cn_top])
+	cn_ok = cn_ok and cn_ok2
+	cn_dr.dead = true
+	g.stamps.append({"x0": cn_c.x, "y0": cn_c.y, "w": CNW, "h": CNH, "data": cn_clear, "ax": cn_c.x, "aw": CNW})
+	await _frames(5)
+	return [cn_ok, cn_rows]
 
 ## every game grows a system of its own: the rules for many seeds, and one random planet made for real
 func _test_worlds() -> void:
