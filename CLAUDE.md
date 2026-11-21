@@ -72,7 +72,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `zoom` world units, so nothing squeezes going up or down; the horizon curves a little. `_write_frame_params`
   locks the camera to a corner of a cell of the shell it's in and turns the view to that cell's column, so moving
   a cell moves the picture exactly a cell (no shimmer). `main.close_view()` (zoomed in, not out in space with the
-  planet out of sight): sprites upright on whole pixels. `main.unrolled()` = close view AND the "unrolled" setting:
+  planet out of sight): sprites upright, snapped to whole SCREEN pixels (overlay `_snap`; user, 21 Nov: snapped
+  to whole game pixels a standing foe hopped a cell against the ground as you walked); open doors are turned
+  with the world under them (`_sprite(..., turn)`), so they lean with their house. `main.unrolled()` = close view AND the "unrolled" setting:
   the old strips (screenToWorld branch on P.p[122].w bit 1; `unroll_step`). P.p[122].w bit 2: past `R_SPACE` the
   picture is clear (out in space and on the map), so what's under it shows (space.gd's stars, the clear colour).
   The picture is drawn a CELL a pixel (bit 4, `cellPicToWorld`: picture row j = cell row y0 + j in its own shell's
@@ -370,7 +372,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   breach's `spot` is the surface over the burrower, only begun over `diggable_under` ground, a creature's lunge
   low (0.3 of `BREACH_H`) toward you; `dig_in` back into the ground where it lands or down its hole.
 - Frogs (user: "glitchy, flicker between jump and not jumping"): `Enemy.off_t` (frames off the ground, main after
-  `move_body`) picks "_air" only past 3 frames; `Ecology.hop` crouches 6 frames first (boss_ai `tick` plays
+  `move_body`) and `air_on` (set by a jump, vy < -0.3, or a fall past 8 frames; held at least 3 frames) pick "_air"; `Ecology.hop` crouches 6 frames first (boss_ai `tick` plays
   `crouch_t` out, frame "_crouch"), `land_t` squashes on landing; a frog never shows walk frames. They float in
   water (`_fall`). Move "tongue" (boss_ai: out at you and back, stings and pulls; `e.tongue` along `e.aim`, drawn by
   overlay `_eco_marks`). New frames: beast "_graze", "_sleep"; toad "_croak", "_crouch", "_sleep"; bird "_perch",
@@ -548,7 +550,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   outright (anchored, not F_FILL: a fill only lands in open space, so it never showed against solid earth), and only
   ever outward into the blueprint's untouched (255) cells, so halls and shafts stay as built.
 - Biome borders: gen.comp picks one of the two neighbouring biomes per cell with noise at three scales (lobes,
-  fingers, single grains), so their layers interfinger instead of meeting at a seam.
+  fingers, single grains), so their layers interfinger instead of meeting at a seam. Undergrowth (grass, bushes,
+  tufts) picks per COLUMN the same way (`floraType` in main), trees by their own trunk's biome; overlapping
+  mushroom caps: the shorter one wins the cells (in front), not the nearer trunk (that split them down a line, each
+  its own colour). render.comp: a cave's back wall bands (`wallColor`) have ragged edges, and the far tree line
+  (near parallax hills) takes each tree's kind from the biome at that tree (user, 21 Nov: sharp transitions).
 - Back walls (and furniture, which is stamped as back wall) rest on settled powder below them (`support.comp`),
   the way front blocks do: a table set on sand or soil stays.
 - Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each

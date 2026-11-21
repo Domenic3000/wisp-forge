@@ -186,7 +186,7 @@ func _draw_carcasses() -> void:
 		var mod := _lit(sp) * Color(0.62, 0.55, 0.52)
 		mod.a = clampf(float(cc["t"]) / 300.0, 0.0, 1.0)
 		# (flipped top to bottom: its back on the ground, the empty margin over its head sunk into it)
-		draw_set_transform(sp.round(), 0.0, Vector2(-1.0 if int(cc["facing"]) < 0 else 1.0, -1.0) / z)
+		draw_set_transform(_snap(sp), 0.0, Vector2(-1.0 if int(cc["facing"]) < 0 else 1.0, -1.0) / z)
 		draw_texture(t, Vector2(-floorf(ts.x * 0.5), -floorf(ts.y - float(cc["h"]) - 3.0)), mod)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -209,10 +209,11 @@ func _boss_frame(e) -> String:
 	if e.act == "windup":
 		return id + "_wind"
 	# its daily life (ecology.gd): grazing, asleep, croaking, growling at you
-	if e.act == "" and e.pose != "" and e.off_t <= 3 and tex.has(id + "_" + e.pose):
+	if e.act == "" and e.pose != "" and not e.air_on and tex.has(id + "_" + e.pose):
 		return id + "_" + e.pose
-	# off the ground for more than a moment (one frame's on_ground flickers on a curved slope)
-	if e.leaping or e.off_t > 3:
+	# jumping, or falling more than a step (one frame's on_ground flickers on a curved slope; main.gd keeps
+	# `air_on` at least 3 frames once it shows)
+	if e.leaping or e.air_on:
 		return id + "_air"
 	if plan == "toad":
 		# a frog sits or hops, it never walks: it crouches before a hop and squashes as it lands
@@ -271,7 +272,7 @@ func _draw_mound(e) -> void:
 	var hw: float = (float(e.w) * 0.5 + 3.0) / z
 	var hh: float = (2.4 + sin(t * 0.25) * 0.6 + (2.5 if tell else 0.0)) / z
 	var jit := Vector2((randf() - 0.5) * 2.0, 0.0) if tell else Vector2.ZERO
-	var base: Vector2 = sp.round() + jit
+	var base: Vector2 = _snap(sp) + jit
 	var gt: int = game.type_at(p - up * 1.5)
 	var col: Color = Defs.COLOR[gt] if Defs.KIND[gt] != Defs.K_EMPTY else Color(0.86, 0.74, 0.5)
 	col = col * _lit(sp)
@@ -299,7 +300,7 @@ func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Co
 		return
 	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
 	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / float(game.zoom)
-	draw_set_transform(sp.round() if game.close_view() else sp, rot, sc)
+	draw_set_transform(_snap(sp) if game.close_view() else sp, rot, sc)
 	var mod := Color(4, 4, 4) if white else _lit(sp) * tint
 	var ts := t.get_size()
 	draw_texture(t, -(ts * 0.5).floor(), mod)
@@ -325,15 +326,26 @@ func _feet(wpos: Vector2, body_h: float, grounded: bool) -> Array:
 		feet = up * roundf(feet.length())
 	var sp: Vector2 = game.world_to_screen(feet)
 	if game.close_view() or absf(wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)) < 0.02:
-		sp = sp.round()
+		sp = _snap(sp)
 	return [sp, raw]
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1)) -> void:
+## A point snapped to whole SCREEN pixels (the overlay draws in game pixels, `scale_px` screen pixels each).
+## Sprites go here, not to whole game pixels: the ground under them is drawn a screen pixel at a time and
+## turns a little as you walk (the view turns to the column you're on), so snapping a standing foe to the
+## coarser game-pixel grid made it hop a whole cell up and down against the ground (user, 21 Nov).
+func _snap(p: Vector2) -> Vector2:
+	var k := float(game.scale_px)
+	return (p * k).round() / k
+
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(wpos, body_h, grounded)[0]
 	# upright in the close view (crisp pixels: turned a few degrees they'd go jagged); turned with the
-	# planet's curve in the round map view
+	# planet's curve in the round map view. `turn`: always turned with the world under it (an open door
+	# stands with its house, which leans with the curve: upright it seemed to turn as you walked)
 	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
+	if turn and game.close_view() and not game.unrolled():
+		rot = wrapf(game.view_angle() - atan2(wpos.y, wpos.x), -PI, PI)
 	var z: float = game.zoom
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
@@ -578,7 +590,7 @@ func _draw_all() -> void:
 					tex.erase(_door_keys.pop_front())
 				_door_keys.append(dkey)
 				tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"]), dc, int(d["w"])))
-		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true)
+		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true, 1.0, 1.0, Color(1, 1, 1), true)
 	# foes
 	# pieces breaking off: felled trees and fragments of buildings, turned as they tumble
 	if game.chunks != null:
@@ -748,7 +760,7 @@ func _folk_mark(v) -> void:
 ## a villager asleep: the figure turned a quarter (still whole pixels) with its head toward the pillow, on
 ## a bedroll if there's no bed for them, the blanket pulled up to the chin
 func _lying(v, t: Texture2D) -> void:
-	var c: Vector2 = game.world_to_screen(v.pos).round()
+	var c: Vector2 = _snap(game.world_to_screen(v.pos))
 	var hs: Vector2 = game.world_to_screen(v.lie_head)
 	var head_right: bool = hs.x > c.x
 	var z: float = game.zoom

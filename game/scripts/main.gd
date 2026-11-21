@@ -201,7 +201,9 @@ class Enemy extends Body:
 	var storm := false         # (in the open in a storm: it goes for shelter)
 	var den := Vector2.ZERO    # where it sleeps (where it was first met)
 	var den_t := 0
-	var off_t := 0             # frames off the ground (its pose reads this, never one frame's on_ground)
+	var off_t := 0             # frames off the ground (never one frame's on_ground: it flickers on a slope)
+	var air_on := false        # (showing its leaping pose: a jump, or a fall of more than a few frames)
+	var air_n := 0
 	var land_t := 0            # frames since it landed (a frog's squash)
 	var crouch_t := 0          # a frog crouching to hop, and the hop it's about to make
 	var hop_v := Vector2.ZERO
@@ -3254,8 +3256,18 @@ func _update_enemies() -> void:
 				if e.off_t > 4:
 					e.land_t = 6
 				e.off_t = 0
+				# (the leaping pose, once shown, stays at least 3 frames: no one-frame flicker)
+				if e.air_on:
+					e.air_n += 1
+					if e.air_n >= 3:
+						e.air_on = false
 			else:
 				e.off_t += 1
+				if not e.air_on and ((e.off_t > 1 and e.vy < -0.3) or e.off_t > 8):
+					e.air_on = true             # a jump, or a real fall (not a step down a slope)
+					e.air_n = 0
+				elif e.air_on:
+					e.air_n += 1
 			if e.land_t > 0:
 				e.land_t -= 1
 			# (how long it has been pressed against a wall: its way about gives up on that way)

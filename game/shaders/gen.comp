@@ -496,6 +496,9 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 			// wood wins over leaves (each tree stays one piece), and a root gives way to every other part
 			// of any tree (a root reaching under a downhill neighbour never cuts its branches or crown)
 			float sc = abs(da) - ((m == M_WOOD || m == M_COAL || m == M_CACTUS || m == M_STALK) ? 1000.0 : 0.0) + (m == M_ROOT ? 2000.0 : 0.0);
+			// where two mushroom caps overlap, the shorter one is in front: its whole cap shows and the
+			// taller one's shows round it (nearest-trunk split them down a straight line, each its own colour)
+			if (m == M_CAP) sc = 500.0 + (h3 < 0.15 ? 50.0 + floor(hh * 12.0) : 18.0 + floor(hh * 26.0)) * 4.0 + abs(da) * 0.01;
 			if (sc < bestScore) { bestScore = sc; best = m; bestId = 0x8000u | uint(bb + 1); }
 		}
 	}
@@ -626,7 +629,21 @@ void main() {
 	float rs = sa.x;
 	vec4 B = biomeB(b);
 	int ug = int(B.w) & 15;
-	int floraType = int(biomeB(int(sa.y)).w) >> 4;   // plants follow the column's biome (whole trees)
+	// small plants follow the column's biome (trees take theirs from their own trunk, in flora()); near a
+	// border each column picks one of the two by ragged noise, so grass, bushes and tufts mingle in clumps
+	// instead of changing at one column
+	int floraType = int(biomeB(int(sa.y)).w) >> 4;
+	{
+		float fk = floor(sb.w);
+		int f0 = int(fk) / 16, f1 = int(fk) % 16;
+		if (f0 != f1) {
+			float fbt = clamp((sb.w - fk) / 0.9, 0.0, 1.0);
+			float colA = th * RS0;
+			float frag = (vnoise(vec2(colA / 13.0, 0.5), SEED + 65) - 0.5) * 1.5 + (vnoise(vec2(colA / 4.0, 0.5), SEED + 66) - 0.5) * 0.6
+				+ (h2(ivec2(int(floor(colA)), 67), SEED) - 0.5) * 0.25;
+			floraType = int(biomeB((fbt + frag) < 0.5 ? f0 : f1).w) >> 4;
+		}
+	}
 	uint m = 0u;
 	uint bgm = 0u;   // background decoration (no collisions)
 
