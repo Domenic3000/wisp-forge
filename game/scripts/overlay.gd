@@ -477,6 +477,8 @@ func _draw_all() -> void:
 	if game.space.active and not game.space.live:
 		_draw_in_space()
 		return
+	# the villagers (towns.gd), behind the chests so a chest in front of one is never hidden
+	_draw_folk()
 	# treasure chests (whole objects)
 	for c in game.chests:
 		var csp: Vector2 = game.world_to_screen(c.pos)
@@ -526,22 +528,7 @@ func _draw_all() -> void:
 			draw_texture(c.tex_b, c.img_origin, cm)
 			draw_texture(c.tex_f, c.img_origin, cm)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	# the villagers (towns.gd), and what they're saying
-	for v in game.towns.folk:
-		var vsp: Vector2 = game.world_to_screen(v.pos)
-		if vsp.x < -30 or vsp.y < -40 or vsp.x > game.VW + 30 or vsp.y > game.VH + 40:
-			continue
-		var fk := "folk_%d" % v.fseed
-		if not tex.has(fk + "_stand"):
-			var fr: Dictionary = FolkArt.frames(v.fseed, v.role)
-			for fn in fr:
-				tex[fk + "_" + fn] = ImageTexture.create_from_image(fr[fn])
-		if v.lying:
-			_lying(v, tex[fk + "_stand"])
-			continue
-		var walking: bool = absf(v.vx) > 0.08
-		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
-		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v))
+	# what the villagers are saying (they're drawn before the chests: `_draw_folk`)
 	for v2 in game.towns.folk:
 		if v2.fade > 0:
 			continue
@@ -711,3 +698,21 @@ func _lying(v, t: Texture2D) -> void:
 	draw_rect(Rect2(qx, qy, 8.0, 2.0), bl.lightened(0.35))
 	draw_rect(Rect2(qx, qy + floorf(qh * 0.55), 8.0, 1.0), bl.darkened(0.2))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## the villagers (towns.gd): walking, standing, or asleep lying down
+func _draw_folk() -> void:
+	for v in game.towns.folk:
+		var vsp: Vector2 = game.world_to_screen(v.pos)
+		if vsp.x < -30 or vsp.y < -40 or vsp.x > game.VW + 30 or vsp.y > game.VH + 40:
+			continue
+		var fk := "folk_%d" % v.fseed
+		if not tex.has(fk + "_stand"):
+			var fr: Dictionary = FolkArt.frames(v.fseed, v.role)
+			for fn in fr:
+				tex[fk + "_" + fn] = ImageTexture.create_from_image(fr[fn])
+		if v.lying:
+			_lying(v, tex[fk + "_stand"])
+			continue
+		var walking: bool = absf(v.vx) > 0.08
+		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
+		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v))

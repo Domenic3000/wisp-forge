@@ -150,7 +150,7 @@ func _test_gear() -> void:
 	for ge_i in ge_inv0.size():
 		g.player.inv[ge_i] = ge_inv0[ge_i]
 	g._apply_gear()
-	_ok("ore gear: hidden until its ore is found, forged, and each piece does what it says", ge_hide_ok and ge_bad.is_empty() and absf(ge_spent - 4.0 * ge_cost_k) < 0.01 and ge_cost_k < 0.76 and absf(ge_reach - g.REACH * ge_reach_k) < 0.5 and ge_reach_k > 1.39 and ge_calm and ge_hp1 >= g.player.max_hp - 0.01 and ge_roused and ge_breath > 1700.0,
+	_ok("ore gear: hidden until its ore is found, forged, and each piece does what it says", ge_hide_ok and ge_bad.is_empty() and absf(ge_spent - float(Defs.SPELLS["spark"]["mana"]) * ge_cost_k) < 0.01 and ge_cost_k < 0.76 and absf(ge_reach - g.REACH * ge_reach_k) < 0.5 and ge_reach_k > 1.39 and ge_calm and ge_hp1 >= g.player.max_hp - 0.01 and ge_roused and ge_breath > 1700.0,
 		"%d first pieces shown locked, %d hidden (of %d); forged all but %s; a Spark Bolt cost %.2f mana with the Silver Sigil and the alloys; the spade reaches %.1f; breath %.0f; the boar beside you with the Amber Totem: calm %s (your health %.0f of %.0f), struck: it hunts %s" % [ge_first, ge_hid, Defs.GEAR.size(), str(ge_bad), ge_spent, ge_reach, ge_breath, ge_calm, ge_hp1, g.max_hp, ge_roused])
 
 ## Living towns: a village that stands fills with its folk as you come; they walk its street by day and
@@ -412,6 +412,31 @@ func _test_vfx() -> void:
 	for vx_e in g.enemies.duplicate():
 		if not vx_e.boss and vx_e.guard_id < 0:
 			g.enemies.erase(vx_e)
+	# Spark Bolt is one bolt a click: holding the button fires it once, a new click again
+	var sp_sel0: int = g.sel
+	if not g.known.has("spark"):
+		g.known.append("spark")
+	g.sel = g.known.find("spark")
+	g.player.mana = g.player.max_mana
+	g.player.cast_cd = 0
+	var sp_c0: int = int(g.vfx.stats.get("casts", 0))
+	var sp_m0: float = g.player.mana
+	g.test_aim = g.player.pos + g.player.pos.normalized().orthogonal() * 60.0
+	g.test_cast = true
+	await _frames(2)
+	var sp_spent: float = sp_m0 - g.player.mana            # (before the mana comes back)
+	await _frames(88)
+	var sp_held: int = int(g.vfx.stats.get("casts", 0)) - sp_c0
+	g.test_cast = false
+	await _frames(3)
+	g.test_cast = true
+	await _frames(3)
+	g.test_cast = false
+	var sp_again: int = int(g.vfx.stats.get("casts", 0)) - sp_c0
+	g.test_aim = Vector2.ZERO
+	g.sel = sp_sel0
+	_ok("Spark Bolt fires once a click, not while the button is held, and costs more mana", sp_held == 1 and sp_again == 2 and sp_spent >= 11.0,
+		"held 1.5 s: %d bolt, %.1f mana; clicked again: %d in all" % [sp_held, sp_spent, sp_again])
 	var vx_runs := [["spark", "night"], ["fireball", "night"], ["frost", "night"], ["tide", "night"], ["quake", "night"], ["starfall", "night"], ["fireball", "day"], ["blink", "night"], ["mend", "night"]]
 	for vx_run in vx_runs:
 		var vx_id: String = vx_run[0]
@@ -487,6 +512,18 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		if not noon.is_empty() and noon != v1.job:
 			sched_ok = false
 			sched_bad = "%s is somewhere odd at noon" % v1.name
+	# a chest stood in front of someone's bed: they sleep on the floor, not over it
+	var tc_v = null
+	for v8 in res:
+		if not v8.bed.is_empty():
+			tc_v = v8
+			break
+	var tc_chest = null
+	if tc_v != null:
+		var b8: Dictionary = tc_v.bed
+		tc_chest = g.new_chest()
+		tc_chest.pos = tw._at(float(int(b8["c"])) + float(int(b8["w"])) * 0.5, float(int(b8["row"]) - 4), 0.0)
+		g.chests.append(tc_chest)
 	# night: everyone in reach of the simulation walks home and goes in
 	_go(mid_p)
 	g.time = tw.time_for_hour(mid_p, 22.6)
@@ -519,10 +556,24 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		if home == watch.size() and lying == watch.size():
 			break
 	var with_bed := watch.filter(func(wb): return not wb.bed.is_empty()).size()
+	# no two asleep in one spot, none lying over a chest
+	var piled := 0
+	var over_chest := 0
+	for va in watch:
+		if not va.lying:
+			continue
+		if tw._chest_near(va.pos, 10.0):
+			over_chest += 1
+		for vb in watch:
+			if vb != va and vb.lying and vb.inside == va.inside and absf(vb.pos.length() - va.pos.length()) < 10.0 and absf(tw._dc(float(tw._col(va.pos)), vb.pos)) < 10.0:
+				piled += 1
+	var tc_ok: bool = tc_v == null or (tc_v.lying and tc_v.bedroll)
+	if tc_chest != null:
+		g.chests.erase(tc_chest)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town_night.png"))
 	# (they walk there: "stuck", stepping in after pushing on a wall for 90 ticks, is the exception)
 	var night_ok: bool = not watch.is_empty() and home == watch.size() and slept > 0 and int(tw.stats.get("stuck", 0)) * 2 <= int(tw.stats.get("went_in", 0)) \
-		and lying == watch.size() and (with_bed == 0 or in_bed > 0)
+		and lying == watch.size() and (with_bed == 0 or in_bed > 0) and piled == 0 and over_chest == 0 and tc_ok
 	var late := []
 	for v6 in watch:
 		if v6.inside != v6.house:
@@ -544,13 +595,47 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		if want_out > 0 and out == want_out:
 			break
 	var morn_ok: bool = want_out > 0 and out == want_out
+	# two put in the very same spot step apart
+	var ap_a = null
+	var ap_b = null
+	for v9 in watch:
+		if not v9.lying and v9.fade == 0 and tw.want_place(v9, 8.2).is_empty():
+			if ap_a == null:
+				ap_a = v9
+			elif ap_b == null:
+				ap_b = v9
+	var apart := -1.0
+	var ap_stacked := 0
+	if ap_a != null and ap_b != null:
+		# (both out in the street, on the very same spot by the middle of the village, beside you)
+		var ap_at: Vector2 = tw._street_at(float(mid) + 20.0)
+		_go(tw._street_at(float(mid)))
+		ap_a.inside = {}
+		ap_b.inside = {}
+		ap_a.vx = 0.0
+		ap_b.vx = 0.0
+		ap_a.pos = ap_at
+		ap_b.pos = ap_at
+		ap_a.idle_t = 400
+		ap_b.idle_t = 400
+		await _frames(90)
+		apart = absf(tw._dc(float(tw._col(ap_a.pos)), ap_b.pos))
+		# then for four seconds: how long are they both standing still in one spot? (passing is fine)
+		for k3 in 240:
+			await _frames(1)
+			if absf(ap_a.vx) < 0.05 and absf(ap_b.vx) < 0.05 and absf(ap_a.pos.length() - ap_b.pos.length()) < 10.0 \
+					and absf(tw._dc(float(tw._col(ap_a.pos)), ap_b.pos)) < 5.0:
+				ap_stacked += 1
+	var apart_ok: bool = ap_a == null or ap_b == null or (apart >= 6.0 and ap_stacked < 20)
+	morn_ok = morn_ok and apart_ok
+	late.append("two put on one spot were %.0f cells apart 1.5 s later, then stood in one spot %d frames of 240" % [apart, ap_stacked])
 	for v7 in watch:
 		if tw.want_place(v7, tw.hour_at(v7.pos)).is_empty() and not v7.inside.is_empty():
 			late.append("%s still in at %.1f h (%s, fade %d, talk %d)" % [v7.name, tw.hour_at(v7.pos), "in grid" if g.in_grid(v7.pos, 12.0) else "far", v7.fade, v7.talk_t])
 	_ok("living towns: folk keep the hours (home asleep at night, out in the morning)", sched_ok and night_ok and morn_ok,
-		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds); in the morning %d of the %d who'd be out came out; %s%s" % [
-		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed,
-		out, want_out, JSON.stringify(tw.stats), "" if late.is_empty() else "; LATE: " + ", ".join(late)])
+		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds; %d in one spot, %d over a chest; with a chest before %s's bed: %s); in the morning %d of the %d who'd be out came out; %s%s" % [
+		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed, piled / 2, over_chest, tc_v.name if tc_v != null else "nobody", ("on the floor" if tc_v.bedroll else "in it") if tc_v != null else "-",
+		out, want_out, JSON.stringify(tw.stats), "" if late.is_empty() else "; " + ", ".join(late)])
 	g.time = tw.time_for_hour(mid_p, 12.0)
 
 ## a villager's requests: each kind taken, done and rewarded (a hunt counted by a real kill)

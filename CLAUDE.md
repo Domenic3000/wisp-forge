@@ -284,6 +284,12 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`v.bed`). Asleep at home they `_lie_down` (in their bed if the collision grid still has furniture there, the
   head at the pillow end; else on a bedroll on the floor), `lying` (no physics), `_get_up` at `wake_at` in the
   morning; overlay `_lying` draws them turned a quarter (whole pixels) under a quilt, "z"s from the head.
+- Keeping apart (user, 21 Nov: "villagers standing on top of each other"): `_spot_in`, the street placement and
+  `_new_goal` pick spots clear of others (`_taken` / `_clearance`, which counts where someone stepping through a
+  door is about to come out, `_spot_of`, and chests); someone standing still on top of another steps aside
+  (`_crowd_side`, checked every 12 ticks). A sleeper never lies over a chest: a bed with one in front of it
+  (`_chest_near`), or already taken, means the floor, and a bedroll goes on the roomiest bit of floor. The overlay
+  draws the folk before the chests (`_draw_folk`), so a chest is never hidden behind one.
 - Memory: `planet_state["folk_known"][seed]` = {met, helped}, `["town_rep"][town seed]` = {n, last}: `_hello`
   (a stranger introduces themselves, a friend you helped greets you so, a village talks of what you did),
   `knows` (overlay name tags of folk you've met), `price_of` (5% off a village's shops per request done there,
@@ -459,6 +465,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
   thickness. `Build.shape_cells` / `shape_stamp`; one material per cell; blocks skip cells where someone stands.
+- Spells with "single" in `Defs.SPELLS` cast once a click (user, 21 Nov: the start was too strong): `Mage.cast_latch`
+  is set by `_cast` and cleared when the button is let go. Spark Bolt is single, 12 mana, 30 ticks, reaches 220
+  cells (it was 4 mana every 9 ticks while held). Test: in `_test_vfx`.
 - Health doesn't regenerate. Healing Draughts (`items["potion"]`, H to drink, `_drink`; forged or found in chests,
   two at the start) and the Mending spell (its scroll is a rare find) heal over a moment (`Mage.heal_left`).
 - Falling rock hurts only after falling `ROCK_HURT_FALL` cells and only through your upper half (grid.comp), so

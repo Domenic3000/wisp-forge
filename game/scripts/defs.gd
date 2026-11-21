@@ -1001,8 +1001,9 @@ func biome_index_at(pl: Dictionary, a: float) -> int:
 
 # ---------------------------------------------------------------- spells ----
 const SPELL_ORDER := ["spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend"]
+## "single": one cast a click (let go and click again; holding the button doesn't repeat it: main `cast_latch`)
 const SPELLS := {
-	"spark": {"name": "Spark Bolt", "mana": 4.0, "cd": 9, "color": Color(1.0000, 0.9020, 0.5020), "desc": "A quick bolt. Chips terrain, stings foes."},
+	"spark": {"name": "Spark Bolt", "mana": 12.0, "cd": 30, "single": true, "color": Color(1.0000, 0.9020, 0.5020), "desc": "One crackling bolt a click. Chips terrain, stings foes."},
 	"conjure": {"name": "Conjure", "mana": 0.0, "cd": 2, "color": Color(0.7451, 1.0000, 0.7451), "desc": "Place the selected material. Q/E to choose."},
 	"fireball": {"name": "Fireball", "mana": 18.0, "cd": 28, "color": Color(1.0000, 0.4706, 0.1569), "desc": "Explodes and ignites anything that burns."},
 	"tide": {"name": "Tidecall", "mana": 14.0, "cd": 22, "color": Color(0.3529, 0.6275, 1.0000), "desc": "Bursts into water. Cools lava into obsidian."},
@@ -1037,7 +1038,7 @@ const POTION_CD := 600         # frames between draughts
 const MEND_HEAL := 30.0
 const HEAL_RATE := 0.5         # health per frame while healing
 const PROJ := {
-	"spark": {"speed": 5.5, "g": 0.0, "life": 55, "dmg": 11.0, "light": 18.2},
+	"spark": {"speed": 5.5, "g": 0.0, "life": 40, "dmg": 11.0, "light": 18.2},
 	"fireball": {"speed": 3.9, "g": 0.035, "life": 140, "dmg": 0.0, "light": 33.8},
 	"tide": {"speed": 3.5, "g": 0.07, "life": 120, "dmg": 6.0, "light": 15.6},
 	"frost": {"speed": 4.7, "g": 0.0, "life": 80, "dmg": 14.0, "light": 20.8},

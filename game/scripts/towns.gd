@@ -196,17 +196,67 @@ func _place(v, where: Dictionary) -> void:
 		v.pos = _spot_in(where)
 	else:
 		var t: Dictionary = v.town
-		for k in 8:
+		for k in 10:
 			var c := float(int(t["x0"]) + 12 + randi() % maxi(1, int(t["w"]) - 24))
-			if _house_at(t, c).is_empty() or k == 7:
+			if (_house_at(t, c).is_empty() and not _taken(_street_at(c), STREET, 9.0)) or k == 9:
 				v.pos = _street_at(c)
 				break
 	v.goal_c = float(_col(v.pos))
 
-## a spot on a house's ground floor
+## a spot on a house's ground floor, clear of anyone already there (a few tries, then the last)
 func _spot_in(h: Dictionary) -> Vector2:
-	var c := float(int(h["x0"]) + 7) + randf() * maxf(1.0, float(int(h["w"]) - 14))
+	var c := 0.0
+	for k in 8:
+		c = float(int(h["x0"]) + 7) + randf() * maxf(1.0, float(int(h["w"]) - 14))
+		if not _taken(_at(c, float(h["floor"]), 9.0), h, 9.0):
+			break
 	return _at(c, float(h["floor"]), 9.0)
+
+## where someone is, or is about to be (stepping through a door: where they'll come out), and in what place
+func _spot_of(f) -> Array:
+	if f.fade > 0:
+		return [f.fade_to, f.fade_in]
+	return [f.pos, f.inside]
+
+## is someone already standing (or lying) within `gap` columns of p, on the same floor of the same place?
+func _taken(p: Vector2, place: Dictionary, gap: float, but = null) -> bool:
+	return _clearance(p, place, but, gap) < gap
+
+## how many columns from p to the nearest other person on the same floor of the same place (and to the
+## nearest chest at that height), up to `cap`
+func _clearance(p: Vector2, place: Dictionary, but, cap: float) -> float:
+	var best := cap
+	var pc := float(_col(p))
+	for f in folk:
+		if f == but or f.gone:
+			continue
+		var sp: Array = _spot_of(f)
+		if sp[1] != place:
+			continue
+		var fp: Vector2 = sp[0]
+		if absf(fp.length() - p.length()) < 10.0:
+			best = minf(best, absf(_dc(pc, fp)))
+	for ch in game.chests:
+		var cp: Vector2 = ch.pos
+		if absf(cp.length() - p.length()) < 14.0:
+			best = minf(best, absf(_dc(pc, cp)) * 0.7)
+	return best
+
+## which way (in columns) to step to get clear of whoever is standing in the same spot: 0 = nobody there
+func _crowd_side(v) -> float:
+	var p: Vector2 = v.pos
+	for f in folk:
+		if f == v or f.gone or f.fade > 0 or f.lying or f.inside != v.inside:
+			continue
+		var fp: Vector2 = f.pos
+		if absf(fp.length() - p.length()) >= 10.0:
+			continue
+		var d := _dc(float(_col(p)), fp)          # (where I am, from them)
+		if absf(d) < 6.0:
+			if absf(d) < 0.5:
+				return 1.0 if v.fseed > f.fseed else -1.0
+			return signf(d)
+	return 0.0
 
 ## standing in the street over column c
 func _street_at(c: float) -> Vector2:
@@ -341,6 +391,12 @@ func _walk(v) -> void:
 			if v.asleep:
 				_lie_down(v, false)
 				return
+		elif (v.idle_t > 0 or absf(v.vx) < 0.05) and (game.frame + v.fseed) % 12 == 0 and _crowd_side(v) != 0.0:
+			# (standing on top of someone: step aside, a little way)
+			var aside := _crowd_side(v)
+			v.goal_c = float(_col(p)) + aside * randf_range(8.0, 16.0)
+			v.idle_t = 0
+			stats["stepped_aside"] = int(stats.get("stepped_aside", 0)) + 1
 		elif v.idle_t > 0:
 			v.idle_t -= 1
 		else:
@@ -380,18 +436,28 @@ func _lie_down(v, now: bool) -> void:
 		var mid := float(int(b["c"])) + (11.0 if not flip else float(bw) - 12.0)
 		var head := float(int(b["c"])) + (4.0 if not flip else float(bw) - 5.0)
 		var row := int(b["row"])
-		# (taken or burnt? the collision grid knows where furniture is; out of it, trust it's there)
+		# (taken or burnt? the collision grid knows where furniture is; out of it, trust it's there. A chest
+		# set down in front of it, or someone already in it, and they sleep on the floor instead)
 		if game._bg_at(int(head), row - 5) == 0 and game._bg_at(int(mid), row - 5) == 0:
+			in_bed = false
+		elif _chest_near(_at(mid, float(row - 4), 0.0), float(bw) * 0.5 + 6.0) or _taken(_at(mid, float(row - 6), 2.5), h, float(bw) * 0.5, v):
 			in_bed = false
 		else:
 			to = _at(mid, float(row - 6), 2.5)
 			v.lie_head = _at(head, float(row - 6), 2.5)
 			v.wake_at = _at(mid, float(row + 1), 9.0)
 	if not in_bed:
-		var c := float(_col(v.pos))
 		var x0 := float(int(h["x0"]) + 12)
 		var x1 := float(int(h["x0"]) + int(h["w"]) - 12)
-		c = clampf(c, minf(x0, x1), maxf(x0, x1))
+		var c := clampf(float(_col(v.pos)), minf(x0, x1), maxf(x0, x1))
+		# (the roomiest bit of floor: farthest from the others asleep there and from any chest)
+		var room := _clearance(_at(c, float(h["floor"]), 4.5), h, v, 40.0)
+		for k in 12:
+			var cc := minf(x0, x1) + absf(x1 - x0) * (float(k) + 0.5) / 12.0
+			var rk := _clearance(_at(cc, float(h["floor"]), 4.5), h, v, 40.0)
+			if rk > room + 0.5:
+				room = rk
+				c = cc
 		to = _at(c, float(h["floor"]), 4.5)
 		var side := 1.0 if (v.fseed % 2) == 0 else -1.0
 		v.lie_head = _at(c + side * 7.0, float(h["floor"]), 4.5)
@@ -407,6 +473,14 @@ func _lie_down(v, now: bool) -> void:
 	v.vx = 0.0
 	v.vy = 0.0
 	stats["to_bed" if in_bed else "bedroll"] = int(stats.get("to_bed" if in_bed else "bedroll", 0)) + 1
+
+## is a chest within `cols` columns of p, at about its height (so a sleeper there would hide it)?
+func _chest_near(p: Vector2, cols: float) -> bool:
+	for ch in game.chests:
+		var cp: Vector2 = ch.pos
+		if absf(cp.length() - p.length()) < 14.0 and absf(_dc(float(_col(p)), cp)) < cols:
+			return true
+	return false
 
 ## up again, standing beside where they slept
 func _get_up(v) -> void:
@@ -442,9 +516,9 @@ func _new_goal(v, side := 0.0) -> void:
 		x0 = float(int(v.town["x0"]) + 8)
 		x1 = float(int(v.town["x0"]) + int(v.town["w"]) - 8)
 	var here := float(_col(v.pos))
-	for k in 6:
+	for k in 8:
 		var c := x0 + randf() * maxf(1.0, fposmod(x1 - x0, float(Defs.NS)))
-		if side == 0.0 or signf(_dc(c, v.pos)) == side:
+		if (side == 0.0 or signf(_dc(c, v.pos)) == side) and (k >= 6 or not _taken(_at(c, 0.0, 0.0).normalized() * v.pos.length(), v.inside, 8.0, v)):
 			v.goal_c = c
 			return
 	v.goal_c = here + side * randf_range(8.0, 30.0)

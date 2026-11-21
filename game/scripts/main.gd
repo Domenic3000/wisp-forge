@@ -90,6 +90,9 @@ class Villager extends Body:
 	var lie_head := Vector2.ZERO # (where their head is, lying)
 	var wake_at := Vector2.ZERO  # (where they stand up again)
 
+func new_chest():
+	return Chest.new()
+
 func new_villager() -> Villager:
 	return Villager.new()
 
@@ -337,6 +340,7 @@ class Mage extends Body:
 	var slot := 0              # which simulation counters and collision grid are this mage's
 	var local := true          # played on this computer (others come from the network)
 	var input := PlayerInput.new()
+	var cast_latch := false    # (a "single" spell was cast and the button hasn't been let go since)
 	var grid_g := Vector2.ZERO # where this mage's collision grid was centred
 	var grid_a := 0.0
 	var hp := 100.0
@@ -1878,9 +1882,11 @@ func _tick() -> void:
 		_update_player(m)
 		m.sel = clampi(m.sel, 0, m.known.size() - 1)
 		if not m.dead and state == "play" and m.aboard == null:
+			if not m.input.cast:
+				m.cast_latch = false
 			if m.local and build_on:
 				_update_build(m)
-			elif m.input.cast:
+			elif m.input.cast and not m.cast_latch:
 				_cast(m, m.known[m.sel], m.input.aim)
 			if m.input.dig:
 				_excavate(m, m.input.aim)
@@ -2147,6 +2153,7 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	if m.cast_cd > 0 or m.mana < cost:
 		return
 	m.cast_frame = frame
+	m.cast_latch = bool(s.get("single", false))
 	if id == "conjure":
 		_conjure(m, aim)
 		m.cast_cd = s["cd"]
