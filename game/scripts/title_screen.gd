@@ -309,12 +309,12 @@ func _ready() -> void:
 	add_child(center)
 	var col := VBoxContainer.new()
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 10)
+	col.add_theme_constant_override("separation", 5)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(col)
 	_col = col
 	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(0, 150)
+	spacer.custom_minimum_size = Vector2(0, 75)
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(spacer)
 	var sub: Label = ui._label("A mage. A wisp. A round planet made of every last grain.", 17, Color(0.86, 0.80, 1.0))
@@ -327,11 +327,11 @@ func _ready() -> void:
 	gap.custom_minimum_size = Vector2(0, 8)
 	col.add_child(gap)
 	box = VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
+	box.add_theme_constant_override("separation", 4)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.add_child(box)
 	slots_box = VBoxContainer.new()
-	slots_box.add_theme_constant_override("separation", 8)
+	slots_box.add_theme_constant_override("separation", 4)
 	box.add_child(slots_box)
 	refresh_slots()
 	var sb: Button = ui._button("Settings", true)
@@ -344,7 +344,7 @@ func _ready() -> void:
 	foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	foot.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	foot.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	foot.position.y -= 14
+	foot.position.y -= 7
 	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	foot.add_theme_color_override("font_outline_color", Color(0.04, 0.02, 0.08))
 	foot.add_theme_constant_override("outline_size", 4)
@@ -361,11 +361,10 @@ func refresh_slots() -> void:
 	for n in range(1, game.SLOTS + 1):
 		var info: Dictionary = game.slot_info(n)
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
+		row.add_theme_constant_override("separation", 3)
 		row.alignment = BoxContainer.ALIGNMENT_CENTER
 		var b: Button = ui._button("", true)
-		b.custom_minimum_size = Vector2(460, 0)
-		b.add_theme_font_size_override("font_size", 17)
+		b.custom_minimum_size = Vector2(230, 0)
 		if info.is_empty():
 			b.text = "Slot %d  ·  Empty\nStart a new journey" % n
 		else:
@@ -376,14 +375,14 @@ func refresh_slots() -> void:
 		slot_btns.append(b)
 		if not info.is_empty():
 			var d: Button = ui._button("Sure?" if _del_armed == n else "Delete")
-			d.custom_minimum_size = Vector2(84, 0)
+			d.custom_minimum_size = Vector2(42, 0)
 			if _del_armed == n:
 				d.add_theme_color_override("font_color", Color(1, 0.5, 0.45))
 			d.pressed.connect(_on_delete.bind(n))
 			row.add_child(d)
 		else:
 			var pad := Control.new()
-			pad.custom_minimum_size = Vector2(84, 0)
+			pad.custom_minimum_size = Vector2(42, 0)
 			row.add_child(pad)
 		slots_box.add_child(row)
 
@@ -426,14 +425,14 @@ func show_message(head: String, msg: String) -> void:
 	var m: Label = ui._label(msg, 12, Color.WHITE)
 	m.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	m.autowrap_mode = TextServer.AUTOWRAP_WORD
-	m.custom_minimum_size = Vector2(900, 0)
+	m.custom_minimum_size = Vector2(450, 0)
 	_col.add_child(m)
 
 func _process(delta: float) -> void:
 	if not visible:
 		return
 	_t += delta
-	var vs := get_viewport_rect().size
+	var vs := size
 	_px = maxf(2.0, floorf(vs.y / 170.0))
 	_mat.set_shader_parameter("px_size", _px)
 	_mat.set_shader_parameter("view_size", vs)
@@ -461,7 +460,7 @@ func _draw_back() -> void:
 
 func _draw_fx() -> void:
 	var px := _px
-	var vs := get_viewport_rect().size
+	var vs := size
 	# the staff, the hat's tip and the beard, and the crystal's glow, pulsing
 	var gem := Color("#46e6f0")
 	var cr: Vector2 = _rig_origin() + _rig.crystal() * px

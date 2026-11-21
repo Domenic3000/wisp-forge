@@ -7,6 +7,7 @@
 ## grown from their biomes, as in space), the one you're on (or near) marked.
 extends Node2D
 
+const PixelFont := preload("res://scripts/pixel_font.gd")
 var game
 
 func _draw() -> void:
@@ -89,13 +90,14 @@ func _edge_arrow(sp: Vector2, text: String, col: Color) -> void:
 	_label(at - dir * 9.0, text, col)
 
 func _label(at: Vector2, text: String, col := Color(0.9, 0.92, 1.0)) -> void:
-	var f := ThemeDB.fallback_font
+	var f: Font = PixelFont.make()
 	var px: float = float(game.scale_px)
-	draw_set_transform(at, 0.0, Vector2.ONE / px)
-	var sz := 15
-	var wd := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
-	draw_string(f, Vector2(-wd * 0.5 + 1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
-	draw_string(f, Vector2(-wd * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(col.r, col.g, col.b, 0.95))
+	var u: int = game.ui.U
+	draw_set_transform(at.round(), 0.0, Vector2.ONE / px)
+	var sz := PixelFont.SIZE * u
+	var wd := roundf(f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x / u) * u
+	draw_string(f, Vector2(-roundf(wd * 0.5 / u) * u + u, u), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
+	draw_string(f, Vector2(-roundf(wd * 0.5 / u) * u, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(col.r, col.g, col.b, 0.95))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # ------------------------------------------------------------- the system ---

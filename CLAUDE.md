@@ -279,9 +279,50 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `buy`/`grant`/`owned` (a ward you have shows "yours")/`sell`; coins in `items["coins"]` (from chests, guardians
   60, wardens 30, requests, selling). "chart" puts the lairs and crypts in `planet_state["charted"]`, which the map
   draws; villages you've been to (`planet_state["towns_seen"]`) are on the map too.
-- Tests ("towns"): `_test_towns` (walk, talk, trade), `_test_town_days` (home and asleep at night, out in the
-  morning; a picture `town_night.png`), `_test_requests`, `_test_kind_trade` (every kind's stock is real, and its
-  danger's ward is sold).
+- Sleep: buildings.gd `_furnish` records each bed it places (`_beds`: {c, w, row, flip}, from `_place_prop`'s
+  `_last_flip`) into its house's "beds" (no rng drawn, so layouts don't move); towns.gd gives each resident one
+  (`v.bed`). Asleep at home they `_lie_down` (in their bed if the collision grid still has furniture there, the
+  head at the pillow end; else on a bedroll on the floor), `lying` (no physics), `_get_up` at `wake_at` in the
+  morning; overlay `_lying` draws them turned a quarter (whole pixels) under a quilt, "z"s from the head.
+- Memory: `planet_state["folk_known"][seed]` = {met, helped}, `["town_rep"][town seed]` = {n, last}: `_hello`
+  (a stranger introduces themselves, a friend you helped greets you so, a village talks of what you did),
+  `knows` (overlay name tags of folk you've met), `price_of` (5% off a village's shops per request done there,
+  a quarter at most; the shop shows it).
+- Tests ("towns"): `_test_towns` (walk, talk, trade), `_test_town_days` (home, in bed and asleep at night, out in
+  the morning; a picture `town_night.png`), `_test_requests` (and being remembered), `_test_kind_trade` (every
+  kind's stock is real, and its danger's ward is sold).
+
+## Spell effects (scripts/vfx.gd; user, 21 Nov: "epic vfx for the spells")
+- main `vfx` (a Node2D in `pix` after the overlay, its child `glow` additive via CanvasItemMaterial): its own
+  particles in packed arrays (`spawn(kind, pos, vel, life, c0, c1, s0, s1, add, grav, drag, f)`; kinds DOT, STREAK,
+  GLOW (banded halo texture), SMOKE, RING (whole-pixel circles), SHARD, FLARE, BOLT (jagged, re-jittered), BEAM,
+  RUNE (a turning magic circle), CHUNK; `MAX` 2200, swap-removed), `light(p, r, col, ticks)` (fading lights into
+  `game.lights`), `screen_flash`. Everything in whole game pixels. `tick()` with the game's ticks.
+- What a spell looks like is DATA, `Defs.SPELL_FX` (core, glow, glow_r, "trail", "impact", "cast" styles); main
+  calls `vfx.cast` (`_cast`), `trail` (each tick a projectile in SPELL_FX flies; the overlay skips drawing those),
+  `impact` (`_impact`, then returns), `blast` (every `_explode`: fireball, quake, starfall, meteors, lava bombs),
+  `blink`, `mend`. Test: `_test_vfx` ("vfx": each spell cast on fresh ground, pictures `vfx_<spell>_fly/_hit.png`,
+  particles die away, the effects' worst frame under 4 ms).
+
+## The UI (scripts/ui.gd, pixel_font.gd, icons.gd; user, 21 Nov: a pixel-art UI)
+- ui.gd's `root` is scaled by `U` (screen pixels per UI pixel: floor(screen height / 540), so 2 at 1080p and
+  1440p) and sized to the screen in UI pixels (`_relayout` on resize): every size in ui.gd is UI pixels. Screen
+  rectangles of controls: `_on_screen(c)` (get_global_rect ignores the scale). Tooltips pop up outside the root,
+  so their frame and font are scaled by U in `_relayout`. title_screen.gd draws by its own `size` (UI pixels).
+- pixel_font.gd: the game's bitmap font (`GLYPHS`: char -> [top row, rows]; caps 7, x-height 5, descent 2;
+  `SIZE` 10), built at start-up into a FontFile (`make()`, `make(true)` bold), integer scaling only. Always use
+  it at a multiple of SIZE (ui `fsize`; the old design sizes map to 1x/2x/3x). Bitmap fonts take no outline:
+  labels get a one-pixel shadow. The overlay's bubbles, name tags and marks, map_view and space labels use it at
+  SIZE * ui.U through a 1/scale_px transform. A new character is one line in GLYPHS.
+- icons.gd: `mat(m)` (style by `MAT_STYLE` or the material's kind: block with its pattern, pile, drop, ore,
+  gem, pearl/orb, ingot, log, leaf, shroom, cactus, torch, door, pane, rune), `spell(id)` (`SPELL_ART`, 11 x 11),
+  `item(key)` (`ITEM_ART`/`ITEM_COL`: potion, coin, letter, chair, heart, drop, bubble, skull, book); outlined
+  and cached.
+- The satchel is a grid of `_slot`s (icon at 2x, count), the spell bar slots with glyphs, their number, the
+  cooldown and a red wash when mana is short (`_draw_slot_over`), the chosen spell's name over it; the forge
+  fills the screen (`show_forge`: 3-5 columns), with a tab per category (jumps the list) and cost chips
+  (`_cost_chip`); shops in two columns. Test: `_test_ui` ("ui": the font has every character the game writes,
+  whole-pixel scale, satchel and spell bar on screen; pictures `ui_hud/forge/settings/shop/title.png`).
 
 ## Music (scripts/audio.gd)
 - Tracks in game/audio/music/ by name: mood (surface_day, surface_night, underground, deep, boss, space, title) or
@@ -445,7 +486,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
 - Test mode quits by itself after 13 minutes (a full run takes about 9), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
-  up (a parse error in main.gd used to leave a blank window) or that passes 14 minutes. tests.gd is loaded at run
+  up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
+  script it preloads failed to compile: 25 s), or that passes 14 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -493,7 +535,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "sky", "gear", "towns", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

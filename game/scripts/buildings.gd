@@ -37,6 +37,8 @@ var lair_list := []               # {biome, pos (the arena floor's middle), name
 var towns := []                   # villages: {x0, w, name, ruined, living, seed, houses: [{role, x0, w, floor, ruined}]}
                                   # (main's towns.gd peoples the living ones; floor = the ground floor's row)
 var _house := {}                  # (the house `_cottage` just made, for `_town`)
+var _beds := []                   # (beds `_furnish` put in the house being made: {c, w, row, flip}; towns.gd's sleepers)
+var _last_flip := false           # (whether `_place_prop` mirrored what it placed)
 ## the dungeon wardens: {key ("warden_<seed>_<col>": its foe type), pos (its hall floor's middle),
 ## def (wardens.gd), tether, ceil, ward (the stamp rectangle of the reliquary's warded door), name}
 var warden_list := []
@@ -1685,11 +1687,12 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 		_ruin(bp, left - 3, left + full + 2, hi, lb - 1, b)
 	# inside and out: furniture by what the house was, then the yard
 	var kit := "dwelling" if b == "desert" and role == "home" else role
+	_beds = []
 	_furnish(bp, ox, w, th, lb, floors, kit, ruined)
 	if aw > 0:
 		_furnish(bp, left if aside < 0 else ox + w - th, aw, th, lb, 1, "hut" if role != "home" else "home", ruined)
 	_dress_yard(bp, left, full, role, ruined)
-	_house = {"role": role, "x0": posmod(bp.x0 + ox, N0), "w": w, "floor": bp.y0 + lb, "ruined": ruined}
+	_house = {"role": role, "x0": posmod(bp.x0 + ox, N0), "w": w, "floor": bp.y0 + lb, "ruined": ruined, "beds": _beds.duplicate()}
 	if label:
 		_claim(x0, tw, ("Ruined " if ruined else "Abandoned ") + ("Cottage" if b != "desert" else "Dwelling"), bp.y0, base + 2)
 	else:
@@ -2928,6 +2931,7 @@ func _place_prop(bp: BP, prop: Dictionary, i0: int, i1: int, bottom: int, indoor
 			continue
 		if _prop_fits(bp, rows, x, b - lift, flip, indoors, not wall):
 			_stamp_prop(bp, rows, x, b - lift, flip, lit, Props.kind_id(String(prop.get("kind", ""))))
+			_last_flip = flip
 			return x
 	return -1
 
@@ -2973,7 +2977,10 @@ func _furnish(bp: BP, ox: int, w: int, th: int, base: int, floors: int, role: St
 				# a rug lies on the floor where nothing else stands
 				_place_prop(bp, prop, ox + th + 2, ox + w - th - 3, fl - 1, true, 6)
 				continue
-			_place_prop(bp, prop, ox + th + 2, ox + w - th - 3, fl - 1, true, 10, WALL_LIFT.get(kind, 0), not ruined)
+			var px := _place_prop(bp, prop, ox + th + 2, ox + w - th - 3, fl - 1, true, 10, WALL_LIFT.get(kind, 0), not ruined)
+			if kind == "bed" and px >= 0:
+				# (where the house's folk sleep: towns.gd; the pillow is at the bed's start unless mirrored)
+				_beds.append({"c": posmod(bp.x0 + px, N0), "w": (prop["rows"][0] as String).length(), "row": bp.y0 + fl - 1, "flip": _last_flip})
 
 ## Outside a house: a sign by the door (what the place is), hedges and flowers along the walls,
 ## a lamp post, a fence along the yard.

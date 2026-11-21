@@ -1012,6 +1012,24 @@ const SPELLS := {
 	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "A falling star: a huge fiery blast."},
 	"mend": {"name": "Mending", "mana": 60.0, "cd": 600, "color": Color(0.55, 1.0, 0.62), "desc": "Knit your wounds: 30 health over a second. Ten seconds to recover."},
 }
+## How each spell LOOKS (scripts/vfx.gd): "core" its white-hot heart, "glow" its halo and light, "glow_r" the
+## halo's size, and a style for each part: "trail" (spark, flame, frost, water, rocks, star, ember: what it leaves
+## as it flies, and how it's drawn), "impact" (zap, shatter, splash, quake, nova; explosions add vfx `blast`),
+## "cast" (flick, burst, rune: a circle of runes round the caster). A new spell needs only an entry here.
+const SPELL_FX := {
+	"spark": {"core": Color(1.0, 1.0, 0.85), "glow": Color(1.0, 0.82, 0.3), "glow_r": 6.0, "trail": "spark", "impact": "zap", "cast": "flick"},
+	"fireball": {"core": Color(1.0, 0.95, 0.7), "glow": Color(1.0, 0.42, 0.1), "glow_r": 11.0, "trail": "flame", "impact": "", "cast": "burst"},
+	"frost": {"core": Color(0.92, 1.0, 1.0), "glow": Color(0.45, 0.8, 1.0), "glow_r": 8.0, "trail": "frost", "impact": "shatter", "cast": "flick"},
+	"tide": {"core": Color(0.75, 0.9, 1.0), "glow": Color(0.2, 0.5, 1.0), "glow_r": 8.0, "trail": "water", "impact": "splash", "cast": "flick"},
+	"quake": {"core": Color(0.95, 0.85, 1.0), "glow": Color(0.6, 0.3, 1.0), "glow_r": 12.0, "trail": "rocks", "impact": "quake", "cast": "rune"},
+	"starfall": {"core": Color(1.0, 1.0, 0.95), "glow": Color(1.0, 0.75, 0.35), "glow_r": 16.0, "trail": "star", "impact": "nova", "cast": "rune"},
+	"blink": {"core": Color(0.9, 1.0, 1.0), "glow": Color(0.45, 0.9, 1.0)},
+	"mend": {"core": Color(0.9, 1.0, 0.9), "glow": Color(0.45, 1.0, 0.55)},
+	"efire": {"core": Color(1.0, 0.85, 0.5), "glow": Color(1.0, 0.4, 0.15), "glow_r": 7.0, "trail": "ember"},
+	"lavabomb": {"core": Color(1.0, 0.8, 0.4), "glow": Color(1.0, 0.35, 0.05), "glow_r": 9.0, "trail": "flame"},
+	"meteor": {"core": Color(1.0, 0.95, 0.8), "glow": Color(1.0, 0.55, 0.2), "glow_r": 12.0, "trail": "star"},
+}
+
 ## Health doesn't come back by itself: Healing Draughts (H to drink; forged, or found in chests) and
 ## the Mending spell are the only ways back up. Both heal over a moment, not at once.
 const POTION_HEAL := 35.0

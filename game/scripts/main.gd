@@ -18,6 +18,7 @@ const FoeAI := preload("res://scripts/foe_ai.gd")
 const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
+const Vfx := preload("res://scripts/vfx.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
 const Audio := preload("res://scripts/audio.gd")
@@ -82,6 +83,12 @@ class Villager extends Body:
 	var fade_to := Vector2.ZERO
 	var fade_in: Dictionary
 	var block_t := 0
+	var bed: Dictionary          # (their bed in their house, from buildings.gd `_beds`, or {})
+	var lying := false           # (asleep lying down: in bed, or on a bedroll)
+	var lie_next := false        # (lying down once the fade's halfway)
+	var bedroll := false
+	var lie_head := Vector2.ZERO # (where their head is, lying)
+	var wake_at := Vector2.ZERO  # (where they stand up again)
 
 func new_villager() -> Villager:
 	return Villager.new()
@@ -175,6 +182,7 @@ var ui
 var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
 var towns                 # the living villages' folk, talk and trade (towns.gd)
+var vfx                   # the spells' effects (vfx.gd): its own particles, glow, flashes
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
 var view_rect: TextureRect
@@ -476,6 +484,7 @@ var _sky_roll := 0
 var _sky_next := 0             # (ticks to the event's next meteor, bomb, strike, rocket...)
 var weather_timer := 1800
 var flash := 0.0
+var booted := false
 
 func _ready() -> void:
 	player.inv.resize(Defs.NM)
@@ -503,6 +512,10 @@ func _ready() -> void:
 	overlay.game = self
 	overlay.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pix.add_child(overlay)
+	vfx = Vfx.new()
+	vfx.game = self
+	vfx.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	pix.add_child(vfx)
 	map_view = MapView.new()
 	map_view.game = self
 	map_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -527,6 +540,7 @@ func _ready() -> void:
 	gpu.resize(VW, VH)
 	GS = gpu.GS
 	HALF = GS / 2.0
+	booted = true                 # (watchdog.gd: _ready got this far, so every preloaded script compiled)
 	if "--test" in OS.get_cmdline_user_args():
 		testing = true
 		var tests_script = load("res://scripts/tests.gd")
@@ -1848,6 +1862,7 @@ func _tick() -> void:
 		# out in space only the mage moves; the planet below waits as it was
 		space.tick()
 		_update_particles()
+		vfx.tick()
 		_update_wisp()
 		shake *= 0.88
 		hurt_flash *= 0.9
@@ -1897,6 +1912,7 @@ func _tick() -> void:
 	_use_grid(player)
 	_check_door_fire()
 	_update_particles()
+	vfx.tick()
 	prof_add("shots and particles", Time.get_ticks_usec() - tq)
 	_update_weather()
 	_update_climate()
@@ -2145,9 +2161,7 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		m.cast_cd = s["cd"]
 		m.heal_left += Defs.MEND_HEAL
 		audio.play("rare", m.pos, 0.6)
-		lights.append([m.pos, 26.0, Color(0.5, 1.1, 0.6)])
-		for k in 14:
-			_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 14.0, m.pos.normalized() * (0.2 + randf() * 0.4), 30, s["color"], true, -0.01)
+		vfx.mend(m)
 		return
 	if id == "blink":
 		if _blink(m, aim):
@@ -2162,9 +2176,7 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	var st := _staff(m, aim)
 	var pd: Dictionary = Defs.PROJ[id]
 	_spawn_proj(id, st[0], st[1] * float(pd["speed"]), "player")
-	var col: Color = s["color"]
-	for k in 6:
-		_particle(st[0], Vector2(randf() - 0.5, randf() - 0.5), 12, col, true, 0.0)
+	vfx.cast(id, st[0], st[1], m)
 
 ## step through space to the cursor (up to 48 cells), stopping at the last free spot along the way
 func _blink(m: Mage, aim: Vector2) -> bool:
@@ -2179,13 +2191,10 @@ func _blink(m: Mage, aim: Vector2) -> bool:
 			continue
 		var l := to_grid(p)
 		if not box_solid(l.x - m.w * 0.5, l.y - m.h * 0.5, m.w, m.h):
-			for k in 16:
-				_particle(from, Vector2(randf() - 0.5, randf() - 0.5) * 1.5, 20, Color(0.55, 0.95, 1.0), true, 0.0)
-				_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 1.5, 20, Color(0.55, 0.95, 1.0), true, 0.0)
+			vfx.blink(from, p)
 			m.pos = p
 			m.vx = 0
 			m.vy = 0
-			lights.append([p, 24.0, Color(0.5, 0.9, 1.2)])
 			return true
 	return false
 
@@ -2565,7 +2574,9 @@ func _update_projectiles() -> void:
 		var col: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else pd.get("col", Color(1, 0.35, 0.12))
 		if float(pd["light"]) > 0.0:
 			lights.append([pos, float(pd["light"]), col * 0.85])
-		if randf() < 0.6:
+		if Defs.SPELL_FX.has(pr["type"]):
+			vfx.trail(pr)                   # (the spells' own trails: vfx.gd)
+		elif randf() < 0.6:
 			_particle(pos, Vector2(randf() - 0.5, randf() - 0.5) * 0.3, 10 + randi() % 8, col, true, 0.0)
 
 ## does a circle of radius r around p touch body e?
@@ -2636,6 +2647,9 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 				brushes.append([p, 2.2, 3, int(pd["splat"]), 0, 0, 0])
 			if type == "lavabomb":
 				sky_stats["bomb_hits"] = int(sky_stats.get("bomb_hits", 0)) + 1
+	if Defs.SPELL_FX.has(type):
+		vfx.impact(type, p, hit)
+		return
 	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else pd.get("col", Color(1, 0.35, 0.12))
 	for k in 10:
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.8) * 1.5, 14 + randi() % 10, col, true, 0.05)
@@ -2647,9 +2661,7 @@ func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 		if bool(dk["open"]) and door_panel_pos(dk).distance_to(p) < r + float(dk["h"]) * 0.5:
 			_hurt_open_door(dk, p, r + 1.0, kind == 1)
 	audio.play("boom", p, clampf(r / 14.0, 0.4, 1.2), 1.3 - clampf(r / 40.0, 0.0, 0.5))
-	for k in int(r * 4):
-		_particle(p, Vector2(randf() - 0.5, randf() - 0.5) * 3.0, 15 + randi() % 20, Color(1, 0.6 + randf() * 0.3, 0.25), true, 0.03)
-	lights.append([p, r * 4.0, Color(1.5, 0.8, 0.3)])
+	vfx.blast(p, r, kind)
 	shake = maxf(shake, r * 0.6)
 	if dmg > 0:
 		for e in enemies:
@@ -4794,6 +4806,8 @@ func _make_world(index: int, arriving: bool) -> void:
 	sky_fx.clear()
 	if towns != null:
 		towns.clear()
+	if vfx != null:
+		vfx.clear()
 	wind = 0.0
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))

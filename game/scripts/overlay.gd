@@ -6,6 +6,7 @@ const FoeAI := preload("res://scripts/foe_ai.gd")
 const MageRig := preload("res://scripts/mage_rig.gd")
 const BossArt := preload("res://scripts/boss_art.gd")
 const FolkArt := preload("res://scripts/folk_art.gd")
+const PixelFont := preload("res://scripts/pixel_font.gd")
 
 var game
 var tex := {}
@@ -403,9 +404,10 @@ func _draw() -> void:
 func _bubble(wpos: Vector2, text: String, alpha: float) -> void:
 	var px: float = float(game.scale_px)
 	var head: Vector2 = game.world_to_screen(wpos - game.basis_d(atan2(wpos.y, wpos.x)) * 13.0)
-	var f := ThemeDB.fallback_font
-	var sz := 14
-	var maxw := 300.0
+	var f: Font = PixelFont.make()
+	var u: int = game.ui.U
+	var sz := PixelFont.SIZE * u
+	var maxw := 150.0 * u
 	# wrap the words into lines no wider than maxw (in screen pixels)
 	var lines := []
 	var cur := ""
@@ -421,9 +423,10 @@ func _bubble(wpos: Vector2, text: String, alpha: float) -> void:
 	var wmax := 0.0
 	for ln in lines:
 		wmax = maxf(wmax, f.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x)
-	var lh := float(sz) + 3.0
-	var bw := (wmax + 14.0) / px
-	var bh := (lh * lines.size() + 8.0) / px
+	var lh := float(sz + u)
+	var pad := 4.0 * u
+	var bw := (wmax + pad * 2.0) / px
+	var bh := (lh * lines.size() - u + pad * 2.0) / px
 	var x0 := clampf(head.x - bw * 0.5, 2.0, float(game.VW) - bw - 2.0)
 	var y0 := head.y - bh - 4.0 / px
 	var bg := Color(0.98, 0.96, 0.9, 0.92 * alpha)
@@ -433,7 +436,7 @@ func _bubble(wpos: Vector2, text: String, alpha: float) -> void:
 	draw_colored_polygon(PackedVector2Array([Vector2(head.x - 3.0 / px * 2.0, y0 + bh), Vector2(head.x + 3.0 / px * 2.0, y0 + bh), Vector2(head.x, y0 + bh + 5.0 / px * 2.0)]), bg)
 	draw_set_transform(Vector2(x0, y0), 0.0, Vector2.ONE / px)
 	for li in lines.size():
-		draw_string(f, Vector2(7.0, 4.0 + float(sz) + li * lh), lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0.15, 0.11, 0.08, alpha))
+		draw_string(f, Vector2(pad, pad + float(PixelFont.ASCENT * u) + li * lh), lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0.15, 0.11, 0.08, alpha))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 ## the sky events' own pictures (main `sky_fx`, `sky_wisps`): shooting stars, lightning bolts, rockets,
@@ -533,6 +536,9 @@ func _draw_all() -> void:
 			var fr: Dictionary = FolkArt.frames(v.fseed, v.role)
 			for fn in fr:
 				tex[fk + "_" + fn] = ImageTexture.create_from_image(fr[fn])
+		if v.lying:
+			_lying(v, tex[fk + "_stand"])
+			continue
 		var walking: bool = absf(v.vx) > 0.08
 		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
 		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v))
@@ -577,6 +583,8 @@ func _draw_all() -> void:
 				var q := a1.lerp(a0, float(k) / 3.0).floor()
 				draw_rect(Rect2(q, Vector2.ONE), (Color(0.85, 0.82, 0.72) if k == 3 else Color(0.55, 0.38, 0.22)) * lc)
 			continue
+		if Defs.SPELL_FX.has(pr["type"]):
+			continue                  # (vfx.gd draws the spells, with their glow)
 		var c: Color = Defs.SPELLS[pr["type"]]["color"] if Defs.SPELLS.has(pr["type"]) else Color(1, 0.35, 0.12)
 		var sp: Vector2 = game.world_to_screen(pr["pos"])
 		var big := 1 if pr["type"] == "fireball" or pr["type"] == "quake" else 0
@@ -634,25 +642,72 @@ func _draw_all() -> void:
 func _folk_mark(v) -> void:
 	var mk: String = game.towns.mark_of(v)
 	var a := atan2(v.pos.y, v.pos.x)
-	var f := ThemeDB.fallback_font
+	var f: Font = PixelFont.make()
+	var fb: Font = PixelFont.make(true)
 	var px: float = float(game.scale_px)
+	var u: int = game.ui.U
 	if mk != "":
 		var bob := sin(float(game.frame) * 0.08) * 1.2
 		var hp: Vector2 = game.world_to_screen(v.pos - game.basis_d(a) * (13.0 + bob))
 		var ch := "!" if mk == "offer" else "?"
 		var col := Color(0.62, 0.62, 0.68) if mk == "wait" else Color(1.0, 0.82, 0.25)
-		var fs := 40
-		var sz := f.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		var fs := PixelFont.SIZE * 2 * u
+		var sz := fb.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
 		draw_set_transform(hp.round(), 0.0, Vector2.ONE / px)
-		var at := Vector2(-sz.x * 0.5, 0.0)
-		for o in [Vector2(-3, 0), Vector2(3, 0), Vector2(0, -3), Vector2(0, 3)]:
-			draw_string(f, at + o, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.06, 0.02))
-		draw_string(f, at, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		var at := Vector2(-roundf(sz.x * 0.5 / u) * u, 0.0)
+		for o in [Vector2(-2, 0), Vector2(2, 0), Vector2(0, -2), Vector2(0, 2)]:
+			draw_string(fb, at + o * u, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.1, 0.06, 0.02))
+		draw_string(fb, at, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	elif not v.asleep and v.fade == 0 and (v.pos as Vector2).distance_to(game.player.pos) < 45.0 and game.towns.knows(v):
+		# someone you've met: their name over their head
+		var np: Vector2 = game.world_to_screen(v.pos - game.basis_d(a) * 11.5)
+		var nfs := PixelFont.SIZE * u
+		var nsz := f.get_string_size(v.name, HORIZONTAL_ALIGNMENT_LEFT, -1, nfs)
+		draw_set_transform(np.round(), 0.0, Vector2.ONE / px)
+		var nat := Vector2(-roundf(nsz.x * 0.5 / u) * u, 0.0)
+		for o in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
+			draw_string(f, nat + o * u, v.name, HORIZONTAL_ALIGNMENT_LEFT, -1, nfs, Color(0.08, 0.05, 0.03, 0.8))
+		draw_string(f, nat, v.name, HORIZONTAL_ALIGNMENT_LEFT, -1, nfs, Color(0.98, 0.93, 0.8, 0.9))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	elif v.asleep:
 		for k in 3:
 			var ph := fposmod(float(game.frame) * 0.01 + float(k) / 3.0, 1.0)
-			var zp: Vector2 = game.world_to_screen(v.pos - game.basis_d(a) * (9.0 + ph * 9.0) + game.basis_r(a) * (1.0 + ph * 4.0))
+			var zb: Vector2 = v.lie_head if v.lying else v.pos
+			var zp: Vector2 = game.world_to_screen(zb - game.basis_d(a) * ((3.0 if v.lying else 9.0) + ph * 9.0) + game.basis_r(a) * (1.0 + ph * 4.0))
 			draw_set_transform(zp.round(), 0.0, Vector2.ONE / px)
-			draw_string(f, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, int(16.0 + ph * 13.0), Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.8))
+			draw_string(fb, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, PixelFont.SIZE * u * (1 if ph < 0.5 else 2), Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.8))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## a villager asleep: the figure turned a quarter (still whole pixels) with its head toward the pillow, on
+## a bedroll if there's no bed for them, the blanket pulled up to the chin
+func _lying(v, t: Texture2D) -> void:
+	var c: Vector2 = game.world_to_screen(v.pos).round()
+	var hs: Vector2 = game.world_to_screen(v.lie_head)
+	var head_right: bool = hs.x > c.x
+	var z: float = game.zoom
+	var mod := _lit(c)
+	mod.a = game.towns.alpha_of(v)
+	var ts := t.get_size()
+	if v.bedroll:
+		# a rolled-out blanket under them, in a colour from their seed
+		var bc := Color.from_hsv(fposmod(float(v.fseed % 97) / 97.0, 1.0), 0.45, 0.55) * mod
+		bc.a = mod.a
+		draw_set_transform(c, 0.0, Vector2.ONE / z)
+		draw_rect(Rect2(-ts.y * 0.5 - 1.0, ts.x * 0.5 - 4.0, ts.y + 2.0, 3.0), bc)
+		draw_rect(Rect2(-ts.y * 0.5 - 1.0, ts.x * 0.5 - 1.0, ts.y + 2.0, 1.0), bc.darkened(0.35))
+	draw_set_transform(c, PI * 0.5 if head_right else -PI * 0.5, Vector2.ONE / z)
+	draw_texture(t, -(ts * 0.5).floor(), mod)
+	# a quilt over the body from the shoulders down (just the body's width), its own colour, edged and
+	# folded back at the top, with a stripe
+	var bl := Color.from_hsv(fposmod(float(v.fseed % 89) / 89.0 + 0.3, 1.0), 0.55, 0.78) * mod
+	bl.a = mod.a
+	var ed := bl.darkened(0.45)
+	var qx := -4.0
+	var qy := -floorf(ts.y * 0.5) + 8.0
+	var qh := ts.y - 9.0
+	draw_rect(Rect2(qx - 1.0, qy, 10.0, qh + 1.0), ed)
+	draw_rect(Rect2(qx, qy, 8.0, qh), bl)
+	draw_rect(Rect2(qx, qy, 8.0, 2.0), bl.lightened(0.35))
+	draw_rect(Rect2(qx, qy + floorf(qh * 0.55), 8.0, 1.0), bl.darkened(0.2))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

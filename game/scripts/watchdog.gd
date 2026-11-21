@@ -20,6 +20,11 @@ func _process(_delta: float) -> void:
 		printerr("SCRIPT ERROR: the main scene didn't load (a script failed to parse?); the test run stops")
 		get_tree().quit(1)
 		_on = false
+	elif t > 25.0 and not bool(cs.get("booted")):
+		# (main.gd came up but its _ready stopped short: a script it preloads failed to compile)
+		printerr("SCRIPT ERROR: the main scene stopped while starting (a preloaded script failed?); the test run stops")
+		get_tree().quit(1)
+		_on = false
 	elif t > 840.0:
 		printerr("SCRIPT ERROR: the test run went on past 14 minutes; stopped")
 		get_tree().quit(1)

@@ -223,7 +223,8 @@ func _test_towns() -> void:
 		tn_shop = g.towns.talk(g.player) and g.state == "shop"
 		g.items["coins"] = 100
 		var tn_first: Dictionary = g.towns.shop_def(tn_k)["sell"][0]
-		tn_buy = g.towns.buy(tn_k, 0) and int(g.items["coins"]) == 100 - int(tn_first["price"])
+		var tn_price: int = g.towns.price_of(tn_k, tn_first)
+		tn_buy = g.towns.buy(tn_k, 0) and int(g.items["coins"]) == 100 - tn_price
 		var tn_b: Array = g.towns.buys(tn_k)[0]
 		g.player.inv[int(tn_b[0])] += int(tn_b[1])
 		var tn_cb: int = int(g.items["coins"])
@@ -247,6 +248,227 @@ func _test_towns() -> void:
 
 ## a village's day: at night its folk go home and sleep, in the morning they come out again; who'd be where
 ## at each hour (towns.gd `want_place`)
+
+## every spell's effects (vfx.gd): it casts, flies and lands with its own look, the particles die away, and it
+## costs the frame little. Pictures of each in flight and landing (saves/shots/vfx_<spell>_fly.png, _hit.png),
+## by night (where glow shows) and the fireball by day too.
+
+## the pixel-art UI: its font has every character the game writes, it's drawn at a whole pixel scale, the
+## satchel and the spell bar are where the mouse finds them; pictures of the HUD, the forge, a shop, the
+## settings and the title (saves/shots/ui_*.png)
+func _test_ui() -> void:
+	var ui = g.ui
+	var dir: String = g._real_save_dir().path_join("shots")
+	var bad := []
+	var f: FontFile = ui.font
+	for ch in "AZaz09·…✦✓—'\"()[]%:,.!?":
+		if not f.has_char(ch.unicode_at(0)):
+			bad.append("no glyph for %s" % ch)
+	if ui.root.scale.x != float(ui.U) or ui.U < 1:
+		bad.append("the UI isn't at a whole pixel scale")
+	# give the satchel and spell bar something to show
+	var inv0: Array = Array(g.player.inv).duplicate()
+	var known0: Array = g.known.duplicate()
+	for m in [Defs.STONE, Defs.DIRT, Defs.SAND, Defs.WOOD, Defs.COPPER, Defs.COAL, Defs.WISP, Defs.CRYSTAL, Defs.GLASS, Defs.BRICK, Defs.WATER, Defs.STARIRON, Defs.FIREOPAL, Defs.AMBER]:
+		g.player.inv[m] += 25
+	for sp in Defs.SPELL_ORDER:
+		if not g.known.has(sp):
+			g.known.append(sp)
+	g.ui._inv_key = ""
+	g.ui._hot_key = ""
+	await _frames(20)
+	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_hud.png"))
+	var sr: Rect2 = ui._on_screen(ui.satchel_panel)
+	var hr: Rect2 = ui._on_screen(ui.hotbar)
+	var vs: Vector2 = g.get_viewport().get_visible_rect().size
+	if sr.size.x < 50 or not Rect2(Vector2.ZERO, vs).encloses(sr):
+		bad.append("the satchel is off the screen (%s)" % sr)
+	if hr.size.x < 50 or not Rect2(Vector2.ZERO, vs).encloses(hr):
+		bad.append("the spell bar is off the screen (%s)" % hr)
+	var slots: int = ui.satchel.get_child_count()
+	g.ui.show_forge()
+	await _frames(10)
+	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_forge.png"))
+	var fr: Rect2 = ui._on_screen(ui.forge)
+	if not Rect2(Vector2.ZERO, vs).encloses(fr):
+		bad.append("the forge doesn't fit the screen (%s)" % fr)
+	g.ui.hide_forge()
+	ui.settings_panel.visible = true
+	ui._refresh_settings()
+	await _frames(10)
+	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_settings.png"))
+	ui.settings_panel.visible = false
+	# a shop, if a keeper is about
+	var shop_shot := false
+	for v in g.towns.folk:
+		if v.keeper:
+			g.towns.open_shop(v)
+			await _frames(10)
+			g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_shop.png"))
+			g.towns.close_shop()
+			shop_shot = true
+			break
+	ui.show_title(true)
+	await _frames(30)
+	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_title.png"))
+	ui.title.visible = false
+	for k in g.player.inv.size():
+		g.player.inv[k] = int(inv0[k])
+	g.known = known0
+	g.ui._inv_key = ""
+	g.ui._hot_key = ""
+	_ok("the pixel-art UI: its own font, whole pixels, everything on screen", bad.is_empty(),
+		("UI pixel %d screen pixels; %d satchel slots; satchel at %s, spells at %s%s" % [ui.U, slots, sr, hr, "; a shop too" if shop_shot else ""]) if bad.is_empty() else "; ".join(bad))
+
+
+## a planet kind's hazards (tried with Verdance's climate turned to them): the cold under the open sky and the
+## sun at midday hurt you slowly, unless their ward bears them ("hazards" runs it alone)
+func _test_hazards() -> void:
+	# ---- a planet kind's hazards (tried here with Verdance's climate turned to them): the cold under the
+	# open sky and the sun at midday hurt you slowly, unless their ward (or a guardian's relic) bears them ----
+	for hz_e in g.enemies.duplicate():
+		if not hz_e.boss and hz_e.guard_id < 0:
+			g.enemies.erase(hz_e)
+	var hz_god0: bool = g.test_god
+	var hz_time0: float = g.time
+	g.spawn_timer = 999999                     # (no foe wanders in and muddles the sums)
+	g.test_god = false
+	await _frames(8)
+	var hz_open: bool = g.exposed
+	var hz_res := {}
+	var hz_why := []
+	for hz_k in ["cold", "sun"]:
+		var hz_d: Dictionary = Defs.HAZARDS[hz_k]
+		if hz_k == "sun":
+			# (the sun straight overhead)
+			var hz_pa: float = atan2(g.player.pos.y, g.player.pos.x)
+			g.time = fposmod((hz_pa - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+		g.clim[hz_k] = 1.0
+		g.player.hp = g.player.max_hp
+		await _hz_watch(150, hz_k + " bare", hz_why)
+		var hz_bare: float = g.player.max_hp - g.player.hp
+		var hz_was: String = g.hazard
+		g.items[String(hz_d["ward"])] = true
+		g.player.hp = g.player.max_hp
+		await _hz_watch(120, hz_k + " warded", hz_why)
+		var hz_ward: float = g.player.max_hp - g.player.hp
+		g.items.erase(String(hz_d["ward"]))
+		g.clim[hz_k] = 0.0
+		hz_res[hz_k] = [hz_bare, hz_ward, hz_was]
+	g.time = hz_time0
+	g.spawn_timer = 600
+	# (and digging what the staff can't cut no longer counts as star iron: the GPU's counters moved)
+	var hz_si0: int = g.player.inv[Defs.STARIRON]
+	var hz_up: Vector2 = g.player.pos.normalized()
+	g.brushes.append([hz_up * (g.gpu.surf_at(atan2(hz_up.y, hz_up.x)).x - 110.0), 6.0, 1, 0, 0, 0, 0, 0])
+	var hz_blk := false
+	for hz_f in 8:
+		await _frames(1)
+		hz_blk = hz_blk or g.dig_blocked > 0
+	var hz_si1: int = g.player.inv[Defs.STARIRON]
+	g.test_god = hz_god0
+	g.player.hp = g.player.max_hp
+	var hz_ok := hz_open and hz_blk and hz_si1 == hz_si0
+	for hz_k2 in hz_res:
+		hz_ok = hz_ok and float(hz_res[hz_k2][0]) > 0.8 and float(hz_res[hz_k2][1]) < 0.05 and String(hz_res[hz_k2][2]) == hz_k2
+	_ok("a planet's cold and midday sun hurt you in the open, but not with their wards; too-hard digging gives no star iron", hz_ok,
+		"in the open %s; the cold: -%.1f health in 2.5 s bare (%s), -%.1f with the Hearth Charm; the sun overhead: -%.1f bare (%s), -%.1f with the Sun Veil; digging stone with no power: blocked %s, star iron %d -> %d" % [hz_open,
+		float(hz_res["cold"][0]), hz_res["cold"][2], float(hz_res["cold"][1]), float(hz_res["sun"][0]), hz_res["sun"][2], float(hz_res["sun"][1]), hz_blk, hz_si0, hz_si1] + ("" if hz_ok else "; what hurt: " + "; ".join(hz_why.slice(0, 12))))
+
+## wait n frames noting every hurt: when, how much, and what was about (the hazard, fire or lava near, foes)
+func _hz_watch(n: int, phase: String, why: Array) -> void:
+	var hp: float = g.player.hp
+	for k in n:
+		await _frames(1)
+		var d: float = hp - g.player.hp
+		hp = g.player.hp
+		if d > 0.3 and why.size() < 40:
+			var hot := 0
+			var l: Vector2 = g.to_grid(g.player.pos)
+			for y in range(int(l.y) - 10, int(l.y) + 11):
+				for x in range(int(l.x) - 10, int(l.x) + 11):
+					var t: int = g.gtype(x, y)
+					if t == Defs.FIRE or t == Defs.LAVA:
+						hot += 1
+			var foes := 0
+			for e in g.enemies:
+				if not e.dead and (e.pos as Vector2).distance_to(g.player.pos) < 40.0:
+					foes += 1
+			why.append("%s f%d -%.1f (hazard '%s', fire/lava %d, foes %d, liquid %s, breath %.0f, warm %s)" % [phase, k, d, g.hazard, hot, foes, g.player.in_liquid, g.player.breath, g._warm])
+
+func _test_vfx() -> void:
+	var vx_god0: bool = g.test_god
+	var vx_from: Vector2 = g.player.pos
+	var vx_time0: float = g.time
+	g.test_god = true
+	g.spawn_timer = 999999
+	var vx_base := int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 60
+	var vx_ri := 0
+	var vx_dir: String = g._real_save_dir().path_join("shots")
+	var vx_txt := []
+	var vx_bad := []
+	var vx_peak := 0
+	var vx_cost := 0.0
+	for vx_e in g.enemies.duplicate():
+		if not vx_e.boss and vx_e.guard_id < 0:
+			g.enemies.erase(vx_e)
+	var vx_runs := [["spark", "night"], ["fireball", "night"], ["frost", "night"], ["tide", "night"], ["quake", "night"], ["starfall", "night"], ["fireball", "day"], ["blink", "night"], ["mend", "night"]]
+	for vx_run in vx_runs:
+		var vx_id: String = vx_run[0]
+		var vx_when: String = vx_run[1]
+		# (each on fresh ground: the last one's crater would be in the way)
+		var vx_st := _clear_stretch(vx_base + 150 * vx_ri, 80, 90, 6)
+		vx_ri += 1
+		var vx_col := vx_st.x + 10
+		var vx_a: float = (float(vx_col) + 0.5) / float(Defs.NS) * TAU
+		g.time = fposmod((vx_a + (PI if vx_when == "night" else 0.0) - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+		_go(_cell_pos(vx_col, g.builds.ground_row(vx_col) - 12))
+		await _frames(20)
+		g.vfx.clear()
+		g.prof_reset()
+		g.player.mana = g.player.max_mana
+		g.player.cast_cd = 0
+		if vx_id == "mend":
+			g.player.hp = g.player.max_hp - 40.0
+		var vx_tc := vx_col + (30 if vx_id == "blink" else 52)
+		var vx_aim: Vector2 = _cell_pos(vx_tc, g.builds.ground_row(vx_tc) + (-10 if vx_id == "blink" else 1))
+		var vx_i0: int = int(g.vfx.stats.get("impacts", 0)) + int(g.vfx.stats.get("blasts", 0))
+		var vx_b0: int = int(g.vfx.stats.get("blinks", 0)) + int(g.vfx.stats.get("mends", 0))
+		g._cast(g.player, vx_id, vx_aim)
+		var vx_tag := vx_id + ("_day" if vx_when == "day" else "")
+		var vx_hit_f := -1
+		var vx_shot := false
+		for vx_f in 150:
+			await _frames(1)
+			vx_peak = maxi(vx_peak, g.vfx.count())
+			if vx_f == 4 and vx_id != "blink" and vx_id != "mend":
+				g.get_viewport().get_texture().get_image().save_png(vx_dir.path_join("vfx_%s_fly.png" % vx_tag))
+			var vx_landed: bool = int(g.vfx.stats.get("impacts", 0)) + int(g.vfx.stats.get("blasts", 0)) > vx_i0 or int(g.vfx.stats.get("blinks", 0)) + int(g.vfx.stats.get("mends", 0)) > vx_b0
+			if vx_landed and vx_hit_f < 0:
+				vx_hit_f = vx_f
+			if vx_hit_f >= 0 and vx_f == vx_hit_f + (3 if vx_id == "spark" or vx_id == "blink" else 6):
+				g.get_viewport().get_texture().get_image().save_png(vx_dir.path_join("vfx_%s_hit.png" % vx_tag))
+				vx_shot = true
+			if vx_shot and vx_f > vx_hit_f + 20:
+				break
+		for vx_k in g.prof:
+			if vx_k == "spell effects":
+				vx_cost = maxf(vx_cost, float(g.prof[vx_k][3]))
+		vx_txt.append("%s%s %s" % [vx_id, " (day)" if vx_when == "day" else "", ("landed at frame %d" % vx_hit_f) if vx_hit_f >= 0 else "NEVER LANDED"])
+		if vx_hit_f < 0:
+			vx_bad.append(vx_id)
+	# and they die away
+	await _frames(400)
+	var vx_left: int = g.vfx.count()
+	g.time = vx_time0
+	_go(vx_from)
+	await _frames(20)
+	g.test_god = vx_god0
+	g.spawn_timer = 600
+	g.player.hp = g.player.max_hp
+	_ok("spell effects: every spell casts, flies and lands with its own look, then fades away, cheaply", vx_bad.is_empty() and vx_peak > 100 and vx_left < 40 and vx_cost < 4000.0,
+		"%s; at most %d particles at once, %d left 7 s after; the effects' worst frame %.2f ms (pictures: saves/shots/vfx_*.png)" % [", ".join(vx_txt), vx_peak, vx_left, vx_cost / 1000.0])
+
 func _test_town_days(t: Dictionary, mid: int) -> void:
 	var tw = g.towns
 	var mid_p: Vector2 = _cell_pos(mid, g.builds.ground_row(mid) - 14)
@@ -275,22 +497,32 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		at_dusk.append("%s %s%s" % [v2.name, "in" if not v2.inside.is_empty() else "out", "" if g.in_grid(v2.pos, 14.0) else " (far)"])
 	var home := 0
 	var slept := 0
+	var lying := 0
+	var in_bed := 0
 	var waited := 0
 	for k in 40:
 		await _frames(30)
 		waited += 30
 		home = 0
 		slept = 0
+		lying = 0
+		in_bed = 0
 		for v3 in watch:
 			if v3.inside == v3.house:
 				home += 1
 			if v3.asleep:
 				slept += 1
-		if home == watch.size():
+			if v3.lying:
+				lying += 1
+				if not v3.bedroll:
+					in_bed += 1
+		if home == watch.size() and lying == watch.size():
 			break
+	var with_bed := watch.filter(func(wb): return not wb.bed.is_empty()).size()
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town_night.png"))
 	# (they walk there: "stuck", stepping in after pushing on a wall for 90 ticks, is the exception)
-	var night_ok: bool = not watch.is_empty() and home == watch.size() and slept > 0 and int(tw.stats.get("stuck", 0)) * 2 <= int(tw.stats.get("went_in", 0))
+	var night_ok: bool = not watch.is_empty() and home == watch.size() and slept > 0 and int(tw.stats.get("stuck", 0)) * 2 <= int(tw.stats.get("went_in", 0)) \
+		and lying == watch.size() and (with_bed == 0 or in_bed > 0)
 	var late := []
 	for v6 in watch:
 		if v6.inside != v6.house:
@@ -316,8 +548,8 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		if tw.want_place(v7, tw.hour_at(v7.pos)).is_empty() and not v7.inside.is_empty():
 			late.append("%s still in at %.1f h (%s, fade %d, talk %d)" % [v7.name, tw.hour_at(v7.pos), "in grid" if g.in_grid(v7.pos, 12.0) else "far", v7.fade, v7.talk_t])
 	_ok("living towns: folk keep the hours (home asleep at night, out in the morning)", sched_ok and night_ok and morn_ok,
-		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep); in the morning %d of the %d who'd be out came out; %s%s" % [
-		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept,
+		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds); in the morning %d of the %d who'd be out came out; %s%s" % [
+		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed,
 		out, want_out, JSON.stringify(tw.stats), "" if late.is_empty() else "; LATE: " + ", ".join(late)])
 	g.time = tw.time_for_hour(mid_p, 12.0)
 
@@ -326,6 +558,8 @@ func _test_requests(t: Dictionary) -> void:
 	var tw = g.towns
 	var rq0: Array = (g.planet_state.get("requests", []) as Array).duplicate(true)
 	var rn0: Dictionary = (g.planet_state.get("req_n", {}) as Dictionary).duplicate(true)
+	var fk0: Dictionary = (g.planet_state.get("folk_known", {}) as Dictionary).duplicate(true)
+	var tr0: Dictionary = (g.planet_state.get("town_rep", {}) as Dictionary).duplicate(true)
 	var c0: int = int(g.items.get("coins", 0))
 	var pot0: int = int(g.items.get("potion", 0))
 	g.planet_state["requests"] = []
@@ -423,8 +657,21 @@ func _test_requests(t: Dictionary) -> void:
 		var full_ok: bool = cur != null and tw.mark_of(cur) == "" and not tw._request_talk(cur)
 		lines.append("full hands (%d at once): %s" % [Defs.MAX_REQUESTS, full_ok])
 		ok = ok and full_ok
+	# remembered: the one helped greets you as a friend, the village's shops give a better price
+	if asker != null:
+		var fr_line: String = tw._hello(asker, RandomNumberGenerator.new(), 12.0)
+		var fr_keep = null
+		for kv in tw.folk:
+			if kv.keeper and int(kv.town["seed"]) == int(t["seed"]):
+				fr_keep = kv
+		var cheaper: bool = fr_keep != null and tw.price_of(fr_keep, {"price": 100}) < 100
+		var friend_ok: bool = int(tw.memory(asker).get("helped", 0)) > 0 and fr_line.find("I'm") < 0 and cheaper
+		lines.append("remembered: \"%s\", a keeper's 100 coins now %d: %s" % [fr_line, tw.price_of(fr_keep, {"price": 100}) if fr_keep != null else -1, friend_ok])
+		ok = ok and friend_ok
 	g.planet_state["requests"] = rq0
 	g.planet_state["req_n"] = rn0
+	g.planet_state["folk_known"] = fk0
+	g.planet_state["town_rep"] = tr0
 	for f in tw.folk:
 		if int(f.town["seed"]) == int(t["seed"]) and not f.keeper:
 			f.asker = f.idx == tw.asker_index(f.town)
@@ -862,6 +1109,21 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_towns()
+		elif only == "vfx":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_vfx()
+		elif only == "hazards":
+			# (where the full run tries it: the open ground beside the frozen basin)
+			var hzo_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 160, 80, 60, 4, 30)
+			var hzo_a: float = (float(hzo_st.x) + 66.5) / float(Defs.NS) * TAU
+			_go(Vector2(cos(hzo_a), sin(hzo_a)) * (g.gpu.surf_at(hzo_a).x + 12.0))
+			await _frames(60)
+			await _test_hazards()
+		elif only == "ui":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_ui()
 		elif only == "mines":
 			for mi_info in g.builds.infos:
 				if mi_info["meta"].has("mine") and int(mi_info.get("unsound", 0)) > 0:
@@ -2804,55 +3066,7 @@ func run() -> void:
 	var fz1: Vector2i = fz_count.call()
 	_ok("on a frozen world, open water ices over from the top", fz0.x >= 20 and fz0.y == 0 and fz1.y >= 8 and fz1.x > 0,
 		"the basin: water %d, ice %d; 10 s in the frost: water %d, ice %d (the ice on top, the water under it); you: health %.0f, %s" % [fz0.x, fz0.y, fz1.x, fz1.y, g.hp, g.state])
-	# ---- a planet kind's hazards (tried here with Verdance's climate turned to them): the cold under the
-	# open sky and the sun at midday hurt you slowly, unless their ward (or a guardian's relic) bears them ----
-	for hz_e in g.enemies.duplicate():
-		if not hz_e.boss and hz_e.guard_id < 0:
-			g.enemies.erase(hz_e)
-	var hz_god0: bool = g.test_god
-	var hz_time0: float = g.time
-	g.spawn_timer = 999999                     # (no foe wanders in and muddles the sums)
-	g.test_god = false
-	await _frames(8)
-	var hz_open: bool = g.exposed
-	var hz_res := {}
-	for hz_k in ["cold", "sun"]:
-		var hz_d: Dictionary = Defs.HAZARDS[hz_k]
-		if hz_k == "sun":
-			# (the sun straight overhead)
-			var hz_pa: float = atan2(g.player.pos.y, g.player.pos.x)
-			g.time = fposmod((hz_pa - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
-		g.clim[hz_k] = 1.0
-		g.player.hp = g.player.max_hp
-		await _frames(150)
-		var hz_bare: float = g.player.max_hp - g.player.hp
-		var hz_was: String = g.hazard
-		g.items[String(hz_d["ward"])] = true
-		g.player.hp = g.player.max_hp
-		await _frames(120)
-		var hz_ward: float = g.player.max_hp - g.player.hp
-		g.items.erase(String(hz_d["ward"]))
-		g.clim[hz_k] = 0.0
-		hz_res[hz_k] = [hz_bare, hz_ward, hz_was]
-	g.time = hz_time0
-	g.spawn_timer = 600
-	# (and digging what the staff can't cut no longer counts as star iron: the GPU's counters moved)
-	var hz_si0: int = g.player.inv[Defs.STARIRON]
-	var hz_up: Vector2 = g.player.pos.normalized()
-	g.brushes.append([hz_up * (g.gpu.surf_at(atan2(hz_up.y, hz_up.x)).x - 110.0), 6.0, 1, 0, 0, 0, 0, 0])
-	var hz_blk := false
-	for hz_f in 8:
-		await _frames(1)
-		hz_blk = hz_blk or g.dig_blocked > 0
-	var hz_si1: int = g.player.inv[Defs.STARIRON]
-	g.test_god = hz_god0
-	g.player.hp = g.player.max_hp
-	var hz_ok := hz_open and hz_blk and hz_si1 == hz_si0
-	for hz_k2 in hz_res:
-		hz_ok = hz_ok and float(hz_res[hz_k2][0]) > 0.8 and float(hz_res[hz_k2][1]) < 0.05 and String(hz_res[hz_k2][2]) == hz_k2
-	_ok("a planet's cold and midday sun hurt you in the open, but not with their wards; too-hard digging gives no star iron", hz_ok,
-		"in the open %s; the cold: -%.1f health in 2.5 s bare (%s), -%.1f with the Hearth Charm; the sun overhead: -%.1f bare (%s), -%.1f with the Sun Veil; digging stone with no power: blocked %s, star iron %d -> %d" % [hz_open,
-		float(hz_res["cold"][0]), hz_res["cold"][2], float(hz_res["cold"][1]), float(hz_res["sun"][0]), hz_res["sun"][2], float(hz_res["sun"][1]), hz_blk, hz_si0, hz_si1])
+	await _test_hazards()
 	await _test_sky()
 	# ---- health doesn't come back by itself; a draught and Mending bring it back over a moment ----
 	# (nothing about to bite: a wild creature wandering by would muddle the sums)
@@ -2995,6 +3209,8 @@ func run() -> void:
 			shown += 1
 	await _test_gear()
 	await _test_towns()
+	await _test_vfx()
+	await _test_ui()
 	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
 
 	# ---- a building left hanging comes down as a whole once you dig at any part of it ----

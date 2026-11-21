@@ -74,6 +74,7 @@ void fragment() {
 	COLOR.a *= 1.0 - smoothstep(edge - 0.012, edge, d);
 }"
 
+const PixelFont := preload("res://scripts/pixel_font.gd")
 var game
 var active := false             # the local mage is out in space
 var live := true                # the planet is still drawn from its cells (zoomed in close enough)
@@ -719,17 +720,17 @@ func _marker(xf: Transform2D, wpos: Vector2, rad: float, text: String, col: Colo
 	_label(at - dir * 9.0, "%s  %.0fk" % [text, maxf(dist, 0.0) / 1000.0])
 
 func _label(at: Vector2, text: String) -> void:
-	var f := ThemeDB.fallback_font
+	var f: Font = PixelFont.make()
 	var px: float = float(game.scale_px)
 	draw_set_transform(at, 0.0, Vector2.ONE / px)
-	var sz := 15
+	var sz: int = PixelFont.SIZE * int(game.ui.U)
 	var wd := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
 	# (kept on screen: a marker at the edge used to push its label half off it; and moved up or down,
 	# toward the middle, while it would overlap a label already drawn)
 	var half := wd * 0.5 / px + 6.0
 	var cx := clampf(at.x, half, float(game.VW) - half)
 	var cy := at.y
-	var lh := 17.0 / px
+	var lh := float(sz + 2 * int(game.ui.U)) / px
 	var step := lh if at.y < float(game.VH) * 0.5 else -lh
 	for k in 6:
 		var rr := Rect2(cx - half, cy - lh, half * 2.0, lh)

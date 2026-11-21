@@ -115,7 +115,13 @@ func _fill(t: Dictionary) -> void:
 			var v = _add(t, h, STREET if role == "home" else h, hseed(t, hi, k + 1), "folk", false)
 			v.idx = n
 			v.asker = n == asker
-			_place(v, want_place(v, hour_at(_at(float(int(t["x0"]) + int(t["w"]) / 2), 0.0, 0.0))))
+			var beds: Array = h.get("beds", [])
+			if k < beds.size():
+				v.bed = beds[k]
+			var hr_now := hour_at(_at(float(int(t["x0"]) + int(t["w"]) / 2), 0.0, 0.0))
+			_place(v, want_place(v, hr_now))
+			if is_night(hr_now) and v.inside == v.house:
+				_lie_down(v, true)
 			n += 1
 	stats["filled"] = int(stats.get("filled", 0)) + 1
 	var seen: Array = game.planet_state.get("towns_seen", [])
@@ -235,7 +241,17 @@ func _walk(v) -> void:
 			v.goal_c = float(_col(v.pos))
 			v.idle_t = randi_range(20, 120)
 			v.block_t = 0
+			v.lying = v.lie_next
+			v.lie_next = false
+			v.asleep = v.lying
 		return
+	# lying down asleep: still till morning (or till something sends them out)
+	if v.lying:
+		var hl := hour_at(v.pos)
+		if is_night(hl) and want_place(v, hl) == v.house and v.inside == v.house and _foe_near(v.pos, 50.0) == null:
+			v.asleep = true
+			return
+		_get_up(v)
 	if not game.in_grid(v.pos, 12.0):
 		# outside the simulated neighbourhood (and the view): no walking, but they still keep the hours
 		if not v.keeper and game.frame % 30 == v.fseed % 30:
@@ -252,6 +268,10 @@ func _walk(v) -> void:
 				v.goal_c = float(_col(v.pos))
 				stats["moved_off"] = int(stats.get("moved_off", 0)) + 1
 			v.asleep = is_night(hr0) and not v.inside.is_empty() and v.inside == v.house
+			if v.asleep and not v.lying:
+				_lie_down(v, true)
+			elif not v.asleep and v.lying:
+				_get_up(v)
 		return
 	var p: Vector2 = v.pos
 	var a := atan2(p.y, p.x)
@@ -317,7 +337,10 @@ func _walk(v) -> void:
 					return
 			want = -s * HURRY                                  # (basis_r points toward FEWER columns)
 		elif not v.inside.is_empty() and is_night(hr):
-			v.asleep = v.inside == v.house                    # (asleep where they live)
+			v.asleep = v.inside == v.house                    # (asleep where they live: in bed)
+			if v.asleep:
+				_lie_down(v, false)
+				return
 		elif v.idle_t > 0:
 			v.idle_t -= 1
 		else:
@@ -342,6 +365,58 @@ func _step(v, to: Vector2, into: Dictionary) -> void:
 	v.fade = FADE * 2
 	v.fade_to = to
 	v.fade_in = into
+
+## to bed: their own bed if it's still there (its pillow end where the head goes), else a bedroll on the
+## floor of the room they're in. `now`: straight there (out of sight, or when the village is filled);
+## otherwise a fade, like going through a door.
+func _lie_down(v, now: bool) -> void:
+	var h: Dictionary = v.inside
+	var to: Vector2
+	var b: Dictionary = v.bed
+	var in_bed := not b.is_empty()
+	if in_bed:
+		var flip := bool(b["flip"])
+		var bw := int(b["w"])
+		var mid := float(int(b["c"])) + (11.0 if not flip else float(bw) - 12.0)
+		var head := float(int(b["c"])) + (4.0 if not flip else float(bw) - 5.0)
+		var row := int(b["row"])
+		# (taken or burnt? the collision grid knows where furniture is; out of it, trust it's there)
+		if game._bg_at(int(head), row - 5) == 0 and game._bg_at(int(mid), row - 5) == 0:
+			in_bed = false
+		else:
+			to = _at(mid, float(row - 6), 2.5)
+			v.lie_head = _at(head, float(row - 6), 2.5)
+			v.wake_at = _at(mid, float(row + 1), 9.0)
+	if not in_bed:
+		var c := float(_col(v.pos))
+		var x0 := float(int(h["x0"]) + 12)
+		var x1 := float(int(h["x0"]) + int(h["w"]) - 12)
+		c = clampf(c, minf(x0, x1), maxf(x0, x1))
+		to = _at(c, float(h["floor"]), 4.5)
+		var side := 1.0 if (v.fseed % 2) == 0 else -1.0
+		v.lie_head = _at(c + side * 7.0, float(h["floor"]), 4.5)
+		v.wake_at = _at(c, float(h["floor"]), 9.0)
+	v.bedroll = not in_bed
+	if now:
+		v.pos = to
+		v.lying = true
+		v.asleep = true
+	else:
+		_step(v, to, h)
+		v.lie_next = true
+	v.vx = 0.0
+	v.vy = 0.0
+	stats["to_bed" if in_bed else "bedroll"] = int(stats.get("to_bed" if in_bed else "bedroll", 0)) + 1
+
+## up again, standing beside where they slept
+func _get_up(v) -> void:
+	v.lying = false
+	v.asleep = false
+	if v.wake_at != Vector2.ZERO:
+		v.pos = v.wake_at
+	v.vx = 0.0
+	v.vy = 0.0
+	v.goal_c = float(_col(v.pos))
 
 ## how visible someone is (fading through a house's side)
 static func alpha_of(v) -> float:
@@ -414,11 +489,60 @@ func talk(m) -> bool:
 		return true
 	best.talk_t = 240
 	if best.asker and not best.asleep and _request_talk(best):
+		_meet(best)
 		return true
 	best.talks += 1
 	_say(best, line_for(best), 330)
+	if not best.asleep:
+		_meet(best)
 	stats["talked"] = int(stats.get("talked", 0)) + 1
 	return true
+
+# ------------------------------------------------------------------ memory ---
+# The folk remember you: planet_state["folk_known"][their seed] = {"met": times you've talked, "helped": your
+# requests they've had done}, and each village how much you've done for it: planet_state["town_rep"][its
+# seed] = {"n": requests done there, "last": who for}. They greet you by it, the village's shops give a friend
+# a better price (`price_of`), and you know the names of the folk you've met (overlay's name tags).
+
+func memory(v) -> Dictionary:
+	var fk: Dictionary = game.planet_state.get("folk_known", {})
+	return fk.get(str(v.fseed), {})
+
+func knows(v) -> bool:
+	return int(memory(v).get("met", 0)) > 0
+
+func _meet(v) -> void:
+	var fk: Dictionary = game.planet_state.get("folk_known", {})
+	var m: Dictionary = fk.get(str(v.fseed), {})
+	m["met"] = int(m.get("met", 0)) + 1
+	fk[str(v.fseed)] = m
+	game.planet_state["folk_known"] = fk
+
+func rep(t: Dictionary) -> Dictionary:
+	var tr: Dictionary = game.planet_state.get("town_rep", {})
+	return tr.get(str(t["seed"]), {})
+
+## what a thing costs from this keeper: a friend of the village (5% for every request done there, up to a
+## quarter) pays less
+func price_of(v, it: Dictionary) -> int:
+	var n := int(rep(v.town).get("n", 0))
+	return maxi(1, int(round(float(int(it["price"])) * (1.0 - minf(0.25, 0.05 * float(n))))))
+
+## a greeting that knows you: a stranger's introduction, a welcome back, a friend's
+func _hello(v, r: RandomNumberGenerator, hr: float) -> String:
+	var mem := memory(v)
+	var met := int(mem.get("met", 0))
+	var rp := rep(v.town)
+	var town_name := String(v.town["name"])
+	if met == 0:
+		return "%s I'm %s. Not seen you in %s before, mage." % [["Hello there!", "Oh! A mage.", "Well met."][r.randi_range(0, 2)], v.name, town_name]
+	if int(mem.get("helped", 0)) > 0:
+		return ["My friend the mage!", "Ah, it's you! Good to see you.", "There's my favourite mage."][r.randi_range(0, 2)]
+	if int(rp.get("n", 0)) > 0 and r.randf() < 0.5:
+		return "You're the one who helped %s! %s" % [String(rp.get("last", "us")), "Thank you." if r.randf() < 0.5 else "Folk talk of nothing else."]
+	if met >= 3:
+		return ["Back again, mage?", "You again! Hello.", "Hello again."][r.randi_range(0, 2)]
+	return (["Morning!", "Good day.", "Well met, mage."] if hr > 5.0 and hr < 17.0 else ["Evening.", "Late to be out."])[r.randi_range(0, 1)]
 
 ## what someone says: a greeting, then (in turn, as you keep asking) a rumour about the nearest guardian, a
 ## dungeon, this world's ore, its danger, the village's shops, or just village talk
@@ -428,7 +552,9 @@ func line_for(v) -> String:
 	var r := RandomNumberGenerator.new()
 	r.seed = v.fseed + v.talks * 977
 	var hr := hour_at(v.pos)
-	var hello: String = (["Morning!", "Good day.", "Well met, mage."] if hr > 5.0 and hr < 17.0 else ["Evening.", "Late to be out."])[r.randi_range(0, 1)]
+	var hello := _hello(v, r, hr)
+	if not knows(v):
+		return hello                                  # (the first time, they just introduce themselves)
 	var topics := ["lair", "dungeon", "ore", "hazard", "shops", "chat"]
 	var topic: String = topics[(v.talks + r.randi_range(0, 5)) % topics.size()]
 	var said := ""
@@ -623,6 +749,16 @@ func _finish(rq: Dictionary, v) -> void:
 	var rn: Dictionary = game.planet_state.get("req_n", {})
 	rn[str(rq["town"])] = int(rn.get(str(rq["town"]), 0)) + 1
 	game.planet_state["req_n"] = rn
+	# remembered: by the one you helped, and by their village
+	var fk: Dictionary = game.planet_state.get("folk_known", {})
+	var fm: Dictionary = fk.get(str(rq["from"]), {})
+	fm["helped"] = int(fm.get("helped", 0)) + 1
+	fm["met"] = maxi(1, int(fm.get("met", 0)))
+	fk[str(rq["from"])] = fm
+	game.planet_state["folk_known"] = fk
+	var tr: Dictionary = game.planet_state.get("town_rep", {})
+	tr[str(rq["town"])] = {"n": int((tr.get(str(rq["town"]), {}) as Dictionary).get("n", 0)) + 1, "last": String(rq["who"])}
+	game.planet_state["town_rep"] = tr
 	for f in folk:
 		if int(f.town["seed"]) == int(rq["town"]) and not f.keeper:
 			f.asker = f.idx == asker_index(f.town)
@@ -665,7 +801,13 @@ func short(rq: Dictionary) -> String:
 func open_shop(v) -> void:
 	shop_of = v
 	v.facing = 1 if (game.player.pos - v.pos).dot(game.basis_r(atan2(v.pos.y, v.pos.x))) > 0.0 else -1
-	_say(v, ["What'll it be?", "Come in, come in.", "Take a look."][randi() % 3], 200)
+	if not knows(v):
+		_say(v, "Welcome, stranger. I'm %s. Take a look." % v.name, 220)
+	elif int(rep(v.town).get("n", 0)) > 0:
+		_say(v, "For a friend of %s, a better price!" % v.town["name"], 220)
+	else:
+		_say(v, ["Welcome back! What'll it be?", "Back again? Come in.", "Good to see you. Take a look."][randi() % 3], 200)
+	_meet(v)
 	game.state = "shop"
 	game.ui.show_shop(v)
 	stats["shops"] = int(stats.get("shops", 0)) + 1
@@ -731,7 +873,7 @@ func owned(it: Dictionary) -> bool:
 ## buy the i-th thing the keeper sells
 func buy(v, i: int) -> bool:
 	var it: Dictionary = shop_def(v)["sell"][i]
-	var price := int(it["price"])
+	var price := price_of(v, it)
 	if coins() < price or owned(it):
 		return false
 	game.items["coins"] = coins() - price
