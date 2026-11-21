@@ -379,6 +379,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   "_sleep" (`BossArt.bird_feet` puts it on its branch). Bats roost on cave roofs (`main._bat_roost`, "bat_hang").
 - Prey creatures: hare (forest, savanna, mountain), snowhare, deer (a herd of 3), skink, reedfrog. Test: `_test_ecology`
   ("ecology").
+- Sizes true to life (user, 21 Nov: "accurate to size compared to the player"): a cell is about 10 cm (the mage's
+  body is 17 tall). Wolves, hyenas, hounds ~12 x 9, boars and rams ~13 x 9-10, deer 13 x 14, jackals 8 x 6, hares
+  6 x 4, skinks 5 x 2, frogs 4-8 wide, hawks/owls/gulls len 5-6 (wing 7), vultures 9 (wing 11), snakes rad 1 (2 cells
+  thick, 12-16 segments), fungi ~5. boss_art.gd scales its fixed-size details by `minf(1, size / design size)`
+  (beast L/18, toad L/15, bird L/12, fungus L/12), so guardians (larger) are drawn as before; a serpent's segments
+  thin to 0.6 x rad, its head at least 1.4. `_test_ui` saves `lineup.png` (the mage and every creature, feet on one
+  line). Treasure chests lean with the ground like doors (`_sprite(..., turn)`).
 
 ## Pathfinding (scripts/nav.gd)
 - `shaders/navmap.comp` runs after grid.comp: one byte per 4 x 4 grid cells per mage (bit 0 blocks, 1 platform, 2

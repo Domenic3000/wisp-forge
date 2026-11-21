@@ -568,7 +568,7 @@ func _draw_all() -> void:
 			var ch_f := clampf(float(c.open_t - 50) / 60.0, 0.0, 1.0)   # CHEST_VANISH (110) - 50
 			ch_a = 1.0 - ch_f * ch_f
 			ch_sq = 1.0 - ch_f * 0.7
-		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq)
+		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq, Color(1, 1, 1), true)
 	# open doors, swung out of their houses
 	for d in game.doors:
 		if not d["open"]:

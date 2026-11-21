@@ -392,6 +392,28 @@ func _test_ui() -> void:
 		px0 += big2.get_width() + 6
 		prow_h = maxi(prow_h, big2.get_height())
 	pimg.save_png(dir.path_join("poses.png"))
+	# every creature standing beside the mage, 4x, feet on one line: saves/shots/lineup.png (sizes true to life)
+	var lu := [Defs.sprite_texture("mage").get_image()]
+	for lc in Defs.CREATURES:
+		var lfr: Dictionary = BA.frames("c_" + lc, Defs.CREATURES[lc]["body"])
+		var lkey: String = "c_" + lc + ("_head" if String(Defs.CREATURES[lc]["body"]["plan"]) == "serpent" else "")
+		if lfr.has(lkey):
+			lu.append(lfr[lkey])
+	var lw := 4
+	var lh := 0
+	for im5 in lu:
+		lw += (im5 as Image).get_width() * 4 + 4
+		lh = maxi(lh, (im5 as Image).get_height() * 4)
+	var limg := Image.create(lw, lh + 12, false, Image.FORMAT_RGBA8)
+	limg.fill(Color(0.35, 0.5, 0.62))
+	var lx := 4
+	for im6 in lu:
+		var big3: Image = (im6 as Image).duplicate()
+		big3.convert(Image.FORMAT_RGBA8)
+		big3.resize(big3.get_width() * 4, big3.get_height() * 4, Image.INTERPOLATE_NEAREST)
+		limg.blend_rect(big3, Rect2i(Vector2i.ZERO, big3.get_size()), Vector2i(lx, 4 + lh - big3.get_height()))
+		lx += big3.get_width() + 4
+	limg.save_png(dir.path_join("lineup.png"))
 	for k in g.player.inv.size():
 		g.player.inv[k] = int(inv0[k])
 	g.known = known0
