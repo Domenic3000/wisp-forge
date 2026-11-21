@@ -34,6 +34,7 @@ var ground_t := 0               # ticks resting on something
 var centre := Vector2.ZERO      # the centre of the planet it flies over (space.gd: the nearest one)
 var look := 1.0                 # which way it's drawn facing: eases from one side to the other in a turn
 var clear_below := 99.0         # air under the keel (cells, up to 24; `advance` measures it)
+var power := 1.0                # its engine (1.5 with the Star-Iron Engine): thrust and top speed in space
 
 static func make(sd: int):
 	var s = load("res://scripts/skiff.gd").new()
@@ -195,7 +196,7 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 			vel *= drag
 	elif in_space:
 		if steering:
-			vel += want * SPACE_THRUST
+			vel += want * SPACE_THRUST * power
 			thrusting = true
 		vel -= up * g
 		vel *= drag
@@ -215,8 +216,8 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 		if vel.length() > cruise:
 			vel = vel.normalized() * maxf(cruise, vel.length() * 0.93)
 		thrusting = steering
-	if vel.length() > MAX_SPEED:
-		vel = vel.normalized() * MAX_SPEED
+	if vel.length() > MAX_SPEED * power:
+		vel = vel.normalized() * MAX_SPEED * power
 	# the hull: level with the ground below, tilted into a climb or a dive, on a spring
 	var tilt := 0.0
 	if not (grounded and vel.length() < 0.6):

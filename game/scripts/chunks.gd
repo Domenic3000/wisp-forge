@@ -5,7 +5,7 @@ extends RefCounted
 ## edges that hit hard splinter (chips and dust as particles, a little rubble); the rest lands whole.
 ##
 ## Finding a piece: every frame the GPU reports, near each mage, one cell of a felled tree (grid.comp
-## counts[59] / [60]) and one creaking block about to fall (counts[56] / [57]). detect() reads the world
+## counts C_FELL_N / C_FELL) and one creaking block about to fall (C_CREAK_N / C_CREAK). detect() reads the world
 ## around it (gpu.read_rect), works out which cells came loose (a tree: the cells of that plant no longer
 ## joined to wood on the ground; a building: the loose blocks and the back walls and furniture hanging
 ## off them), splits a building piece into fragments, takes them out of the world with a stamp and makes
@@ -162,15 +162,15 @@ func detect(m, cn: PackedInt32Array) -> void:
 	if list.size() >= MAX_CHUNKS or cn.size() < 61:
 		return
 	g._use_grid(m)
-	if cn[59] > 0:
-		var u: int = cn[60] & 0xFFFFFFFF
+	if cn[Defs.C_FELL_N] > 0:
+		var u: int = cn[Defs.C_FELL] & 0xFFFFFFFF
 		var wp: Vector2 = g.from_grid(Vector2((u & 1023) + 0.5, ((u >> 10) & 1023) + 0.5))
 		# (a tree just lifted out is gone from the world by the next frame, so only a short pause here:
 		# a long one left the rest of a big tree, or the next tree felled, crumbling meanwhile)
 		if not _seen(wp, 20.0, 6):
 			_take_tree(m, wp)
-	if cn[56] > 0 and list.size() < MAX_CHUNKS:
-		var u2: int = cn[57] & 0xFFFFFFFF
+	if cn[Defs.C_CREAK_N] > 0 and list.size() < MAX_CHUNKS:
+		var u2: int = cn[Defs.C_CREAK] & 0xFFFFFFFF
 		var wp2: Vector2 = g.from_grid(Vector2((u2 & 1023) + 0.5, ((u2 >> 10) & 1023) + 0.5))
 		if not _seen(wp2, 20.0, 8):
 			_take_block(m, wp2)

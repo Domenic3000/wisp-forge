@@ -1,7 +1,8 @@
 // Terrain magic: excavate, explode, fill, freeze, place, chip.
-// Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR).
-// counts[t] = cells collected per material; counts[50] = blocked by hardness; counts[51] = placed;
-// counts[54] = chest cells opened (mode 7). Mode 9 opens or closes a door; mode 10 paints back walls (build mode). Each player has their own 64 counters: owner = mode >> 4.
+// Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR)
+// (excavating, mode 1: budget is how much faster than usual the staff digs).
+// counts[t] = cells collected per material; C_HARD = blocked by hardness; C_PLACED = placed;
+// C_CHEST_OPEN = chest cells opened (mode 7). Mode 9 opens or closes a door; mode 10 paints back walls (build mode). Each player has their own CNT counters: owner = mode >> 4.
 // pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame, 0, 0)
 #include "common"
 #include "world"
@@ -26,7 +27,7 @@ void main() {
 		vec4 A = P.p[88 + 2 * bi], B = P.p[89 + 2 * bi];
 		float dist = distance(p, A.xy);
 		int mode = int(A.w) & 15;
-		uint ob = uint(int(A.w) >> 4) * 64u;   // whose satchel this brush fills (64 counters per player)
+		uint ob = uint(int(A.w) >> 4) * CNT;   // whose satchel this brush fills (CNT counters per player)
 		float rad = A.z;
 		uint t = c & 255u;
 		float R = rnd3(uint(i), uint(pc.b.y), uint(bi) * 31u + 5u);
@@ -60,16 +61,16 @@ void main() {
 			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u && !keepBg) {
 				// nothing in front: harvest the background plant / decoration (never a building's
 				// walls or furniture: those need the deconstruct action)
-				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
+				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
 				if (R > 0.3) continue;
 				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
 				ab = 0u;
 				continue;
 			}
 			if (t == 0u || COLLECT[t] == 0u) continue;
-			if (t == M_TREASURE) { atomicAdd(counts.n[ob + (58)], 1u); continue; }   // digging at a chest opens it
-			if (HARD[t] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
-			float rate = KIND[t] == K_LIQUID ? 0.25 : 0.32 / (1.0 + float(HARD[t]) * 1.2);
+			if (t == M_TREASURE) { atomicAdd(counts.n[ob + C_TREASURE], 1u); continue; }   // digging at a chest opens it
+			if (HARD[t] > power) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
+			float rate = (KIND[t] == K_LIQUID ? 0.25 : 0.32 / (1.0 + float(HARD[t]) * 1.2)) * (1.0 + B.z);   // (B.z: a faster staff)
 			if (R > rate) continue;
 			atomicAdd(counts.n[ob + (collectAs(t))], 1u);
 			c = withFG(c, 0u, 0u);
@@ -88,16 +89,16 @@ void main() {
 			c = withFG(c, nt, life);
 		} else if (mode == 7) { // open a chest: the treasure is taken, an opened chest stays behind
 			if (bgm == M_TREASURE) {
-				atomicAdd(counts.n[ob + (54)], 1u);
+				atomicAdd(counts.n[ob + C_CHEST_OPEN], 1u);
 				ab = B.x > 0.5 ? (M_OPENCHEST | (ab & 0xff0000u)) : 0u;
 			} else if (t == M_TREASURE) {   // a chest (it stands in the foreground; you walk through it)
-				atomicAdd(counts.n[ob + (54)], 1u);
+				atomicAdd(counts.n[ob + C_CHEST_OPEN], 1u);
 				ab = B.x > 0.5 ? (M_OPENCHEST | (((c >> 8) & 255u) << 16)) : 0u;
 				c = withFG(c, 0u, 0u);
 			}
 		} else if (mode == 8) { // deconstruct: take background tiles (back walls, furniture, plants)
 			if (bgm != 0u && bgm != M_TREASURE) {
-				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + (50)], 1u); continue; }
+				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
 				if (R > 0.35) continue;
 				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
 				ab = decorGone(ab);          // (furniture: the wall behind it stays)
@@ -128,14 +129,14 @@ void main() {
 			}
 		} else if (mode == 10) { // build: a back wall of material B.x where there is no background yet (budget B.z)
 			if (bgm != 0u) continue;
-			uint usedw = atomicAdd(counts.n[ob + (51)], 1u);
+			uint usedw = atomicAdd(counts.n[ob + C_PLACED], 1u);
 			if (usedw < uint(B.z)) ab = uint(B.x) | BG_WALL;
 		} else if (mode == 5) { // conjure from the satchel
 			uint m = uint(B.x);
 			// into air, smoke or flames, or pushing water and lava aside (a stone bridge over a pond)
 			if (!(t == 0u || KIND[t] == K_GAS || KIND[t] == K_FIRE || (KIND[t] == K_LIQUID && t != m))) continue;
 			if (isBlock(m) && distance(p, P.p[6].zw) < B.w) continue;
-			uint used = atomicAdd(counts.n[ob + (51)], 1u);
+			uint used = atomicAdd(counts.n[ob + C_PLACED], 1u);
 			// (what you conjure is built: dressed blocks look like blocks, not the planet's own rock)
 			if (used < uint(B.z)) c = withFG(c, m, m == M_FIRE ? 30u : 0u) | (KIND[m] == K_SOLID ? ST_BUILT : 0u);
 		}

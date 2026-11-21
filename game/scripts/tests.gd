@@ -2171,8 +2171,8 @@ func run() -> void:
 	for f in 120:
 		await _frames(1)
 		var here: bool = stone_near.call()
-		max_creak = maxi(max_creak, g.gpu.counts[56])
-		if here and g.gpu.counts[56] > 0:
+		max_creak = maxi(max_creak, g.gpu.counts[Defs.C_CREAK_N])
+		if here and g.gpu.counts[Defs.C_CREAK_N] > 0:
 			creaking = true
 		if not here and gone_at < 0:
 			gone_at = f
@@ -2246,6 +2246,53 @@ func run() -> void:
 	var fz1: Vector2i = fz_count.call()
 	_ok("on a frozen world, open water ices over from the top", fz0.x >= 20 and fz0.y == 0 and fz1.y >= 8 and fz1.x > 0,
 		"the basin: water %d, ice %d; 10 s in the frost: water %d, ice %d (the ice on top, the water under it); you: health %.0f, %s" % [fz0.x, fz0.y, fz1.x, fz1.y, g.hp, g.state])
+	# ---- a planet kind's hazards (tried here with Verdance's climate turned to them): the cold under the
+	# open sky and the sun at midday hurt you slowly, unless their ward (or a guardian's relic) bears them ----
+	for hz_e in g.enemies.duplicate():
+		if not hz_e.boss and hz_e.guard_id < 0:
+			g.enemies.erase(hz_e)
+	var hz_god0: bool = g.test_god
+	var hz_time0: float = g.time
+	g.test_god = false
+	await _frames(8)
+	var hz_open: bool = g.exposed
+	var hz_res := {}
+	for hz_k in ["cold", "sun"]:
+		var hz_d: Dictionary = Defs.HAZARDS[hz_k]
+		if hz_k == "sun":
+			# (the sun straight overhead)
+			var hz_pa: float = atan2(g.player.pos.y, g.player.pos.x)
+			g.time = fposmod((hz_pa - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+		g.clim[hz_k] = 1.0
+		g.player.hp = g.player.max_hp
+		await _frames(150)
+		var hz_bare: float = g.player.max_hp - g.player.hp
+		var hz_was: String = g.hazard
+		g.items[String(hz_d["ward"])] = true
+		g.player.hp = g.player.max_hp
+		await _frames(120)
+		var hz_ward: float = g.player.max_hp - g.player.hp
+		g.items.erase(String(hz_d["ward"]))
+		g.clim[hz_k] = 0.0
+		hz_res[hz_k] = [hz_bare, hz_ward, hz_was]
+	g.time = hz_time0
+	# (and digging what the staff can't cut no longer counts as star iron: the GPU's counters moved)
+	var hz_si0: int = g.player.inv[Defs.STARIRON]
+	var hz_up: Vector2 = g.player.pos.normalized()
+	g.brushes.append([hz_up * (g.gpu.surf_at(atan2(hz_up.y, hz_up.x)).x - 110.0), 6.0, 1, 0, 0, 0, 0, 0])
+	var hz_blk := false
+	for hz_f in 8:
+		await _frames(1)
+		hz_blk = hz_blk or g.dig_blocked > 0
+	var hz_si1: int = g.player.inv[Defs.STARIRON]
+	g.test_god = hz_god0
+	g.player.hp = g.player.max_hp
+	var hz_ok := hz_open and hz_blk and hz_si1 == hz_si0
+	for hz_k2 in hz_res:
+		hz_ok = hz_ok and float(hz_res[hz_k2][0]) > 0.8 and float(hz_res[hz_k2][1]) < 0.05 and String(hz_res[hz_k2][2]) == hz_k2
+	_ok("a planet's cold and midday sun hurt you in the open, but not with their wards; too-hard digging gives no star iron", hz_ok,
+		"in the open %s; the cold: -%.1f health in 2.5 s bare (%s), -%.1f with the Hearth Charm; the sun overhead: -%.1f bare (%s), -%.1f with the Sun Veil; digging stone with no power: blocked %s, star iron %d -> %d" % [hz_open,
+		float(hz_res["cold"][0]), hz_res["cold"][2], float(hz_res["cold"][1]), float(hz_res["sun"][0]), hz_res["sun"][2], float(hz_res["sun"][1]), hz_blk, hz_si0, hz_si1])
 	# ---- health doesn't come back by itself; a draught and Mending bring it back over a moment ----
 	# (nothing about to bite: a wild creature wandering by would muddle the sums)
 	for hl_e in g.enemies.duplicate():
@@ -2836,23 +2883,71 @@ func run() -> void:
 		if g.space.active:
 			tv_in = tvk1
 			break
+	# ---- the Prospector's Beam: the pilot mines an asteroid from aboard ----
+	g.space._ensure_rocks(true)
+	var bm_r = g.space.nearest_rock(sf_sk.pos, 1e9)
+	var bm_got := -1
+	var bm_inv0 := 0
+	var bm_inv1 := 0
+	if bm_r != null:
+		bm_r.omega = 0.0
+		bm_r.vel = Vector2.ZERO
+		var bm_dir: Vector2 = (sf_sk.pos - bm_r.pos).normalized()
+		var bm_at: Vector2 = bm_r.pos + bm_dir * (bm_r.reach() + 70.0)
+		g.items["beam"] = true
+		var bm_c0: int = bm_r.count()
+		for bm_v in g.player.inv:
+			bm_inv0 += int(bm_v)
+		g.test_cast = false
+		g.test_dig = true
+		for bm_f in 150:
+			sf_sk.pos = bm_at
+			sf_sk.vel = Vector2.ZERO
+			bm_r.vel = Vector2.ZERO
+			g.test_aim = bm_r.pos + bm_dir * (bm_r.reach() * 0.4)
+			await _frames(1)
+			if bm_f == 100:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("beam.png"))
+		g.test_dig = false
+		g.test_cast = true
+		g.items.erase("beam")
+		bm_got = bm_c0 - bm_r.count()
+		for bm_v2 in g.player.inv:
+			bm_inv1 += int(bm_v2)
+	_ok("the Prospector's Beam mines an asteroid from the skiff", bm_got >= 30 and bm_inv1 - bm_inv0 >= 30,
+		"%d cells taken from the rock, %d into the satchel" % [bm_got, bm_inv1 - bm_inv0])
 	var tv_to: Vector2 = Defs.planet_pos(1) - Defs.planet_pos(0)
-	# ---- first with no Core Drive: Cindrel is beyond the skiff's reach, and you're held off it; then the
-	# drive is forged (a Planet Core bound in star iron), and it isn't ----
+	# ---- first with no Core Drive: Cindrel is beyond the skiff's reach, wrapped in a storm belt that
+	# throws you back (no invisible wall: the wind and lightning you see); then the drive is forged (a
+	# Planet Core bound in star iron), and the belt lets you through ----
 	var tv_reach0: int = g.skiff_reach()
 	g.items["reach"] = 0
-	var tv_lim: float = float(Defs.make_planet(1)["radius"]) + Defs.ATMO + Defs.ORBIT_ROWS + 3000.0
-	sf_sk.pos = tv_to - tv_to.normalized() * (tv_lim + 900.0)
+	var tv_space: float = float(Defs.make_planet(1)["radius"]) + Defs.ATMO + Defs.ORBIT_ROWS
+	var tv_lim: float = tv_space + g.space.BELT_IN
+	sf_sk.pos = tv_to - tv_to.normalized() * (tv_space + g.space.BELT_OUT + 300.0)
 	sf_sk.vel = tv_to.normalized() * 30.0
 	g.cam_c = sf_sk.pos
 	var tv_lk_travel := false
 	var tv_lk_min := 1e12
-	for tvl in 240:
+	g.space.belt_max = 0.0
+	g.space.belt_hits = 0
+	var tv_god0: bool = g.test_god
+	g.test_god = true
+	var tv_bk := 0.0
+	var tv_bshot := false
+	for tvl in 420:
 		g.test_aim = Defs.planet_pos(1) - Defs.planet_pos(g.space.home) + Vector2(0.5, 0.5)
 		await _frames(1)
 		tv_lk_travel = tv_lk_travel or g.travelling or g.space.home != 0
 		tv_lk_min = minf(tv_lk_min, (sf_sk.pos - tv_to).length())
-	var tv_locked: bool = not tv_lk_travel and tv_lk_min > tv_lim - 60.0
+		if not tv_bshot and g.space.belt > 0.35:
+			tv_bshot = true
+			await _frames(2)
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("storm_belt.png"))
+		if tvl > 360:
+			tv_bk = maxf(tv_bk, -sf_sk.vel.dot(tv_to.normalized()))
+	g.test_god = tv_god0
+	var tv_locked: bool = not tv_lk_travel and tv_lk_min > tv_lim and g.space.belt_max > 0.2
 	g.tier = 4
 	g.items["heart"] = true
 	var tv_rec: Dictionary = {}
@@ -2863,7 +2958,7 @@ func run() -> void:
 		g.player.inv[int(tv_k)] += int(tv_rec["cost"][tv_k])
 	var tv_drive: bool = not tv_rec.is_empty() and g.craft(tv_rec) and g.skiff_reach() == 1
 	_ok("without a Core Drive the skiff can't reach the next planet; with one it can", tv_locked and tv_drive,
-		"held off Cindrel %s (closest %.0f, hold at %.0f, travel started %s); Core Drive forged %s (reach %d, was %d)" % [not tv_lk_travel, tv_lk_min, tv_lim, tv_lk_travel, tv_drive, g.skiff_reach(), tv_reach0])
+		"held off Cindrel by its storm belt %s (closest %.0f from its centre, the belt's inner edge %.0f, deepest in it %.2f, %d lightning strikes, thrown back at up to %.1f a tick near the end, travel started %s); Core Drive forged %s (reach %d, was %d)" % [not tv_lk_travel, tv_lk_min, tv_lim, g.space.belt_max, g.space.belt_hits, tv_bk, tv_lk_travel, tv_drive, g.skiff_reach(), tv_reach0])
 	# (most of the way there at once: the planet is made as you cover the rest)
 	sf_sk.pos = tv_to * 0.7
 	sf_sk.vel = tv_to.normalized() * 35.0
@@ -3187,6 +3282,24 @@ func _test_far_biomes() -> void:
 		g.player.items["cinderheart"] = true
 	_ok("Cindrel's air scorches you under the open sky, but not with the Heat Ward", fh_open and fh_burnt > 0.8 and fh_warded < 0.05,
 		"out in the open %s; 2.5 s without the ward: -%.1f health, with it: -%.1f" % [fh_open, fh_burnt, fh_warded])
+	# its own ore, Fire Opal, lies in its ground (a block of rock under you, read back), and the Core Drive
+	# that leaves it wants some
+	var fo_c := int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS)
+	var fo_r: int = Defs.row_at(g.gpu.surf_at(atan2(g.player.pos.y, g.player.pos.x)).x) + 30
+	var fo_n := 0
+	var fo_cells := 0
+	for fo_q in 3:
+		var fo_rr: Dictionary = g.gpu.read_rect(fo_c - 300 + fo_q * 200, fo_r, 200, 260, fo_c - 300 + fo_q * 200, 200)
+		for fo_v in fo_rr["fg"]:
+			fo_cells += 1
+			if (fo_v & 255) == Defs.FIREOPAL:
+				fo_n += 1
+	var fo_cost: Dictionary = {}
+	for fo_rec in g.recipes:
+		if fo_rec["id"] == "drive":
+			fo_cost = fo_rec["cost"]
+	_ok("each kind of planet has its own ore: Fire Opal in Cindrel's ground, wanted by its Core Drive", fo_n >= 20 and int(fo_cost.get(Defs.FIREOPAL, 0)) == Defs.DRIVE_ORE,
+		"%d Fire Opal cells in %d read under you; the Core Drive here costs %s" % [fo_n, fo_cells, str(fo_cost)])
 	g._enter_planet(2)
 	g.ui.title.visible = false
 	await _frames(60)
@@ -3202,6 +3315,55 @@ func _test_far_biomes() -> void:
 	# the swimmers: somewhere the sea is deep near you, each comes after you and keeps to the water
 	g.test_god = true
 	var fb_c0 := int(floor(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS))
+	# the deep sea crushes you, unless the Tide Charm (or the Tidefin, from its guardian) bears it
+	# (the deepest stretch of sea within reach: 9 columns together at least that deep)
+	var dp_col := -1
+	var dp_best := 0
+	for dp_k in range(0, 6000, 8):
+		for dp_sgn in [1, -1]:
+			var dp_c: int = fb_c0 + dp_sgn * dp_k
+			var dp_d := 9999
+			for dp_q in range(-8, 9, 4):
+				dp_d = mini(dp_d, g.builds.ground_row(dp_c + dp_q) - g.builds.water_row(dp_c + dp_q))
+			if dp_d > dp_best:
+				dp_best = dp_d
+				dp_col = dp_c
+	if dp_best < 46:
+		dp_col = -1
+	var dp_bare := -1.0
+	var dp_charm := -1.0
+	var dp_was := ""
+	if dp_col >= 0:
+		var dp_fin: bool = g.player.items.has("tidefin")
+		g.player.items.erase("tidefin")
+		for dp_e in g.enemies.duplicate():
+			if not dp_e.boss and dp_e.guard_id < 0:
+				g.enemies.erase(dp_e)
+		var dp_at: Vector2 = _cell_pos(dp_col, g.builds.water_row(dp_col) + mini(dp_best - 6, 60))
+		_go(dp_at)
+		await _frames(10)
+		g.test_god = false
+		g.player.hp = g.player.max_hp
+		g.player.breath = g.player.max_breath
+		for dp_f in 120:
+			g.player.pos = dp_at
+			await _frames(1)
+		dp_bare = g.player.max_hp - g.player.hp
+		dp_was = g.hazard
+		g.items["tidecharm"] = true
+		g.player.hp = g.player.max_hp
+		g.player.breath = g.player.max_breath
+		for dp_f2 in 120:
+			g.player.pos = dp_at
+			await _frames(1)
+		dp_charm = g.player.max_hp - g.player.hp
+		g.items.erase("tidecharm")
+		g.test_god = true
+		if dp_fin:
+			g.player.items["tidefin"] = true
+		g.player.hp = g.player.max_hp
+	_ok("Thalassa's deep sea crushes you, but not with the Tide Charm", dp_bare > 1.5 and dp_charm < 0.05 and dp_was == "deep",
+		"the deepest sea near you %d cells (at column %d); 2 s near its floor: -%.1f health bare (%s), -%.1f with the charm" % [dp_best, dp_col, dp_bare, dp_was, dp_charm])
 	var fb_col := -1
 	for fb_k in range(0, 3000, 8):
 		for fb_sgn in [1, -1]:

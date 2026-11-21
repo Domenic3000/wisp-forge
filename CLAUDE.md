@@ -174,11 +174,39 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   wild, realm); the classic five are temperate, volcanic, ocean, desert, marsh.
 - Travel is gated: `main.skiff_reach()` (`items["reach"]`, saved; a save from before keeps every planet it has a
   world file for) is the highest planet index the skiff can fly to. The Core Drive (recipe "drive": 30 Planet
-  Core, 12 Star Iron, 10 Wisp; needs the Core Siphon, tier 4, which needs Vulkhar's Ember Heart, and the skiff)
+  Core, 12 Star Iron, 10 Wisp, plus `Defs.DRIVE_ORE` of this planet's own ore if it has one: `main._refresh_recipes`
+  rewrites its cost in `_make_world`; needs the Core Siphon, tier 4, which needs Vulkhar's Ember Heart, and the skiff)
   raises it to this planet's index + 1. space.gd `reachable(i)`: `_maybe_travel` never starts for a planet out of
-  reach, so `_hold` keeps you HOLD above it (a toast says why); its edge marker says "(needs a Core Drive)".
-  STAR IRON (material 50, `PLACE` 0: its id is the GPU's "too hard" counter, so it must never be put into the
-  world) is only in asteroids (asteroid.gd: metallic rocks' hearts, a speck in stony ones).
+  reach. NO INVISIBLE WALL (user, 20 Nov): such a planet is wrapped in a STORM BELT (`_storm`, `BELT_IN`..`BELT_OUT`
+  above its orbit band, coloured by its kind's `CLIMATES` "belt"): `_draw_belts` shows a shimmering curtain at its
+  outer edge and a haze inside; in it the wind pushes outward (0.03 + 0.85 f^2 a tick, f = how deep, 0..1), takes
+  speed coming in, gusts sideways, blows sparks past, and lightning strikes (`_strike`: hurts, knocks out, flash,
+  shake, "zap"; at f >= 1 a great bolt throws you clear). Full thrust stalls about halfway in. `_hold` is only for
+  a reachable planet still being made. Markers and the map's system chart (a dashed ring) say "storm belt: needs a
+  Core Drive". STAR IRON (material 50) is only in asteroids (asteroid.gd: metallic rocks' hearts, a speck in stony
+  ones).
+- GPU counters: `Defs.CNT` (128) per player, one per material below `C_HARD` (112), then `C_HARD`, `C_PLACED`,
+  `C_FALL_N`/`C_FALL_MAX`, `C_CHEST_OPEN`, `C_CHEST`, `C_CREAK_N`/`C_CREAK`, `C_FOG`, `C_FELL_N`/`C_FELL`,
+  `C_TREASURE` (also #defines in every shader). They used to start at 50, so digging what the staff couldn't cut
+  counted as star iron; a save without "cnt": 2 has its star iron zeroed on load. Materials must stay below 112.
+- Each planet kind's own ore (`Defs.KIND_ORES`, materials 51-57: Fire Opal volcanic, Abyss Pearl ocean (seabed
+  only, 30+ under the sea), Sunstone desert, Bog Iron marsh, Rime Crystal frozen, Amber wild, Silver realm; temperate
+  has none): gen.comp `strata` lays it as veins in its host ground at its depths (P.p[126] = material + 3 hosts,
+  P.p[127] = depth from/to, threshold, 4th host + 1000 for seabed only; set in `gpu.build_surface`). Its gear
+  (recipes with "ore": Fire Opal Focus digs x1.5 via brush B.z, Pearl Lung breath x3, Sunstone Circlet +60 mana,
+  Bog Iron Mail x0.8 damage, Rime Lens dig radius 14, Amber Heart +40 health, Silver Sigil spells x0.75 mana) is
+  locked until you've held some (`items["found_<mat>"]`, set when first dug or from a hoard). Guardians' hoards hold
+  16 of the planet's ore, wardens' 6 (`_hoard_ore`), chests a little.
+- Hazards (`Defs.HAZARDS`, CLIMATES keys "cold" frozen, "sun" desert, "miasma" marsh, "deep" ocean; main `_hazards`
+  / `_hazard_level`, local player only, `hazard` = the one hurting you now): cold under the open sky (x1.6 at night,
+  x1.6 in wind; a fire, torch or lava within ~14 cells, `_near_warmth`, keeps it off), sun under the open sky when
+  `sun_overhead` > 0.72, miasma in fog (`m.fog` > 0.25) near the ground, deep in liquid 35+ under the sea's level (the Abyss Pearl beds).
+  Each is borne by a ward (Wards: Hearth Charm, Sun Veil, Fen Mask, Tide Charm; `items[id]`) or a guardian's relic
+  (rimefang, sunidol, pearl, tidefin: relics are keys past hazards). Volcanic heat stays the Heat Ward's (or the
+  Cinderheart's).
+- Skiff upgrades (Travel): Star-Iron Engine (`items["engine"]`: `skiff.power` 1.5, thrust and top speed in space,
+  cruise in the air), Prospector's Beam (`items["beam"]`: the pilot holds dig in space, space.gd `_beam` mines
+  asteroids within `BEAM_REACH` of the skiff via `_mine_at`; drawn as a line to `beam_to`).
 - Climate per kind (`CLIMATES`): "storm" (how often it rains, lightning), "wind" (main `wind`, gusting with the
   storm, turning with each spell of weather; pushes you while `exposed`, i.e. `_open_sky`: nothing solid 6-72
   cells over you, above the ground), "heat" (volcanic: the open air hurts 0.012 a tick without the Heat Ward or the
@@ -187,6 +215,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   biomes), "wild" (wild: creatures spawn more often). `_update_climate` blows snow (a blizzard), sand or embers
   across the view as particles. Prism Crystal is rarer (gen.comp thresholds, chest loot), and so are draughts in
   chests (0.1 + rare x 0.3).
+
+## Music (scripts/audio.gd)
+- Tracks in game/audio/music/ by name: mood (surface_day, surface_night, underground, deep, boss, space, title) or
+  kind + "_" + mood (`track_key`: "volcanic_surface_day.mp3"); `_pick` tries this planet kind's own, then the common
+  one, then the fallbacks. A new kind of planet counts as a new mood (crossfade). The user makes tracks with Suno.
 
 ## Pathfinding (scripts/nav.gd)
 - `shaders/navmap.comp` runs after grid.comp: one byte per 4 x 4 grid cells per mage (bit 0 blocks, 1 platform, 2

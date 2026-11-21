@@ -8,10 +8,10 @@
 #include "bglayer"
 #include "clouds"
 layout(std430, set = 0, binding = 7) restrict writeonly buffer Grid { uint g[]; } grid;
-// counts[52] = falling blocks overlapping the mage, counts[53] = the longest fall among them,
-// counts[55] = nearest chest within 44 cells: (4095 - dist^2) << 20 | centreJ << 10 | centreI,
-// counts[56] = creaking blocks nearby, counts[57] = one of them: random << 20 | j << 10 | i
-// counts[59] = cells of a felled tree or bush nearby (cut loose, not yet lifted out), counts[60] = one
+// counts (CNT a mage, names from defs.gd): C_FALL_N = falling blocks overlapping the mage, C_FALL_MAX = the
+// longest fall among them, C_CHEST = nearest chest within 44 cells: (4095 - dist^2) << 20 | centreJ << 10 | centreI,
+// C_CREAK_N = creaking blocks nearby, C_CREAK = one of them: random << 20 | j << 10 | i,
+// C_FELL_N = cells of a felled tree or bush nearby (cut loose, not yet lifted out), C_FELL = one
 // of them, packed the same way (scripts/chunks.gd lifts the piece out whole and lets it topple)
 layout(std430, set = 0, binding = 3) restrict buffer Counts { uint n[]; } counts;
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -23,11 +23,11 @@ void main() {
 	vec2 G = pc.c.xy;
 	float A = pc.c.z;
 	int slot = pc.a.y;
-	uint cb = uint(slot) * 64u;
+	uint cb = uint(slot) * CNT;
 	int goff = slot * GS * (GS / 4);
 	vec2 R = vec2(sin(A), -cos(A)), D = vec2(-cos(A), -sin(A));
-	// counts[58]: how deep in cloud this mage stands (0-1000)
-	if (gx4 == 0 && j == 0) counts.n[cb + 58u] = uint(cloudDensity(G) * 1000.0);
+	// C_FOG: how deep in cloud this mage stands (0-1000)
+	if (gx4 == 0 && j == 0) counts.n[cb + C_FOG] = uint(cloudDensity(G) * 1000.0);
 	uint pk = 0u;
 	for (int q = 0; q < 4; q++) {
 		int i = gx4 * 4 + q;
@@ -38,17 +38,17 @@ void main() {
 		float di = float(i - GS / 2) + 0.5, dj = float(j - GS / 2) + 0.5;
 		bool looseF = KIND[t] == K_SOLID && (full & ST_ANCHOR) == 0u && stOf(full) > SPAN[t];
 		if (looseF && lifeF >= 128u && di * di + dj * dj < 160.0 * 160.0) {
-			atomicAdd(counts.n[cb + 56u], 1u);
+			atomicAdd(counts.n[cb + C_CREAK_N], 1u);
 			uint hsh = hashu(uint(i) * 7919u ^ uint(j) * 104729u ^ uint(P.p[0].y)) & 0xfffu;
-			atomicMax(counts.n[cb + 57u], (hsh << 20) | (uint(j) << 10) | uint(i));
+			atomicMax(counts.n[cb + C_CREAK], (hsh << 20) | (uint(j) << 10) | uint(i));
 		}
 		if (di * di + dj * dj < 150.0 * 150.0) {
 			int pi2 = idxAt(pos);
 			uint ap = pi2 < 0 ? 0u : aux.a[pi2];
 			if ((ap & 0x80000000u) != 0u && (ap & 255u) != 0u && ((ap >> 8) & 63u) >= 62u) {
-				atomicAdd(counts.n[cb + 59u], 1u);
+				atomicAdd(counts.n[cb + C_FELL_N], 1u);
 				uint hp = hashu(uint(i) * 3571u ^ uint(j) * 7919u ^ uint(P.p[0].y)) & 0xfffu;
-				atomicMax(counts.n[cb + 60u], (hp << 20) | (uint(j) << 10) | uint(i));
+				atomicMax(counts.n[cb + C_FELL], (hp << 20) | (uint(j) << 10) | uint(i));
 			}
 		}
 		if (abs(di) <= 44.5 && abs(dj) <= 44.5) {
@@ -63,14 +63,14 @@ void main() {
 				float ic = float(i) + (pi - 5.5);
 				float jc = float(j) + (4.0 - pj);
 				uint d2 = uint(min(di * di + dj * dj, 4095.0));
-				atomicMax(counts.n[cb + 55u], ((4095u - d2) << 20) | (uint(clamp(jc, 0.0, 1023.0)) << 10) | uint(clamp(ic, 0.0, 1023.0)));
+				atomicMax(counts.n[cb + C_CHEST], ((4095u - d2) << 20) | (uint(clamp(jc, 0.0, 1023.0)) << 10) | uint(clamp(ic, 0.0, 1023.0)));
 			}
 		}
 		// (only through the upper half: a clod sliding down beside your legs as you drop into a pit
 		// you dug isn't one falling on you)
 		if (looseF && lifeF > 0u && lifeF < 128u && abs(di) <= 4.5 && dj >= -11.5 && dj <= 0.0) {
-			atomicAdd(counts.n[cb + 52u], 1u);
-			atomicMax(counts.n[cb + 53u], lifeF);
+			atomicAdd(counts.n[cb + C_FALL_N], 1u);
+			atomicMax(counts.n[cb + C_FALL_MAX], lifeF);
 		}
 		// falling sand / snow / rain (nothing under it yet) never blocks or drags bodies
 		if (KIND[t] == K_POWDER || KIND[t] == K_LIQUID) {

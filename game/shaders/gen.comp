@@ -157,6 +157,16 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 		}
 	}
 
+	// the planet kind's own ore (Defs.KIND_ORES): P.p[126] = (material, three of the ground kinds it forms
+	// in), P.p[127] = (depth from, depth to, threshold, the fourth ground kind + 1000 if only in the seabed)
+	vec4 ko = P.p[126], kd = P.p[127];
+	if (ko.x > 0.5 && d >= kd.x && d < kd.y) {
+		float h4 = mod(kd.w, 1000.0);
+		bool host = m == uint(ko.y + 0.5) || m == uint(ko.z + 0.5) || m == uint(ko.w + 0.5) || m == uint(h4 + 0.5);
+		bool bed = kd.w < 999.5 || (P.p[7].y > 0.0 && rs < RS0 - P.p[7].y - 30.0);
+		if (host && bed && oreN(p * 0.8, 10) > kd.z - (P.p[7].w - 1.0) * 0.02) return uint(ko.x + 0.5);
+	}
+
 	// ores and pockets
 	float rich = (P.p[7].w - 1.0) * 0.03;
 	if (m == M_STONE) {

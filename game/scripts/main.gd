@@ -427,6 +427,9 @@ var wind := 0.0                # the wind now (+ blows toward screen right), gus
 var _wind_dir := 1.0
 var exposed := false           # you're out under the open sky (the wind reaches you; a volcanic world's air scorches)
 var _heat_t := 0
+var hazard := ""               # the planet's hazard hurting you right now (Defs.HAZARDS), "" for none
+var _hz_t := {}                # (hazard -> ticks until its warning is shown again)
+var _warm := false             # a fire, torch or lava close by (it keeps a frozen world's cold off)
 var weather_timer := 1800
 var flash := 0.0
 
@@ -828,23 +831,23 @@ func _write_frame_params() -> void:
 
 func _apply_counts(m: Mage) -> void:
 	var all: PackedInt32Array = gpu.counts
-	var o := m.slot * 64
-	if all.size() < o + 64:
+	var o := m.slot * Defs.CNT
+	if all.size() < o + Defs.CNT:
 		return
-	var cn := all.slice(o, o + 64)
-	m.fog = lerpf(m.fog, cn[58] / 1000.0, 0.25)
+	var cn := all.slice(o, o + Defs.CNT)
+	m.fog = lerpf(m.fog, cn[Defs.C_FOG] / 1000.0, 0.25)
 	if chunks != null and state == "play":
 		var td := Time.get_ticks_usec()
 		chunks.detect(m, cn)            # a felled tree or a creaking piece: lift it out whole
 		prof_add("lifting pieces out", Time.get_ticks_usec() - td)
 	_use_grid(m)
-	if m.local and cn[56] > 0:
+	if m.local and cn[Defs.C_CREAK_N] > 0:
 		# something loose is about to fall: dust trickles from it and the ground rumbles
-		var u: int = cn[57] & 0xFFFFFFFF
+		var u: int = cn[Defs.C_CREAK] & 0xFFFFFFFF
 		var dp := from_grid(Vector2((u & 1023) + 0.5, ((u >> 10) & 1023) + 0.5))
-		for k in mini(4, 1 + cn[56] / 15):
+		for k in mini(4, 1 + cn[Defs.C_CREAK_N] / 15):
 			_particle(dp + Vector2(randf() - 0.5, randf() - 0.5) * 5.0, Vector2(randf() - 0.5, randf() - 0.5) * 0.15, 40 + randi() % 30, Color(0.62, 0.57, 0.5), false, 0.04)
-		if cn[56] > 20:
+		if cn[Defs.C_CREAK_N] > 20:
 			shake = maxf(shake, 1.2)
 			if _creak_t <= 0 and dp.distance_to(m.pos) < 70.0:
 				ui.toast("Something nearby creaks and shifts…", Color(0.85, 0.75, 0.6), 2.0)
@@ -855,25 +858,29 @@ func _apply_counts(m: Mage) -> void:
 		if cn[t] > 0:
 			m.inv[t] += cn[t]
 			total += cn[t]
+			if t >= Defs.FIREOPAL and t <= Defs.SILVER and not m.items.has("found_%d" % t):
+				m.items["found_%d" % t] = true
+				if m.local:
+					ui.toast("%s: this world's own ore. The Wisp Forge (C) has gear for it, and the Core Drive wants some." % Defs.NAMES[t], Color(1.0, 0.85, 0.5), 5.0)
 			if randf() < 0.6 and m.local:
 				_spawn_suck_particles(t, mini(cn[t], 3))
 	if cn[Defs.TREASURE] > 0 and m.local:
 		_open_treasure(cn[Defs.TREASURE])
 		m.inv[Defs.TREASURE] = 0
-	if cn.size() > 53 and cn[52] > 0 and cn[53] >= ROCK_HURT_FALL and not m.dead:
+	if cn[Defs.C_FALL_N] > 0 and cn[Defs.C_FALL_MAX] >= ROCK_HURT_FALL and not m.dead:
 		# a falling block lands on you: the longer it fell, the harder it hits (a clod that only
 		# dropped a few cells, like the rim of a pit you're digging, just bumps you)
-		var dmg := clampf(1.0 + float(cn[53] - ROCK_HURT_FALL) * 0.45 + float(cn[52]) * 0.1, 1.0, 35.0)
+		var dmg := clampf(1.0 + float(cn[Defs.C_FALL_MAX] - ROCK_HURT_FALL) * 0.45 + float(cn[Defs.C_FALL_N]) * 0.1, 1.0, 35.0)
 		var was := m.iframes
 		hurt(m, dmg, Vector2(0, 1.2), true)
 		if was == 0 and m.iframes > 0 and m.local:
 			ui.toast("Falling rock! -%d" % int(dmg), Color(1, 0.6, 0.45), 1.5)
 			shake = maxf(shake, 4.0)
-	if cn[50] > 0:
+	if cn[Defs.C_HARD] > 0:
 		m.dig_blocked = 30
 	if m.pending_place > 0:
 		var pm := m.pending_mat if m.pending_mat >= 0 else m.mat
-		m.inv[pm] = maxi(0, m.inv[pm] - mini(cn[51], m.pending_place))
+		m.inv[pm] = maxi(0, m.inv[pm] - mini(cn[Defs.C_PLACED], m.pending_place))
 		m.pending_place = 0
 		m.pending_mat = -1
 
@@ -892,7 +899,7 @@ func _loot_table() -> Array:
 	var deep: float = clampf((gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - player.pos.length()) / 300.0, 0.0, 1.0)
 	return [[Defs.COPPER, 6.0, 4], [Defs.COAL, 5.0, 4], [Defs.CRYSTAL, 1.5, 2], [Defs.FROST, 2.0 + deep * 2.0, 3],
 		[Defs.EMBER, 1.0 + deep * 3.0, 3], [Defs.WISP, 1.0 + deep * 3.0, 2], [Defs.OBSIDIAN, 0.5 + deep * 2.0, 2],
-		[Defs.GLASS, 2.0, 4], [Defs.TORCH, 2.0, 3], [Defs.MASONRY, 1.5, 6]]
+		[Defs.GLASS, 2.0, 4], [Defs.TORCH, 2.0, 3], [Defs.MASONRY, 1.5, 6]] + ([[Defs.kind_ore(planet), 1.2, 3]] if Defs.kind_ore(planet) >= 0 else [])
 
 func _roll_loot(rolls: int, mult: float) -> void:
 	var table := _loot_table()
@@ -1976,6 +1983,9 @@ func _update_player(m: Mage) -> void:
 		if _heat_t <= 0:
 			_heat_t = 1200
 			ui.toast("The air of %s scorches you under the open sky: forge the Heat Ward, or keep to the caves" % planet.get("name", ""), Color(1.0, 0.6, 0.4), 4.0)
+	# the other kinds' hazards: cold, sun, miasma, the deep (Defs.HAZARDS)
+	if m.local:
+		_hazards(m, p)
 	# under water, or above the air: holding your breath
 	if (Defs.KIND[head_t] == Defs.K_LIQUID and not m.items.has("pearl")) or p.pos.length() > Defs.R_TOP + 4.0:
 		m.breath -= 1.0
@@ -2007,6 +2017,8 @@ func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 		return
 	if m.items.has("ironbark"):
 		dmg *= 0.75
+	if m.items.has("bogmail"):
+		dmg *= 0.8
 	if hit:
 		if m.iframes > 0:
 			return
@@ -2055,7 +2067,8 @@ func _staff(m: Mage, aim: Vector2) -> Array:
 
 func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	var s: Dictionary = Defs.SPELLS[id]
-	if m.cast_cd > 0 or m.mana < float(s["mana"]):
+	var cost := float(s["mana"]) * (0.75 if m.items.has("silver") else 1.0)     # (the Silver Sigil)
+	if m.cast_cd > 0 or m.mana < cost:
 		return
 	m.cast_frame = frame
 	if id == "conjure":
@@ -2068,7 +2081,7 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 				ui.toast("You're unhurt", Color(0.8, 0.95, 0.8), 1.0)
 			m.cast_cd = 20
 			return
-		m.mana -= float(s["mana"])
+		m.mana -= cost
 		m.cast_cd = s["cd"]
 		m.heal_left += Defs.MEND_HEAL
 		audio.play("rare", m.pos, 0.6)
@@ -2079,10 +2092,10 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	if id == "blink":
 		if _blink(m, aim):
 			audio.play("blink", m.pos)
-			m.mana -= float(s["mana"])
+			m.mana -= cost
 			m.cast_cd = s["cd"]
 		return
-	m.mana -= float(s["mana"])
+	m.mana -= cost
 	m.cast_cd = s["cd"]
 	var snd := {"spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
 	audio.play(snd.get(id, "spark"), m.pos, 0.8)
@@ -2137,7 +2150,8 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 	if m.local and _dig_open_t <= 0 and _dig_hits_chest(p, m.dig_r):
 		_dig_open_t = 30
 		_try_open_chest()
-	brushes.append([p, m.dig_r, 1, 0, m.tier, 0, 0, m.slot])
+	# (the Fire Opal Focus digs half again as fast: brush.comp's rate)
+	brushes.append([p, m.dig_r, 1, 0, m.tier, 0.5 if m.items.has("opal") else 0.0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
 
 ## Shift + right mouse: take background tiles (a building's back walls, furniture, plants). It is how
@@ -2673,6 +2687,7 @@ func _guardian_falls(e: Enemy) -> void:
 	var loot: Dictionary = bd["loot"]
 	for mt in loot:
 		player.inv[int(mt)] += int(loot[mt])
+	_hoard_ore(16)
 	_roll_loot(4, 1.5)
 	shake = 16.0
 	audio.play("rare")
@@ -2680,6 +2695,16 @@ func _guardian_falls(e: Enemy) -> void:
 		if o.summoner == e:
 			o.summoner = null
 	save_game()
+
+## A boss's hoard holds some of this world's own ore (Defs.KIND_ORES): a guardian's most of what a Core
+## Drive wants, so beating one is a step on the way to the next planet.
+func _hoard_ore(n: int) -> void:
+	var ko := Defs.kind_ore(planet)
+	if ko < 0:
+		return
+	player.inv[ko] += n
+	items["found_%d" % ko] = true
+	ui.toast("+%d %s" % [n, Defs.NAMES[ko]], Color(1.0, 0.85, 0.5), 4.0)
 
 ## A dungeon's warden is beaten: its loot (and a Healing Draught), it stays dead, and the ward on
 ## its reliquary's door breaks (a stamp clears the runestone; the world keeps it open from then on).
@@ -2695,6 +2720,7 @@ func _warden_falls(e: Enemy) -> void:
 	for mt in loot:
 		player.inv[int(mt)] += int(loot[mt])
 	items["potion"] = int(items.get("potion", 0)) + 1
+	_hoard_ore(6)
 	_roll_loot(3, 1.4)
 	for wl in builds.warden_list:
 		if wl["key"] != key:
@@ -3307,6 +3333,86 @@ func _open_sky(p: Vector2) -> bool:
 			return false
 	return true
 
+## A planet kind's slow hazards (Defs.HAZARDS), unless a ward or a relic bears them. `hazard` is the one
+## hurting you now; each warns you now and then what would help.
+func _hazards(m: Mage, p: Body) -> void:
+	hazard = ""
+	if m.dead:
+		return
+	for hz in Defs.HAZARDS:
+		var lvl := float(clim.get(hz, 0.0))
+		if lvl <= 0.0:
+			continue
+		var hd: Dictionary = Defs.HAZARDS[hz]
+		if m.items.has(String(hd["ward"])) or m.items.has(String(hd["relic"])):
+			continue
+		var k := _hazard_level(String(hz), m, p) * lvl
+		if k <= 0.0:
+			continue
+		hurt(m, float(hd["dmg"]) * k, Vector2.ZERO, false)
+		hazard = String(hz)
+		_hz_t[hz] = int(_hz_t.get(hz, 0)) - 1
+		if int(_hz_t[hz]) <= 0:
+			_hz_t[hz] = 1200
+			ui.toast(String(hd["msg"]) % planet.get("name", ""), Color(1.0, 0.7, 0.5), 4.5)
+
+## how hard a hazard bites where you are (0: not here)
+func _hazard_level(hz: String, m: Mage, p: Body) -> float:
+	match hz:
+		"cold":
+			if frame % 15 == 0:
+				_warm = _near_warmth(p.pos)
+			if not exposed or _warm or p.in_liquid:
+				return 0.0
+			var k := 1.0
+			if _local_daylight(p.pos) < 0.3:
+				k *= 1.6                                  # (night)
+			if absf(wind) > 0.25:
+				k *= 1.6                                  # (a blizzard)
+			return k
+		"sun":
+			return 1.0 if exposed and not p.in_liquid and sun_overhead(p.pos) > 0.72 else 0.0
+		"miasma":
+			if m.fog < 0.25 or p.pos.length() > gpu.surf_at(atan2(p.pos.y, p.pos.x)).x + 70.0:
+				return 0.0
+			return clampf(m.fog * 1.6, 0.4, 1.5)
+		"deep":
+			var sea := float(planet.get("sea", -1.0))
+			if sea < 0.0 or not p.in_liquid:
+				return 0.0
+			var under: float = (Defs.RS0 - sea) - p.pos.length()
+			return 0.0 if under < 35.0 else 1.0 + (under - 35.0) / 60.0
+	return 0.0
+
+## a fire, a torch or lava within about 14 cells (the collision grid round you)
+func _near_warmth(wp: Vector2) -> bool:
+	var l := to_grid(wp)
+	for y in range(int(l.y) - 14, int(l.y) + 15, 2):
+		for x in range(int(l.x) - 14, int(l.x) + 15, 2):
+			var t := gtype(x, y)
+			if t == Defs.FIRE or t == Defs.TORCH or t == Defs.LAVA:
+				return true
+	return false
+
+## how straight overhead the sun is at p (1: straight up, 0 on the horizon, below 0 at night)
+func sun_overhead(wp: Vector2) -> float:
+	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
+	return wp.normalized().dot(Vector2(cos(sun_a), sin(sun_a)))
+
+## The Core Drive that leaves this planet wants some of its own ore (if it has one): its recipe is
+## rewritten for each planet.
+func _refresh_recipes() -> void:
+	var ko := Defs.kind_ore(planet)
+	for i in recipes.size():
+		if String(recipes[i]["id"]) != "drive":
+			continue
+		var r: Dictionary = (recipes[i] as Dictionary).duplicate(true)
+		var cost := {Defs.CORE: 30, Defs.STARIRON: 12, Defs.WISP: 10}
+		if ko >= 0:
+			cost[ko] = Defs.DRIVE_ORE
+		r["cost"] = cost
+		recipes[i] = r
+
 # ============================================================= crafting ====
 func recipe_done(r: Dictionary) -> bool:
 	if r.has("spell"):
@@ -3321,6 +3427,9 @@ func recipe_done(r: Dictionary) -> bool:
 		"ward": return heat_ward
 		"skiff": return items.has("skiff")
 		"drive": return skiff_reach() > int(planet.get("index", 0))
+		"rimelens": return dig_r >= 14.0
+	if r.has("ore") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam":
+		return items.has(String(r["id"]))
 	return false
 
 ## the furthest planet (by index) the skiff can fly to: one more for every Core Drive fitted (a planet's
@@ -3336,6 +3445,12 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier3": return tier == 2
 		"tier4": return tier == 3 and items.has("heart")
 		"drive": return tier >= 4 and items.has("skiff")
+		"engine", "beam": return items.has("skiff")
+		"rimelens": return dig_r >= 11.0 and (player.inv[Defs.RIMECRYSTAL] > 0 or items.has("found_%d" % Defs.RIMECRYSTAL))
+	if r.has("ore"):
+		# (gear from a planet kind's own ore: shown once you've found some)
+		var om := int(r["ore"])
+		return player.inv[om] > 0 or items.has("found_%d" % om)
 	return true
 
 func recipe_lock_text(r: Dictionary) -> String:
@@ -3343,9 +3458,16 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"tier3": return "Needs Copper Focus"
 		"tier4": return "Needs Obsidian Focus + the Ember Heart"
 		"drive": return "Needs the Core Siphon and the Wisp Skiff"
+		"engine", "beam": return "Needs the Wisp Skiff"
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
 		"mend": return "Find the Scroll of Mending in a chest"
+		"rimelens":
+			if dig_r < 11.0:
+				return "Needs Wide Excavation"
+	if r.has("ore"):
+		var kd := Defs.ore_kind(int(r["ore"]))
+		return "%s is found only on %s worlds" % [Defs.NAMES[int(r["ore"])], kd]
 	return "Locked"
 
 func recipe_affordable(r: Dictionary) -> bool:
@@ -3418,6 +3540,21 @@ func craft(r: Dictionary) -> bool:
 			mana_regen = 0.32
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
+		"opal", "bogmail", "silver", "hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam":
+			items[String(r["id"])] = true
+		"pearlcharm":
+			items["pearlcharm"] = true
+			max_breath = 1800.0
+		"sunstone":
+			items["sunstone"] = true
+			max_mana += 60
+			mana_regen += 0.08
+		"rimelens":
+			dig_r = 14.0
+		"amber":
+			items["amber"] = true
+			max_hp += 40
+			hp += 40
 		"drive":
 			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
 			var nxt := String(Defs.make_planet(int(items["reach"]))["name"])
@@ -4216,6 +4353,7 @@ func _make_world(index: int, arriving: bool) -> void:
 	_gt0 = Time.get_ticks_usec()
 	planet = Defs.make_planet(index)
 	clim = Defs.climate(planet)
+	_refresh_recipes()
 	wind = 0.0
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))
@@ -4379,7 +4517,8 @@ func _update_skiff() -> void:
 	var high: bool = skiff.pos.length() > Defs.R_TOP
 	skiff.centre = Vector2.ZERO
 	# faster above the air; with nobody at the controls the air drags at it as it falls
-	skiff.fly(want, pl != null, g, false, Skiff.CRUISE_HIGH if high else Skiff.CRUISE, 0.999 if high else 0.97)
+	skiff.power = 1.5 if items.has("engine") else 1.0              # (the Star-Iron Engine)
+	skiff.fly(want, pl != null, g, false, (Skiff.CRUISE_HIGH if high else Skiff.CRUISE) * skiff.power, 0.999 if high else 0.97)
 	skiff.advance(_skiff_solid if in_grid(skiff.pos, 40.0) else Callable())
 	var up: Vector2 = skiff.pos.normalized()
 	if skiff.pos.length() > Defs.R_SPACE - 9.5:
@@ -4391,7 +4530,7 @@ func _update_skiff() -> void:
 	if skiff.thrusting:
 		_skiff_exhaust()
 	# coming down fast through the air, it glows where it meets it
-	if skiff.pos.length() < Defs.R_TOP and skiff.vel.length() > Skiff.CRUISE + 1.0 and skiff.vel.dot(up) < 0.0:
+	if skiff.pos.length() < Defs.R_TOP and skiff.vel.length() > Skiff.CRUISE * skiff.power + 1.0 and skiff.vel.dot(up) < 0.0:
 		var lead: Vector2 = skiff.pos + skiff.vel.normalized() * 14.0
 		for k in 2:
 			_particle(lead + Vector2(randf() - 0.5, randf() - 0.5) * 16.0, -skiff.vel * (0.3 + randf() * 0.3), 10 + randi() % 8, Color8(255, 170, 90), true, 0.0)
@@ -4591,7 +4730,7 @@ func _save_path() -> String:
 
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
-		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat,
+		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2,
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
@@ -4618,12 +4757,16 @@ func _apply_save(s: Dictionary) -> void:
 	tier = int(s.get("tier", 1))
 	# saves from before the scale-up stored 4.5 / 7.0; the mage is bigger now (7.5 / 11)
 	var sd := float(s.get("dig_r", 7.5))
-	dig_r = 11.0 if sd >= 7.0 else 7.5
+	dig_r = 14.0 if sd >= 13.0 else (11.0 if sd >= 7.0 else 7.5)
 	max_hp = float(s.get("max_hp", 100))
 	max_mana = float(s.get("max_mana", 100))
 	mana_regen = float(s.get("mana_regen", 0.22))
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
+	max_breath = 1800.0 if items.has("pearlcharm") else 600.0
+	if int(s.get("cnt", 0)) < 2:
+		# (before the GPU's counters moved, digging what the staff couldn't cut counted as star iron)
+		player.inv[Defs.STARIRON] = 0
 	# (how far the skiff reaches: a journey from before the Core Drive keeps every planet it had been to)
 	var rch := maxi(int(items.get("reach", 0)), int(s.get("planet", 0)))
 	for wi in 25:

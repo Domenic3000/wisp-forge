@@ -61,6 +61,10 @@ const DRAG := 0.999             # (a whisper of drag, so a prototype flight can 
 const SUN_DIST := 170000.0
 const SUN_R := 9000.0
 const HOLD := 3000.0             # a planet still being made: you're held this far above its orbit band
+const BELT_IN := 1400.0         # a planet out of the skiff's reach is wrapped in a storm belt: from this far
+const BELT_OUT := 4400.0        # above its orbit band out to this. Its wind throws you back, harder the deeper
+                                # you go, and lightning strikes; a Core Drive carries the skiff through.
+const BEAM_REACH := 150.0       # the Prospector's Beam: how far from the skiff it mines
 const NEARER := 0.8             # another planet is clearly nearer: at this fraction of home's distance
 const PLANET_MASK := "shader_type canvas_item;
 uniform float edge = 0.45;
@@ -96,6 +100,16 @@ var _rock_sprites := []
 var _lit: Shader
 var _mining := 0                # (frames since you last dug at a rock)
 var _mask: Shader
+var belt := 0.0                 # how deep you are in a storm belt (0 outside it, 1 at its inner edge)
+var belt_max := 0.0             # (the deepest since the tests last reset it)
+var belt_hits := 0              # (lightning strikes taken: the tests read it)
+var bolts := []                 # lightning out here: [points (world), frames left]
+var _flash := 0.0               # (a strike lights up the view)
+var _belt_warn := 0
+var beam_to = null              # the Prospector's Beam: where it reaches now (null when off)
+var belt_dir := Vector2.ZERO    # (the way the belt's wind blows where you are, outward)
+var _lrects: Array = []         # (labels drawn this frame: a new one steps aside rather than overlap one)
+var belt_col := Color.WHITE
 
 func _ready() -> void:
 	_mask = Shader.new()
@@ -152,6 +166,10 @@ func try_enter() -> void:
 func exit() -> void:
 	var m = game.player
 	var sk = game.skiff
+	belt = 0.0
+	bolts.clear()
+	_flash = 0.0
+	beam_to = null
 	if m.aboard != null:
 		sk.pos = sk.pos.normalized() * minf(sk.pos.length(), Defs.R_SPACE - 12.0)
 		# (coming back in, the skiff sheds its space speed: it drops into the sky, not through it)
@@ -194,7 +212,9 @@ func tick() -> void:
 		var pl = sk.pilot()
 		sk.centre = centre
 		var want: Vector2 = sk.steer(pl.input) if pl != null else Vector2.ZERO
+		sk.power = 1.5 if game.items.has("engine") else 1.0
 		sk.fly(want, pl != null, pull(sk.pos), true, 0.0, 0.9995)
+		sk.vel = _storm(sk.pos, sk.vel)
 		sk.pos = _hold(sk.pos, sk)
 		# (it bumps against asteroids: the skiff's own collision, against their cells)
 		sk.advance(Callable(self, "_rock_solid") if not _rocks_near(sk.pos, 120.0).is_empty() else Callable())
@@ -203,8 +223,12 @@ func tick() -> void:
 				game._ride(rider)
 		if sk.thrusting:
 			game._skiff_exhaust()
+	_age_bolts()
+	beam_to = null
 	if m.aboard != null:
 		vel = sk.vel
+		if sk.pilot() == m and m.input.dig and game.items.has("beam") and not m.dead:
+			_beam(m, sk)
 		_follow(m)
 		_maybe_travel(sk.pos)
 		if _landing(sk.pos, sk.vel):
@@ -231,6 +255,7 @@ func tick() -> void:
 	vel *= DRAG
 	if vel.length() > MAX_SPEED:
 		vel = vel.normalized() * MAX_SPEED
+	vel = _storm(m.pos, vel)
 	var goal := _hold(m.pos + vel, null)
 	var dv: Vector2 = goal - m.pos
 	vel = dv
@@ -277,12 +302,14 @@ func _landing(p: Vector2, v: Vector2) -> bool:
 		return false
 	return p.length() < Defs.R_SPACE - 10.0 and v.dot(p.normalized()) < 0.0
 
-## A planet that isn't ready (one that isn't home, or any while one is being made) keeps you HOLD
-## above its orbit band: `p` pushed back out, and a skiff's speed toward it taken away. One beyond the
-## skiff's reach (main.skiff_reach: a Core Drive for each planet further) never gets ready.
+## A planet that isn't ready yet (one that isn't home, or any while one is being made) keeps you HOLD
+## above its orbit band: `p` pushed back out, and a skiff's speed toward it taken away. (One beyond the
+## skiff's reach is kept off by its storm belt instead: `_storm`.)
 func _hold(p: Vector2, sk) -> Vector2:
 	for b in bodies:
 		if int(b["index"]) == home and not game.travelling:
+			continue
+		if not reachable(int(b["index"])):
 			continue
 		var c: Vector2 = b["pos"]
 		var lim: float = float(b["space"]) + HOLD
@@ -292,12 +319,89 @@ func _hold(p: Vector2, sk) -> Vector2:
 			if sk != null and sk.vel.dot(n) < 0.0:
 				sk.vel -= n * sk.vel.dot(n)
 			if game.frame % 120 == 0:
-				if not reachable(int(b["index"])):
-					game.ui.toast("%s is beyond your skiff's reach: fit a Core Drive at the Wisp Forge (a Planet Core bound in star iron from the asteroids)" % b["name"], Color(1.0, 0.8, 0.55), 3.0)
-				else:
-					game.ui.toast("Approaching %s… %d%%" % [b["name"], int(game.travel_progress * 100.0)], Color(0.75, 0.9, 1.0), 2.0)
+				game.ui.toast("Approaching %s… %d%%" % [b["name"], int(game.travel_progress * 100.0)], Color(0.75, 0.9, 1.0), 2.0)
 			p = c + n * lim
 	return p
+
+## A planet out of the skiff's reach is wrapped in a storm belt (BELT_IN..BELT_OUT above its orbit band,
+## coloured by its kind): you see it from outside as a shimmering curtain, and inside it the wind throws
+## you back out, harder the deeper you go, takes the speed you come in with, gusts along the belt, and
+## lightning strikes (it hurts and knocks you outward; at the inner edge a great bolt throws you clear).
+## Returns the velocity v becomes at p.
+func _storm(p: Vector2, v: Vector2) -> Vector2:
+	belt = 0.0
+	for b in bodies:
+		var bi := int(b["index"])
+		if bi == home or reachable(bi):
+			continue
+		var o: Vector2 = p - b["pos"]
+		var h: float = o.length() - float(b["space"])
+		if h > BELT_OUT:
+			continue
+		var f := clampf((BELT_OUT - h) / (BELT_OUT - BELT_IN), 0.0, 1.2)
+		belt = maxf(belt, f)
+		belt_max = maxf(belt_max, f)
+		var n := o.normalized()
+		belt_dir = n
+		belt_col = b["belt"]
+		var t := Vector2(-n.y, n.x)
+		v += n * (0.03 + 0.85 * f * f)
+		var vin := -v.dot(n)
+		if vin > 0.0:
+			v += n * vin * (0.02 + 0.1 * f)
+		v += t * sin(float(game.frame) * 0.021 + o.angle() * 40.0) * 0.12 * f
+		var col: Color = b["belt"]
+		# wind-blown sparks streaming past: you can see which way it throws you
+		for k in int(f * 3.0) + (1 if randf() < f * 3.0 - floorf(f * 3.0) else 0):
+			var off: Vector2 = Vector2(randf() - 0.5, randf() - 0.5) * Vector2(game.VW, game.VH).length() * float(game.zoom)
+			game._particle(p + off, n * (3.0 + randf() * 4.0) + t * (randf() - 0.5) * 3.0, 16 + randi() % 12, col.lightened(0.3), true, 0.0)
+		if f >= 1.0 or randf() < 0.004 + 0.035 * f:
+			v += n * (2.0 + 4.0 * f)
+			_strike(p, n, f, col)
+			if f >= 1.0:
+				v = n * 14.0                       # (a great bolt at the inner edge throws you clear)
+		_belt_warn -= 1
+		if _belt_warn <= 0:
+			_belt_warn = 420
+			game.ui.toast("%s is wrapped in a storm belt that throws you back. A Core Drive (forged at the Wisp Forge from this world's Planet Core and star iron) carries the skiff through." % b["name"], col.lightened(0.4), 4.5)
+	return v
+
+## lightning out of the belt onto whoever is at p: it hurts, shakes the view and lights it up
+func _strike(p: Vector2, n: Vector2, f: float, col: Color) -> void:
+	var from := p + n.rotated(randf_range(-1.2, 1.2)) * randf_range(140.0, 300.0)
+	var pts := PackedVector2Array([from])
+	var steps := 9
+	for k in range(1, steps):
+		var q := from.lerp(p, float(k) / float(steps))
+		var side := (p - from).normalized().orthogonal()
+		pts.append(q + side * randf_range(-18.0, 18.0) * (1.0 - float(k) / float(steps)))
+	pts.append(p)
+	bolts.append([pts, 10, col])
+	if p.distance_to(game.cam_c) < 500.0:
+		_flash = maxf(_flash, 0.25 + 0.3 * f)
+		belt_hits += 1
+		game.shake = maxf(game.shake, 6.0 + 8.0 * f)
+		game.audio.play("zap", null, 0.9)
+	for m in game.players:
+		if not m.dead and m.pos.distance_to(p) < 60.0:
+			game.hurt(m, 3.0 + 6.0 * f, Vector2.ZERO, true)
+
+func _age_bolts() -> void:
+	for k in range(bolts.size() - 1, -1, -1):
+		bolts[k][1] -= 1
+		if int(bolts[k][1]) <= 0:
+			bolts.remove_at(k)
+	_flash = maxf(0.0, _flash - 0.03)
+
+## The Prospector's Beam: the skiff's pilot holds dig and it mines asteroids at the cursor, up to
+## BEAM_REACH from the skiff
+func _beam(m, sk) -> void:
+	var d: Vector2 = m.input.aim - sk.pos
+	if d.length() > BEAM_REACH:
+		d = d.normalized() * BEAM_REACH
+	var p: Vector2 = sk.pos + d
+	beam_to = p
+	_mine_at(m, p, m.dig_r * 1.2)
 
 ## can the skiff go to planet i? (home and any planet up to its reach; on foot, only home)
 func reachable(i: int) -> bool:
@@ -416,6 +520,7 @@ func _draw() -> void:
 		return
 	var w: int = game.VW
 	var h: int = game.VH
+	_lrects.clear()
 	draw_rect(Rect2(0, 0, w, h), Color(0.006, 0.006, 0.02))
 	var xf := _world_xf()
 	# stars: a fixed field turned with the view, drifting as you travel (two depths: the nearer half
@@ -472,6 +577,7 @@ func _draw() -> void:
 	for si in sprites:
 		if not shown.has(si):
 			sprites[si].visible = false
+	_draw_belts(xf)
 	_draw_rocks(xf)
 	# where the planets are when they're off screen: a marker at the edge, pointing the way
 	for b2 in bodies:
@@ -479,7 +585,7 @@ func _draw() -> void:
 		var bi := int(b2["index"])
 		if not reachable(bi):
 			hc = Color(0.62, 0.6, 0.66)
-		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " (needs a Core Drive)"), hc)
+		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · storm belt"), hc)
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
 		_marker(xf, nr.pos, nr.reach(), "Asteroid", Color(0.95, 0.82, 0.62))
@@ -487,6 +593,101 @@ func _draw() -> void:
 	if game.player.aboard == null:
 		var ms: Vector2 = xf * game.player.pos
 		draw_arc(ms, 11.0, 0.0, TAU, 28, Color(0.55, 0.85, 1.0, 0.35 if jetting else 0.22), 1.0)
+	# the Prospector's Beam
+	if beam_to != null and game.skiff != null:
+		var bd: Vector2 = ((beam_to as Vector2) - game.skiff.pos).normalized()
+		var b0: Vector2 = xf * (game.skiff.pos + bd * 22.0)
+		var b1: Vector2 = xf * (beam_to as Vector2)
+		var fl := 0.6 + 0.4 * sin(float(game.frame) * 0.9)
+		draw_line(b0, b1, Color(0.5, 0.95, 1.0, 0.25 * fl), 5.0)
+		draw_line(b0, b1, Color(0.85, 1.0, 1.0, 0.8 * fl), 1.5)
+		draw_circle(b1, 3.0 + fl * 2.0, Color(0.7, 1.0, 1.0, 0.5))
+	# lightning from a storm belt, and the flash it lights the view with
+	for bo in bolts:
+		var spts := PackedVector2Array()
+		for q in bo[0]:
+			spts.append(xf * q)
+		var bc: Color = bo[2]
+		var la := float(bo[1]) / 10.0
+		draw_polyline(spts, Color(bc.r, bc.g, bc.b, 0.35 * la), 5.0)
+		draw_polyline(spts, Color(1.0, 1.0, 1.0, 0.95 * la), 1.5)
+	if belt > 0.0:
+		_draw_gale(xf, w, h)
+	if belt > 0.0 or _flash > 0.0:
+		draw_rect(Rect2(0, 0, w, h), Color(1.0, 1.0, 1.0, _flash * 0.35))
+
+## the storm belts round the planets out of reach: a shimmering curtain at the belt's outer edge (the part
+## of the ring near the view), and a haze inside it
+func _draw_belts(xf: Transform2D) -> void:
+	var hd: float = Vector2(game.VW, game.VH).length() * 0.5 * game.zoom
+	var tt := float(game.frame)
+	for b in bodies:
+		var bi := int(b["index"])
+		if bi == home or reachable(bi):
+			continue
+		var c: Vector2 = b["pos"]
+		var r_out: float = float(b["space"]) + BELT_OUT
+		var r_in: float = float(b["space"]) + BELT_IN
+		var dc: float = (game.cam_c - c).length()
+		if dc - hd > r_out + 400.0 or dc + hd < r_in:
+			continue
+		var col: Color = b["belt"]
+		var ac: float = (game.cam_c - c).angle()
+		var span := clampf((hd + 600.0) / r_out, 0.02, PI)
+		var nseg := 90
+		for k in nseg:
+			var t0 := ac - span + 2.0 * span * float(k) / float(nseg)
+			var t1 := ac - span + 2.0 * span * float(k + 1) / float(nseg)
+			var i0 := _shimmer(t0, r_out, tt)
+			var i1 := _shimmer(t1, r_out, tt)
+			var d0 := Vector2(cos(t0), sin(t0))
+			var d1 := Vector2(cos(t1), sin(t1))
+			# the curtain: bright at the edge, fading inward and up into long rays
+			var mid0 := xf * (c + d0 * r_out)
+			var mid1 := xf * (c + d1 * r_out)
+			var in0 := xf * (c + d0 * (r_out - 90.0))
+			var in1 := xf * (c + d1 * (r_out - 90.0))
+			var out0 := xf * (c + d0 * (r_out + 120.0 + 260.0 * i0))
+			var out1 := xf * (c + d1 * (r_out + 120.0 + 260.0 * i1))
+			var cm0 := Color(col.r, col.g, col.b, 0.18 + 0.4 * i0)
+			var cm1 := Color(col.r, col.g, col.b, 0.18 + 0.4 * i1)
+			var cz := Color(col.r, col.g, col.b, 0.0)
+			draw_polygon(PackedVector2Array([in0, mid0, mid1, in1]), PackedColorArray([cz, cm0, cm1, cz]))
+			draw_polygon(PackedVector2Array([mid0, out0, out1, mid1]), PackedColorArray([cm0, cz, cz, cm1]))
+			# and the belt's body, a faint haze down to its inner edge
+			var deep0 := xf * (c + d0 * r_in)
+			var deep1 := xf * (c + d1 * r_in)
+			var ch := Color(col.r, col.g, col.b, 0.05 + 0.03 * i0)
+			draw_polygon(PackedVector2Array([deep0, in0, in1, deep1]), PackedColorArray([Color(col.r, col.g, col.b, 0.13), ch, ch, Color(col.r, col.g, col.b, 0.13)]))
+
+## inside a storm belt: streaks of its wind racing past outward (more and brighter the deeper you are),
+## and a tint of its colour over the view
+func _draw_gale(xf: Transform2D, w: int, h: int) -> void:
+	var f := clampf(belt, 0.0, 1.0)
+	draw_rect(Rect2(0, 0, w, h), Color(belt_col.r, belt_col.g, belt_col.b, 0.05 + 0.1 * f))
+	var d: Vector2 = xf.basis_xform(belt_dir).normalized()
+	var side := d.orthogonal()
+	var span := Vector2(w, h).length()
+	var ctr := Vector2(w, h) * 0.5
+	var tt := float(game.frame)
+	var n := int(30.0 + 90.0 * f)
+	for k in n:
+		var hs := float((k * 7919) % 1000) / 1000.0
+		var hs2 := float((k * 104729) % 1000) / 1000.0
+		var spd := 9.0 + 14.0 * hs2 + 10.0 * f
+		var along := fposmod(hs * span + tt * spd, span) - span * 0.5
+		var across := (hs2 - 0.5) * span + sin(tt * 0.02 + hs * 9.0) * 30.0
+		var p: Vector2 = ctr + d * along + side * across
+		if p.x < -60.0 or p.y < -60.0 or p.x > w + 60.0 or p.y > h + 60.0:
+			continue
+		var ln := 18.0 + 50.0 * hs * (0.5 + f)
+		var a := (0.12 + 0.3 * hs2) * (0.4 + 0.6 * f)
+		draw_line(p, p - d * ln, Color(belt_col.r, belt_col.g, belt_col.b, a), 1.0 + float(k % 3 == 0))
+
+## how bright the curtain is at angle t (rays that drift and pulse)
+func _shimmer(t: float, r: float, tt: float) -> float:
+	var u := t * r
+	return clampf((0.5 + 0.5 * sin(u / 70.0 + tt * 0.05)) * (0.55 + 0.45 * sin(u / 23.0 - tt * 0.031)) + 0.15 * sin(u / 9.0 + tt * 0.11), 0.0, 1.0)
 
 func _sprite_for(idx: int) -> Sprite2D:
 	if sprites.has(idx):
@@ -523,6 +724,26 @@ func _label(at: Vector2, text: String) -> void:
 	draw_set_transform(at, 0.0, Vector2.ONE / px)
 	var sz := 15
 	var wd := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
+	# (kept on screen: a marker at the edge used to push its label half off it; and moved up or down,
+	# toward the middle, while it would overlap a label already drawn)
+	var half := wd * 0.5 / px + 6.0
+	var cx := clampf(at.x, half, float(game.VW) - half)
+	var cy := at.y
+	var lh := 17.0 / px
+	var step := lh if at.y < float(game.VH) * 0.5 else -lh
+	for k in 6:
+		var rr := Rect2(cx - half, cy - lh, half * 2.0, lh)
+		var hit := false
+		for o in _lrects:
+			if (o as Rect2).intersects(rr):
+				hit = true
+				break
+		if not hit:
+			break
+		cy += step
+	_lrects.append(Rect2(cx - half, cy - lh, half * 2.0, lh))
+	if cx != at.x or cy != at.y:
+		draw_set_transform(Vector2(cx, cy), 0.0, Vector2.ONE / px)
 	draw_string(f, Vector2(-wd * 0.5 + 1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.6))
 	draw_string(f, Vector2(-wd * 0.5, 0), text, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0.85, 0.9, 1.0, 0.85))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -551,7 +772,7 @@ func _make_bodies() -> void:
 			dc = [ImageTexture.create_from_image(_disc_image(pl, sun_dir)), sun_ang]
 			_discs[dk] = dc
 		bodies.append({"index": i, "pos": Defs.planet_pos(i) - Defs.planet_pos(home), "top": top,
-			"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": dc[0]})
+			"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": dc[0], "belt": Defs.climate(pl)["belt"]})
 
 ## a planet's disc picture (for the map's system chart): the one kept for space, or made now
 func disc_texture(i: int) -> Texture2D:
@@ -713,8 +934,10 @@ func _split(a) -> void:
 ## Dig at the rock under the cursor (within the staff's reach): its cells come into the satchel at
 ## the pace and by the hardness rules of digging on a planet; dust streams to you.
 func mine(m) -> void:
-	var p: Vector2 = game._reach(m, m.input.aim)
-	var r: float = m.dig_r
+	_mine_at(m, game._reach(m, m.input.aim), m.dig_r)
+
+## digs the asteroid cells within r of p into m's satchel (what m's staff can cut)
+func _mine_at(m, p: Vector2, r: float) -> void:
 	var hard := false
 	var got := 0
 	for a in _rocks_near(p, r + 2.0):

@@ -8,8 +8,11 @@ extends Node
 ##
 ## Music is optional: any .mp3 or .ogg files in game/audio/music/ are loaded at runtime (no
 ## import step). A track's name decides when it plays: "surface_day", "surface_night",
-## "underground", "deep", "boss", "title" (anything starting with that word counts, so
-## "surface_day_2.mp3" joins the day tracks). Tracks crossfade when the situation changes.
+## "underground", "deep", "boss", "space", "title" (anything starting with that word counts, so
+## "surface_day_2.mp3" joins the day tracks). A track for one kind of planet starts with the kind:
+## "volcanic_surface_day.mp3" plays on volcanic worlds by day (kinds: temperate, volcanic, ocean,
+## desert, marsh, frozen, wild, realm); a world with no track of its own for the moment plays the
+## common one. Tracks crossfade when the situation changes.
 
 var game
 const RATE := 22050
@@ -20,7 +23,9 @@ var _next := 0
 var sfx_volume := 0.8         # 0..1, from settings
 var music_volume := 0.6
 
-var tracks := {}              # mood -> Array of streams
+var tracks := {}              # mood (or "kind:mood") -> Array of streams
+const MOODS := ["surface_day", "surface_night", "underground", "deep", "boss", "space", "title"]
+const KINDS := ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm"]
 var _music_a: AudioStreamPlayer
 var _music_b: AudioStreamPlayer
 var _music_on_a := true
@@ -28,7 +33,7 @@ var _mood := ""
 var _fade := 1.0
 
 const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak": 50, "rumble": 25, "land": 8,
-	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6}
+	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8}
 
 func _ready() -> void:
 	for k in 10:
@@ -91,17 +96,33 @@ func _load_music() -> void:
 				stream = o
 		if stream == null:
 			continue
-		for mood in ["surface_day", "surface_night", "underground", "deep", "boss", "title"]:
-			if fn.begins_with(mood):
-				if not tracks.has(mood):
-					tracks[mood] = []
-				tracks[mood].append(stream)
+		var key := track_key(fn)
+		if key != "":
+			if not tracks.has(key):
+				tracks[key] = []
+			tracks[key].append(stream)
 	print("[Wisp Forge] music: %s" % str(tracks.keys()))
+
+## which list a music file joins: "mood", or "kind:mood" for a planet kind's own ("" for none)
+static func track_key(fn: String) -> String:
+	var kind := ""
+	var rest := fn
+	for k in KINDS:
+		if fn.begins_with(k + "_"):
+			kind = k
+			rest = fn.substr(k.length() + 1)
+			break
+	for mood in MOODS:
+		if rest.begins_with(mood):
+			return mood if kind == "" else kind + ":" + mood
+	return ""
 
 ## what should be playing now
 func _want_mood() -> String:
 	if game == null or game.state == "title" or game.state == "loading":
 		return "title"
+	if game.space != null and game.space.active:
+		return "space"
 	var p: Vector2 = game.player.pos
 	var rs: float = game.gpu.surf_at(atan2(p.y, p.x)).x
 	var depth := rs - p.length()
@@ -114,26 +135,35 @@ func _want_mood() -> String:
 		return "underground"
 	return "surface_day" if game._local_daylight(p) > 0.3 else "surface_night"
 
+## a track for the mood: this planet kind's own first, then the common one, then the fallbacks' in turn
 func _pick(mood: String) -> AudioStream:
-	var fall := {"surface_night": "surface_day", "deep": "underground", "boss": "underground", "title": "surface_day", "underground": "surface_night"}
+	var fall := {"surface_night": "surface_day", "deep": "underground", "boss": "underground", "title": "surface_day", "underground": "surface_night", "space": "surface_night"}
+	var kind := _kind()
 	var m := mood
-	for k in 3:
-		if tracks.has(m) and not tracks[m].is_empty():
-			return tracks[m][randi() % tracks[m].size()]
+	for k in 4:
+		for key in ([kind + ":" + m, m] if kind != "" else [m]):
+			if tracks.has(key) and not tracks[key].is_empty():
+				return tracks[key][randi() % tracks[key].size()]
 		m = fall.get(m, "")
 		if m == "":
 			break
 	return null
 
+func _kind() -> String:
+	if game == null or game.state == "title":
+		return ""
+	return String(game.planet.get("kind", ""))
+
 func _update_music() -> void:
 	if tracks.is_empty():
 		return
 	var mood := _want_mood()
+	var mkey := _kind() + ":" + mood                     # (a new kind of planet is a new mood)
 	var cur: AudioStreamPlayer = _music_a if _music_on_a else _music_b
 	var old: AudioStreamPlayer = _music_b if _music_on_a else _music_a
-	if mood != _mood:
+	if mkey != _mood:
 		var st := _pick(mood)
-		_mood = mood
+		_mood = mkey
 		if st != null and st != cur.stream:
 			# swap: the new track fades in while the old one fades out
 			_music_on_a = not _music_on_a
@@ -263,5 +293,7 @@ func _build_sfx() -> void:
 	sfx["screech"] = _wav(_sweep(0.22, 2400.0, 1500.0, "square", 9.0, 0.07))
 	# falling pieces: wood cracking as a trunk goes, and the heavy thud of a piece landing
 	sfx["crack"] = _wav(_mix(_noise(0.18, 0.6, 22.0, 0.7), _sweep(0.12, 180.0, 90.0, "saw", 20.0, 0.15)))
+	# lightning out of a storm belt: a sharp crackle and a falling buzz
+	sfx["zap"] = _wav(_mix(_noise(0.45, 0.85, 9.0, 1.0), _sweep(0.3, 1500.0, 260.0, "saw", 11.0, 0.3)))
 	sfx["thud"] = _wav(_mix(_lowpass(_noise(0.35, 0.05, 9.0, 1.1), 0.25), _sweep(0.3, 75.0, 38.0, "sine", 9.0, 0.6)))
 	randomize()

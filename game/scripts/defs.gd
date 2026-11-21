@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 51
+const NM := 58
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -64,6 +64,29 @@ const DRYGRASS := 48      # golden savanna grass: the ground's top and the tall 
 const ROOT := 49          # a tree's roots (background): they give way to every other part of a tree, and
                           # building over them is fine (it can't fell the tree); dug up they give Wood
 const STARIRON := 50      # star iron: found only in asteroids (the metallic ones, deep in), for the Core Drive
+# each kind of planet's own ore (KIND_ORES): found only on planets of that kind, for its gear and the Core Drive
+const FIREOPAL := 51      # volcanic
+const ABYSSPEARL := 52    # ocean: in the seabed, deep under the sea
+const SUNSTONE := 53      # desert
+const BOGIRON := 54       # marsh
+const RIMECRYSTAL := 55   # frozen
+const AMBER := 56         # wild
+const SILVER := 57        # realm
+## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
+## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
+const CNT := 128
+const C_HARD := 112        # cells the staff was too weak for
+const C_PLACED := 113      # cells placed by conjuring
+const C_FALL_N := 114      # falling blocks overlapping the mage
+const C_FALL_MAX := 115    # the longest fall among them
+const C_CHEST_OPEN := 116  # chest cells opened (brush mode 7)
+const C_CHEST := 117       # the nearest chest: (4095 - dist^2) << 20 | j << 10 | i
+const C_CREAK_N := 118     # creaking blocks nearby
+const C_CREAK := 119       # one of them: random << 20 | j << 10 | i
+const C_FOG := 120         # how deep in cloud the mage stands (0-1000)
+const C_FELL_N := 121      # cells of a felled tree or bush nearby
+const C_FELL := 122        # one of them
+const C_TREASURE := 123    # treasure cells dug
 ## The back walls a piece of furniture can stand in front of (see behind_index). 0 is none.
 const BEHIND := [0, PLANK, WOOD, MASONRY, BRICK, SANDSTONE, GLASS, MOSSBLOCK, STONE, TILE, OBSIDIAN,
 	RUNESTONE, DRYGRASS, CAP, STALK, DIRT, DEEPSTONE, ICE, LEAF, SCAFFOLD]
@@ -75,6 +98,7 @@ const MAT_NAMES := {
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
+	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -207,20 +231,28 @@ func _init() -> void:
 	_def(ROOT, "Roots", K_SOLID, ["#4a2e18", "#5a3820", "#6a4428", "#3e2614"], {"fuel": 110, "ign": 0.03})
 	# star iron: no planet has it; it comes from the hearts of metallic asteroids
 	_def(STARIRON, "Star Iron", K_SOLID, ["#8fa4c8", "#c4d4ee", "#64789e", "#eef4ff"], {"hard": 2, "self": 1, "glow": Vector3(0.25, 0.32, 0.5)})
+	# each kind of planet's own ore (KIND_ORES says where it lies)
+	_def(FIREOPAL, "Fire Opal", K_SOLID, ["#e8582a", "#ff9a3a", "#c8304a", "#ffd070"], {"hard": 2, "self": 1, "glow": Vector3(0.7, 0.25, 0.1)})
+	_def(ABYSSPEARL, "Abyss Pearl", K_SOLID, ["#e4ecf4", "#c4d4ec", "#f4dcea", "#9cb8d8"], {"hard": 1, "self": 1, "glow": Vector3(0.3, 0.38, 0.5)})
+	_def(SUNSTONE, "Sunstone", K_SOLID, ["#f0b030", "#ffd860", "#c88420", "#fff0a0"], {"hard": 2, "self": 1, "glow": Vector3(0.75, 0.55, 0.12)})
+	_def(BOGIRON, "Bog Iron", K_SOLID, ["#7a4a2a", "#9a5e34", "#553220", "#b4743e"], {"hard": 1})
+	_def(RIMECRYSTAL, "Rime Crystal", K_SOLID, ["#8ae8ff", "#c8f8ff", "#58bce8", "#ffffff"], {"hard": 2, "self": 1, "glow": Vector3(0.35, 0.75, 1.0)})
+	_def(AMBER, "Amber", K_SOLID, ["#d88a20", "#f0a838", "#a86418", "#ffc860"], {"hard": 1, "self": 1, "glow": Vector3(0.35, 0.2, 0.04)})
+	_def(SILVER, "Silver Ore", K_SOLID, ["#b8c0c8", "#e0e8f0", "#6e767e", "#ffffff"], {"hard": 2})
 	# warded stone: the walls of dungeons, carved with faintly glowing runes. Too hard for any staff
 	# but the Core Siphon, so a dungeon is explored through its halls, not dug around.
 	_def(RUNESTONE, "Warded Stone", K_SOLID, ["#2c3044", "#353a52", "#3f4560", "#24283a"], {"hard": 4, "glow": Vector3(0.025, 0.045, 0.06)})
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
-	PLACE[STARIRON] = 0          # (never put into the world: its id is the GPU's "too hard" counter)
 	# structural strength: how many cells a solid can reach sideways (or hang) from something
 	# (a chest reaches further than its 8-cell width, so it never breaks in pieces: any part
 	# resting on something holds the whole chest, and with nothing under it, it drops whole)
 	# resting on the ground before it breaks loose. Stacking straight up is always fine.
 	for kv in [[STONE, 40], [DEEPSTONE, 48], [MAGMAROCK, 56], [OBSIDIAN, 60], [CORE, 63], [DIRT, 10], [GRASS, 10],
 			[ICE, 14], [FROST, 24], [WOOD, 16], [LEAF, 4], [PLANK, 12], [BRICK, 24], [GLASS, 6], [CACTUS, 8],
-			[SHROOM, 6], [CAP, 6], [STALK, 14], [MYCELIUM, 10], [DRYGRASS, 10], [MASONRY, 28], [MOSSBLOCK, 22], [SANDSTONE, 20], [TILE, 14], [TREASURE, 14], [TORCH, 4]]:
+			[SHROOM, 6], [CAP, 6], [STALK, 14], [MYCELIUM, 10], [DRYGRASS, 10], [MASONRY, 28], [MOSSBLOCK, 22], [SANDSTONE, 20], [TILE, 14], [TREASURE, 14], [TORCH, 4],
+			[STARIRON, 40], [FIREOPAL, 30], [ABYSSPEARL, 20], [SUNSTONE, 30], [BOGIRON, 24], [RIMECRYSTAL, 26], [AMBER, 18], [SILVER, 40]]:
 		SPAN[kv[0]] = kv[1]
 	for kv in [[STONE, GRAVEL], [DEEPSTONE, GRAVEL], [MAGMAROCK, GRAVEL], [BRICK, GRAVEL], [MASONRY, GRAVEL],
 			[MOSSBLOCK, GRAVEL], [TILE, GRAVEL], [SANDSTONE, SAND], [WOOD, TIMBER], [PLANK, TIMBER], [LEAF, LITTER],
@@ -435,6 +467,9 @@ func glsl_prefix() -> String:
 	# (the planet's own geometry, R_TOP, NS, the shells..., is in the shell table, not here: the
 	# shaders are then the same for every planet and a planet of another size needs no new compile)
 	s += "#define R_IN %.1f\n#define ORBIT_ROWS %d\n" % [R_IN, ORBIT_ROWS]
+	s += "#define CNT %du\n" % CNT
+	for cn in ["C_HARD", "C_PLACED", "C_FALL_N", "C_FALL_MAX", "C_CHEST_OPEN", "C_CHEST", "C_CREAK_N", "C_CREAK", "C_FOG", "C_FELL_N", "C_FELL", "C_TREASURE"]:
+		s += "#define %s %du\n" % [cn, get(cn)]
 	s += "#define K_EMPTY 0u\n#define K_SOLID 1u\n#define K_POWDER 2u\n#define K_LIQUID 3u\n#define K_GAS 4u\n#define K_FIRE 5u\n"
 	for id in MAT_NAMES:
 		s += "#define M_%s %du\n" % [MAT_NAMES[id], id]
@@ -558,21 +593,68 @@ const PLANETS := [
 ## ("dust"), and how many wild creatures roam ("wild"). And how settled it is: "settle" scales how many
 ## structures it has (towns and the rest), "towns" how many of those are towns and castles, "ruin" how
 ## many more of them lie in ruins.
+## Its hazards (HAZARDS: "cold", "sun", "miasma", "deep", each 0-1) hurt you slowly unless a ward or a
+## guardian's relic bears them. "belt": the colour of the storm belt round it while it's out of reach.
 const CLIMATES := {
-	"temperate": {"settle": 0.5, "towns": 0.6},
-	"volcanic": {"storm": 0.6, "wind": 0.3, "heat": 1.0, "settle": 0.25, "towns": 0.2, "ruin": 0.3},
-	"ocean": {"storm": 1.8, "wind": 0.5, "settle": 0.35, "towns": 0.5},
-	"desert": {"storm": 0.8, "wind": 0.7, "dust": 1.0, "settle": 0.35, "towns": 0.3, "ruin": 0.25},
-	"marsh": {"storm": 1.3, "fog": 1.0, "settle": 0.3, "towns": 0.3, "ruin": 0.15},
-	"frozen": {"storm": 1.4, "wind": 0.8, "freeze": 1.0, "settle": 0.3, "towns": 0.5},
-	"wild": {"wild": 1.7, "settle": 0.3, "towns": 0.4, "ruin": 0.2},
-	"realm": {"storm": 0.9, "settle": 1.35, "towns": 3.0, "ruin": -0.2},
+	"temperate": {"settle": 0.5, "towns": 0.6, "belt": Color(0.45, 0.7, 1.0)},
+	"volcanic": {"storm": 0.6, "wind": 0.3, "heat": 1.0, "settle": 0.25, "towns": 0.2, "ruin": 0.3, "belt": Color(1.0, 0.45, 0.2)},
+	"ocean": {"storm": 1.8, "wind": 0.5, "deep": 1.0, "settle": 0.35, "towns": 0.5, "belt": Color(0.3, 0.85, 0.95)},
+	"desert": {"storm": 0.8, "wind": 0.7, "dust": 1.0, "sun": 1.0, "settle": 0.35, "towns": 0.3, "ruin": 0.25, "belt": Color(1.0, 0.8, 0.35)},
+	"marsh": {"storm": 1.3, "fog": 1.0, "miasma": 1.0, "settle": 0.3, "towns": 0.3, "ruin": 0.15, "belt": Color(0.55, 0.95, 0.45)},
+	"frozen": {"storm": 1.4, "wind": 0.8, "freeze": 1.0, "cold": 1.0, "settle": 0.3, "towns": 0.5, "belt": Color(0.7, 0.9, 1.0)},
+	"wild": {"wild": 1.7, "settle": 0.3, "towns": 0.4, "ruin": 0.2, "belt": Color(0.75, 1.0, 0.4)},
+	"realm": {"storm": 0.9, "settle": 1.35, "towns": 3.0, "ruin": -0.2, "belt": Color(0.8, 0.55, 1.0)},
 }
+
+## The slow hazards of a kind of planet (its CLIMATES key, 0-1), and what bears each: a ward forged at
+## the Wisp Forge (its `items` key) or a guardian's relic (keys past the hazard, found on earlier
+## worlds). Where: "cold" under the open sky (worse at night and in a blizzard; a fire, torch or lava
+## close by warms you), "sun" under the open sky near midday, "miasma" in a marsh world's low fog,
+## "deep" 35+ cells under the sea's level (its pearl beds). dmg: health a tick. (Volcanic heat stays with the Heat Ward, which also
+## bears the mantle and lava.)
+const HAZARDS := {
+	"cold": {"ward": "hearth", "relic": "rimefang", "dmg": 0.011, "name": "The cold",
+		"msg": "The cold of %s bites under the open sky: forge the Hearth Charm, warm yourself by a fire, or keep to shelter"},
+	"sun": {"ward": "sunveil", "relic": "sunidol", "dmg": 0.010, "name": "The sun",
+		"msg": "The midday sun of %s scorches you in the open: forge the Sun Veil, or keep to the shade until it's lower"},
+	"miasma": {"ward": "fenmask", "relic": "pearl", "dmg": 0.012, "name": "The miasma",
+		"msg": "The fog of %s chokes you: forge the Fen Mask, or climb out of the lowlands"},
+	"deep": {"ward": "tidecharm", "relic": "tidefin", "dmg": 0.03, "name": "The deep",
+		"msg": "The deep sea of %s crushes you: forge the Tide Charm, or stay nearer the surface"},
+}
+
+## Each kind of planet's own ore: where gen.comp lays it (`hosts`: the ground it forms in, `depth`: cells
+## under the surface, `thr`: the vein noise's threshold, higher = rarer; `sea`: only in the seabed, well
+## under the sea). The Core Drive that leaves a planet needs some of its ore (`drive_ore`), and so does the
+## gear made from it.
+const KIND_ORES := {
+	"volcanic": {"mat": FIREOPAL, "hosts": [MAGMAROCK, OBSIDIAN, STONE, DEEPSTONE], "depth": [6.0, 900.0], "thr": 0.80},
+	"ocean": {"mat": ABYSSPEARL, "hosts": [SAND, GRAVEL, STONE, MUD], "depth": [0.0, 70.0], "thr": 0.77, "sea": true},
+	"desert": {"mat": SUNSTONE, "hosts": [SANDSTONE, STONE, SAND, GRAVEL], "depth": [8.0, 320.0], "thr": 0.80},
+	"marsh": {"mat": BOGIRON, "hosts": [MUD, DIRT, STONE, MOSSBLOCK], "depth": [3.0, 200.0], "thr": 0.79},
+	"frozen": {"mat": RIMECRYSTAL, "hosts": [ICE, STONE, DEEPSTONE, SNOW], "depth": [10.0, 520.0], "thr": 0.80},
+	"wild": {"mat": AMBER, "hosts": [DIRT, STONE, MOSSBLOCK, MYCELIUM], "depth": [4.0, 260.0], "thr": 0.80},
+	"realm": {"mat": SILVER, "hosts": [STONE, DEEPSTONE, GRAVEL, SANDSTONE], "depth": [20.0, 700.0], "thr": 0.81},
+}
+const DRIVE_ORE := 12
+
+## a planet's own ore (KIND_ORES), or -1 (a temperate world has none of its own)
+func kind_ore(pl: Dictionary) -> int:
+	var ko: Dictionary = KIND_ORES.get(String(pl.get("kind", "temperate")), {})
+	return int(ko["mat"]) if not ko.is_empty() else -1
+
+## which kind of planet an ore comes from ("" for none)
+func ore_kind(mat: int) -> String:
+	for k in KIND_ORES:
+		if int(KIND_ORES[k]["mat"]) == mat:
+			return k
+	return ""
 
 ## a planet's climate and settlement (see CLIMATES), every key filled in
 func climate(pl: Dictionary) -> Dictionary:
 	var out := {"storm": 1.0, "wind": 0.0, "fog": 0.0, "heat": 0.0, "freeze": 0.0, "dust": 0.0, "wild": 1.0,
-		"settle": 1.0, "towns": 1.0, "ruin": 0.0}
+		"cold": 0.0, "sun": 0.0, "miasma": 0.0, "deep": 0.0, "settle": 1.0, "towns": 1.0, "ruin": 0.0,
+		"belt": Color(0.45, 0.7, 1.0)}
 	var c: Dictionary = CLIMATES.get(String(pl.get("kind", "temperate")), {})
 	for k in c:
 		out[k] = c[k]
@@ -841,8 +923,23 @@ const RECIPES := [
 	{"id": "ward", "cat": "Staff & Body", "name": "Heat Ward", "cost": {EMBER: 15, FROST: 10, OBSIDIAN: 6}, "desc": "Survive the mantle heat."},
 	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISP: 6}, "desc": "Staff tier 3: Obsidian and Magma Rock."},
 	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISP: 15}, "desc": "Staff tier 4: harvest the Planet Core. Needs the Ember Heart."},
+	# gear from each kind of planet's own ore (locked until you've found some: recipe_unlocked)
+	{"id": "opal", "cat": "Staff & Body", "name": "Fire Opal Focus", "cost": {FIREOPAL: 14, OBSIDIAN: 6, GLASS: 4}, "ore": FIREOPAL, "desc": "Your staff digs half again as fast."},
+	{"id": "pearlcharm", "cat": "Staff & Body", "name": "Pearl Lung", "cost": {ABYSSPEARL: 12, GLASS: 4, COPPER: 6}, "ore": ABYSSPEARL, "desc": "Your breath lasts three times as long."},
+	{"id": "sunstone", "cat": "Staff & Body", "name": "Sunstone Circlet", "cost": {SUNSTONE: 12, COPPER: 8, CRYSTAL: 2}, "ore": SUNSTONE, "desc": "+60 max mana, and it comes back faster."},
+	{"id": "bogmail", "cat": "Staff & Body", "name": "Bog Iron Mail", "cost": {BOGIRON: 16, COPPER: 8, PLANK: 6}, "ore": BOGIRON, "desc": "You take a fifth less damage."},
+	{"id": "rimelens", "cat": "Staff & Body", "name": "Rime Lens", "cost": {RIMECRYSTAL: 12, GLASS: 6, WISP: 4}, "ore": RIMECRYSTAL, "desc": "A still wider excavation (radius 11 to 14). Needs Wide Excavation."},
+	{"id": "amber", "cat": "Staff & Body", "name": "Amber Heart", "cost": {AMBER: 12, SHROOM: 8, LEAF: 10}, "ore": AMBER, "desc": "+40 max health."},
+	{"id": "silver", "cat": "Staff & Body", "name": "Silver Sigil", "cost": {SILVER: 14, CRYSTAL: 2, WISP: 6}, "ore": SILVER, "desc": "Your spells cost a quarter less mana."},
+	# wards: each bears one kind of planet's hazard (HAZARDS); a guardian's relic can do it instead
+	{"id": "hearth", "cat": "Wards", "name": "Hearth Charm", "cost": {EMBER: 10, COAL: 16, COPPER: 6}, "desc": "Keeps a frozen world's cold off you under the open sky."},
+	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPER: 6}, "desc": "Shades you from a desert world's midday sun."},
+	{"id": "fenmask", "cat": "Wards", "name": "Fen Mask", "cost": {SHROOM: 10, LEAF: 10, GLASS: 4}, "desc": "Lets you breathe a marsh world's choking fog."},
+	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISP: 8, GLASS: 6, COPPER: 10}, "desc": "Bears the crushing deep of an ocean world's sea."},
 	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISP: 10, COPPER: 8}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
-	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it can reach the next planet of the system. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids."},
+	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it carries the skiff through the next planet's storm belt. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids, and a world with an ore of its own wants some of that too."},
+	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISP: 12, COPPER: 16}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
+	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 ]
 
 # ---------------------------------------------------------------- sprites ---
@@ -1802,13 +1899,13 @@ const BOSSES := {
 const RELICS := {
 	"ironbark": {"name": "Ironbark Shell", "desc": "You take a quarter less damage."},
 	"coil": {"name": "Serpent's Coil", "desc": "You move a fifth faster."},
-	"pearl": {"name": "Mire Pearl", "desc": "You breathe under water."},
-	"cinderheart": {"name": "Cinderheart", "desc": "Fire can't burn you, and lava hurts far less."},
-	"tidefin": {"name": "Tidefin", "desc": "You swim as fast as you walk."},
-	"rimefang": {"name": "Rimefang's Tooth", "desc": "Your Spark Bolts chill what they hit."},
+	"pearl": {"name": "Mire Pearl", "desc": "You breathe under water, and a marsh world's choking fog can't harm you."},
+	"cinderheart": {"name": "Cinderheart", "desc": "Fire can't burn you, lava hurts far less, and a volcanic world's air can't scorch you."},
+	"tidefin": {"name": "Tidefin", "desc": "You swim as fast as you walk, and the deep sea can't crush you."},
+	"rimefang": {"name": "Rimefang's Tooth", "desc": "Your Spark Bolts chill what they hit, and a frozen world's cold can't touch you."},
 	"roc": {"name": "Roc Feather", "desc": "Levitating costs half the mana."},
 	"lionheart": {"name": "Lionheart", "desc": "+40 max health."},
-	"sunidol": {"name": "Sun Idol", "desc": "Your spells hit a quarter harder."},
+	"sunidol": {"name": "Sun Idol", "desc": "Your spells hit a quarter harder, and a desert world's sun can't scorch you."},
 	"lantern": {"name": "Glowcap Lantern", "desc": "A soft light goes with you."},
 }
 

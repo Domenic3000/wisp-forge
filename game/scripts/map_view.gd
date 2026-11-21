@@ -126,8 +126,15 @@ func _draw_system() -> void:
 		var tc := Color(0.6, 1.0, 0.7) if i3 == here else (Color(0.9, 0.9, 1.0) if visited else Color(0.6, 0.62, 0.75))
 		if i3 == here:
 			draw_arc(at, dr + 3.0, 0.0, TAU, 32, tc, 1.0)
+		var walled: bool = i3 != here and i3 > g.skiff_reach()
+		if walled:
+			# beyond the skiff's reach: its storm belt, a dashed ring in its colour
+			var bc: Color = Defs.climate(pl)["belt"]
+			for q in 16:
+				var a0 := TAU * float(q) / 16.0 + float(Time.get_ticks_msec()) * 0.0004
+				draw_arc(at, dr + 5.0, a0, a0 + TAU / 32.0, 4, Color(bc.r, bc.g, bc.b, 0.75), 1.0)
 		_label(at + Vector2(0, dr + 9.0), String(pl["name"]), tc)
-		_label(at + Vector2(0, dr + 15.0), "you are here" if i3 == here and not g.space.active else String(pl.get("kind", "")) + ("" if visited else " · unexplored"), Color(tc.r, tc.g, tc.b, 0.7))
+		_label(at + Vector2(0, dr + 15.0), "you are here" if i3 == here and not g.space.active else String(pl.get("kind", "")) + ("" if visited else " · unexplored") + (" · storm belt: needs a Core Drive" if walled else ""), Color(tc.r, tc.g, tc.b, 0.7))
 	# out in space: where you are between them
 	if g.space.active:
 		var me: Vector2 = ctr + (g.player.pos + Defs.planet_pos(g.space.home) - mid) * sc

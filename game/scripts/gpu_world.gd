@@ -140,7 +140,7 @@ func _alloc() -> bool:
 	rd.buffer_clear(sites_buf, 0, (MAX_SITES + 1) * 16)
 	params_buf = rd.storage_buffer_create(NPARAM * 16)
 	surf_buf = rd.storage_buffer_create(Defs.NS * 32)
-	counts_buf = rd.storage_buffer_create(64 * MAXP * 4)   # 64 counters per player
+	counts_buf = rd.storage_buffer_create(Defs.CNT * MAXP * 4)   # Defs.CNT counters per player
 	var tbl: PackedByteArray = Defs.shell_table()
 	shells_buf = rd.storage_buffer_create(tbl.size(), tbl)
 	return true
@@ -245,8 +245,8 @@ func resize(w: int, h: int) -> void:
 	light_b = rd.storage_buffer_create(LW * LH * 16)
 	view_buf = rd.storage_buffer_create(PW * PH * 4)
 	# read back in one go: the counters, the light, the picture, the nav maps, then the grids
-	nav_off = 64 * MAXP * 4 + LW * LH * 16 + PW * PH * 4
-	rb_off = [0, 64 * MAXP * 4, 64 * MAXP * 4 + LW * LH * 16, nav_off + NG * NGP * MAXP]
+	nav_off = Defs.CNT * MAXP * 4 + LW * LH * 16 + PW * PH * 4
+	rb_off = [0, Defs.CNT * MAXP * 4, Defs.CNT * MAXP * 4 + LW * LH * 16, nav_off + NG * NGP * MAXP]
 	rb_buf = rd.storage_buffer_create(rb_off[3] + GS * GS * MAXP)
 	sets["light"] = _mkset("light", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [8, aux_buf]])
 	sets["blur_h"] = _mkset("blur", [[4, light_a], [5, light_b]])
@@ -308,6 +308,15 @@ func build_surface(planet: Dictionary) -> void:
 		st8[q] = bst[q]
 	setp(24, Vector4(st8[0], st8[1], st8[2], st8[3]))
 	setp(25, Vector4(st8[4], st8[5], st8[6], st8[7]))
+	# the planet kind's own ore (gen.comp `strata`)
+	var ko: Dictionary = Defs.KIND_ORES.get(String(planet.get("kind", "temperate")), {})
+	if ko.is_empty():
+		setp(126, Vector4.ZERO)
+		setp(127, Vector4.ZERO)
+	else:
+		var hs: Array = ko["hosts"]
+		setp(126, Vector4(ko["mat"], hs[0], hs[1], hs[2]))
+		setp(127, Vector4(ko["depth"][0], ko["depth"][1], ko["thr"], float(hs[3]) + (1000.0 if ko.get("sea", false) else 0.0)))
 	setp(120, Vector4(0, 0, 0, 0))
 	_upload_params()
 	var cl := rd.compute_list_begin()
@@ -530,7 +539,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 	flush()
 	params[1] = frame + 1
 	_upload_params()
-	rd.buffer_clear(counts_buf, 0, 64 * MAXP * 4)
+	rd.buffer_clear(counts_buf, 0, Defs.CNT * MAXP * 4)
 	var win := _windows(sim_centers)
 	rd.capture_timestamp("start")
 	var cl := rd.compute_list_begin()
@@ -568,7 +577,7 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 	if not sim_only:
 		# everything to be read back, into one buffer
 		_rb_slots = clampi(grid_frames.size(), 1, MAXP)
-		rd.buffer_copy(counts_buf, rb_buf, 0, rb_off[0], 64 * MAXP * 4)
+		rd.buffer_copy(counts_buf, rb_buf, 0, rb_off[0], Defs.CNT * MAXP * 4)
 		rd.buffer_copy(light_a, rb_buf, 0, rb_off[1], LW * LH * 16)
 		rd.buffer_copy(view_buf, rb_buf, 0, rb_off[2], PW * PH * 4)
 		rd.buffer_copy(nav_buf, rb_buf, 0, nav_off, NG * NGP * _rb_slots)
