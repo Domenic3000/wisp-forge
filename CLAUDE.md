@@ -577,6 +577,22 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`rootWidth` per flora type), into the ground below the surface and into the air where a slope drops away
   under the trunk, so no tree shows a flat underside. Roots score lowest in `flora` (every other part of any
   tree wins a cell), aren't tree-flagged in the collision grid (build over them freely), and dig up as Wood.
+- Fog over the unseen underground (user, 21 Nov: "fog to underground areas the player has not illuminated yet ...
+  soft fall off"): `shaders/inc/seen.comp`, binding 12, `gpu.seen_buf` (`seen_bytes()` = total cells / 2): a level
+  0..16 per block of 2 x 2 cells as a 16-bit thermometer, two blocks a word (`seenWord`, `seenAt`, `markSeen` =
+  one atomicOr, levels only go up). render.comp marks what's lit now (`visNow`: the light less a lightning flash,
+  smoothstep 0.02..0.25; never from the map or space, P.p[122].w bit 2); light.comp puts how clear each light
+  point is in the light's w (4 samples of the seen map, or what's lit now, times `fogUnder`: none in the top 5
+  rows under the surface, all of it from 26 down), blurred with the light, so the edge falls off softly; render
+  mixes in a drifting dark mist by 1 - w, over lava and glowing ore too. Sprites: `gpu.light_at(...).a`, overlay
+  `_lit` darkens them to match; chunks.gd takes no colour from a fogged spot. Saved in the world file as a block
+  of its own after the cells (`SEEN_MAGIC`, compressed apart; `gpu.read_seen`/`write_seen`, `read_world_async`
+  returns [cells, seen]; a world without it loads all unseen); cleared for a new planet (`generate_prepare`).
+  (`read_world(true)` / `write_world` with the seen map appended are for the tests.) Test: `_test_fog` ("fog",
+  picture `fog.png`).
+- Point lights are given to light.comp in the PICTURE's pixels (`world_to_screen` + `PMX/PMY`): in the screen's
+  they shone a margin up and left of where they were (since the picture got its margin), so underground the wisp
+  lit the rock beside you.
 - Clouds live in world space (`shaders/inc/clouds.comp`: `cloudLow` near the ground, `cloudHigh` the weather
   layer above the mountains; `cloudDensity` is both): render.comp draws them over everything
   at their height (fog when you fly in), react.comp spawns rain/snow/ash only under the high layer's undersides, and
@@ -607,8 +623,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ground curves away in it (a row every 10-15 cells far out): never assume a floor is on one row; follow it
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
+- The wild-life checks (`_test_creatures`, `_test_ecology`) are set up near `start_pos` (where you arrived), in clear
+  weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
+  frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -705,6 +724,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   below (`was_ground`). Drawing: overlay `_feet` puts a grounded body's feet on the top of the world cell the grid
   has under it (`main.ground_top`), and `_sprite` hangs a frame by its lowest opaque row (`_gap_under`, not doors
   or chests), so frames with empty rows under the feet don't float; birds on the ground are drawn by their feet.
+  The gap is worked out from the Image as a texture is made (`_make_tex`, `_image_gap`; Defs sprites from their
+  rows): never `get_image()` on a texture while drawing, it stalls the renderer.
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
 

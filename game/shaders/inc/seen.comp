@@ -1,0 +1,42 @@
+// What you've seen of the planet: fog lies over the underground you haven't lit yet (user, 21 Nov).
+// A level 0..16 per block of 2 x 2 cells, kept as a 16-bit thermometer (level k = its low k bits set),
+// two blocks to a word: marking is one atomicOr, and a level only ever goes up. Every shell's first
+// row is even and its columns a multiple of 16, so blocks never straddle a shell, a row or a word.
+// Bound at 12 (gpu.seen_buf: Defs.total_cells() / 2 bytes, saved after the world's two layers).
+layout(std430, set = 0, binding = 12) restrict buffer Seen { uint s[]; } seen;
+
+int seenWord(vec2 p, out uint sh) {
+	sh = 0u;
+	float r = length(p);
+	if (r >= R_SPACE || r < R_IN) return -1;
+	int y = min(int(floor(R_TOP - r)), ROWS - 1);
+	int s = shellOf(y);
+	int n = SH_N(s);
+	int x = min(int(angleOf(p) / TAU * float(n)), n - 1);
+	int blk = (SH_OFF(s) >> 2) + ((y - SH_Y0(s)) >> 1) * (n >> 1) + (x >> 1);
+	sh = uint(blk & 1) * 16u;
+	return blk >> 1;
+}
+// how much of the block at p has been seen, 0..1 (1 outside the simulated shells)
+float seenAt(vec2 p) {
+	uint sh;
+	int w = seenWord(p, sh);
+	if (w < 0) return 1.0;
+	return float(bitCount((seen.s[w] >> sh) & 0xFFFFu)) / 16.0;
+}
+void markSeen(vec2 p, float v) {
+	int k = int(v * 16.0);
+	if (k <= 0) return;
+	uint sh;
+	int w = seenWord(p, sh);
+	if (w < 0) return;
+	uint m = (k >= 16 ? 0xFFFFu : ((1u << uint(k)) - 1u)) << sh;
+	if ((seen.s[w] & m) != m) atomicOr(seen.s[w], m);
+}
+// fog lies only underground: none in the top few rows under the surface, all of it from ~26 down
+float fogUnder(float r, float surf) { return smoothstep(5.0, 26.0, surf - r); }
+// how well a point is seen in this light (a lightning flash lights everything for a moment: not that)
+float visNow(vec3 L) {
+	float lum = max(L.r, max(L.g, L.b)) - P.p[3].w;
+	return smoothstep(0.02, 0.25, lum);
+}

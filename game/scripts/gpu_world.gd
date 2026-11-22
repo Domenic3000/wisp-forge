@@ -55,6 +55,7 @@ var grid_buf: RID
 var light_a: RID
 var light_b: RID
 var view_buf: RID
+var seen_buf: RID        # what you've seen of the planet (fog over the rest underground: inc/seen.comp), binding 12
 
 var VW := 480
 var VH := 270
@@ -143,7 +144,13 @@ func _alloc() -> bool:
 	counts_buf = rd.storage_buffer_create(Defs.CNT * MAXP * 4)   # Defs.CNT counters per player
 	var tbl: PackedByteArray = Defs.shell_table()
 	shells_buf = rd.storage_buffer_create(tbl.size(), tbl)
+	seen_buf = rd.storage_buffer_create(seen_bytes())
+	rd.buffer_clear(seen_buf, 0, seen_bytes())
 	return true
+
+## the seen map's size: 16 bits a block of 2 x 2 cells (inc/seen.comp)
+static func seen_bytes() -> int:
+	return Defs.total_cells() / 2
 
 func _load_text(path: String) -> String:
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -248,10 +255,10 @@ func resize(w: int, h: int) -> void:
 	nav_off = Defs.CNT * MAXP * 4 + LW * LH * 16 + PW * PH * 4
 	rb_off = [0, Defs.CNT * MAXP * 4, Defs.CNT * MAXP * 4 + LW * LH * 16, nav_off + NG * NGP * MAXP]
 	rb_buf = rd.storage_buffer_create(rb_off[3] + GS * GS * MAXP)
-	sets["light"] = _mkset("light", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [8, aux_buf]])
+	sets["light"] = _mkset("light", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [8, aux_buf], [12, seen_buf]])
 	sets["blur_h"] = _mkset("blur", [[4, light_a], [5, light_b]])
 	sets["blur_v"] = _mkset("blur", [[4, light_b], [5, light_a]])
-	sets["render"] = _mkset("render", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [6, view_buf], [8, aux_buf]])
+	sets["render"] = _mkset("render", [[0, world_buf], [1, params_buf], [2, surf_buf], [4, light_a], [6, view_buf], [8, aux_buf], [12, seen_buf]])
 
 # ------------------------------------------------------------------ helpers --
 func setp(slot: int, v: Vector4) -> void:
@@ -345,6 +352,7 @@ func generate_prepare(spawn_angle: float, boss: Vector4, sites: Array) -> Array:
 		sd[(k + 1) * 4 + 1] = q.y
 	var sb := sd.to_byte_array()
 	rd.buffer_update(sites_buf, 0, sb.size(), sb)
+	rd.buffer_clear(seen_buf, 0, seen_bytes())      # (a new planet: none of it seen yet)
 	setp(120, boss)
 	setp(121, Vector4(spawn_angle, 0, 0, 0))
 	_upload_params()
@@ -706,7 +714,9 @@ func light_at(px: Vector2) -> Color:
 	var k := light_off + (j * LW + i) * 16
 	if light_off == 0 or k + 12 > grid.size():
 		return Color.WHITE
-	return Color(minf(sqrt(maxf(grid.decode_float(k), 0.0) + 0.008), 1.3), minf(sqrt(maxf(grid.decode_float(k + 4), 0.0) + 0.008), 1.3), minf(sqrt(maxf(grid.decode_float(k + 8), 0.0) + 0.008), 1.3))
+	# (a: how clear of the fog over the unseen underground it is, 1 clear)
+	return Color(minf(sqrt(maxf(grid.decode_float(k), 0.0) + 0.008), 1.3), minf(sqrt(maxf(grid.decode_float(k + 4), 0.0) + 0.008), 1.3), minf(sqrt(maxf(grid.decode_float(k + 8), 0.0) + 0.008), 1.3),
+		clampf(grid.decode_float(k + 12), 0.0, 1.0))
 
 ## A w x h block of shell-0 cells (column c0.., row r0..; columns wrap around the planet), both
 ## layers: {"fg": PackedInt32Array, "bg": PackedInt32Array}, row by row. For a one-off look (picking
@@ -731,14 +741,29 @@ func read_rect(c0: int, r0: int, w: int, h: int, ax := -1, aw := 1) -> Dictionar
 	read_us += Time.get_ticks_usec() - t0
 	return {"fg": both.slice(0, w * h), "bg": both.slice(w * h, 2 * w * h)}
 
-func read_world() -> PackedByteArray:
+## Both layers (and, `with_seen`, the seen map after them: what a save keeps).
+func read_world(with_seen := false) -> PackedByteArray:
 	flush()
 	var out := rd.buffer_get_data(world_buf)
 	out.append_array(rd.buffer_get_data(aux_buf))
+	if with_seen:
+		out.append_array(rd.buffer_get_data(seen_buf))
 	return out
 
-## read_world a slice a frame (8 MB at a time). Await it.
-func read_world_async() -> PackedByteArray:
+## the seen map alone (saved as a block of its own after the world's cells)
+func read_seen() -> PackedByteArray:
+	flush()
+	return rd.buffer_get_data(seen_buf)
+
+func write_seen(data: PackedByteArray) -> void:
+	flush()
+	if data.size() == seen_bytes():
+		rd.buffer_update(seen_buf, 0, seen_bytes(), data)
+	else:
+		rd.buffer_clear(seen_buf, 0, seen_bytes())
+
+## read_world a slice a frame (8 MB at a time), then the seen map: [cells, seen]. Await it.
+func read_world_async() -> Array:
 	flush()
 	var out := PackedByteArray()
 	var n: int = Defs.total_cells() * 4
@@ -750,13 +775,18 @@ func read_world_async() -> PackedByteArray:
 			out.append_array(rd.buffer_get_data(buf, o, sz))
 			o += sz
 			await Engine.get_main_loop().process_frame
-	return out
+	return [out, read_seen()]
 
+## A saved world: both layers, then the seen map if the save has one (one from before it: none seen).
 func write_world(data: PackedByteArray) -> void:
 	flush()
 	var n: int = Defs.total_cells() * 4
 	rd.buffer_update(world_buf, 0, n, data.slice(0, n))
 	rd.buffer_update(aux_buf, 0, n, data.slice(n, n * 2))
+	if data.size() >= n * 2 + seen_bytes():
+		rd.buffer_update(seen_buf, 0, seen_bytes(), data.slice(n * 2, n * 2 + seen_bytes()))
+	else:
+		rd.buffer_clear(seen_buf, 0, seen_bytes())
 
 func cleanup() -> void:
 	if rd == null:
@@ -768,7 +798,7 @@ func cleanup() -> void:
 	for nm in shaders:
 		rd.free_rid(shaders[nm]["pipeline"])
 		rd.free_rid(shaders[nm]["shader"])
-	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf, shells_buf, nav_buf]:
+	for b in [world_buf, aux_buf, sites_buf, params_buf, surf_buf, counts_buf, grid_buf, light_a, light_b, view_buf, rb_buf, shells_buf, nav_buf, seen_buf]:
 		if b.is_valid():
 			rd.free_rid(b)
 	rd.free()

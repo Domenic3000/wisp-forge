@@ -19,10 +19,17 @@ var _boss_made := {}          # guardians whose frames have been grown (boss_art
 func _ready() -> void:
 	for k in Defs.SPRITES:
 		tex[k] = Defs.sprite_texture(k)
+		# (empty rows under the lowest drawn row: the outline takes one of them)
+		var srows: Array = Defs.SPRITES[k]["rows"]
+		var last := -1
+		for sy in srows.size():
+			if String(srows[sy]).replace(".", "") != "":
+				last = sy
+		_gaps[k] = float(maxi(0, srows.size() - 1 - last)) if last >= 0 else 0.0
 	# a bat asleep under a cave roof: its first frame upside down
 	var bh: Image = tex["bat1"].get_image()
 	bh.flip_y()
-	tex["bat_hang"] = ImageTexture.create_from_image(bh)
+	_make_tex("bat_hang", bh)
 	tex["door_open"] = ImageTexture.create_from_image(_door_open_image(30))
 
 func _draw_build_preview() -> void:
@@ -231,7 +238,7 @@ func _boss_art(e) -> void:
 	_boss_made[e.type] = true
 	var fr: Dictionary = BossArt.frames(e.type, e.d["def"]["body"])
 	for k in fr:
-		tex[k] = ImageTexture.create_from_image(fr[k])
+		_make_tex(k, fr[k])
 
 ## a serpent: its segments along its trail (tail first; a burrower's are hidden in the ground), then
 ## its head, jaws open while it strikes
@@ -311,7 +318,9 @@ func _lit(sp: Vector2) -> Color:
 	if game.space.active and not game.space.live:
 		return Color(1, 1, 1)               # (out in space: full sun, and no light grid to read)
 	var c: Color = game.gpu.light_at(game.screen_to_pic(sp))
-	return Color(clampf(c.r, 0.12, 1.0), clampf(c.g, 0.12, 1.0), clampf(c.b, 0.12, 1.0))
+	# (in the fog over the unseen underground a creature is as hidden as the ground round it)
+	var f := 0.04 + 0.96 * c.a
+	return Color(clampf(c.r, 0.12, 1.0) * f, clampf(c.g, 0.12, 1.0) * f, clampf(c.b, 0.12, 1.0) * f)
 
 ## Where a body's feet are drawn on screen. Sprites hang from the feet, not the centre: a body
 ## standing on the ground has its feet snapped onto the same cell row as the ground under it,
@@ -367,31 +376,30 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0 + (0.0 if turn else _gap_under(key, t))), mod)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-## how many empty rows a frame has under its lowest opaque row (its feet's outline), cached by key
+## how many empty rows a frame has under its lowest opaque row (its feet's outline), cached by key: worked
+## out from the Image as each texture is made (`_make_tex`). (Read back from a texture as it was first
+## drawn, each one stalled the renderer: arriving on a planet full of new creatures took a 280 ms frame.)
 func _gap_under(key: String, t: Texture2D) -> float:
-	if _gaps.has(key):
-		return _gaps[key]
-	var gap := 0
-	var img := t.get_image()
-	if img != null:
-		if img.is_compressed():
-			img.decompress()
-		var w := img.get_width()
-		var hh := img.get_height()
-		gap = hh
-		for yy in range(hh - 1, -1, -1):
-			var any := false
-			for xx in w:
-				if img.get_pixel(xx, yy).a > 0.5:
-					any = true
-					break
-			if any:
-				gap = hh - 1 - yy
-				break
-		if gap >= hh:
-			gap = 0
-	_gaps[key] = float(gap)
-	return float(gap)
+	if not _gaps.has(key):
+		_gaps[key] = _image_gap(t.get_image())
+	return _gaps[key]
+
+func _make_tex(key: String, img: Image) -> void:
+	tex[key] = ImageTexture.create_from_image(img)
+	_gaps[key] = _image_gap(img)
+
+static func _image_gap(img: Image) -> float:
+	if img == null:
+		return 0.0
+	if img.is_compressed():
+		img.decompress()
+	var w := img.get_width()
+	var hh := img.get_height()
+	for yy in range(hh - 1, -1, -1):
+		for xx in w:
+			if img.get_pixel(xx, yy).a > 0.5:
+				return float(hh - 1 - yy)
+	return 0.0
 
 ## A mage: the frame, plus the parts mage_rig.gd simulates (the scarf behind him; the hat's tip,
 ## the beard's end and the staff in front), all in the sprite's own pixels and transform.
@@ -842,7 +850,7 @@ func _draw_folk() -> void:
 		if not tex.has(fk + "_stand"):
 			var fr: Dictionary = FolkArt.frames(v.fseed, v.role)
 			for fn in fr:
-				tex[fk + "_" + fn] = ImageTexture.create_from_image(fr[fn])
+				_make_tex(fk + "_" + fn, fr[fn])
 		if v.lying:
 			_lying(v, tex[fk + "_stand"])
 			continue

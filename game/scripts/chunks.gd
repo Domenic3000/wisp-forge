@@ -621,8 +621,8 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 		lit = g.gpu.light_at(sp)
 		lc[lk] = lit
 	var lum := (lit.r + lit.g + lit.b) / 3.0
-	if lum < 0.25:
-		return pal
+	if lum < 0.25 or lit.a < 0.9:
+		return pal          # (too dark, or in the fog over the unseen underground: its own colour)
 	var s := img.get_pixel(int(sp.x), int(sp.y))
 	var cap := Color(clampf(s.r / maxf(lit.r, 0.2), 0, 1), clampf(s.g / maxf(lit.g, 0.2), 0, 1), clampf(s.b / maxf(lit.b, 0.2), 0, 1), 1.0)
 	# what's on screen there may not be this cell (sky through a gap in the leaves, a sprite in front):

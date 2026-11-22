@@ -12,6 +12,8 @@ var g                       # the game (main.gd)
 var lines := []
 var passed := 0
 var failed := 0
+var start_pos := Vector2.ZERO  # where you arrived on the planet (the wild-life checks are set up near it, as
+                               # when run alone: the full run's earlier checks leave you somewhere else each time)
 var worst_us := 0           # the longest frame since this was last reset (a hitch shows here)
 var _last_us := 0
 
@@ -1283,6 +1285,7 @@ func run() -> void:
 	g.ui.show_hud()
 	g.state = "play"
 	var b = g.builds
+	start_pos = g.player.pos
 	# (saves/test_only.txt naming a section runs just that one, to try a change quickly)
 	# (an empty file runs everything)
 	var only_f: String = g._real_save_dir().path_join("test_only.txt")
@@ -1320,6 +1323,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_ecology()
+		elif only == "fog":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_fog()
 		elif only == "sky":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3597,6 +3604,7 @@ func run() -> void:
 
 	await _test_creatures()
 	await _test_ecology()
+	await _test_fog()
 
 	await _test_climb()
 	await _test_nav()
@@ -3976,15 +3984,33 @@ func run() -> void:
 	var tv_gap := 0
 	var tv_gap_at := ""
 	var tv_t0 := Time.get_ticks_usec()
+	g.hitch_us = 0
 	var tv_held := false
 	var tv_shot := false
 	var tv_arrive := -1
 	var tv_back := -1
+	var tv_draw := {"pre": 0, "draw": 0}
+	var tv_pre := func() -> void:
+		tv_draw["pre"] = Time.get_ticks_usec()
+	var tv_post := func() -> void:
+		tv_draw["draw"] = Time.get_ticks_usec() - int(tv_draw["pre"])
+	RenderingServer.frame_pre_draw.connect(tv_pre)
+	RenderingServer.frame_post_draw.connect(tv_post)
 	for tvk2 in 2400:
 		# (Cindrel's centre; nudged off zero, which would mean "follow the mouse")
 		g.test_aim = Defs.planet_pos(1) - Defs.planet_pos(g.space.home) + Vector2(0.5, 0.5)
 		await _frames(1)
 		var tv_now := Time.get_ticks_usec()
+		if tv_now - tv_t0 > 150000:
+			var tv_big := []
+			for tv_sec in g.prof:
+				if float(g.prof[tv_sec][3]) > 30000.0:
+					tv_big.append("%s %.0f" % [tv_sec, float(g.prof[tv_sec][3]) / 1000.0])
+			print("[travel] a %.0f ms frame at tick %d (%s): %s; process %.0f ms, physics %.0f ms, GPU wait %.0f ms, game's own %.0f ms, drawing %.0f ms, live %s, space %s" % [(tv_now - tv_t0) / 1000.0, tvk2,
+				"arrived" if tv_arrive >= 0 else "on the way", ", ".join(tv_big), Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+				Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, g.gpu.wait_us / 1000.0, g.hitch_us / 1000.0, float(tv_draw["draw"]) / 1000.0, str(g.space.live), str(g.space.active)])
+			g.hitch_us = 0
+		g.prof_reset()
 		if tv_now - tv_t0 > tv_gap:
 			tv_gap = tv_now - tv_t0
 			tv_gap_at = "tick %d, %s, made %.2f" % [tvk2, "travelling" if g.travelling else ("arrived %d ticks before" % (tvk2 - tv_arrive) if tv_arrive >= 0 else "before arriving"), g.travel_progress]
@@ -3996,9 +4022,12 @@ func run() -> void:
 		if not tv_shot and tv_arrive >= 0 and g.zoom < 12.0:
 			tv_shot = true
 			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("arrival.png"))
+			tv_t0 = Time.get_ticks_usec()       # (the picture's own saving isn't the game's frame)
 		if tv_arrive >= 0 and not g.space.active:
 			tv_back = tvk2
 			break
+	RenderingServer.frame_pre_draw.disconnect(tv_pre)
+	RenderingServer.frame_post_draw.disconnect(tv_post)
 	g.test_cast = false
 	g.test_aim = Vector2.ZERO
 	g.test_down = true
@@ -4049,6 +4078,10 @@ func run() -> void:
 func _test_creatures() -> void:
 	var cr_god0: bool = g.test_god
 	g.test_god = true
+	var cr_w0 := [g.rain, g.rain_target, g.weather_timer]     # (clear weather: see _test_ecology)
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
 	var cr_rows := []
 	var cr_bad := []
 	var cr_places := []
@@ -4068,7 +4101,7 @@ func _test_creatures() -> void:
 	# (on the ground: the test before this one leaves you up in the orbit band)
 	var cr_orig: Vector2 = g.player.pos
 	# (on a clear, level stretch: spawned inside a tower, a creature can't come after you at all)
-	var cr_st := _soft_stretch(Build.cell_of(g.player.pos).x - 85, 170, 50, 30)    # (soft ground: a burrower lives in it)
+	var cr_st := _soft_stretch(Build.cell_of(start_pos).x - 85, 170, 50, 30)    # (soft ground: a burrower lives in it)
 	var cr_a0: float = (float(cr_st.x) + 85.5) / float(Defs.NS) * TAU
 	_go(Vector2(cos(cr_a0), sin(cr_a0)) * (g.gpu.surf_at(cr_a0).x + 14.0))
 	await _frames(60)
@@ -4127,6 +4160,9 @@ func _test_creatures() -> void:
 			if not cr_e3.dead:
 				g._kill_enemy(cr_e3)
 	g.test_god = cr_god0
+	g.rain = float(cr_w0[0])
+	g.rain_target = float(cr_w0[1])
+	g.weather_timer = int(cr_w0[2])
 	g.boss_clouds.clear()
 	_go(cr_orig)
 	await _frames(30)
@@ -4141,12 +4177,18 @@ func _test_ecology() -> void:
 	var ec_god0: bool = g.test_god
 	var ec_time0: float = g.time
 	g.test_god = true
+	# (in clear weather, as when run alone: in the full run it was sometimes raining by now, and in a
+	# storm creatures go for shelter and huddle, and the rain puts out the fire meant to scare them)
+	var ec_w0 := [g.rain, g.rain_target, g.weather_timer]
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
 	for ec_e0 in g.enemies.duplicate():
 		if not ec_e0.boss:
 			g.enemies.erase(ec_e0)
 	g.spawn_timer = 999999
 	var ec_orig: Vector2 = g.player.pos
-	var ec_st := _soft_stretch(Build.cell_of(g.player.pos).x - 130, 260, 50, 8)
+	var ec_st := _soft_stretch(Build.cell_of(start_pos).x - 130, 260, 50, 8)
 	var ec_a0: float = (float(ec_st.x) + 130.5) / float(Defs.NS) * TAU
 	var ec_r0: float = g.gpu.surf_at(ec_a0).x
 	var ec_br: Vector2 = g.basis_r(ec_a0)
@@ -4403,6 +4445,9 @@ func _test_ecology() -> void:
 
 	g.time = ec_time0
 	g.test_god = ec_god0
+	g.rain = float(ec_w0[0])
+	g.rain_target = float(ec_w0[1])
+	g.weather_timer = int(ec_w0[2])
 	g.spawn_timer = 600
 	g.eco_carcasses.clear()
 	for ec_e1 in g.enemies.duplicate():
@@ -4509,6 +4554,73 @@ func _test_corner() -> Array:
 	g.stamps.append({"x0": cn_c.x, "y0": cn_c.y, "w": CNW, "h": CNH, "data": cn_clear, "ax": cn_c.x, "aw": CNW})
 	await _frames(5)
 	return [cn_ok, cn_rows]
+
+## Fog over the underground you haven't seen (user, 21 Nov): ground far under you is fogged on screen, a
+## pocket you've stood in is clear once you've gone, the fog's edge falls off over several cells, and the
+## seen map goes with the save (a picture: saves/shots/fog.png).
+func _test_fog() -> void:
+	var fg_god0: bool = g.test_god
+	g.test_god = true
+	var fg_orig: Vector2 = g.player.pos
+	var fg_a := atan2(fg_orig.y, fg_orig.x)
+	var fg_surf: float = g.gpu.surf_at(fg_a).x
+	var fg_up := Vector2(cos(fg_a), sin(fg_a))
+	var fg_side: Vector2 = g.basis_r(fg_a)
+	var fg_top: Vector2 = fg_up * (fg_surf + 14.0)
+	# (from a clean slate: the checks before this one went about underground round here)
+	g.gpu.flush()
+	g.gpu.rd.buffer_clear(g.gpu.seen_buf, 0, g.gpu.seen_bytes())
+	_go(fg_top)
+	await _frames(30)
+	var fg_far: Vector2 = fg_up * (fg_surf - 90.0) + fg_side * 70.0
+	var fg_clear := func(p: Vector2) -> float:
+		return g.gpu.light_at(g.world_to_pic(p)).a
+	var fg_a0: float = fg_clear.call(fg_far)
+	# a pocket down there to stand in
+	var fg_c: Vector2i = Build.cell_of(fg_far)
+	var fg_d := PackedInt32Array()
+	fg_d.resize(24 * 30)
+	fg_d.fill(Defs.AIR | 0xFF00)
+	g.stamps.append({"x0": fg_c.x - 12, "y0": fg_c.y - 15, "w": 24, "h": 30, "data": fg_d, "ax": fg_c.x - 12, "aw": 24})
+	await _frames(3)
+	_go(fg_far)
+	await _frames(40)
+	_go(fg_top)
+	await _frames(20)
+	var fg_a1: float = fg_clear.call(fg_far)
+	var fg_a2: float = fg_clear.call(fg_far + fg_side * 110.0)
+	# the edge: from the pocket outward, along and down
+	var fg_mid := 0
+	var fg_jump := 0.0
+	var fg_prev: float = fg_a1
+	var fg_line := []
+	for fg_k in range(1, 31):
+		var fg_v: float = fg_clear.call(fg_far + (fg_side * 0.8 - fg_up * 0.6) * float(fg_k) * 3.0)
+		if fg_v > 0.15 and fg_v < 0.85:
+			fg_mid += 1
+		fg_jump = maxf(fg_jump, absf(fg_v - fg_prev))
+		fg_prev = fg_v
+		if fg_k % 3 == 0:
+			fg_line.append("%.2f" % fg_v)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("fog.png"))
+	# kept with the world: without the seen map the pocket is fogged again, with it clear
+	var fg_raw: PackedByteArray = g.gpu.read_world(true)
+	var fg_n: int = Defs.total_cells() * 8
+	var fg_seen: PackedByteArray = fg_raw.slice(fg_n)
+	var fg_any: bool = fg_seen.size() == g.gpu.seen_bytes() and fg_seen.count(0) < fg_seen.size()
+	g.gpu.write_world(fg_raw.slice(0, fg_n))
+	await _frames(6)
+	var fg_a3: float = fg_clear.call(fg_far)
+	g.gpu.write_world(fg_raw)
+	await _frames(6)
+	var fg_a4: float = fg_clear.call(fg_far)
+	var fg_ok: bool = fg_a0 < 0.25 and fg_a1 > 0.8 and fg_a2 < 0.25 and fg_mid >= 3 and fg_jump < 0.45 and fg_any and fg_a3 < 0.25 and fg_a4 > 0.8
+	_ok("fog lies over the underground you haven't seen, lifts where you've been, falls off softly and is saved",
+		fg_ok, "unseen ground %.2f clear; the pocket you stood in %.2f after; 110 cells on %.2f; edge %s (%d between, steepest step %.2f); seen map kept %s, without it %.2f, with it %.2f" % [
+		fg_a0, fg_a1, fg_a2, ", ".join(fg_line), fg_mid, fg_jump, str(fg_any), fg_a3, fg_a4])
+	g.test_god = fg_god0
+	_go(fg_orig)
+	await _frames(20)
 
 ## every game grows a system of its own: the rules for many seeds, and one random planet made for real
 func _test_worlds() -> void:

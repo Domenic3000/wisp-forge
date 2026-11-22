@@ -6,6 +6,7 @@
 #include "params"
 #include "surf_ro"
 #include "bglayer"
+#include "seen"
 layout(std430, set = 0, binding = 4) restrict writeonly buffer LightOut { vec4 l[]; } lo;
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -76,5 +77,19 @@ void main() {
 		float d = distance(pxc, a.xy) / max(a.z / zoom, 1.0);
 		if (d < 1.0) L += P.p[25 + 2 * k].rgb * (1.0 - d) * (1.0 - d);
 	}
-	lo.l[j * LW + i] = vec4(L, 1.0);
+	// --- fog over the underground not yet seen (w: 1 clear .. 0 fogged; render.comp and the sprites
+	// read it). What's lit now counts as seen; blurred with the light, its edge falls off softly ---
+	float vis = 1.0;
+	if (r > R_IN && r < R_TOP) {
+		float under = fogUnder(r, surfA(angleOf(pos)).x);
+		if (under > 0.0) {
+			float sv = 0.0;
+			for (int q = 0; q < 4; q++) {
+				vec2 o = vec2(float(q & 1), float(q >> 1)) * float(LS) * 0.5 + float(LS) * 0.25;
+				sv += seenAt(screenToWorld(vec2(float(i * LS), float(j * LS)) + o));
+			}
+			vis = 1.0 - (1.0 - max(sv * 0.25, visNow(L))) * under;
+		}
+	}
+	lo.l[j * LW + i] = vec4(L, vis);
 }

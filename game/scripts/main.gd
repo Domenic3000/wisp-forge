@@ -913,7 +913,10 @@ func _write_frame_params() -> void:
 	gpu.setp(121, Vector4(spawn_angle, time * 0.00004, minf(Defs.R_TOP - 2.0, cr + VH * 0.55 * zoom), cam_unwrap))
 	for k in mini(lights.size(), 32):
 		var L: Array = lights[k]
-		var sp := world_to_screen(L[0])
+		# (in the picture's pixels, as light.comp counts them: the screen's plus its margin. Given in the
+		# screen's, every light shone a margin up and to the left of where it was, so underground the
+		# wisp lit the rock beside you and not you)
+		var sp := world_to_screen(L[0]) + Vector2(gpu.PMX, gpu.PMY)
 		gpu.setp(24 + 2 * k, Vector4(sp.x, sp.y, L[1], 0))
 		var col: Color = L[2]
 		gpu.setp(25 + 2 * k, Vector4(col.r, col.g, col.b, 0))
@@ -5305,6 +5308,7 @@ func _respawn() -> void:
 const OLD_SAVE_PATH := "user://wispforge_save.json"
 const GEN_VERSION := 36            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
+const SEEN_MAGIC := 0x5345454e    # "SEEN": then the seen map (gpu_world.seen_bytes), compressed on its own
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)
 var _save_task := -1
 
@@ -5446,12 +5450,13 @@ func save_world(blocking: bool, without_skiff := false) -> void:
 		gpu.stamp(stamps, frame)
 		stamps.clear()
 	var raw: PackedByteArray = gpu.read_world()
+	var seen: PackedByteArray = gpu.read_seen()
 	var meta := _world_meta(without_skiff)
 	var path := _world_path(int(planet["index"]))
 	if blocking:
-		_write_world_file(path, raw, meta)
+		_write_world_file(path, raw, meta, seen)
 	else:
-		_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, raw, meta))
+		_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, raw, meta, seen))
 
 ## save_world, with the world read back from the GPU a slice a frame (space travel: the GPU rests
 ## out there, so the world can't change meanwhile) and written on another thread. Await it.
@@ -5466,8 +5471,8 @@ func save_world_async(without_skiff := false) -> void:
 		stamps.clear()
 	var meta := _world_meta(without_skiff)
 	var path := _world_path(int(planet["index"]))
-	var raw: PackedByteArray = await gpu.read_world_async()
-	_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, raw, meta))
+	var both: Array = await gpu.read_world_async()
+	_save_task = WorkerThreadPool.add_task(_write_world_file.bind(path, both[0], meta, both[1]))
 
 ## the planet's own state as saved with its cells: where you are, the skiff, chests, doors, time
 func _world_meta(without_skiff: bool) -> String:
@@ -5498,8 +5503,9 @@ func _world_meta(without_skiff: bool) -> String:
 	planet_state["time"] = time
 	return JSON.stringify(planet_state)
 
-func _write_world_file(path: String, raw: PackedByteArray, meta: String) -> void:
+func _write_world_file(path: String, raw: PackedByteArray, meta: String, seen := PackedByteArray()) -> void:
 	var comp := raw.compress(FileAccess.COMPRESSION_ZSTD)
+	var seen_comp := seen.compress(FileAccess.COMPRESSION_ZSTD) if not seen.is_empty() else PackedByteArray()
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
@@ -5511,6 +5517,12 @@ func _write_world_file(path: String, raw: PackedByteArray, meta: String) -> void
 	f.store_buffer(mb)
 	f.store_32(comp.size())
 	f.store_buffer(comp)
+	if not seen.is_empty():
+		# what you've seen of it (the fog over the rest underground), a block of its own after the cells
+		f.store_32(SEEN_MAGIC)
+		f.store_32(seen.size())
+		f.store_32(seen_comp.size())
+		f.store_buffer(seen_comp)
 	f.close()
 	DirAccess.remove_absolute(path)
 	DirAccess.rename_absolute(tmp, path)
@@ -5533,6 +5545,13 @@ func _load_world(i: int) -> bool:
 	if raw.size() != size:
 		return false
 	gpu.write_world(raw)
+	# the seen map, if it was saved with one (a world from before it: none of it seen yet)
+	var seen := PackedByteArray()
+	if f.get_position() + 12 <= f.get_length() and f.get_32() == SEEN_MAGIC:
+		var ssize := f.get_32()
+		var scomp := f.get_buffer(f.get_32())
+		seen = scomp.decompress(ssize, FileAccess.COMPRESSION_ZSTD)
+	gpu.write_seen(seen)
 	var m = JSON.parse_string(meta_txt)
 	planet_state = m if typeof(m) == TYPE_DICTIONARY else {}
 	return true
