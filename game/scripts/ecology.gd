@@ -565,9 +565,11 @@ static func _life(g, e, tgt, dist: float, gacc: float, spd: float, go: String) -
 				e.goal_p = find_perch(g, e)
 			if e.goal_p == Vector2.ZERO or _perch(g, e, spd):
 				e.asleep = true                   # (nowhere to perch: it dozes on the wing)
+				e.act = ""
 			return DONE
 		if go == "burrow" or go == "slither" or e.den == Vector2.ZERO or e.pos.distance_to(e.den) < 8.0 or e.den_t > 600:
 			e.asleep = true
+			e.act = ""
 			e.den_t = 0
 			_fall(g, e, gacc, go)
 			return DONE
@@ -1004,3 +1006,4 @@ static func spawn_weight(g, id: String, a: float, p: Vector2) -> float:
 static func on_spawn(g, e) -> void:
 	if not active_now(g, e):
 		e.asleep = true
+		e.act = ""

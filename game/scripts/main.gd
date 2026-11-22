@@ -3070,6 +3070,8 @@ func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
 func _kill_enemy(e: Enemy) -> void:
 	e.dead = true
 	audio.play("foe_die", e.pos)
+	if not e.boss:
+		_check_cleared()
 	towns.on_kill(e.type)                # (a villager's hunt may want it)
 	if e.guard_id >= 0:
 		var slain: Array = planet_state.get("slain", [])
@@ -3589,21 +3591,58 @@ func _update_enemies() -> void:
 		elif e.type == "imp":
 			lights.append([e.pos, 14.0, Color(0.6, 0.2, 0.05)])
 
+## (user, 22 Nov: "a bit too many enemies and spawn rate are a bit too aggressive on the starting planet ...
+## give the player some breathing room if they kill all the enemies in an area. maybe we only spawn enemies
+## farther away from the player")
+const SPAWN_EVERY := 150          # ticks between tries (the first planet: FIRST_CALM times that)
+const FIRST_CALM := 1.7
+const SPAWN_MIN_DIST := 160.0     # nothing comes in nearer than this, and never in view
+const QUIET_TICKS := 60 * 90      # an area you've cleared stays quiet this long...
+const QUIET_R := 450.0            # ...this far round where you cleared it
+var quiet_until := -1
+var quiet_at := Vector2.ZERO
+
+## how many foes (not guardians) may be about at once: fewer on the first planet, more at night
+func spawn_cap(night: bool) -> int:
+	if sky_ev == "bloodmoon":
+		return 12
+	if int(planet.get("index", 0)) == 0:
+		return 5 if night else 3
+	return 7 if night else 5
+
+## every foe near you is gone (prey and sleepers aren't foes): the area falls quiet for a while
+func _check_cleared() -> void:
+	for e in enemies:
+		if e.dead or e.boss or e.asleep:
+			continue
+		if e.d.has("def") and String(e.d["def"].get("temper", "")) == "prey":
+			continue
+		if e.pos.distance_to(player.pos) < 320.0:
+			return
+	var was_quiet := frame < quiet_until and player.pos.distance_to(quiet_at) < QUIET_R
+	quiet_until = frame + QUIET_TICKS
+	quiet_at = player.pos
+	if not was_quiet:
+		ui.toast("The area falls quiet", Color(0.7, 0.9, 1.0), 2.5)
+
 func _try_spawn() -> void:
 	spawn_timer -= 1
 	if spawn_timer > 0 or dead:
 		return
-	spawn_timer = int(90.0 / (maxf(float(clim.get("wild", 1.0)), 0.3) * spawn_mult()))
+	var first_world := int(planet.get("index", 0)) == 0
+	spawn_timer = int(float(SPAWN_EVERY) * (FIRST_CALM if first_world else 1.0) / (maxf(float(clim.get("wild", 1.0)), 0.3) * spawn_mult()))
+	if frame < quiet_until and player.pos.distance_to(quiet_at) < QUIET_R and sky_ev != "bloodmoon":
+		return
+	var night := _local_daylight(player.pos) < 0.3
 	var count := 0
 	for e in enemies:
 		if not e.boss:
 			count += 1
-	if count >= (12 if sky_ev == "bloodmoon" else 7):
+	if count >= spawn_cap(night):
 		return
 	var a := atan2(player.pos.y, player.pos.x)
 	var sa: Vector4 = gpu.surf_at(a)
 	var r := player.pos.length()
-	var night := _local_daylight(player.pos) < 0.3
 	var type := ""
 	if r > sa.x - 14.0:
 		# the surface is gentle by day, busier at night, when the dead walk too (a swordsman or an
@@ -3656,7 +3695,7 @@ func _try_spawn() -> void:
 		# on the ground just past the edge of the view (it waits, still, until you come near)
 		for tries in 6:
 			var side := -1.0 if randf() < 0.5 else 1.0
-			var dist := reach_x + randf_range(4.0, 60.0)
+			var dist := maxf(reach_x, SPAWN_MIN_DIST) + randf_range(10.0, 80.0)
 			var ga := ca + side * dist / maxf(sa.x, 1.0)
 			var gs: Vector4 = gpu.surf_at(ga)
 			if gpu.surf_b(ga).y > gs.x:
@@ -3677,26 +3716,55 @@ func _try_spawn() -> void:
 				mate.asleep = first.asleep
 			return
 		return
-	# underground: in open cave space inside the simulated area, but outside the view
-	_use_grid(player)
-	var l0 := to_grid(cv)
-	for tries in 16:
-		var lx := HALF + (randf() * 2.0 - 1.0) * (HALF - 14.0)
-		var ly := HALF + (randf() * 2.0 - 1.0) * (HALF - 14.0)
-		if absf(lx - l0.x) < reach_x and absf(ly - l0.y) < reach_y:
-			continue                          # it would appear on screen
-		# (a swimmer comes in through the water, everything else through open air)
-		if not box_solid(lx - d["w"] * 0.5, ly - d["h"] * 0.5, d["w"], d["h"]) and (Defs.KIND[gtype(int(lx), int(ly))] == Defs.K_LIQUID) == swim:
-			var sp := from_grid(Vector2(lx, ly))
-			if r > sa.x - 14.0 and not swim and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
-				continue                      # (a bird of the surface comes in through the air, not a cave)
-			var cfirst := spawn_enemy(type, sp)
-			if d.has("def"):
-				Ecology.on_spawn(self, cfirst)
-			# bats often hunt in pairs
-			if type == "bat" and randf() < 0.5 and not box_solid(lx + 6.0 - d["w"] * 0.5, ly - 4.0 - d["h"] * 0.5, d["w"], d["h"]):
-				spawn_enemy(type, from_grid(Vector2(lx + 6.0, ly - 4.0)))
-			return
+	# underground (and anything that flies or swims): off to the side of the view, past it and never
+	# nearer than SPAWN_MIN_DIST, read straight from the world there (the collision grid is little wider
+	# than the view, and a walker put in over the screen fell into it: user, 22 Nov). A walker stands on a
+	# floor, a flier is in open air, a swimmer in water; it waits there, still, until you come near.
+	var pc := Build.cell_of(player.pos)
+	var bw := int(ceil(float(d["w"]))) + 2
+	var bh := int(ceil(float(d["h"]))) + 2
+	var walker: bool = not d["fly"] and not swim
+	var surf_flier: bool = r > sa.x - 14.0 and not swim
+	for tries in 3:
+		var side := -1 if randf() < 0.5 else 1
+		var dc := side * int(maxf(reach_x, SPAWN_MIN_DIST) + randf_range(10.0, 70.0))
+		var RW := 40
+		var RH := 90
+		var c0 := pc.x + dc - RW / 2
+		var r0 := pc.y - (70 if surf_flier else 45)
+		var rr: Dictionary = gpu.read_rect(posmod(c0, Defs.NS), r0, RW, RH)
+		var fgs: PackedInt32Array = rr["fg"]
+		var open := func(t: int) -> bool:
+			var kd: int = Defs.KIND[t]
+			return (kd == Defs.K_LIQUID) if swim else (kd == Defs.K_EMPTY or kd == Defs.K_GAS)
+		var i0 := randi() % RW
+		for q in RW:
+			var ic := (i0 + q * 7) % RW
+			if ic - bw / 2 < 0 or ic + bw / 2 >= RW:
+				continue
+			for jb in range(bh, RH - 1):
+				var fits := true
+				for yy in range(jb - bh, jb):
+					for xx in range(ic - bw / 2, ic + bw / 2 + 1):
+						if not open.call(fgs[yy * RW + xx] & 255):
+							fits = false
+							break
+					if not fits:
+						break
+				if not fits:
+					continue
+				var ft: int = fgs[jb * RW + ic] & 255
+				if walker and Defs.KIND[ft] != Defs.K_SOLID and Defs.KIND[ft] != Defs.K_POWDER:
+					continue
+				var sp := Build.cell_pos(c0 + ic, jb - bh / 2)
+				if surf_flier and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
+					continue                  # (a bird of the surface comes in through the air, not a cave)
+				var cfirst := spawn_enemy(type, sp)
+				if d.has("def"):
+					Ecology.on_spawn(self, cfirst)
+				if type == "bat" and randf() < 0.5:
+					spawn_enemy(type, sp + basis_r(atan2(sp.y, sp.x)) * 6.0 - basis_d(atan2(sp.y, sp.x)) * 4.0)
+				return
 
 ## Inside a cloud: wisps of vapour stream past you with the wind, in front of everything.
 func _cloud_wisps() -> void:

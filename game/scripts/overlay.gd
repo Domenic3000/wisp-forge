@@ -179,7 +179,7 @@ func _eco_marks(e) -> void:
 			var ph := fposmod(float(game.frame) * 0.008 + float(k2) * 0.5 + e.phase, 1.0)
 			var zp: Vector2 = game.world_to_screen(e.pos - game.basis_d(a) * (e.h * 0.5 + 2.0 + ph * 8.0) + game.basis_r(a) * float(e.facing) * (e.w * 0.3 + ph * 3.0))
 			draw_set_transform(zp.round(), 0.0, Vector2.ONE / px)
-			draw_string(fb, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, PixelFont.SIZE * u, Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.7))
+			draw_string(fb, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, PixelFont.SIZE * u, Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.7 * _lit(zp).a))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 ## creatures killed by others (ecology.gd): on their backs, darkened, fading as they go
@@ -195,7 +195,7 @@ func _draw_carcasses() -> void:
 		var z: float = game.zoom
 		var ts := t.get_size()
 		var mod := _lit(sp) * Color(0.62, 0.55, 0.52)
-		mod.a = clampf(float(cc["t"]) / 300.0, 0.0, 1.0)
+		mod.a = clampf(float(cc["t"]) / 300.0, 0.0, 1.0) * _lit(sp).a
 		# (flipped top to bottom: its back on the ground, the empty margin over its head sunk into it)
 		draw_set_transform(_snap(sp), 0.0, Vector2(-1.0 if int(cc["facing"]) < 0 else 1.0, -1.0) / z)
 		draw_texture(t, Vector2(-floorf(ts.x * 0.5), -floorf(ts.y - float(cc["h"]) - 3.0)), mod)
@@ -205,6 +205,14 @@ func _draw_carcasses() -> void:
 func _boss_frame(e) -> String:
 	var id: String = e.type
 	var plan: String = e.d["def"]["body"]["plan"]
+	if e.asleep and plan != "serpent":
+		# (asleep, it shows its sleep, never a move it was in the middle of: user, 22 Nov, birds frozen in
+		# their attack until woken)
+		if tex.has(id + "_sleep"):
+			return id + "_sleep"
+		if e.pose != "" and tex.has(id + "_" + e.pose):
+			return id + "_" + e.pose
+		return id if plan != "bird" else "%s_fly0" % id
 	if plan == "bird":
 		if e.move.begins_with("dive") and e.act == "go":
 			return id + "_dive"
@@ -337,6 +345,8 @@ func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Co
 	var sc := Vector2(-1.0 if flip else 1.0, 1.0) / float(game.zoom)
 	draw_set_transform(_snap(sp) if game.close_view() else sp, rot, sc)
 	var mod := Color(4, 4, 4) if white else _lit(sp) * tint
+	if white:
+		mod.a = _lit(sp).a
 	var ts := t.get_size()
 	draw_texture(t, -(ts * 0.5).floor(), mod)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -347,7 +357,10 @@ func _lit(sp: Vector2) -> Color:
 	var c: Color = game.gpu.light_at(game.screen_to_pic(sp))
 	# (in the fog over the unseen underground a creature is as hidden as the ground round it)
 	var f := 0.04 + 0.96 * c.a
-	return Color(clampf(c.r, 0.12, 1.0) * f, clampf(c.g, 0.12, 1.0) * f, clampf(c.b, 0.12, 1.0) * f)
+	# (deep in the fog it's gone altogether, not a dark shape against the mist: user, 22 Nov, "I can see
+	# enemies under the fog of war")
+	var fa := clampf((c.a - 0.12) / 0.35, 0.0, 1.0)
+	return Color(clampf(c.r, 0.12, 1.0) * f, clampf(c.g, 0.12, 1.0) * f, clampf(c.b, 0.12, 1.0) * f, fa)
 
 ## Where a body's feet are drawn on screen. Sprites hang from the feet, not the centre: a body
 ## standing on the ground has its feet snapped onto the same cell row as the ground under it,
@@ -393,7 +406,7 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
 	var mod := Color(4, 4, 4) if white else (tint if glow else _lit(game.world_to_screen(wpos)) * tint)
-	mod.a = alpha
+	mod.a = alpha * (1.0 if glow else _lit(game.world_to_screen(wpos)).a)
 	# feet (the last opaque row above the outline) rest on the bottom of the body box, wherever they are in
 	# the frame: a frame with empty rows under its feet (most of the grown creatures had one or two, a
 	# small one four) stood that much over the ground (user, 21 Nov: "look more like their feet are on
@@ -461,6 +474,7 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 		sc = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) * float(place[2])
 	draw_set_transform(sp, rot, sc)
 	var mod := _lit(game.world_to_screen(m.pos))
+	mod.a = 1.0                                  # (a mage is always seen)
 	mod = mod.lerp(Color(0.86, 0.88, 0.95), clampf(m.fog, 0.0, 1.0) * 0.55)   # misted over inside a cloud
 	var ts := t.get_size()
 	var origin := Vector2(-floorf(ts.x * 0.5) + 1.0, -ts.y + 2.0)
@@ -502,7 +516,7 @@ func _draw_skiff() -> void:
 	var rot := wrapf(xf.y.angle() - PI * 0.5, -PI, PI)
 	# the cabin's back (glass, and whatever is built there), then whoever sits in it, then the hull
 	draw_set_transform_matrix(xf)
-	draw_texture(sk.back_texture(), -sk.com, _lit(p))
+	draw_texture(sk.back_texture(), -sk.com, Color(_lit(p), 1.0))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 	for k in sk.riders.size():
 		var m = sk.riders[k]
@@ -514,7 +528,7 @@ func _draw_skiff() -> void:
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px) if m == game.player else m.input.aim
 		_draw_mage(m, aim, gem, true, [feet, rot, xf.y.length()])
 	draw_set_transform_matrix(xf)
-	draw_texture(sk.texture(), -sk.com, _lit(p))
+	draw_texture(sk.texture(), -sk.com, Color(_lit(p), 1.0))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 
 ## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the

@@ -1397,6 +1397,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_remove()
+		elif only == "spawns":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_spawns()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2665,6 +2669,7 @@ func run() -> void:
 	await _test_stairs()
 	await _test_workshops()
 	await _test_remove()
+	await _test_spawns()
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
 	var furn0: int = g.player.furn.size()
@@ -5441,6 +5446,73 @@ func _test_wardens() -> void:
 
 ## Staircases (build mode, roadmap step 8): a flight one storey high set down on clear ground still
 ## stands a few seconds later (its posts hold it up), and the mage walks up it to the top
+## Foes come in fewer and farther (user, 22 Nov: too many, too aggressive on the starting planet; one fell in
+## from the top of the screen; "give the player some breathing room if they kill all the enemies in an area"):
+## on the first planet by day no more than its cap are about, each comes in out of view and no nearer than
+## SPAWN_MIN_DIST, and once you've cleared the area nothing more comes for a while.
+func _test_spawns() -> void:
+	var sw_back: Vector2 = g.player.pos
+	var sw_time0: float = g.time
+	g.test_no_wild = false
+	for e0 in g.enemies.duplicate():
+		if not e0.boss:
+			g.enemies.erase(e0)
+	var sw_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 30, 60, 60, 6)
+	_go(_cell_pos(sw_st.x + 30, sw_st.y - 12))
+	await _frames(30)
+	g.time = g.towns.time_for_hour(g.player.pos, 12.0)
+	g.quiet_until = -1
+	var known := {}
+	var made := 0
+	var near := 0
+	var seen := 0
+	var most := 0
+	var vrect := Rect2(0, 0, g.VW, g.VH)
+	for k in 160:
+		g.spawn_timer = 0
+		g._try_spawn()
+		var cnt := 0
+		for e in g.enemies:
+			if e.boss:
+				continue
+			cnt += 1
+			var key: int = e.get_instance_id()
+			if known.has(key):
+				continue
+			known[key] = true
+			made += 1
+			if e.pos.distance_to(g.player.pos) < g.SPAWN_MIN_DIST - 2.0:
+				near += 1
+			if vrect.has_point(g.world_to_screen(e.pos)):
+				seen += 1
+		most = maxi(most, cnt)
+		await _frames(1)
+	var cap: int = g.spawn_cap(false)
+	# clear them all: the area falls quiet, and nothing more comes
+	for e2 in g.enemies.duplicate():
+		if not e2.boss and not e2.dead:
+			g._kill_enemy(e2)
+	await _frames(5)
+	var quiet: bool = g.quiet_until > g.frame
+	var after := 0
+	for k2 in 60:
+		g.spawn_timer = 0
+		g._try_spawn()
+		for e3 in g.enemies:
+			if not e3.boss and not e3.dead and not known.has(e3.get_instance_id()):
+				known[e3.get_instance_id()] = true
+				after += 1
+	for e4 in g.enemies.duplicate():
+		if not e4.boss:
+			g.enemies.erase(e4)
+	g.test_no_wild = true
+	g.quiet_until = -1
+	g.time = sw_time0
+	_go(sw_back)
+	await _frames(20)
+	_ok("foes come in fewer and farther: out of view, never near, and a cleared area stays quiet", made >= 2 and most <= cap and near == 0 and seen == 0 and quiet and after == 0,
+		"%d came in (at most %d at once, the cap %d), %d nearer than %d, %d in view; cleared: quiet %s, %d came after" % [made, most, cap, near, int(g.SPAWN_MIN_DIST), seen, quiet, after])
+
 ## Taking away precisely and torches as one piece (user, 22 Nov): on a slab of natural stone up in open
 ## air, a back wall with planks and a table in front of it; the Remove tab takes the furniture only (the
 ## wall comes back behind it), then the blocks only, then one cell of wall; a cell taken from an anchored

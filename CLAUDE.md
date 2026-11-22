@@ -484,6 +484,18 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   territorial ones and sleepers don't hurt to touch.
 - Spawning (`main._wild_pick`): weighed by `spawn_weight` (habitat, and out of its hours 0.3: met asleep, `on_spawn`);
   prey counts apart (3 at most) from the rest. A burrower only spawns over soft ground.
+- Fewer, farther foes (user, 22 Nov: too many, too often on the first planet; one fell in from the top of the
+  screen; "breathing room" after clearing an area): `_try_spawn` every `SPAWN_EVERY` (150) ticks / (wild x
+  `spawn_mult`), x `FIRST_CALM` (1.7) on planet 0; at most `spawn_cap(night)` (planet 0: 3 by day, 5 at night;
+  else 5 / 7; a blood moon 12). Every spawn is at least `SPAWN_MIN_DIST` (160) cells to the side, past the
+  screen's edge: on the ground by the surface table; in caves and for fliers by `gpu.read_rect` (40 x 90 cells
+  beside you, three tries) for an open box the size of the foe (water for swimmers), walkers with a floor under
+  it, surface fliers above the ground (the collision grid is only about as wide as the view, so a spot in it was
+  always over or under the screen). Killing the last roused foe within 320 (`_check_cleared`, from `_kill_enemy`)
+  makes the area quiet: no spawns for `QUIET_TICKS` (90 s) within `QUIET_R` (450) of there (a blood moon
+  ignores it), toast "The area falls quiet". Test: `_test_spawns` ("spawns").
+- Asleep means asleep (user: birds frozen in their attack pose until woken): falling asleep clears `e.act`, and
+  overlay `_boss_frame` picks the "_sleep" frame (or the pose, or standing / flying) before any attack frame.
 - Burrowers (user, 21 Nov: "the holes they pop out of are floating way above the ground"): under the ground they're
   always IN soft ground (`soft`: dirt, grass, sand, mud, gravel, snow, ash, sandstone, litter, mycelium, dry grass):
   `burrow_toward` follows the surface (`surface_under`) at `depth` (6, a guardian 14) and stops at rock, floors,
@@ -784,7 +796,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   point is in the light's w (4 samples of the seen map, or what's lit now, times `fogUnder`: none in the top 5
   rows under the surface, all of it from 26 down), blurred with the light, so the edge falls off softly; render
   mixes in a drifting dark mist by 1 - w, over lava and glowing ore too. Sprites: `gpu.light_at(...).a`, overlay
-  `_lit` darkens them to match; chunks.gd takes no colour from a fogged spot. Saved in the world file as a block
+  `_lit` darkens them to match and returns the fog as alpha (clear 0.12..0.47), so foes, creatures, villagers,
+  sleep marks and carcasses fade out under the fog (user, 22 Nov: "I can see enemies under the fog of war");
+  the mage, the skiff and glowing sprites stay opaque; chunks.gd takes no colour from a fogged spot. Saved in the world file as a block
   of its own after the cells (`SEEN_MAGIC`, compressed apart; `gpu.read_seen`/`write_seen`, `read_world_async`
   returns [cells, seen]; a world without it loads all unseen); cleared for a new planet (`generate_prepare`).
   (`read_world(true)` / `write_world` with the seen map appended are for the tests.) Test: `_test_fog` ("fog",
@@ -826,7 +840,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "galaxy", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "galaxy", "remove", "spawns", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
