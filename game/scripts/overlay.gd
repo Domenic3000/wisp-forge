@@ -9,6 +9,7 @@ const FolkArt := preload("res://scripts/folk_art.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
 const Ecology := preload("res://scripts/ecology.gd")
 
+var _art_jobs := {}         # foe type -> [worker task, {"fr", "gaps"}] (`_boss_art`)
 var _gaps := {}             # empty rows under each sprite frame's feet (`_gap_under`)
 var game
 var tex := {}
@@ -232,13 +233,37 @@ func _boss_frame(e) -> String:
 		return "%s_walk%d" % [id, int(e.anim * 0.6) % 4]
 	return id
 
-func _boss_art(e) -> void:
+## A creature's, guardian's or warden's frames, grown from parts on a worker thread the first time one is
+## in the list of foes: true once they're made. (Grown all at once on the main thread as the planet's
+## guardians and wardens were first drawn, the first frame took 750 ms: user, 21 Nov, "a hitch on start up".)
+func _boss_art(e) -> bool:
 	if _boss_made.has(e.type):
-		return
+		return true
+	if not _art_jobs.has(e.type):
+		var box := {}
+		var typ: String = e.type
+		var body: Dictionary = e.d["def"]["body"]
+		var tid := WorkerThreadPool.add_task(func():
+			var fr: Dictionary = BossArt.frames(typ, body)
+			var gp := {}
+			for fk in fr:
+				gp[fk] = _image_gap(fr[fk])
+			box["fr"] = fr
+			box["gaps"] = gp)
+		_art_jobs[e.type] = [tid, box]
+		return false
+	var job: Array = _art_jobs[e.type]
+	if not WorkerThreadPool.is_task_completed(int(job[0])):
+		return false
+	WorkerThreadPool.wait_for_task_completion(int(job[0]))
+	var bx: Dictionary = job[1]
+	var frs: Dictionary = bx.get("fr", {})
+	for k in frs:
+		tex[k] = ImageTexture.create_from_image(frs[k])
+		_gaps[k] = bx["gaps"][k]
+	_art_jobs.erase(e.type)
 	_boss_made[e.type] = true
-	var fr: Dictionary = BossArt.frames(e.type, e.d["def"]["body"])
-	for k in fr:
-		_make_tex(k, fr[k])
+	return true
 
 ## a serpent: its segments along its trail (tail first; a burrower's are hidden in the ground), then
 ## its head, jaws open while it strikes
@@ -594,13 +619,21 @@ func _draw_sky() -> void:
 	if t.a > 0.003:
 		draw_rect(Rect2(0, 0, game.VW, game.VH), t)
 
+## (a part of the drawing timed for the profiler: its time since `t0`, and now)
+func _part(nm: String, t0: int) -> int:
+	var t1 := Time.get_ticks_usec()
+	game.prof_add(nm, t1 - t0)
+	return t1
+
 func _draw_all() -> void:
 	var z: float = game.zoom
 	if game.space.active and not game.space.live:
 		_draw_in_space()
 		return
 	# the villagers (towns.gd), behind the chests so a chest in front of one is never hidden
+	var tq := Time.get_ticks_usec()
 	_draw_folk()
+	tq = _part("draw: folk", tq)
 	# treasure chests (whole objects)
 	for c in game.chests:
 		var csp: Vector2 = game.world_to_screen(c.pos)
@@ -614,6 +647,7 @@ func _draw_all() -> void:
 			ch_a = 1.0 - ch_f * ch_f
 			ch_sq = 1.0 - ch_f * 0.7
 		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq, Color(1, 1, 1), true)
+	tq = _part("draw: chests", tq)
 	# open doors, swung out of their houses
 	for d in game.doors:
 		if not d["open"]:
@@ -636,6 +670,7 @@ func _draw_all() -> void:
 				_door_keys.append(dkey)
 				tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"]), dc, int(d["w"])))
 		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true, 1.0, 1.0, Color(1, 1, 1), true)
+	tq = _part("draw: doors", tq)
 	# foes
 	# pieces breaking off: felled trees and fragments of buildings, turned as they tumble
 	if game.chunks != null:
@@ -650,6 +685,7 @@ func _draw_all() -> void:
 			draw_texture(c.tex_b, c.img_origin, cm)
 			draw_texture(c.tex_f, c.img_origin, cm)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	tq = _part("draw: chunks", tq)
 	# what the villagers are saying (they're drawn before the chests: `_draw_folk`)
 	for v2 in game.towns.folk:
 		if v2.fade > 0:
@@ -662,14 +698,17 @@ func _draw_all() -> void:
 			_folk_mark(v2)
 
 	_draw_carcasses()
+	tq = _part("draw: words, carcasses", tq)
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	for e in game.enemies:
 		var tl: float = FoeAI.tell(e)
 		var tint := Color(1, 1, 1).lerp(Color(2.2, 0.75, 0.5), tl)
 		var sq := 1.0 - 0.22 * tl if (e.type == "slime" or e.type == "mimic") else 1.0
 		if e.d.has("def"):
-			# a guardian: its frames grown from parts the first time it's seen
-			_boss_art(e)
+			# a guardian or creature: its frames grown from parts (on a worker thread) the first time it's
+			# in the list; until they're ready it isn't drawn
+			if not _boss_art(e):
+				continue
 			var plan: String = e.d["def"]["body"]["plan"]
 			if plan == "serpent":
 				if e.under:
@@ -687,6 +726,7 @@ func _draw_all() -> void:
 				continue
 		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground or e.off_t <= 3, 1.0, sq, tint, false, e.w)
 		_eco_marks(e)
+	tq = _part("draw: foes", tq)
 	# projectiles
 	for pr in game.projs:
 		if pr["type"] == "arrow":
@@ -720,6 +760,7 @@ func _draw_all() -> void:
 		draw_rect(Rect2(sp.floor(), Vector2.ONE), Color(1, 1, 0.9))
 	# build mode: what would go where, in its own colours (red where it doesn't fit)
 	_draw_build_preview()
+	tq = _part("draw: projectiles, preview", tq)
 	# the mages, with their simulated hats, beards, scarves and staves
 	for m in game.players:
 		if m != game.player and not m.dead and m.aboard == null:
@@ -728,8 +769,10 @@ func _draw_all() -> void:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)
+	tq = _part("draw: mages", tq)
 	# the skiff (over its riders: the hull hides their legs, the canopy is glass)
 	_draw_skiff()
+	tq = _part("draw: skiff", tq)
 	# wisp companion
 	var ws: Vector2 = game.world_to_screen(game.wisp)
 	var wf := ws.floor()
@@ -742,6 +785,7 @@ func _draw_all() -> void:
 		if not p["self"]:
 			c2 = c2 * _lit(game.world_to_screen(p["pos"]))
 		_px(p["pos"], c2)
+	tq = _part("draw: particles", tq)
 	# reticle + reach circle (the normal pointer takes over above menus)
 	if game.ui.mouse_over_ui():
 		return

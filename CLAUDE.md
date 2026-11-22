@@ -538,6 +538,23 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Digging: the excavation brush's rate is scaled by the staff's tier (`tier_rate` 0.55, 0.8, 1.0, 1.2), so a plain
   staff digs about half as fast. Ores are a little rarer (gen.comp `strata` thresholds +0.015, each planet
   kind's own ore +0.012 in `gpu.build_surface`).
+- Recipes you discover (user, 21 Nov; roadmap step 13): `Defs.LEARN` / `learn_of(r)` says how each recipe is
+  learned ("start"; "find" [materials]: the first time you hold one; "scroll" 1-3: a recipe scroll in a chest of
+  that grade; "shop" role + "kind" + "price": sold by village keepers, and taught as a request's thanks; "hoard":
+  a guardian's hoard or a warden's reliquary). Ore gear: an ore's first piece on finding it, its second at a smithy
+  on that ore's world, its third and every alloy in a hoard; furniture and anything unlisted is known from the
+  start. main: `learned` (ids, saved as "learned"; a save without it learns all), `knows(r)`, `learn(id, why)`
+  (a spell with its own "scroll" item gets that item too), `learn_all` (old saves, the test mode, F9),
+  `_learn_from_finds` (every second), `_chest_recipe(level)` (in `_try_open_chest`: 0.3 + rare x 0.4, level 3 in
+  dungeons and temples, 2 in ruins, keeps, mines or 150 below the surface), `_hoard_recipe` (this world's own
+  first), `shop_recipes(role)`. `craft` refuses an unknown recipe. towns.gd `shop_def` lists a keeper's recipes
+  ("recipe" sale items; `owned` = known, `grant` learns), `_finish` teaches one as thanks (one request in three).
+  ui.gd: the forge lists what you know, then the Recipe Book (`_book_page`: locked pages with `Defs.learn_hint`;
+  J opens the forge there, `show_forge(true)`). Test: `_test_recipes` ("recipes", picture `forge_book.png`).
+- Boss art is grown on a worker thread (overlay `_boss_art`, `_art_jobs`): a foe isn't drawn until its frames are
+  ready. (Grown on the main thread the first time the planet's guardians and wardens were drawn, the first frame
+  took 750 ms: the user's start-up hitch.) The tests print `[startup]` frames over 40 ms (`_trace_frames`), and
+  F3 shows the overlay's parts ("draw: foes", "draw: mages"...).
 - Health doesn't regenerate. Healing Draughts (`items["potion"]`, H to drink, `_drink`; forged or found in chests,
   two at the start) and the Mending spell (its scroll is a rare find) heal over a moment (`Mage.heal_left`).
 - Falling rock hurts only after falling `ROCK_HURT_FALL` cells and only through your upper half (grid.comp), so
@@ -639,7 +656,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

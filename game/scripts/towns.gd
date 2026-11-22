@@ -817,9 +817,19 @@ func _finish(rq: Dictionary, v) -> void:
 	requests().erase(rq)
 	game.items["coins"] = int(game.items.get("coins", 0)) + int(rq["reward"])
 	var extra := ""
-	if posmod(hash([int(rq["from"]), int(rq["reward"])]), 3) == 0:
+	var rh := posmod(hash([int(rq["from"]), int(rq["reward"])]), 3)
+	if rh == 0:
 		game.items["potion"] = int(game.items.get("potion", 0)) + 1
 		extra = " and a Healing Draught"
+	elif rh == 1:
+		# a keeper's recipe, taught as thanks (one not yet known, of any trade sold on this world)
+		var tl := []
+		for r in game.shop_recipes():
+			if not game.knows(r):
+				tl.append(String(r["id"]))
+		if not tl.is_empty():
+			game.learn(String(tl[posmod(int(rq["from"]), tl.size())]), "taught as thanks")
+			extra = " and a recipe"
 	var rn: Dictionary = game.planet_state.get("req_n", {})
 	rn[str(rq["town"])] = int(rn.get(str(rq["town"]), 0)) + 1
 	game.planet_state["req_n"] = rn
@@ -896,7 +906,13 @@ func coins() -> int:
 	return int(game.items.get("coins", 0))
 
 func shop_def(v) -> Dictionary:
-	return shop_def_for(String(v.role), String(game.planet.get("kind", "temperate")), int(game.planet.get("seed", 0)))
+	var sd := shop_def_for(String(v.role), String(game.planet.get("kind", "temperate")), int(game.planet.get("seed", 0)))
+	if sd.is_empty():
+		return sd
+	# recipes of the keeper's trade (Defs.LEARN "shop"): always listed (a known one shows "yours")
+	for r in game.shop_recipes(String(v.role)):
+		(sd["sell"] as Array).append({"name": "Recipe: %s" % r["name"], "price": int(Defs.learn_of(r).get("price", 50)), "recipe": String(r["id"])})
+	return sd
 
 ## a shop's stock on a kind of planet: Defs.SHOPS[role], plus KIND_TRADE's, plus (the smithy, on a world
 ## with its own ore) an imported ore and a better price for the world's own
@@ -942,6 +958,8 @@ func owned(it: Dictionary) -> bool:
 		return bool(game.heat_ward)
 	if it.has("spell"):
 		return game.known.has(String(it["spell"]))
+	if it.has("recipe"):
+		return game.knows(game.recipe_by_id(String(it["recipe"])))
 	return false
 
 ## buy the i-th thing the keeper sells
@@ -980,6 +998,8 @@ func grant(it: Dictionary) -> void:
 		game.heat_ward = true
 	if it.has("spell") and not game.known.has(String(it["spell"])):
 		game.known.append(String(it["spell"]))
+	if it.has("recipe"):
+		game.learn(String(it["recipe"]), "bought")
 
 ## sell what the keeper pays for, one lot
 func sell(v, mat: int) -> bool:

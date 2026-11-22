@@ -778,6 +778,74 @@ func gear_recipes() -> Array:
 		out.append({"id": id, "cat": "Ore Gear" if ores.size() == 1 else "Alloys", "name": gd["name"], "cost": gd["cost"], "ore": ores[0], "ores": ores, "desc": gd["desc"], "gear": true})
 	return out
 
+# ------------------------------------------------------- learning recipes ---
+## How each recipe is learned (user, 21 Nov: "recipes you discover"). A journey starts knowing a handful;
+## the rest are learned: "start" known from the first; "find" [materials]: the first time you hold any of
+## them (its plain uses: first sand teaches glass); "scroll" 1-3: a recipe scroll in a chest (1 anywhere,
+## 2 deep down or in ruins, keeps and mines, 3 in dungeons and temples); "shop" role (+ "kind" of planet,
+## "price"): a village keeper sells it, and teaches one as a request's reward; "hoard": a guardian's hoard or
+## a warden's reliquary. A recipe may have several. Furniture and anything not listed is known from the start.
+## The ore gear: each ore's first piece on finding the ore, its second at a smithy on that ore's world, its
+## third (and every alloy) in a hoard.
+const LEARN := {
+	"plank": {"start": true}, "torch": {"start": true}, "brick": {"start": true}, "masonry": {"start": true},
+	"door": {"start": true}, "tier2": {"start": true}, "tier4": {"start": true},
+	"glass": {"find": [SAND]}, "sandstone": {"find": [SAND]}, "tile": {"find": [COAL]},
+	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
+	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
+	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]},
+	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
+	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
+	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
+	"hearth": {"shop": "shop", "kind": "frozen", "price": 45, "hoard": true},
+	"sunveil": {"shop": "shop", "kind": "desert", "price": 45, "hoard": true},
+	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
+	"tidecharm": {"shop": "shop", "kind": "ocean", "price": 45, "hoard": true},
+	"engine": {"hoard": true},
+}
+
+## how a recipe is learned (LEARN, or worked out for gear and furniture)
+func learn_of(r: Dictionary) -> Dictionary:
+	var id := String(r["id"])
+	if LEARN.has(id):
+		return LEARN[id]
+	if r.has("gear"):
+		var ores: Array = r["ores"]
+		if ores.size() > 1:
+			return {"hoard": true}
+		var n := 0
+		for gid in GEAR:
+			if gid == id:
+				break
+			if gear_ores(gid).size() == 1 and int(gear_ores(gid)[0]) == int(ores[0]):
+				n += 1
+		if n == 0:
+			return {"find": [int(ores[0])]}
+		if n == 1:
+			return {"shop": "smithy", "kind": ore_kind(int(ores[0])), "price": 70}
+		return {"hoard": true}
+	return {"start": true}
+
+const LEARN_WHO := {"smithy": "smiths", "shop": "shopkeepers", "tavern": "tavern keepers", "inn": "innkeepers"}
+## where a recipe you don't know yet is learned, for the recipe book
+func learn_hint(r: Dictionary) -> String:
+	var L := learn_of(r)
+	var ways := []
+	if L.has("find"):
+		var nm := []
+		for m in L["find"]:
+			nm.append(NAMES[int(m)])
+		ways.append("learned the first time you find %s" % " or ".join(nm))
+	if L.has("scroll"):
+		ways.append(["a recipe scroll in chests", "a recipe scroll in chests deep down, or in ruins, keeps and mines", "a recipe scroll in dungeons and temples"][clampi(int(L["scroll"]) - 1, 0, 2)])
+	if L.has("shop"):
+		var kd := String(L.get("kind", ""))
+		ways.append("sold by village %s%s" % [LEARN_WHO.get(String(L["shop"]), "keepers"), (" on %s worlds" % kd) if kd != "" else ""])
+	if L.has("hoard"):
+		ways.append("in a guardian's hoard or a crypt's reliquary")
+	var t := "; or ".join(ways)
+	return t.substr(0, 1).to_upper() + t.substr(1)
+
 ## a planet's own ore (KIND_ORES), or -1 (a temperate world has none of its own)
 func kind_ore(pl: Dictionary) -> int:
 	var ko: Dictionary = KIND_ORES.get(String(pl.get("kind", "temperate")), {})

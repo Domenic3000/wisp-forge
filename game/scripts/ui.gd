@@ -14,6 +14,7 @@ const Build := preload("res://scripts/build.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
 const Icons := preload("res://scripts/icons.gd")
 
+var _book_head: Control = null   # the recipe book's heading in the forge (J scrolls there)
 var game
 var root: Control
 var U := 2                    # screen pixels per UI pixel
@@ -620,6 +621,8 @@ func _sale_icon(it: Dictionary) -> Texture2D:
 		return Icons.spell(String(it["spell"]))
 	if it.has("chart"):
 		return Icons.item("letter")
+	if it.has("recipe"):
+		return Icons.item("book")
 	if it.has("item") or it.has("heat_ward"):
 		return Icons.mat(Defs.CRYSTAL)
 	if it.has("meal") or it.has("rest"):
@@ -802,7 +805,7 @@ func _build_settings() -> void:
 			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate (dig a chest open)"],
 			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
-			["C", "The Wisp Forge"], ["M", "Map (Tab: the system)"],
+			["C", "The Wisp Forge"], ["J", "Recipe book"], ["M", "Map (Tab: the system)"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: shapes)"],
 			["K", "Call the skiff"], ["Esc", "Settings"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 12, GOLD))
@@ -901,13 +904,18 @@ func show_map(g) -> void:
 func hide_map() -> void:
 	map_bar.visible = false
 
-func show_forge() -> void:
+func show_forge(to_book := false) -> void:
 	# as big as the screen allows (a card is 152 UI pixels wide: 3 to 5 across)
 	var cols := clampi(int((root.size.x - 60.0) / 152.0), 3, 5)
 	forge.custom_minimum_size = Vector2(cols * 152 + 14, clampf(root.size.y - 70.0, 300.0, 520.0))
 	_forge_cols = cols
 	_render_forge()
 	forge.visible = true
+	if to_book and _book_head != null:
+		# (J: opened at the recipe book's pages)
+		await get_tree().process_frame
+		if is_instance_valid(_book_head):
+			_forge_scroll.scroll_vertical = int(_book_head.position.y)
 
 func hide_forge() -> void:
 	forge.visible = false
@@ -1187,9 +1195,15 @@ func _render_forge() -> void:
 		t.queue_free()
 	var cats := {}
 	var order := []
+	var book := []                 # recipes not yet learned (shown as the recipe book's locked pages)
+	var n_known := 0
 	for r in game.recipes:
 		if game.recipe_hidden(r):
 			continue
+		if not game.knows(r):
+			book.append(r)
+			continue
+		n_known += 1
 		if not cats.has(r["cat"]):
 			cats[r["cat"]] = []
 			order.append(r["cat"])
@@ -1221,6 +1235,51 @@ func _render_forge() -> void:
 		tb.pressed.connect(func():
 			_forge_scroll.scroll_vertical = int(ch.position.y))
 		forge_tabs.add_child(tb)
+	# the recipe book: what you know, and the rest as locked pages saying where each is learned
+	_book_head = _box(false, 4)
+	_book_head.add_child(_head("Recipe Book: %d known, %d to learn" % [n_known, book.size()], 12, Color(0.72, 0.9, 1.0)))
+	var br := _rule(50)
+	br.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	br.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_book_head.add_child(br)
+	forge_list.add_child(_book_head)
+	if book.is_empty():
+		forge_list.add_child(_label("Every recipe there is to find here is yours.", 11, DIM))
+	else:
+		var bg := GridContainer.new()
+		bg.columns = _forge_cols
+		bg.add_theme_constant_override("h_separation", 4)
+		bg.add_theme_constant_override("v_separation", 4)
+		forge_list.add_child(bg)
+		for r3 in book:
+			bg.add_child(_book_page(r3))
+	var bh: Control = _book_head
+	var bt := _button("Recipe Book")
+	bt.pressed.connect(func():
+		_forge_scroll.scroll_vertical = int(bh.position.y))
+	forge_tabs.add_child(bt)
+
+## a recipe not yet learned: its name, and where it's learned
+func _book_page(r: Dictionary) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _frame(Color(0.06, 0.05, 0.1, 0.97), TRIM_DIM, 4))
+	p.custom_minimum_size = Vector2(148, 0)
+	var v := _box(true, 2)
+	p.add_child(v)
+	var top := _box(false, 3)
+	v.add_child(top)
+	var ic := _tex(Icons.item("book"))
+	ic.modulate = Color(0.6, 0.6, 0.7)
+	top.add_child(ic)
+	var nm := _label(String(r["name"]), 12, Color(0.62, 0.6, 0.72))
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
+	nm.custom_minimum_size.x = 120
+	top.add_child(nm)
+	var hl := _label(Defs.learn_hint(r), 11, DIM)
+	hl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	hl.custom_minimum_size = Vector2(138, 0)
+	v.add_child(hl)
+	return p
 
 func _recipe_card(r: Dictionary) -> Control:
 	var done: bool = game.recipe_done(r)

@@ -1280,6 +1280,7 @@ func run() -> void:
 	g.player.inv.fill(0)
 	g.known = ["spark", "conjure"]
 	g.items["levitate"] = true        # (forged in a real game: the checks fly as they always have)
+	g.learn_all()                     # (every recipe known: learning them is _test_recipes's)
 	var t0 := Time.get_ticks_msec()
 	g._enter_planet(0)
 	var gen_ms := Time.get_ticks_msec() - t0
@@ -1287,6 +1288,7 @@ func run() -> void:
 	g.state = "play"
 	var b = g.builds
 	start_pos = g.player.pos
+	await _trace_frames("startup", 300)
 	# (saves/test_only.txt naming a section runs just that one, to try a change quickly)
 	# (an empty file runs everything)
 	var only_f: String = g._real_save_dir().path_join("test_only.txt")
@@ -1348,6 +1350,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_start()
+		elif only == "recipes":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_recipes()
 		elif only == "hazards":
 			# (where the full run tries it: the open ground beside the frozen basin)
 			var hzo_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 160, 80, 60, 4, 30)
@@ -3446,6 +3452,7 @@ func run() -> void:
 	await _test_towns()
 	await _test_vfx()
 	await _test_start()
+	await _test_recipes()
 	await _test_ui()
 	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
 
@@ -4630,6 +4637,40 @@ func _test_fog() -> void:
 	_go(fg_orig)
 	await _frames(20)
 
+## The first frames after a planet is entered (user, 21 Nov: "a hitch on start up"): any frame over 40 ms is
+## printed as `[<label>] frame N: T ms` with what took the time (the game's sections over 8 ms, the game's
+## process, the drawing).
+func _trace_frames(label: String, n: int) -> void:
+	var tf_draw := {"pre": 0, "draw": 0}
+	var tf_pre := func() -> void:
+		tf_draw["pre"] = Time.get_ticks_usec()
+	var tf_post := func() -> void:
+		tf_draw["draw"] = Time.get_ticks_usec() - int(tf_draw["pre"])
+	RenderingServer.frame_pre_draw.connect(tf_pre)
+	RenderingServer.frame_post_draw.connect(tf_post)
+	g.prof_reset()
+	var tf_t0 := Time.get_ticks_usec()
+	var tf_worst := 0
+	var tf_big := 0
+	for tf_k in n:
+		await _frames(1)
+		var tf_now := Time.get_ticks_usec()
+		var tf_dt := tf_now - tf_t0
+		tf_t0 = tf_now
+		tf_worst = maxi(tf_worst, tf_dt)
+		if tf_dt > 40000:
+			tf_big += 1
+			var tf_secs := []
+			for tf_s in g.prof:
+				if float(g.prof[tf_s][3]) > 8000.0:
+					tf_secs.append("%s %.0f" % [tf_s, float(g.prof[tf_s][3]) / 1000.0])
+			print("[%s] frame %d: %.0f ms (%s; process %.0f ms, drawing %.0f ms)" % [label, tf_k, tf_dt / 1000.0, ", ".join(tf_secs),
+				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, float(tf_draw["draw"]) / 1000.0])
+		g.prof_reset()
+	RenderingServer.frame_pre_draw.disconnect(tf_pre)
+	RenderingServer.frame_post_draw.disconnect(tf_post)
+	print("[%s] %d frames: the slowest %.0f ms, %d over 40 ms" % [label, n, tf_worst / 1000.0, tf_big])
+
 ## A modest start (user, 21 Nov): no levitation until it's forged (holding jump in the air you fall), then
 ## you float; the first spell is the Wisp Mote, and Spark Bolt and Levitation are forged.
 func _test_start() -> void:
@@ -4683,6 +4724,78 @@ func _test_start() -> void:
 	g.test_god = st_god0
 	_go(st_orig)
 	await _frames(20)
+
+## Recipes you discover (user, 21 Nov): a journey knows a handful; an unknown one can't be forged and shows in
+## the recipe book with where it's learned; a first find teaches its plain uses; chests, keepers and hoards teach
+## the rest; what you know is saved (a picture of the book: saves/shots/forge_book.png).
+func _test_recipes() -> void:
+	var rc_inv: PackedInt32Array = g.player.inv.duplicate()
+	var rc_learned: Dictionary = g.learned.duplicate()
+	var rc_items: Dictionary = g.items.duplicate(true)
+	var rc_rows := []
+	var rc_ok := true
+	g.player.inv.fill(0)
+	g.learned = {}
+	await _frames(70)
+	var rc_plank: bool = g.knows(g.recipe_by_id("plank"))
+	var rc_glass0: bool = g.knows(g.recipe_by_id("glass"))
+	# an unknown recipe can't be forged, even with all it costs
+	var rc_glass_r: Dictionary = g.recipe_by_id("glass")
+	for rk in rc_glass_r["cost"]:
+		g.player.inv[int(rk)] = int(rc_glass_r["cost"][rk]) + 5
+	var rc_cant: bool = not g.craft(rc_glass_r)
+	var rc_ok1: bool = rc_plank and not rc_glass0 and rc_cant
+	rc_rows.append("%sstart: planks known %s, glass known %s, glass forged while unknown %s" % ["" if rc_ok1 else "(!) ", rc_plank, rc_glass0, not rc_cant])
+	rc_ok = rc_ok and rc_ok1
+	# a first find: sand teaches glass (and sandstone)
+	g.player.inv[Defs.SAND] = 6
+	await _frames(70)
+	var rc_ok2: bool = g.knows(rc_glass_r) and g.knows(g.recipe_by_id("sandstone"))
+	rc_rows.append("%sfirst sand taught glass %s, sandstone %s" % ["" if rc_ok2 else "(!) ", g.knows(rc_glass_r), g.knows(g.recipe_by_id("sandstone"))])
+	rc_ok = rc_ok and rc_ok2
+	# a chest's recipe scroll, a boss's hoard, a keeper's sale
+	var rc_n0: int = g.learned.size()
+	var rc_chest: bool = g._chest_recipe(1)
+	var rc_hoard: bool = g._hoard_recipe()
+	var rc_shop: Array = g.shop_recipes("smithy")
+	var rc_skiff := false
+	for rr in rc_shop:
+		if String(rr["id"]) == "skiff":
+			rc_skiff = true
+	g.towns.grant({"recipe": "skiff"})
+	var rc_ok3: bool = rc_chest and rc_hoard and rc_skiff and g.knows(g.recipe_by_id("skiff")) and g.learned.size() >= rc_n0 + 3
+	rc_rows.append("%sa chest's scroll %s, a hoard's %s, the skiff sold at a smithy %s and bought %s" % ["" if rc_ok3 else "(!) ", rc_chest, rc_hoard, rc_skiff, g.knows(g.recipe_by_id("skiff"))])
+	rc_ok = rc_ok and rc_ok3
+	# every recipe has a way to be learned, and the book says where
+	var rc_noway := []
+	for rr2 in g.recipes:
+		var rl: Dictionary = Defs.learn_of(rr2)
+		if not (rl.get("start", false) or rl.has("find") or rl.has("scroll") or rl.has("shop") or rl.get("hoard", false)):
+			rc_noway.append(String(rr2["id"]))
+		elif not rl.get("start", false) and Defs.learn_hint(rr2) == "":
+			rc_noway.append(String(rr2["id"]))
+	rc_rows.append("%severy recipe has a way to be learned (%s)" % ["" if rc_noway.is_empty() else "(!) ", ", ".join(rc_noway) if not rc_noway.is_empty() else "all"])
+	rc_ok = rc_ok and rc_noway.is_empty()
+	# the recipe book
+	g.state = "forge"
+	g.ui.show_forge(true)
+	await _frames(8)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("forge_book.png"))
+	var rc_book: bool = g.ui._book_head != null and is_instance_valid(g.ui._book_head)
+	g.ui.hide_forge()
+	g.state = "play"
+	# saved with the journey
+	g.save_game()
+	var rc_saved = JSON.parse_string(FileAccess.get_file_as_string(g._save_path()))
+	var rc_sl: Array = rc_saved.get("learned", []) if typeof(rc_saved) == TYPE_DICTIONARY else []
+	var rc_ok4: bool = rc_book and rc_sl.has("glass") and rc_sl.has("skiff") and not rc_sl.has("plank")
+	rc_rows.append("%sthe book shows %s; saved: %d learned (glass %s, skiff %s)" % ["" if rc_ok4 else "(!) ", rc_book, rc_sl.size(), rc_sl.has("glass"), rc_sl.has("skiff")])
+	rc_ok = rc_ok and rc_ok4
+	g.player.inv = rc_inv
+	g.learned = rc_learned
+	g.items = rc_items
+	g.save_game()
+	_ok("recipes are learned: a handful at first, then first finds, chest scrolls, keepers and hoards; the book shows the rest", rc_ok, "; ".join(rc_rows))
 
 ## every game grows a system of its own: the rules for many seeds, and one random planet made for real
 func _test_worlds() -> void:

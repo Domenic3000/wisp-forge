@@ -1447,6 +1447,12 @@ func _try_open_chest() -> void:
 		items["potion"] = int(items.get("potion", 0)) + 1
 		ui.toast("+1 Healing Draught (H to drink)", Color(0.6, 1.0, 0.65), 3.0)
 	_rare_find(rare)
+	# a recipe scroll, now and then (more in grander and deeper places)
+	var lvl := 3 if rare >= 0.4 else (2 if rare >= 0.25 else 1)
+	if centre.length() < gpu.surf_at(atan2(centre.y, centre.x)).x - 150.0:
+		lvl = maxi(lvl, 2)
+	if randf() < 0.3 + rare * 0.4 and _chest_recipe(lvl):
+		save_game()
 	for k in 14:
 		_particle(centre, Vector2(randf() - 0.5, -randf() * 1.2), 30 + randi() % 20, Color(1, 0.85, 0.35), true, 0.02)
 	lights.append([centre, 30.0, Color(1.2, 0.9, 0.4)])
@@ -1466,7 +1472,7 @@ func _rare_find(p: float) -> void:
 	if randf() > p:
 		return
 	var pool := []
-	for id in ["scroll_blink", "scroll_starfall", "scroll_mend", "ring", "circlet", "boots"]:
+	for id in ["ring", "circlet", "boots"]:      # (spell scrolls are recipe scrolls now: _chest_recipe)
 		if not items.has(id):
 			pool.append(id)
 	if pool.is_empty():
@@ -2055,6 +2061,8 @@ func _tick() -> void:
 	_update_camera(aim)
 	shake *= 0.88
 	hurt_flash *= 0.9
+	if frame % 60 == 30 and not testing_no_learn():
+		_learn_from_finds()
 	if frame % 3600 == 0:
 		save_game()
 	if frame % 7200 == 0:
@@ -2936,6 +2944,7 @@ func _guardian_falls(e: Enemy) -> void:
 	for mt in loot:
 		player.inv[int(mt)] += int(loot[mt])
 	_hoard_ore(16)
+	_hoard_recipe()
 	items["coins"] = int(items.get("coins", 0)) + 60
 	_roll_loot(4, 1.5)
 	shake = 16.0
@@ -2970,6 +2979,7 @@ func _warden_falls(e: Enemy) -> void:
 		player.inv[int(mt)] += int(loot[mt])
 	items["potion"] = int(items.get("potion", 0)) + 1
 	_hoard_ore(6)
+	_hoard_recipe()
 	items["coins"] = int(items.get("coins", 0)) + 30
 	_roll_loot(3, 1.4)
 	for wl in builds.warden_list:
@@ -4057,6 +4067,105 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		return true
 	return true
 
+# ------------------------------------------------------ recipes you learn ---
+## A journey knows only a handful of recipes at first; the rest are learned (Defs.LEARN: a first find,
+## a recipe scroll in a chest, a village keeper, a boss's hoard). `learned` holds the ids learned (saved).
+var learned := {}
+
+func knows(r: Dictionary) -> bool:
+	return learned.has(String(r["id"])) or bool(Defs.learn_of(r).get("start", false))
+
+## (the test mode knows every recipe already: nothing to learn but in its own check)
+func testing_no_learn() -> bool:
+	return learned.size() >= recipes.size()
+
+func recipe_by_id(id: String) -> Dictionary:
+	for r in recipes:
+		if String(r["id"]) == id:
+			return r
+	return {}
+
+## learn a recipe; `why` is said with it. True if it was new.
+func learn(id: String, why := "") -> bool:
+	var r := recipe_by_id(id)
+	if r.is_empty() or knows(r):
+		return false
+	learned[id] = true
+	if r.has("scroll"):
+		items[String(r["scroll"])] = true      # (a spell that had its own scroll: that's what opens it at the forge)
+	# (where to find it is said the first few times)
+	var tail := " (C: the Wisp Forge, J: the recipe book)" if learned.size() <= 3 else ""
+	ui.toast("New recipe: %s%s.%s" % [r["name"], (", " + why) if why != "" else "", tail], Color(0.72, 0.9, 1.0), 6.0)
+	audio.play("rare")
+	return true
+
+## every recipe known (a journey from before recipes were learned, and the test mode)
+func learn_all() -> void:
+	for r in recipes:
+		learned[String(r["id"])] = true
+
+## first finds teach a material's plain uses: checked every second
+func _learn_from_finds() -> void:
+	var any := false
+	for r in recipes:
+		if knows(r):
+			continue
+		var L: Dictionary = Defs.learn_of(r)
+		if not L.has("find"):
+			continue
+		for m in L["find"]:
+			if ore_found(int(m)):
+				any = learn(String(r["id"]), "from your first %s" % Defs.NAMES[int(m)]) or any
+				break
+	if any:
+		save_game()
+
+## a recipe scroll in a chest: one not yet known from this place's depth or shallower (1 anywhere, 2 deep
+## down or in ruins, keeps and mines, 3 in dungeons and temples). True if one was found.
+func _chest_recipe(level: int) -> bool:
+	var pool := []
+	for r in recipes:
+		var L: Dictionary = Defs.learn_of(r)
+		if L.has("scroll") and int(L["scroll"]) <= level and not knows(r):
+			pool.append(String(r["id"]))
+	if pool.is_empty():
+		return false
+	return learn(String(pool[randi() % pool.size()]), "from a recipe scroll in the chest")
+
+## a boss's hoard holds a recipe found nowhere else: this world's own first (its ore's gear, its ward),
+## then an alloy of an ore you've found, then any
+func _hoard_recipe() -> bool:
+	var ko := Defs.kind_ore(planet)
+	var kind := String(planet.get("kind", "temperate"))
+	var best := []
+	var good := []
+	var rest := []
+	for r in recipes:
+		var L: Dictionary = Defs.learn_of(r)
+		if not L.get("hoard", false) or knows(r):
+			continue
+		var id := String(r["id"])
+		if (r.has("gear") and (r["ores"] as Array).has(ko) and ko >= 0) or String(L.get("kind", "")) == kind:
+			best.append(id)
+		elif r.has("gear") and (ore_found(int(r["ores"][0])) or ore_found(int(r["ores"][-1]))):
+			good.append(id)
+		else:
+			rest.append(id)
+	for pool in [best, good, rest]:
+		if not pool.is_empty():
+			return learn(String(pool[randi() % pool.size()]), "from the hoard")
+	return false
+
+## the recipes a village keeper (`role`, or any) sells on this planet
+func shop_recipes(role := "") -> Array:
+	var kind := String(planet.get("kind", "temperate"))
+	var out := []
+	for r in recipes:
+		var L: Dictionary = Defs.learn_of(r)
+		if L.has("shop") and (role == "" or String(L["shop"]) == role) and (String(L.get("kind", "")) == "" or String(L["kind"]) == kind):
+			out.append(r)
+	return out
+
 func ore_found(om: int) -> bool:
 	return player.inv[om] > 0 or items.has("found_%d" % om)
 
@@ -4138,7 +4247,7 @@ func _drink(m: Mage) -> bool:
 	return true
 
 func craft(r: Dictionary) -> bool:
-	if recipe_done(r) or not recipe_unlocked(r) or not recipe_affordable(r):
+	if not knows(r) or recipe_done(r) or not recipe_unlocked(r) or not recipe_affordable(r):
 		return false
 	audio.play("forge")
 	for k in r["cost"]:
@@ -4218,6 +4327,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if k == KEY_C or (k == KEY_ESCAPE and state == "forge"):
 				toggle_forge()
 				return
+			if k == KEY_J:
+				# the recipe book: the forge, opened at its unlearned pages
+				if state == "play":
+					state = "forge"
+					ui.show_forge(true)
+				else:
+					toggle_forge()
+				return
 		if state == "map":
 			_map_key(k)
 			return
@@ -4265,7 +4382,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			for m in Defs.NM:
 				if Defs.COLLECT[m] == 1 and Defs.PLACE[m] == 1:
 					player.inv[m] += 200
-			ui.toast("Creative stock: +200 of every material", Color(0.6, 1, 0.6))
+			learn_all()
+			ui.toast("Creative stock: +200 of every material, and every recipe", Color(0.6, 1, 0.6))
 	elif state == "map" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
 		_map_mouse(ev)
 	elif ev is InputEventMouseButton and ev.pressed and state == "play":
@@ -4902,9 +5020,11 @@ func start_game(use_save: bool) -> void:
 		mana_regen = 0.22
 		heat_ward = false
 		items = {"potion": 2}       # two draughts to start with; health doesn't come back by itself
+		learned = {}
 		if testing:
 			known = ["mote", "spark", "conjure"]
 			items["levitate"] = true  # (the checks fly and cast sparks as they always have)
+			learn_all()
 		player.furn = []
 		played = 0.0
 	_enter_planet(int(s["planet"]) if s != null else 0)
@@ -5388,7 +5508,7 @@ func _save_path() -> String:
 
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
-		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1,
+		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1, "learned": learned.keys(),
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
@@ -5423,6 +5543,12 @@ func _apply_save(s: Dictionary) -> void:
 	items = s.get("items", {})
 	if int(s.get("start", 0)) < 1:
 		items["levitate"] = true    # (a journey from before levitation had to be forged keeps it)
+	learned = {}
+	if s.has("learned"):
+		for lid in s["learned"]:
+			learned[String(lid)] = true
+	else:
+		learn_all()                 # (a journey from before recipes were learned keeps every one)
 	_apply_gear()
 	if int(s.get("cnt", 0)) < 2:
 		# (before the GPU's counters moved, digging what the staff couldn't cut counted as star iron)
