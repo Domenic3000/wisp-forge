@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 58
+const NM := 60
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -72,6 +72,9 @@ const BOGIRON := 54       # marsh
 const RIMECRYSTAL := 55   # frozen
 const AMBER := 56         # wild
 const SILVER := 57        # realm
+# refined in a workshop's Smelter (workshops.gd): never found in the ground
+const COPPERBAR := 58     # Copper Ingot
+const WISPBAR := 59       # Wisp Ingot
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -98,7 +101,7 @@ const MAT_NAMES := {
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
-	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER",
+	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -242,6 +245,11 @@ func _init() -> void:
 	# warded stone: the walls of dungeons, carved with faintly glowing runes. Too hard for any staff
 	# but the Core Siphon, so a dungeon is explored through its halls, not dug around.
 	_def(RUNESTONE, "Warded Stone", K_SOLID, ["#2c3044", "#353a52", "#3f4560", "#24283a"], {"hard": 4, "glow": Vector3(0.025, 0.045, 0.06)})
+	# ingots (Smelter): kept in the satchel, not set down as blocks
+	_def(COPPERBAR, "Copper Ingot", K_SOLID, ["#d8844a", "#f0a868", "#a85c2a", "#ffd0a0"], {"hard": 2})
+	_def(WISPBAR, "Wisp Ingot", K_SOLID, ["#8a9cff", "#b8c4ff", "#5a64d8", "#e4e8ff"], {"hard": 2, "self": 1, "glow": Vector3(0.3, 0.35, 0.8)})
+	PLACE[COPPERBAR] = 0
+	PLACE[WISPBAR] = 0
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -790,7 +798,7 @@ func gear_recipes() -> Array:
 const LEARN := {
 	"plank": {"start": true}, "torch": {"start": true}, "brick": {"start": true}, "masonry": {"start": true},
 	"door": {"start": true}, "tier2": {"start": true}, "tier4": {"start": true},
-	"glass": {"find": [SAND]}, "sandstone": {"find": [SAND]}, "tile": {"find": [COAL]},
+	"sandstone": {"find": [SAND]},
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
 	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]},
@@ -1134,40 +1142,122 @@ const PROJ := {
 const RECIPES := [
 	{"id": "plank", "cat": "Materials", "name": "Planks x4", "cost": {WOOD: 2}, "give": {PLANK: 4}, "desc": "Flammable building boards."},
 	{"id": "brick", "cat": "Materials", "name": "Bricks x4", "cost": {STONE: 3, DIRT: 1}, "give": {BRICK: 4}, "desc": "Tough blocks (staff tier 2 to carve)."},
-	{"id": "glass", "cat": "Materials", "name": "Glass x4", "cost": {SAND: 4, COAL: 1}, "give": {GLASS: 4}, "desc": "See-through blocks."},
 	{"id": "masonry", "cat": "Materials", "name": "Stone Blocks x4", "cost": {STONE: 4}, "give": {MASONRY: 4}, "desc": "Strong building blocks (span 28)."},
 	{"id": "torch", "cat": "Materials", "name": "Torches x4", "cost": {WOOD: 1, COAL: 1}, "give": {TORCH: 4}, "desc": "Light that never goes out."},
-	{"id": "tile", "cat": "Materials", "name": "Roof Tiles x4", "cost": {DIRT: 3, COAL: 1}, "give": {TILE: 4}, "desc": "Fired clay, for roofs (build mode)."},
 	{"id": "sandstone", "cat": "Materials", "name": "Sandstone x4", "cost": {SAND: 6}, "give": {SANDSTONE: 4}, "desc": "Pressed sand, for desert houses."},
 	{"id": "door", "cat": "Materials", "name": "Wooden Door", "cost": {PLANK: 8}, "give": {WOODDOOR: 1}, "desc": "Put it up in build mode (B)."},
 	{"id": "obsid", "cat": "Materials", "name": "Obsidian x4", "cost": {LAVA: 4, WATER: 4}, "give": {OBSIDIAN: 4}, "desc": "Quench lava in water."},
 	{"id": "spark", "cat": "Spells", "name": "Spark Bolt", "cost": {STONE: 24, COAL: 6, COPPER: 4}, "spell": "spark"},
-	{"id": "levitate", "cat": "Staff & Body", "name": "Levitation", "cost": {COPPER: 12, WISP: 4, LEAF: 10}, "desc": "Hold jump in the air to float on your mana. Wisp is cut with the Copper Focus."},
-	{"id": "fireball", "cat": "Spells", "name": "Fireball", "cost": {COAL: 12, COPPER: 6}, "spell": "fireball"},
-	{"id": "tide", "cat": "Spells", "name": "Tidecall", "cost": {WATER: 40, COPPER: 4}, "spell": "tide"},
+	{"id": "levitate", "cat": "Staff & Body", "name": "Levitation", "cost": {COPPERBAR: 3, WISP: 4, LEAF: 10}, "desc": "Hold jump in the air to float on your mana. Wisp is cut with the Copper Focus; copper ingots come from a Smelter."},
+	{"id": "fireball", "cat": "Spells", "name": "Fireball", "cost": {COAL: 12, COPPERBAR: 2}, "spell": "fireball"},
+	{"id": "tide", "cat": "Spells", "name": "Tidecall", "cost": {WATER: 40, COPPERBAR: 1}, "spell": "tide"},
 	{"id": "frost", "cat": "Spells", "name": "Frostbite", "cost": {FROST: 10, SNOW: 10}, "spell": "frost"},
 	{"id": "quake", "cat": "Spells", "name": "Quake Orb", "cost": {WISP: 10, STONE: 40, COAL: 10}, "spell": "quake"},
 	{"id": "blink", "cat": "Spells", "name": "Blink", "cost": {WISP: 6, CRYSTAL: 6}, "spell": "blink", "scroll": "scroll_blink"},
 	{"id": "mend", "cat": "Spells", "name": "Mending", "cost": {WISP: 8, SHROOM: 12, CRYSTAL: 4}, "spell": "mend", "scroll": "scroll_mend"},
 	{"id": "potion", "cat": "Potions", "name": "Healing Draught", "cost": {CRYSTAL: 2, SHROOM: 6, GLASS: 2}, "potion": 1, "desc": "Drink with H: 35 health over a moment."},
 	{"id": "starfall", "cat": "Spells", "name": "Starfall", "cost": {EMBER: 12, OBSIDIAN: 6, COAL: 10}, "spell": "starfall", "scroll": "scroll_starfall"},
-	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPER: 20, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava."},
-	{"id": "wide", "cat": "Staff & Body", "name": "Wide Excavation", "cost": {COPPER: 10, CRYSTAL: 10}, "desc": "Bigger excavation radius (7.5 to 11)."},
+	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava. Copper ingots come from a Smelter (build mode, Workshops)."},
+	{"id": "wide", "cat": "Staff & Body", "name": "Wide Excavation", "cost": {COPPERBAR: 3, CRYSTAL: 10}, "desc": "Bigger excavation radius (7.5 to 11)."},
 	{"id": "vital", "cat": "Staff & Body", "name": "Vital Bloom", "cost": {SHROOM: 16, LEAF: 12}, "desc": "+50 max health."},
-	{"id": "mana", "cat": "Staff & Body", "name": "Mana Crystal", "cost": {WISP: 8, CRYSTAL: 8}, "desc": "+70 max mana, faster regeneration."},
+	{"id": "mana", "cat": "Staff & Body", "name": "Mana Crystal", "cost": {WISPBAR: 3, CRYSTAL: 8}, "desc": "+70 max mana, faster regeneration."},
 	{"id": "ward", "cat": "Staff & Body", "name": "Heat Ward", "cost": {EMBER: 15, FROST: 10, OBSIDIAN: 6}, "desc": "Survive the mantle heat."},
-	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISP: 6}, "desc": "Staff tier 3: Obsidian and Magma Rock."},
-	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISP: 15}, "desc": "Staff tier 4: harvest the Planet Core. Needs the Ember Heart."},
+	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISPBAR: 2}, "desc": "Staff tier 3: Obsidian and Magma Rock."},
+	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISPBAR: 5}, "desc": "Staff tier 4: harvest the Planet Core. Needs the Ember Heart."},
 	# wards: each bears one kind of planet's hazard (HAZARDS); a guardian's relic can do it instead
-	{"id": "hearth", "cat": "Wards", "name": "Hearth Charm", "cost": {EMBER: 10, COAL: 16, COPPER: 6}, "desc": "Keeps a frozen world's cold off you under the open sky."},
-	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPER: 6}, "desc": "Shades you from a desert world's midday sun."},
+	{"id": "hearth", "cat": "Wards", "name": "Hearth Charm", "cost": {EMBER: 10, COAL: 16, COPPERBAR: 2}, "desc": "Keeps a frozen world's cold off you under the open sky."},
+	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPERBAR: 2}, "desc": "Shades you from a desert world's midday sun."},
 	{"id": "fenmask", "cat": "Wards", "name": "Fen Mask", "cost": {SHROOM: 10, LEAF: 10, GLASS: 4}, "desc": "Lets you breathe a marsh world's choking fog."},
-	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISP: 8, GLASS: 6, COPPER: 10}, "desc": "Bears the crushing deep of an ocean world's sea."},
-	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISP: 10, COPPER: 8}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
+	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISPBAR: 3, GLASS: 6, COPPERBAR: 3}, "desc": "Bears the crushing deep of an ocean world's sea."},
+	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISPBAR: 4, COPPERBAR: 3}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it carries the skiff through the next planet's storm belt. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids, and a world with an ore of its own wants some of that too."},
-	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISP: 12, COPPER: 16}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
+	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 ]
+
+# -------------------------------------------------------------- workshops ---
+## Workshops (user, 22 Nov: "stations that process materials in the world with real fuel and fire ... and
+## some secrets that can be discovered through experimenting"). A station is an object standing in the
+## world (main `Station`, workshops.gd), set down from build mode's Workshops tab: load what it should work
+## and feed its fire (F opens it), and it works batch after batch while you do other things. Its fire is
+## real: it throws sparks that catch anything that burns beside it, and water puts it out. "burn": fuel
+## used a tick while it works; "spark": how likely a check (every SPARK_EVERY ticks) lights what's next to it.
+const STATIONS := {
+	"kiln": {"name": "Kiln", "w": 16, "h": 17, "burn": 1.0, "spark": 0.3, "cost": {STONE: 24, DIRT: 12},
+		"desc": "Fires sand into glass, clay into tiles and bricks, wood into charcoal."},
+	"smelter": {"name": "Smelter", "w": 16, "h": 23, "burn": 2.0, "spark": 0.55, "cost": {STONE: 30, BRICK: 12, COPPER: 4},
+		"desc": "Melts ore down into ingots. It eats fuel: coal burns longest."},
+	"still": {"name": "Still", "w": 15, "h": 15, "burn": 0.6, "spark": 0.1, "cost": {GLASS: 6, COPPER: 8, PLANK: 6},
+		"desc": "Steeps herbs and crystals in water over a low flame: draughts."},
+	"anvil": {"name": "Anvil", "w": 13, "h": 8, "burn": 0.0, "spark": 0.0, "cost": {COPPERBAR: 6, STONE: 10},
+		"desc": "Forge ore gear within reach of an anvil and it comes out masterwork: a quarter better."},
+}
+## fuel for a station's fire: ticks of burning per unit
+const FUEL_TICKS := {COAL: 900, WOOD: 300, PLANK: 300, TIMBER: 200, LEAF: 60, ROOT: 300}
+const ANVIL_REACH := 48.0     # (cells from you to an anvil, for masterwork)
+## What the stations make. A batch starts when what's loaded is EXACTLY the kinds of "in" (enough of each):
+## a mix it doesn't know does nothing, so trying a mix out is how a secret is found. "give": materials, or
+## "item": an items key (draughts, "potion") or "gear:<id>" (WORK_GEAR); "ticks" at full heat (a cold
+## station warms up first); "night": only after dark; "secret": hidden until made once (its "hint" is
+## heard from villagers or read in notes found in chests, `game.secret_hints`); "once": made only once.
+const PROCESS := [
+	{"id": "k_glass", "at": "kiln", "in": {SAND: 4}, "give": {GLASS: 4}, "ticks": 240},
+	{"id": "k_tile", "at": "kiln", "in": {DIRT: 3}, "give": {TILE: 4}, "ticks": 240},
+	{"id": "k_brick", "at": "kiln", "in": {MUD: 3}, "give": {BRICK: 4}, "ticks": 240},
+	{"id": "k_charcoal", "at": "kiln", "in": {WOOD: 3}, "give": {COAL: 2}, "ticks": 300},
+	{"id": "k_obsidian", "at": "kiln", "in": {ASH: 3, SAND: 2}, "give": {OBSIDIAN: 2}, "ticks": 360, "secret": true,
+		"name": "Kiln Obsidian", "hint": "Ash of a hearth fired with the stuff of glass sets black and hard as a vault's walls."},
+	{"id": "k_prism", "at": "kiln", "in": {GLASS: 3, SHROOM: 2}, "give": {CRYSTAL: 1}, "ticks": 420, "secret": true,
+		"name": "Grown Prism", "hint": "Glass fired round a glowing cap grows a prism of its own."},
+	{"id": "s_copper", "at": "smelter", "in": {COPPER: 3}, "give": {COPPERBAR: 1}, "ticks": 200},
+	{"id": "s_wisp", "at": "smelter", "in": {WISP: 3}, "give": {WISPBAR: 1}, "ticks": 260},
+	{"id": "s_band", "at": "smelter", "in": {COPPERBAR: 2, WISPBAR: 2, CRYSTAL: 1}, "item": "gear:wispband", "ticks": 480,
+		"secret": true, "once": true, "name": "Wispsteel Band", "hint": "Copper and wisp melted into one ring with a prism set between them: spells come cheaper."},
+	{"id": "s_edge", "at": "smelter", "in": {STARIRON: 2, COAL: 2, MAGMAROCK: 2}, "item": "gear:staredge", "ticks": 600,
+		"secret": true, "once": true, "name": "Starsteel Edge", "hint": "Star iron melted with coal and the rock that glows in the deep takes an edge that sharpens every spell."},
+	{"id": "t_heal", "at": "still", "in": {SHROOM: 4, LEAF: 4, WATER: 4}, "item": "potion", "ticks": 300},
+	{"id": "t_ember", "at": "still", "in": {SHROOM: 2, EMBER: 2, WATER: 4}, "item": "d_ember", "ticks": 360, "secret": true,
+		"name": "Ember Draught", "hint": "A glowcap steeped with an ember crystal: drink it and fire forgets you."},
+	{"id": "t_swift", "at": "still", "in": {CACTUS: 3, LEAF: 3, WATER: 4}, "item": "d_swift", "ticks": 360, "secret": true,
+		"name": "Swiftfoot Draught", "hint": "Desert flesh and green leaves, stilled together, put a spring in your step."},
+	{"id": "t_mana", "at": "still", "in": {WISP: 2, SHROOM: 2, WATER: 4}, "item": "d_mana", "ticks": 360, "secret": true,
+		"name": "Mana Draught", "hint": "Wisp ore stilled with a glowcap fills the head with light: spells cost less."},
+	{"id": "t_moon", "at": "still", "in": {CRYSTAL: 1, SNOW: 4}, "item": "d_moon", "ticks": 420, "secret": true, "night": true,
+		"name": "Moonlit Draught", "hint": "Snow and a prism stilled under the night sky keep a light about you, and only then."},
+]
+## gear only a workshop makes (a secret's "gear:<id>"): read by main `gear()` with Defs.GEAR's
+const WORK_GEAR := {
+	"wispband": {"name": "Wispsteel Band", "mods": {"mana_cost": 0.8, "max_mana": 40.0}, "desc": "Spells cost a fifth less mana; +40 mana."},
+	"staredge": {"name": "Starsteel Edge", "mods": {"spell_spark": 1.35, "spell_fireball": 1.25, "spell_frost": 1.25}, "desc": "Spark, Fireball and Frostbite hit a quarter harder or more."},
+}
+## draughts from the Still, drunk from the satchel (click): each works for "dur" ticks through `gear()`
+const DRAUGHTS := {
+	"d_ember": {"name": "Ember Draught", "col": Color(1.0, 0.45, 0.15), "dur": 3600, "mods": {"lava_dmg": 0.2, "fire_dmg": 0.2}, "desc": "Fire and lava hurt you a fifth as much, for a minute."},
+	"d_swift": {"name": "Swiftfoot Draught", "col": Color(0.5, 0.95, 0.35), "dur": 3600, "mods": {"speed": 1.35, "jump": 1.2}, "desc": "Run faster and jump higher, for a minute."},
+	"d_mana": {"name": "Mana Draught", "col": Color(0.45, 0.55, 1.0), "dur": 3600, "mods": {"mana_cost": 0.6}, "desc": "Spells cost 40% less mana, for a minute."},
+	"d_moon": {"name": "Moonlit Draught", "col": Color(0.8, 0.85, 1.0), "dur": 7200, "mods": {"light": 60.0, "dig_rate": 1.2}, "desc": "A soft light goes with you and you dig faster, for two minutes."},
+}
+const MASTERWORK := 1.25      # ore gear forged within ANVIL_REACH of an anvil (items["q_<id>"])
+
+func process_by_id(id: String) -> Dictionary:
+	for pr in PROCESS:
+		if pr["id"] == id:
+			return pr
+	return {}
+
+## what a process makes, for the UI: [name, icon key ("m<mat>" or an item key), count]
+func process_out(pr: Dictionary) -> Array:
+	if pr.has("give"):
+		for m in pr["give"]:
+			return [NAMES[int(m)], "m%d" % int(m), int(pr["give"][m])]
+	var it := String(pr["item"])
+	if it == "potion":
+		return ["Healing Draught", "potion", 1]
+	if DRAUGHTS.has(it):
+		return [DRAUGHTS[it]["name"], it, 1]
+	if it.begins_with("gear:"):
+		return [WORK_GEAR[it.substr(5)]["name"], "gear", 1]
+	return [it, "", 1]
 
 # ---------------------------------------------------------------- sprites ---
 # ---- sprites (drawn as text; tools/sprites.py checks them). The mage is 16x24 with animation

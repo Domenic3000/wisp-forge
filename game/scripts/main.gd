@@ -19,6 +19,8 @@ const FoeAI := preload("res://scripts/foe_ai.gd")
 const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
+const Workshops := preload("res://scripts/workshops.gd")
+const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
@@ -57,6 +59,28 @@ class Chest extends Body:
 		w = float(Defs.CHEST_W)
 		h = float(Defs.CHEST_H)
 		step_h = 0
+
+## A workshop station (workshops.gd, Defs.STATIONS): one object standing in the world, like a chest.
+## It falls and lands whole; what it's loaded with, its fire and what it made travel with it.
+class Station extends Body:
+	var kind := "kiln"
+	var store := {}           # material -> how many are loaded (what it works)
+	var out := {}             # what it made: "m<material>" or an items key -> how many
+	var fuel := 0.0           # ticks of fire left
+	var heat := 0.0           # 0 cold .. 1 at full heat
+	var prog := 0.0           # the batch under way (ticks at full heat)
+	var cur := ""             # the process it's working (Defs.PROCESS id)
+	var lit := false
+	var unsup_t := 0
+	func _init() -> void:
+		step_h = 0
+
+func new_station(kind: String) -> Station:
+	var st := Station.new()
+	st.kind = kind
+	st.w = float(Defs.STATIONS[kind]["w"])
+	st.h = float(Defs.STATIONS[kind]["h"])
+	return st
 
 ## A villager (towns.gd): walks the street, or keeps a shop (`keeper`, its `role` a Defs.SHOPS key)
 class Villager extends Body:
@@ -219,6 +243,7 @@ var ui
 var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
 var towns                 # the living villages' folk, talk and trade (towns.gd)
+var workshops             # the workshop stations on this planet (workshops.gd)
 var vfx                   # the spells' effects (vfx.gd): its own particles, glow, flashes
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
@@ -309,7 +334,7 @@ var test_no_wild := false    # test mode: no wild creatures come by themselves (
 # build mode (B): see build.gd
 var build_on := false
 var build_cat := 0
-var build_idx := [0, 0, 0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
+var build_idx := [0, 0, 0, 0, 0, 0, 0, 0]  # the chosen piece in each category (one per Build.CATS)
 var build_shape := 2           # how back walls and blocks are laid (Build.SHAPES: brush, line, rectangle, frame)
 var build_thick := 2           # how thick a line or frame is
 var build_drag := false        # dragging out a shape...
@@ -412,6 +437,7 @@ class Mage extends Body:
 	var cast_frame := -100     # when the last spell was cast (for the cast pose)
 	var floating := false      # levitating (for the float pose)
 	var aboard = null          # the skiff this mage rides in (null: on foot)
+	var buffs := {}            # a draught working now (Defs.DRAUGHTS id -> ticks left), read through gear()
 	func _init() -> void:
 		h = 17.0
 		w = 7.0
@@ -537,6 +563,7 @@ func _ready() -> void:
 	space = Space.new()
 	space.game = self
 	towns = Towns.new(self)
+	workshops = Workshops.new(self)
 	pix.add_child(space)
 	view_rect = TextureRect.new()
 	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -645,19 +672,27 @@ func _process(delta: float) -> void:
 		_tick_acc = minf(_tick_acc - steps / 60.0, 1.0 / 60.0)
 		for k in steps:
 			_tick()
+	elif state == "station":
+		# (the world waits while a station's panel is open, but the stations keep working: you watch it)
+		_tick_acc += minf(delta, 0.1)
+		var wsteps := mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
+		_tick_acc = minf(_tick_acc - wsteps / 60.0, 1.0 / 60.0)
+		for k2 in wsteps:
+			workshops.work_all()
+		ui.update_station()
 	if state == "map":
 		_map_tick(delta)
 		if map_tab == "planet" and not travelling:
 			_gpu_frame(true, 1)
 		ui.update_hud(self)
 		map_view.queue_redraw()
-	if state == "play" or state == "dead" or state == "forge" or state == "shop":
+	if state == "play" or state == "dead" or state == "forge" or state == "shop" or state == "station":
 		tp = Time.get_ticks_usec()
 		if (space.active and not space.live) or travelling:
 			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
 			lights.clear()
 		else:
-			_gpu_frame(state == "forge" or state == "shop", steps)
+			_gpu_frame(state == "forge" or state == "shop" or state == "station", steps)
 		prof_add("GPU submit", Time.get_ticks_usec() - tp)
 		tp = Time.get_ticks_usec()
 		ui.update_hud(self)
@@ -1324,6 +1359,8 @@ func _interact() -> void:
 		return
 	if towns.talk(player):                # (a villager: a word, or a keeper's shop)
 		return
+	if workshops.interact(player):        # (a workshop station: its panel)
+		return
 	if _try_home(player, 12):            # a bed right beside you comes before a door
 		return
 	var d := _door_near(player.pos, 22.0)
@@ -1453,6 +1490,8 @@ func _try_open_chest() -> void:
 	if centre.length() < gpu.surf_at(atan2(centre.y, centre.x)).x - 150.0:
 		lvl = maxi(lvl, 2)
 	if randf() < 0.3 + rare * 0.4 and _chest_recipe(lvl):
+		save_game()
+	elif randf() < 0.18 + rare * 0.3 and workshops.hint_note():
 		save_game()
 	for k in 14:
 		_particle(centre, Vector2(randf() - 0.5, -randf() * 1.2), 30 + randi() % 20, Color(1, 0.85, 0.35), true, 0.02)
@@ -2085,6 +2124,7 @@ func _tick() -> void:
 	if gl > 0.0 and not player.dead:
 		lights.append([player.pos, gl, Color(1.15, 0.9, 0.55)])          # (the Sun Lantern)
 	_update_chests()
+	workshops.tick()
 	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
 		tq = Time.get_ticks_usec()
@@ -2231,7 +2271,7 @@ func _update_player(m: Mage) -> void:
 	if lava > 0:
 		hurt(m, (0.08 if m.heat_ward else 0.55) * (0.3 if cinder else 1.0) * gear("lava_dmg", m) * mini(lava, 6), Vector2.ZERO, false)
 	if fire > 0 and not cinder:
-		hurt(m, (0.02 if m.heat_ward else 0.08) * mini(fire, 6), Vector2.ZERO, false)
+		hurt(m, (0.02 if m.heat_ward else 0.08) * gear("fire_dmg", m) * mini(fire, 6), Vector2.ZERO, false)
 	var sa: Vector4 = gpu.surf_at(a)
 	if p.pos.length() < sa.w + 20.0 and not m.heat_ward and not cinder:
 		hurt(m, 0.05, Vector2.ZERO, false)
@@ -2271,6 +2311,12 @@ func _update_player(m: Mage) -> void:
 			_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 10.0, m.pos.normalized() * 0.4, 24, Color(0.55, 1.0, 0.6), true, -0.01)
 	if m.potion_cd > 0:
 		m.potion_cd -= 1
+	for bk in m.buffs.keys():
+		m.buffs[bk] = int(m.buffs[bk]) - 1
+		if int(m.buffs[bk]) <= 0:
+			m.buffs.erase(bk)
+			if m.local:
+				ui.toast("The %s wears off" % Defs.DRAUGHTS[bk]["name"], Color(0.8, 0.8, 0.9), 2.0)
 	if m.local and m.hp < m.max_hp * 0.3 and m.heal_left <= 0.0 and frame >= _low_hp_t and not m.dead:
 		_low_hp_t = frame + 1800
 		ui.toast("Low health%s" % (": drink a Healing Draught (H)" if int(items.get("potion", 0)) > 0 else ". Health doesn't come back by itself"), Color(1, 0.55, 0.5), 3.0)
@@ -2420,6 +2466,9 @@ func _deconstruct(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
 	if m.decon_pause > 0:
 		m.decon_pause -= 1
+		return
+	if m.local and workshops.take_at(m, p):
+		m.decon_pause = 20
 		return
 	if _pick_up_furniture(m, p):
 		m.decon_pause = 15       # a moment's pause, then harvesting carries on while the button is held
@@ -4254,8 +4303,57 @@ func gear(stat: String, m: Mage = null) -> float:
 	for id in Defs.GEAR:
 		var mods: Dictionary = Defs.GEAR[id]["mods"]
 		if mods.has(stat) and who.items.has(id):
-			v = v + float(mods[stat]) if add else v * float(mods[stat])
+			# (forged at an anvil: masterwork, its effect a quarter bigger)
+			var q := float(who.items.get("q_" + id, 1.0))
+			v = v + float(mods[stat]) * q if add else v * (1.0 + (float(mods[stat]) - 1.0) * q)
+	for id2 in Defs.WORK_GEAR:
+		var mods2: Dictionary = Defs.WORK_GEAR[id2]["mods"]
+		if mods2.has(stat) and who.items.has(id2):
+			v = v + float(mods2[stat]) if add else v * float(mods2[stat])
+	for bid in who.buffs:
+		var mods3: Dictionary = Defs.DRAUGHTS[bid]["mods"]
+		if mods3.has(stat):
+			v = v + float(mods3[stat]) if add else v * float(mods3[stat])
 	return v
+
+## gear a workshop made (Defs.WORK_GEAR): owned from now on, its saved numbers raised once
+func own_work_gear(id: String) -> void:
+	if items.has(id):
+		return
+	items[id] = true
+	var mods: Dictionary = Defs.WORK_GEAR[id]["mods"]
+	max_hp += float(mods.get("max_hp", 0.0))
+	hp += float(mods.get("max_hp", 0.0))
+	max_mana += float(mods.get("max_mana", 0.0))
+	mana_regen += float(mods.get("mana_regen", 0.0))
+	_apply_gear()
+	ui.toast("%s: %s" % [Defs.WORK_GEAR[id]["name"], Defs.WORK_GEAR[id]["desc"]], Color(1, 0.82, 0.23), 5.0)
+
+## drink a draught from the Still (the satchel: click it): it works for a while through gear()
+func drink_draught(m: Mage, id: String) -> bool:
+	var n := int(m.items.get(id, 0))
+	if n <= 0 or not Defs.DRAUGHTS.has(id):
+		return false
+	m.items[id] = n - 1
+	if int(m.items[id]) <= 0:
+		m.items.erase(id)
+	var dd: Dictionary = Defs.DRAUGHTS[id]
+	m.buffs[id] = int(dd["dur"])
+	audio.play("water", m.pos, 0.5)
+	var col: Color = dd["col"]
+	for k in 16:
+		_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 8.0, m.pos.normalized() * (0.2 + randf() * 0.4), 30 + randi() % 20, col, true, -0.01)
+	if m.local:
+		ui.toast("%s: %s" % [dd["name"], dd["desc"]], col.lightened(0.3), 3.5)
+	return true
+
+## is there an anvil (a workshop station) within reach of the mage? (masterwork ore gear)
+func anvil_near(m: Mage = null) -> bool:
+	var who: Mage = m if m != null else player
+	for st in workshops.list:
+		if st.kind == "anvil" and st.pos.distance_to(who.pos) < Defs.ANVIL_REACH:
+			return true
+	return false
 
 ## what owning gear sets once (on forging and on loading): your breath
 func _apply_gear() -> void:
@@ -4360,13 +4458,20 @@ func craft(r: Dictionary) -> bool:
 			save_game()
 			return true
 	if r.has("gear"):
-		# ore gear: owned from now on; the saved numbers it raises are raised once, here
+		# ore gear: owned from now on; the saved numbers it raises are raised once, here. Forged within
+		# reach of an anvil it's masterwork (items["q_<id>"]): every effect a quarter bigger.
 		items[String(r["id"])] = true
+		var qm := 1.0
+		if anvil_near():
+			qm = Defs.MASTERWORK
+			items["q_" + String(r["id"])] = qm
+			ui.toast("Masterwork! Hammered out at the anvil: %s works a quarter better" % r["name"], Color(1, 0.9, 0.5), 4.0)
+			audio.play("rare", player.pos, 0.6)
 		var mods: Dictionary = Defs.GEAR[r["id"]]["mods"]
-		max_hp += float(mods.get("max_hp", 0.0))
-		hp += float(mods.get("max_hp", 0.0))
-		max_mana += float(mods.get("max_mana", 0.0))
-		mana_regen += float(mods.get("mana_regen", 0.0))
+		max_hp += float(mods.get("max_hp", 0.0)) * qm
+		hp += float(mods.get("max_hp", 0.0)) * qm
+		max_mana += float(mods.get("max_mana", 0.0)) * qm
+		mana_regen += float(mods.get("mana_regen", 0.0)) * qm
 		if mods.has("dig_r"):
 			dig_r = maxf(dig_r, float(mods["dig_r"]))
 		_apply_gear()
@@ -4401,6 +4506,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if state == "shop":
 			if k == KEY_ESCAPE or k == KEY_F:
 				towns.close_shop()
+			return
+		if state == "station":
+			if k == KEY_ESCAPE or k == KEY_F:
+				workshops.close()
 			return
 		if k == KEY_ESCAPE and state == "play":
 			ui.toggle_settings()
@@ -4760,6 +4869,45 @@ func _update_build(m: Mage) -> void:
 		piece["cost"] = Build.stair_cost(int(piece["mat"]), int(piece["post"]), int(st2["front"]), int(st2["back"]))
 		cost = Build.payable(piece, m.inv)
 		place = {"stamp": st2["stamp"]}
+	elif kind == "station":
+		# a workshop: an object standing on the ground where you point (most of its width on ground)
+		var sk: String = piece["station"]
+		var sw: int = int(Defs.STATIONS[sk]["w"])
+		var sh: int = int(Defs.STATIONS[sk]["h"])
+		var c0s := cell.x - sw / 2
+		var sbot := _floor_span(c0s, sw, cell.y - sh / 2, 40)
+		if sbot < 0:
+			ok = false
+			build_why = "no floor under it"
+			sbot = cell.y + sh / 2
+		var simg: Image = WorkshopArt.frames(sk)["body"]
+		for j in sh:
+			for i in sw:
+				var sc2 := Vector2i(c0s + i, sbot - sh + 1 + j)
+				if not _open_at(sc2.x, sc2.y):
+					if ok:
+						build_why = "cell %s: %s" % [str(sc2), Defs.NAMES[type_at(Build.cell_pos(sc2.x, sc2.y))]]
+					ok = false
+				var px := simg.get_pixel(sw - 1 - i if build_flip else i, j)
+				if px.a > 0.5:
+					cells.append([Build.cell_pos(sc2.x, sc2.y), px])
+		var stheld := 0
+		for i in sw:
+			if _solid_at(c0s + i, sbot + 1):
+				stheld += 1
+		if stheld * 2 < sw:
+			if ok:
+				build_why = "it needs level ground under it"
+			ok = false
+		var spos := (Build.cell_pos(c0s, sbot) + Build.cell_pos(c0s + sw - 1, sbot - sh + 1)) * 0.5
+		for ost in workshops.list:
+			if ost.pos.distance_to(spos) < (sw + ost.w) * 0.5:
+				if ok:
+					build_why = "another workshop is there"
+				ok = false
+		if int(m.items.get("st_" + sk, 0)) > 0:
+			cost = {Defs.AIR: 0}              # (one you took up: set down again for free)
+		place = {"station": sk, "pos": spos}
 	elif kind == "platform":
 		for i in Build.PLATFORM_W:
 			var cx := cell.x - Build.PLATFORM_W / 2 + i
@@ -4788,6 +4936,18 @@ func _update_build(m: Mage) -> void:
 		build_last_stamp = place["stamp"]
 	if kind == "carried":
 		m.furn.remove_at(int(piece["item"]))      # it's set down: no longer carried
+	if place.has("station"):
+		var nst = workshops.add(String(place["station"]), place["pos"])
+		nst.facing = -1 if build_flip else 1
+		var stk := "st_" + String(place["station"])
+		if cost.has(Defs.AIR) and int(m.items.get(stk, 0)) > 0:
+			m.items[stk] = int(m.items[stk]) - 1
+			if int(m.items[stk]) <= 0:
+				m.items.erase(stk)
+		audio.play("place", nst.pos, 0.7)
+		if not m.items.has("tip_station"):
+			m.items["tip_station"] = true
+			ui.toast("%s set down: press F beside it to load it and light its fire" % Defs.STATIONS[place["station"]]["name"], Color(1, 0.85, 0.5), 4.0)
 	if place.has("door"):
 		var rec2: Dictionary = place["door"]
 		doors.append(rec2)
@@ -4954,6 +5114,8 @@ func toggle_forge() -> void:
 	if state == "play":
 		state = "forge"
 		ui.show_forge()
+		if anvil_near():
+			ui.toast("An anvil is at hand: ore gear forged here comes out masterwork", Color(1, 0.9, 0.55), 3.0)
 	elif state == "forge":
 		state = "play"
 		ui.hide_forge()
@@ -5113,6 +5275,8 @@ func _migrate_old_saves() -> void:
 func quit_to_title() -> void:
 	if state == "shop":
 		towns.close_shop()
+	if state == "station":
+		workshops.close()
 	if not (state == "play" or state == "forge" or state == "dead"):
 		return
 	if build_on:
@@ -5375,6 +5539,7 @@ func _make_world(index: int, arriving: bool) -> void:
 		print("[Wisp Forge] %s: %d structures" % [planet["name"], builds.structs.size()])
 		builds.structs.clear()
 	_make_chests(loaded)
+	workshops.load_from(planet_state)
 	_make_doors(loaded)
 	_gt("chests and doors")
 	if chunks == null:
@@ -5768,6 +5933,7 @@ func _world_meta(without_skiff: bool) -> String:
 	for c in chests:
 		cs.append([c.pos.x, c.pos.y, c.opened])
 	planet_state["chests"] = cs
+	workshops.save_to(planet_state)
 	var ast = space.rocks_state(int(planet["index"]))
 	if ast != null:
 		planet_state["asteroids"] = ast
@@ -5845,7 +6011,7 @@ func _notification(what: int) -> void:
 
 ## Closing the window saves your progress and the whole world, then quits.
 func quit_game() -> void:
-	if state == "play" or state == "forge" or state == "dead" or state == "shop":
+	if state == "play" or state == "forge" or state == "dead" or state == "shop" or state == "station":
 		print("[Wisp Forge] saving before quitting...")
 		save_game()
 		save_world(true)

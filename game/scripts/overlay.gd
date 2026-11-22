@@ -1,4 +1,6 @@
 extends Node2D
+
+const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
 ## Draws everything that isn't terrain, in screen pixels on top of the GPU
 ## picture: the mage, the wisp, foes, spells, particles and the reticle.
@@ -378,7 +380,7 @@ func _snap(p: Vector2) -> Vector2:
 	var k := float(game.scale_px)
 	return (p * k).round() / k
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false, body_w := 0.0) -> void:
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false, body_w := 0.0, glow := false) -> void:
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(wpos, body_h, grounded, body_w)[0]
 	# upright in the close view (crisp pixels: turned a few degrees they'd go jagged); turned with the
@@ -390,7 +392,7 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	var z: float = game.zoom
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
-	var mod := Color(4, 4, 4) if white else _lit(game.world_to_screen(wpos)) * tint
+	var mod := Color(4, 4, 4) if white else (tint if glow else _lit(game.world_to_screen(wpos)) * tint)
 	mod.a = alpha
 	# feet (the last opaque row above the outline) rest on the bottom of the body box, wherever they are in
 	# the frame: a frame with empty rows under its feet (most of the grown creatures had one or two, a
@@ -648,6 +650,8 @@ func _draw_all() -> void:
 			ch_sq = 1.0 - ch_f * 0.7
 		_sprite("chest_open" if c.opened else "chest", c.pos, false, c.open_t > 50 and (c.open_t / 4) % 2 == 0, c.h, true, ch_a, ch_sq, Color(1, 1, 1), true)
 	tq = _part("draw: chests", tq)
+	_draw_stations()
+	tq = _part("draw: workshops", tq)
 	# open doors, swung out of their houses
 	for d in game.doors:
 		if not d["open"]:
@@ -908,3 +912,38 @@ func _draw_folk() -> void:
 		var walking: bool = absf(v.vx) > 0.08
 		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
 		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), false, v.w)
+
+## The workshop stations (workshops.gd): the body, lit by the world; a lit one's fire over it, unlit and
+## flickering (two frames), as bright as it is hot; a Still's jar coloured by what it's steeping.
+func _draw_stations() -> void:
+	for st in game.workshops.list:
+		var ssp: Vector2 = game.world_to_screen(st.pos)
+		if ssp.x < -30 or ssp.y < -30 or ssp.x > game.VW + 30 or ssp.y > game.VH + 30:
+			continue
+		var key: String = "st_" + st.kind
+		if not tex.has(key):
+			var fr: Dictionary = WorkshopArt.frames(st.kind)
+			_make_tex(key, fr["body"])
+			_make_tex(key + "_fire0", fr["fire0"])
+			_make_tex(key + "_fire1", fr["fire1"])
+			if fr["fill"] != null:
+				_make_tex(key + "_fill", fr["fill"])
+		var fl: bool = st.facing < 0
+		_sprite(key, st.pos, fl, false, st.h, true, 1.0, 1.0, Color(1, 1, 1), true)
+		var fill_col := Color(0, 0, 0, 0)
+		if st.kind == "still":
+			var pr: Dictionary = Defs.process_by_id(st.cur)
+			var it := String(pr.get("item", ""))
+			if Defs.DRAUGHTS.has(it):
+				fill_col = Defs.DRAUGHTS[it]["col"]
+			elif it == "potion":
+				fill_col = Color(0.9, 0.25, 0.3)
+			elif int(st.store.get(Defs.WATER, 0)) > 0:
+				fill_col = Color(0.35, 0.55, 0.95)
+			if fill_col.a > 0.0 and tex.has(key + "_fill"):
+				_sprite(key + "_fill", st.pos, fl, false, st.h, true, 0.85, 1.0, fill_col * (0.7 + 0.5 * st.heat), true, 0.0, st.heat > 0.3)
+		if st.heat > 0.02:
+			var fk := "%s_fire%d" % [key, (int(game.frame) / 6 + int(absf(st.pos.x))) % 2]
+			var fa: float = clampf(st.heat * 1.3, 0.2, 1.0) if st.lit else st.heat
+			_sprite(fk, st.pos, fl, false, st.h, true, fa, 1.0, Color(1.3, 1.2, 1.1), true, 0.0, true)
+

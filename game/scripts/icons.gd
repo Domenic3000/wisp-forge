@@ -13,7 +13,7 @@ const MAT_STYLE := {
 	18: "orb", 20: "glassy", 21: "speckle", 22: "orb", 23: "shroom", 25: "brick", 26: "pane", 28: "gem", 30: "plank",
 	31: "cactus", 32: "plank", 34: "masonry", 35: "masonry", 36: "masonry", 37: "grass", 39: "torch", 42: "rune",
 	44: "door", 7: "log", 8: "leaf", 49: "log", 50: "ingot", 51: "gem", 52: "pearl", 53: "gem", 54: "ore",
-	55: "gem", 56: "gem", 57: "ingot", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
+	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
 }
 
 ## spell glyphs, 11 x 11: "#" the spell's colour, "o" its light, "w" white-hot
@@ -103,6 +103,16 @@ static func item(key: String) -> ImageTexture:
 	if _cache.has(k):
 		return _cache[k]
 	var tex := _outlined(_art(ITEM_ART[key], ITEM_COL[key]))
+	_cache[k] = tex
+	return tex
+
+## a Still's draught (Defs.DRAUGHTS): the potion bottle in the draught's colour
+static func draught(id: String) -> ImageTexture:
+	var k := "d_" + id
+	if _cache.has(k):
+		return _cache[k]
+	var c: Color = Defs.DRAUGHTS[id]["col"]
+	var tex := _outlined(_art(ITEM_ART["potion"], {"#": c.darkened(0.55), "r": c, "w": c.lightened(0.6), "c": Color(0.7, 0.52, 0.3)}))
 	_cache[k] = tex
 	return tex
 

@@ -1346,6 +1346,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_stairs()
+		elif only == "workshops":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_workshops()
 		elif only == "lairs":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2604,6 +2608,7 @@ func run() -> void:
 		"wall cells %d (%d when painted), table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, wall_first, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
 
 	await _test_stairs()
+	await _test_workshops()
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
 	var furn0: int = g.player.furn.size()
@@ -4905,20 +4910,20 @@ func _test_recipes() -> void:
 	g.learned = {}
 	await _frames(70)
 	var rc_plank: bool = g.knows(g.recipe_by_id("plank"))
-	var rc_glass0: bool = g.knows(g.recipe_by_id("glass"))
-	# an unknown recipe can't be forged, even with all it costs
-	var rc_glass_r: Dictionary = g.recipe_by_id("glass")
+	var rc_glass0: bool = g.knows(g.recipe_by_id("sandstone"))
+	# an unknown recipe can't be forged, even with all it costs (sandstone: glass is fired in a kiln now)
+	var rc_glass_r: Dictionary = g.recipe_by_id("sandstone")
 	for rk in rc_glass_r["cost"]:
 		g.player.inv[int(rk)] = int(rc_glass_r["cost"][rk]) + 5
 	var rc_cant: bool = not g.craft(rc_glass_r)
 	var rc_ok1: bool = rc_plank and not rc_glass0 and rc_cant
-	rc_rows.append("%sstart: planks known %s, glass known %s, glass forged while unknown %s" % ["" if rc_ok1 else "(!) ", rc_plank, rc_glass0, not rc_cant])
+	rc_rows.append("%sstart: planks known %s, sandstone known %s, sandstone forged while unknown %s" % ["" if rc_ok1 else "(!) ", rc_plank, rc_glass0, not rc_cant])
 	rc_ok = rc_ok and rc_ok1
-	# a first find: sand teaches glass (and sandstone)
+	# a first find: sand teaches sandstone
 	g.player.inv[Defs.SAND] = 6
 	await _frames(70)
-	var rc_ok2: bool = g.knows(rc_glass_r) and g.knows(g.recipe_by_id("sandstone"))
-	rc_rows.append("%sfirst sand taught glass %s, sandstone %s" % ["" if rc_ok2 else "(!) ", g.knows(rc_glass_r), g.knows(g.recipe_by_id("sandstone"))])
+	var rc_ok2: bool = g.knows(rc_glass_r)
+	rc_rows.append("%sfirst sand taught sandstone %s" % ["" if rc_ok2 else "(!) ", g.knows(rc_glass_r)])
 	rc_ok = rc_ok and rc_ok2
 	# a chest's recipe scroll, a boss's hoard, a keeper's sale
 	var rc_n0: int = g.learned.size()
@@ -4955,8 +4960,8 @@ func _test_recipes() -> void:
 	g.save_game()
 	var rc_saved = JSON.parse_string(FileAccess.get_file_as_string(g._save_path()))
 	var rc_sl: Array = rc_saved.get("learned", []) if typeof(rc_saved) == TYPE_DICTIONARY else []
-	var rc_ok4: bool = rc_book and rc_sl.has("glass") and rc_sl.has("skiff") and not rc_sl.has("plank")
-	rc_rows.append("%sthe book shows %s; saved: %d learned (glass %s, skiff %s)" % ["" if rc_ok4 else "(!) ", rc_book, rc_sl.size(), rc_sl.has("glass"), rc_sl.has("skiff")])
+	var rc_ok4: bool = rc_book and rc_sl.has("sandstone") and rc_sl.has("skiff") and not rc_sl.has("plank")
+	rc_rows.append("%sthe book shows %s; saved: %d learned (sandstone %s, skiff %s)" % ["" if rc_ok4 else "(!) ", rc_book, rc_sl.size(), rc_sl.has("sandstone"), rc_sl.has("skiff")])
 	rc_ok = rc_ok and rc_ok4
 	g.player.inv = rc_inv
 	g.learned = rc_learned
@@ -5843,3 +5848,268 @@ func _sha(d: PackedByteArray) -> String:
 	h.start(HashingContext.HASH_SHA256)
 	h.update(d)
 	return h.finish().hex_encode()
+
+## Workshops (workshops.gd; user, 22 Nov: real kilns and smelters, a quarter better at an anvil, secrets
+## found by experimenting): on a slab of rock up in open air, a Kiln set down from build mode; it fires
+## sand into glass batch after batch (fuel burns), a mix it doesn't know does nothing, a secret mix is a
+## discovery; a Smelter makes copper ingots; a Still's secret draught works through gear(); ore gear
+## forged at an anvil is masterwork; sparks set planks beside a lit kiln alight; saved and loaded, taken
+## up again; a picture of the four lit (`workshops.png`) and of a panel (`workshop_panel.png`).
+func _test_workshops() -> void:
+	var ws = g.workshops
+	var wk_back: Vector2 = g.player.pos
+	var wk_items0: Dictionary = g.items.duplicate(true)
+	var wk_n0: int = ws.list.size()
+	var wk_rows := []
+	var wk_ok := true
+	for wk_m in [Defs.STONE, Defs.DIRT, Defs.SAND, Defs.COAL, Defs.COPPER, Defs.ASH, Defs.SHROOM, Defs.EMBER, Defs.WATER, Defs.BRICK, Defs.GLASS, Defs.PLANK, Defs.LEAF]:
+		g.player.inv[wk_m] += 60
+	# the slab
+	var wk_a := atan2(g.player.pos.y, g.player.pos.x) + 0.1
+	var wk_up := Vector2(cos(wk_a), sin(wk_a))
+	var wk_c: Vector2i = Build.cell_of(wk_up * (g.gpu.surf_at(wk_a).x + 150.0))
+	var WKW := 150
+	var wk_d := PackedInt32Array()
+	wk_d.resize(WKW * 4)
+	wk_d.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	g.stamps.append({"x0": posmod(wk_c.x, Defs.NS), "y0": wk_c.y, "w": WKW, "h": 4, "data": wk_d, "ax": wk_c.x, "aw": WKW})
+	await _frames(4)
+	var wk_gr := wk_c.y
+	var wk_mid := wk_c.x + WKW / 2
+	_go(_cell_pos(wk_mid + 30, wk_gr - 12, wk_c.x, WKW))
+	await _frames(30)
+	# a kiln from build mode
+	if not g.build_on:
+		g._toggle_build()
+	g.build_cat = Build.CAT_WORKSHOPS
+	var wk_list: Array = g.build_list()
+	for wk_k in wk_list.size():
+		if String(wk_list[wk_k]["name"]) == "Kiln":
+			g.build_idx[Build.CAT_WORKSHOPS] = wk_k
+	g.build_flip = false
+	var wk_stone0: int = g.player.inv[Defs.STONE]
+	g.test_aim = _cell_pos(wk_mid, wk_gr - 9, wk_c.x, WKW)
+	await _frames(4)
+	var wk_fit: bool = g.build_prev.get("ok", false)
+	var wk_why: String = g.build_why
+	g.build_click = true
+	await _frames(10)
+	g.test_aim = Vector2.ZERO
+	if g.build_on:
+		g._toggle_build()
+	var kiln = ws.list[ws.list.size() - 1] if ws.list.size() > wk_n0 else null
+	var wk_ok1: bool = wk_fit and kiln != null and kiln.kind == "kiln" and g.player.inv[Defs.STONE] == wk_stone0 - 24
+	wk_rows.append("%sa kiln set down from build mode: fits %s (%s), %d stations, stone paid %d" % ["" if wk_ok1 else "(!) ", wk_fit, wk_why, ws.list.size(), wk_stone0 - g.player.inv[Defs.STONE]])
+	wk_ok = wk_ok and wk_ok1
+	if kiln == null:
+		kiln = ws.add("kiln", _cell_pos(wk_mid, wk_gr - 9, wk_c.x, WKW))
+	await _frames(60)
+	var wk_sat: bool = kiln.on_ground
+	# the other three, along the slab
+	var smelter = ws.add("smelter", _cell_pos(wk_mid - 30, wk_gr - 13, wk_c.x, WKW))
+	var still = ws.add("still", _cell_pos(wk_mid + 26, wk_gr - 9, wk_c.x, WKW))
+	var anvil = ws.add("anvil", _cell_pos(wk_mid + 48, wk_gr - 6, wk_c.x, WKW))
+	await _frames(60)
+	# glass, batch after batch
+	ws.load_mat(kiln, Defs.SAND, 8)
+	ws.add_fuel(kiln, Defs.COAL, 2)
+	var wk_f0: float = kiln.fuel
+	for wk_t in 1200:
+		ws.work_all()
+	var wk_glass := int(kiln.out.get("m%d" % Defs.GLASS, 0))
+	var wk_ok2: bool = wk_glass == 8 and kiln.store.is_empty() and kiln.fuel < wk_f0 and kiln.fuel > 0.0
+	wk_rows.append("%ssand fired into glass: %d glass, %s left in, fuel %.0f -> %.0f" % ["" if wk_ok2 else "(!) ", wk_glass, str(kiln.store), wk_f0, kiln.fuel])
+	wk_ok = wk_ok and wk_ok2
+	var wk_g0: int = g.player.inv[Defs.GLASS]
+	ws.take_out(kiln)
+	var wk_ok3: bool = g.player.inv[Defs.GLASS] == wk_g0 + 8 and kiln.out.is_empty()
+	# a mix it doesn't know: nothing
+	ws.load_mat(kiln, Defs.SAND, 4)
+	ws.load_mat(kiln, Defs.DIRT, 3)
+	for wk_t2 in 600:
+		ws.work_all()
+	wk_ok3 = wk_ok3 and kiln.out.is_empty() and ws.match_process(kiln).is_empty() and not kiln.lit
+	ws.unload(kiln, Defs.SAND)
+	ws.unload(kiln, Defs.DIRT)
+	wk_rows.append("%staken out (%d glass now), and sand with dirt makes nothing: %s" % ["" if wk_ok3 else "(!) ", g.player.inv[Defs.GLASS], str(kiln.out)])
+	wk_ok = wk_ok and wk_ok3
+	# a secret: ash and sand
+	g.items.erase("secret_k_obsidian")
+	ws.load_mat(kiln, Defs.ASH, 3)
+	ws.load_mat(kiln, Defs.SAND, 2)
+	for wk_t3 in 800:
+		ws.work_all()
+	var wk_ok4: bool = g.items.has("secret_k_obsidian") and int(kiln.out.get("m%d" % Defs.OBSIDIAN, 0)) == 2
+	wk_rows.append("%sa secret mix (ash + sand) found: %s, %s" % ["" if wk_ok4 else "(!) ", g.items.has("secret_k_obsidian"), str(kiln.out)])
+	wk_ok = wk_ok and wk_ok4
+	ws.take_out(kiln)
+	# copper ingots
+	ws.load_mat(smelter, Defs.COPPER, 6)
+	ws.add_fuel(smelter, Defs.COAL, 2)
+	for wk_t4 in 900:
+		ws.work_all()
+	var wk_bar0: int = g.player.inv[Defs.COPPERBAR]
+	ws.take_out(smelter)
+	var wk_ok5: bool = g.player.inv[Defs.COPPERBAR] == wk_bar0 + 2
+	wk_rows.append("%sthe smelter made %d copper ingots" % ["" if wk_ok5 else "(!) ", g.player.inv[Defs.COPPERBAR] - wk_bar0])
+	wk_ok = wk_ok and wk_ok5
+	# a secret draught, drunk
+	ws.load_mat(still, Defs.SHROOM, 2)
+	ws.load_mat(still, Defs.EMBER, 2)
+	ws.load_mat(still, Defs.WATER, 4)
+	ws.add_fuel(still, Defs.PLANK, 4)
+	for wk_t5 in 900:
+		ws.work_all()
+	ws.take_out(still)
+	var wk_had: int = int(g.items.get("d_ember", 0))
+	var wk_lava0: float = g.gear("lava_dmg")
+	var wk_drank: bool = g.drink_draught(g.player, "d_ember")
+	var wk_lava1: float = g.gear("lava_dmg")
+	var wk_ok6: bool = wk_had >= 1 and wk_drank and absf(wk_lava1 - wk_lava0 * 0.2) < 0.001 and g.player.buffs.has("d_ember")
+	wk_rows.append("%sthe Ember Draught: made %d, drunk %s, lava harm x%.2f -> x%.2f" % ["" if wk_ok6 else "(!) ", wk_had, wk_drank, wk_lava0, wk_lava1])
+	wk_ok = wk_ok and wk_ok6
+	g.player.buffs.clear()
+	# a night-only mix waits for the dark
+	g.player.inv[Defs.CRYSTAL] += 2
+	g.player.inv[Defs.SNOW] += 8
+	ws.load_mat(still, Defs.CRYSTAL, 1)
+	ws.load_mat(still, Defs.SNOW, 4)
+	var wk_night: bool = ws._night(still)
+	var wk_wait: String = ws.waiting(still)
+	var wk_ok7: bool = (wk_wait == "night") != wk_night
+	wk_rows.append("%sthe Moonlit Draught: night %s, waiting for '%s'" % ["" if wk_ok7 else "(!) ", wk_night, wk_wait])
+	wk_ok = wk_ok and wk_ok7
+	ws.unload(still, Defs.CRYSTAL)
+	ws.unload(still, Defs.SNOW)
+	# masterwork at the anvil
+	var wk_gear_ok := true
+	var wk_dr0: float = g.gear("dig_rate")
+	var wk_had_opal: bool = g.items.has("opal")
+	var wk_rec: Dictionary = g.recipe_by_id("opal")
+	if not wk_had_opal and not wk_rec.is_empty():
+		_go(anvil.pos + (anvil.pos.normalized() * 6.0))
+		await _frames(10)
+		g.items["found_%d" % Defs.FIREOPAL] = true
+		for wk_gc in wk_rec["cost"]:
+			g.player.inv[int(wk_gc)] += int(wk_rec["cost"][wk_gc])
+		var wk_near: bool = g.anvil_near()
+		var wk_made: bool = g.craft(wk_rec)
+		var wk_dr1: float = g.gear("dig_rate")
+		wk_gear_ok = wk_near and wk_made and absf(float(g.items.get("q_opal", 0.0)) - Defs.MASTERWORK) < 0.001 and absf(wk_dr1 - wk_dr0 * (1.0 + 0.5 * Defs.MASTERWORK)) < 0.01
+		wk_rows.append("%sthe Fire Opal Focus forged at the anvil (near %s, made %s): dig rate x%.3f -> x%.3f" % ["" if wk_gear_ok else "(!) ", wk_near, wk_made, wk_dr0, wk_dr1])
+		g.items.erase("opal")
+		g.items.erase("q_opal")
+	wk_ok = wk_ok and wk_gear_ok
+	# a lit kiln's sparks catch the planks beside it
+	_go(_cell_pos(wk_mid + 30, wk_gr - 12, wk_c.x, WKW))
+	await _frames(20)
+	var wk_kc: Vector2i = Build.cell_of(kiln.pos)
+	var wk_pw := PackedInt32Array()
+	var PW := 30
+	var PH := 22
+	wk_pw.resize(PW * PH)
+	wk_pw.fill(Defs.AIR)
+	for wy in PH:
+		for wx in PW:
+			if wx < 6 or wx >= PW - 6 or wy < 4:
+				wk_pw[wy * PW + wx] = Defs.PLANK | 0x20000
+	var wk_px0 := wk_kc.x - PW / 2
+	var wk_py0 := wk_gr - PH
+	g.stamps.append({"x0": posmod(wk_px0, Defs.NS), "y0": wk_py0, "w": PW, "h": PH, "data": wk_pw, "ax": wk_c.x, "aw": WKW})
+	await _frames(6)
+	var wk_planks := func() -> int:
+		var rr: Dictionary = g.gpu.read_rect(wk_px0, wk_py0, PW, PH, wk_c.x, WKW)
+		var n := 0
+		for v in rr["fg"]:
+			if (int(v) & 255) == Defs.PLANK:
+				n += 1
+		return n
+	var wk_p0: int = wk_planks.call()
+	ws.load_mat(kiln, Defs.SAND, 40)
+	ws.add_fuel(kiln, Defs.COAL, 4)
+	kiln.heat = 1.0
+	await _frames(10)
+	var wk_caught := 0
+	for wk_s in 40:
+		if ws._spark(kiln):
+			wk_caught += 1
+	await _frames(300)
+	var wk_p1: int = wk_planks.call()
+	var wk_ok8: bool = kiln.lit and wk_caught > 0 and wk_p1 < wk_p0
+	wk_rows.append("%sa lit kiln's sparks: %d of 40 caught the planks round it, %d plank cells -> %d" % ["" if wk_ok8 else "(!) ", wk_caught, wk_p0, wk_p1])
+	wk_ok = wk_ok and wk_ok8
+	# (the fire out: the cage cleared)
+	var wk_clr := PackedInt32Array()
+	wk_clr.resize(PW * PH)
+	wk_clr.fill(Defs.AIR)
+	g.stamps.append({"x0": posmod(wk_px0, Defs.NS), "y0": wk_py0, "w": PW, "h": PH, "data": wk_clr, "ax": wk_c.x, "aw": WKW})
+	# all four at work, for the picture (midday)
+	var wk_time0: float = g.time
+	g.time = g.towns.time_for_hour(kiln.pos, 12.0)
+	ws.load_mat(smelter, Defs.COPPER, 30)
+	ws.add_fuel(smelter, Defs.COAL, 4)
+	ws.load_mat(still, Defs.SHROOM, 8)
+	ws.load_mat(still, Defs.LEAF, 8)
+	ws.load_mat(still, Defs.WATER, 8)
+	ws.add_fuel(still, Defs.PLANK, 4)
+	_go(_cell_pos(wk_mid + 14, wk_gr - 12, wk_c.x, WKW))      # (between the kiln and the still: not in front of either)
+	await _frames(260)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("workshops.png"))
+	var wk_lit: bool = kiln.lit and smelter.lit and still.lit
+	# the panel
+	_go(kiln.pos + kiln.pos.normalized() * 2.0)
+	await _frames(10)
+	var wk_opened: bool = ws.interact(g.player) and g.state == "station"
+	await _frames(12)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("workshop_panel.png"))
+	ws.close()
+	await _frames(4)
+	var wk_ok9: bool = wk_sat and wk_lit and wk_opened and g.state == "play"
+	wk_rows.append("%sthe kiln rests on the slab %s; all three fires lit %s (%s %s %s); the panel opened %s and closed" % ["" if wk_ok9 else "(!) ", wk_sat, wk_lit, kiln.lit, smelter.lit, still.lit, wk_opened])
+	wk_ok = wk_ok and wk_ok9
+	# saved and loaded (through JSON, as a world file keeps it)
+	var wk_sd := {}
+	ws.save_to(wk_sd)
+	var wk_js = JSON.parse_string(JSON.stringify(wk_sd))
+	var wk_before: int = ws.list.size()
+	var wk_store := str(kiln.store)
+	ws.load_from(wk_js)
+	var wk_k2 = null
+	for wk_st in ws.list:
+		if wk_st.kind == "kiln" and wk_st.pos.distance_to(kiln.pos) < 1.0:
+			wk_k2 = wk_st
+	var wk_ok10: bool = ws.list.size() == wk_before and wk_k2 != null and str(wk_k2.store) == wk_store and absf(wk_k2.fuel - kiln.fuel) < 1.0
+	wk_rows.append("%ssaved and loaded: %d stations -> %d, the kiln's load %s -> %s" % ["" if wk_ok10 else "(!) ", wk_before, ws.list.size(), wk_store, str(wk_k2.store) if wk_k2 != null else "-"])
+	wk_ok = wk_ok and wk_ok10
+	# taken up again (what's in it comes back), and its hint heard from a note
+	var wk_sand0: int = g.player.inv[Defs.SAND]
+	var wk_took: bool = wk_k2 != null and ws.take_at(g.player, wk_k2.pos)
+	var wk_ok11: bool = wk_took and int(g.items.get("st_kiln", 0)) >= 1 and g.player.inv[Defs.SAND] > wk_sand0
+	wk_rows.append("%staken up: %s, kilns carried %d, sand back %d" % ["" if wk_ok11 else "(!) ", wk_took, int(g.items.get("st_kiln", 0)), g.player.inv[Defs.SAND] - wk_sand0])
+	wk_ok = wk_ok and wk_ok11
+	var wk_h0 := 0
+	for wk_k3 in g.items:
+		if String(wk_k3).begins_with("hint_"):
+			wk_h0 += 1
+	var wk_noted: bool = ws.hint_note()
+	var wk_h1 := 0
+	for wk_k4 in g.items:
+		if String(wk_k4).begins_with("hint_"):
+			wk_h1 += 1
+	var wk_ok12: bool = wk_noted and wk_h1 == wk_h0 + 1
+	wk_rows.append("%sa note in a chest gave a hint: %s (%d -> %d heard)" % ["" if wk_ok12 else "(!) ", wk_noted, wk_h0, wk_h1])
+	wk_ok = wk_ok and wk_ok12
+	# (cleared away: the stations, the slab, what was learned and given)
+	ws.list.clear()
+	var wk_clear := PackedInt32Array()
+	wk_clear.resize(WKW * 50)
+	wk_clear.fill(Defs.AIR)
+	g.stamps.append({"x0": posmod(wk_c.x, Defs.NS), "y0": wk_c.y - 46, "w": WKW, "h": 50, "data": wk_clear, "ax": wk_c.x, "aw": WKW})
+	g.items = wk_items0
+	g.player.buffs.clear()
+	g.time = wk_time0
+	_go(wk_back)
+	await _frames(20)
+	print("[workshops] " + "\n[workshops] ".join(wk_rows))
+	_ok("workshops: kilns, smelters and stills work their loads with real fire, secrets are found by trying mixes", wk_ok, "; ".join(wk_rows))
+

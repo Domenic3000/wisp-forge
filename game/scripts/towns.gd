@@ -629,8 +629,8 @@ func line_for(v) -> String:
 	var hello := _hello(v, r, hr)
 	if not knows(v):
 		return hello                                  # (the first time, they just introduce themselves)
-	var topics := ["lair", "dungeon", "ore", "hazard", "shops", "chat"]
-	var topic: String = topics[(v.talks + r.randi_range(0, 5)) % topics.size()]
+	var topics := ["lair", "dungeon", "ore", "hazard", "shops", "chat", "secret"]
+	var topic: String = topics[(v.talks + r.randi_range(0, 6)) % topics.size()]
 	var said := ""
 	match topic:
 		"lair":
@@ -663,6 +663,13 @@ func line_for(v) -> String:
 					said = "%s is no friend out there. Folk who wander far carry a %s." % [Defs.HAZARDS[hz]["name"], _ward_name(hz)]
 			if said == "" and float(game.clim.get("heat", 0.0)) > 0.0:
 				said = "The air out there would cook you. Get a Heat Ward."
+		"secret":
+			# a workshop's secret, as a riddle (it goes into your notes: the station's panel shows it)
+			var sp: Dictionary = game.workshops.unheard(r)
+			if not sp.is_empty():
+				var who: String = ["An old smith once told me", "My gran swore by this", "A traveller said", "They say in the next village"][r.randi_range(0, 3)]
+				said = "%s: \"%s\"" % [who, String(sp["hint"])]
+				game.workshops.hear(sp)
 		"shops":
 			for h in v.town["houses"]:
 				if Defs.SHOPS.has(h["role"]) and not bool(h["ruined"]):

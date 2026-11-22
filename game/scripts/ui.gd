@@ -58,6 +58,15 @@ var shop_buys: VBoxContainer
 var shop_title: Label
 var shop_coins: Label
 var _shop_v = null
+var station: PanelContainer      # a workshop station's panel (workshops.gd)
+var _st = null                   # the station shown
+var _st_key := ""                # what the panel was last drawn from (redrawn when it changes)
+var _st_title: Label
+var _st_body: VBoxContainer
+var _st_status: Label
+var _st_heat: ProgressBar
+var _st_prog: ProgressBar
+var _st_fuel: Label
 var title
 var death: Control
 var loading: Control
@@ -96,6 +105,7 @@ func _ready() -> void:
 	_build_hud()
 	_build_forge()
 	_build_shop()
+	_build_station()
 	_build_map_bar()
 	_build_screens()
 
@@ -684,6 +694,238 @@ func _render_shop() -> void:
 		row2.add_child(b2)
 		shop_buys.add_child(row2)
 
+## A workshop station's panel (workshops.gd): your satchel to load it from (left click one, right click
+## ten), its fire to feed, what's in it (click to take it back out), what it made, and what it knows how to
+## make, its secrets as riddles you've heard or question marks.
+func _build_station() -> void:
+	station = _panel(Color(0.07, 0.045, 0.035, 0.97), TRIM, 7)
+	station.set_anchors_preset(Control.PRESET_CENTER)
+	station.custom_minimum_size = Vector2(470, 300)
+	station.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	station.grow_vertical = Control.GROW_DIRECTION_BOTH
+	station.visible = false
+	root.add_child(station)
+	var v := _box(true, 4)
+	v.mouse_filter = Control.MOUSE_FILTER_PASS
+	station.add_child(v)
+	var head := _box(false, 4)
+	head.mouse_filter = Control.MOUSE_FILTER_PASS
+	v.add_child(head)
+	_st_title = _head("Workshop", 12, CREAM)
+	_st_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(_st_title)
+	var close := _button("Leave  [F]")
+	close.pressed.connect(func(): game.workshops.close())
+	head.add_child(close)
+	var r := _rule(450)
+	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(r)
+	_st_status = _label("", 12, CREAM)
+	_st_status.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_st_status.custom_minimum_size.x = 450
+	v.add_child(_st_status)
+	var bars := _box(false, 6)
+	v.add_child(bars)
+	bars.add_child(_label("Heat", 12, DIM))
+	_st_heat = _bar(Color(1.0, 0.45, 0.15))
+	bars.add_child(_st_heat)
+	bars.add_child(_label("Batch", 12, DIM))
+	_st_prog = _bar(GOLD)
+	bars.add_child(_st_prog)
+	_st_fuel = _label("", 12, DIM)
+	bars.add_child(_st_fuel)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size.y = 210
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	_st_body = VBoxContainer.new()
+	_st_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_st_body.add_theme_constant_override("separation", 3)
+	scroll.add_child(_st_body)
+
+func show_station(st) -> void:
+	_st = st
+	_st_key = ""
+	update_station()
+	station.visible = true
+
+func hide_station() -> void:
+	station.visible = false
+	_st = null
+
+## each frame the panel is open: the bars and the status; the rest is redrawn when what's in it changes
+func update_station() -> void:
+	if _st == null or not station.visible and game.state != "station":
+		return
+	var ws = game.workshops
+	var st = _st
+	var sd: Dictionary = Defs.STATIONS[st.kind]
+	var pr: Dictionary = ws.match_process(st)
+	_st_heat.value = st.heat * 100.0
+	_st_prog.value = 0.0 if pr.is_empty() else clampf(st.prog / float(pr["ticks"]) * 100.0, 0.0, 100.0)
+	var burn := float(sd["burn"])
+	_st_fuel.text = "" if burn <= 0.0 else "Fuel: %d s" % int(st.fuel / burn / 60.0)
+	_st_heat.visible = burn > 0.0
+	_st_prog.visible = burn > 0.0
+	var txt := ""
+	if burn <= 0.0:
+		txt = String(sd["desc"])
+	elif not ws.loaded(st):
+		txt = "Load something to work (click your satchel below), and feed the fire."
+	elif pr.is_empty():
+		txt = "It doesn't know what to make of this mix. (Every kind loaded must belong to one thing it makes.)"
+	else:
+		var known: bool = not pr.get("secret", false) or ws.is_secret_known(String(pr["id"]))
+		var what := String(Defs.process_out(pr)[0]) if known else "something new..."
+		match ws.waiting(st):
+			"fuel": txt = "Ready to make %s: feed the fire." % what
+			"night": txt = "It will make %s, but only after dark." % what
+			"wet": txt = "The water's put its fire out."
+			_:
+				txt = ("Working: %s" % what) if st.heat > 0.95 else ("Warming up to make %s" % what)
+	_st_status.text = txt
+	var key := "%s|%s|%s|%s|%d" % [str(st.store), str(st.out), _inv_key_now(), st.cur, int(st.fuel > 0.0)]
+	if key != _st_key:
+		_st_key = key
+		_render_station()
+
+func _inv_key_now() -> String:
+	var k := ""
+	for m in Defs.NM:
+		if game.player.inv[m] > 0:
+			k += "%d:%d," % [m, game.player.inv[m]]
+	return k
+
+func _st_section(txt: String) -> void:
+	_st_body.add_child(_head(txt, 12, Color(0.95, 0.8, 0.5)))
+
+func _st_grid() -> GridContainer:
+	var gr := GridContainer.new()
+	gr.columns = 14
+	gr.add_theme_constant_override("h_separation", 2)
+	gr.add_theme_constant_override("v_separation", 2)
+	_st_body.add_child(gr)
+	return gr
+
+func _out_name(key: String) -> String:
+	if key.begins_with("m"):
+		return Defs.NAMES[int(key.substr(1))]
+	if key == "potion":
+		return "Healing Draught"
+	if Defs.DRAUGHTS.has(key):
+		return String(Defs.DRAUGHTS[key]["name"])
+	if key.begins_with("gear:"):
+		return String(Defs.WORK_GEAR[key.substr(5)]["name"])
+	return key
+
+## an icon for a process's output
+func _out_icon(key: String) -> Texture2D:
+	if key.begins_with("m"):
+		return Icons.mat(int(key.substr(1)))
+	if key == "potion":
+		return Icons.item("potion")
+	if Defs.DRAUGHTS.has(key):
+		return Icons.draught(key)
+	return Icons.item("book")
+
+func _render_station() -> void:
+	for c in _st_body.get_children():
+		c.queue_free()
+	var st = _st
+	var ws = game.workshops
+	var sd: Dictionary = Defs.STATIONS[st.kind]
+	_st_title.text = String(sd["name"])
+	var burn := float(sd["burn"])
+	if burn <= 0.0:
+		_st_section("At the anvil")
+		var al := _label("Forge ore gear or alloys (C) while you stand within reach of this anvil and the piece comes out masterwork: each of its effects a quarter bigger.", 12, CREAM)
+		al.autowrap_mode = TextServer.AUTOWRAP_WORD
+		al.custom_minimum_size.x = 440
+		_st_body.add_child(al)
+		return
+	# what it made
+	if not st.out.is_empty():
+		var orow := _box(false, 4)
+		orow.add_child(_head("Made", 12, GOLD))
+		for k in st.out:
+			orow.add_child(_slot(_out_icon(String(k)), str(st.out[k]), true, _out_name(String(k))))
+		var tb := _button("Take it all")
+		tb.pressed.connect(func():
+			ws.take_out(st)
+			_st_key = "")
+		orow.add_child(tb)
+		_st_body.add_child(orow)
+	# what's in it
+	_st_section("Loaded (click to take back out)")
+	var ing := _st_grid()
+	if st.store.is_empty():
+		ing.add_child(_label("nothing", 12, DIM))
+	for m in st.store:
+		var sl := _slot(Icons.mat(int(m)), _count(int(st.store[m])), false, "%s ×%d\nClick: take it back" % [Defs.NAMES[int(m)], int(st.store[m])])
+		sl.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed:
+				ws.unload(st, int(m))
+				_st_key = "")
+		ing.add_child(sl)
+	# the fire
+	_st_section("Feed the fire (left 1, right 5)")
+	var fg := _st_grid()
+	var any_fuel := false
+	for fm in Defs.FUEL_TICKS:
+		var have: int = game.player.inv[int(fm)]
+		if have <= 0:
+			continue
+		any_fuel = true
+		var fs := _slot(Icons.mat(int(fm)), _count(have), false, "%s: %d s of burning each" % [Defs.NAMES[int(fm)], int(float(Defs.FUEL_TICKS[fm]) / burn / 60.0)])
+		fs.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed:
+				ws.add_fuel(st, int(fm), 5 if ev.button_index == MOUSE_BUTTON_RIGHT else 1)
+				game.audio.play("fire", st.pos, 0.4)
+				_st_key = "")
+		fg.add_child(fs)
+	if not any_fuel:
+		fg.add_child(_label("no coal, wood or planks in your satchel", 12, DIM))
+	# the satchel
+	_st_section("Your satchel (left 1, right 10)")
+	var sg := _st_grid()
+	for m2 in Defs.NM:
+		var n2: int = game.player.inv[m2]
+		if n2 <= 0 or Defs.KIND[m2] == Defs.K_EMPTY:
+			continue
+		var ss := _slot(Icons.mat(m2), _count(n2), false, "%s ×%d\nLeft: load 1, right: load 10" % [Defs.NAMES[m2], n2])
+		ss.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed:
+				ws.load_mat(st, m2, 10 if ev.button_index == MOUSE_BUTTON_RIGHT else 1)
+				_st_key = "")
+		sg.add_child(ss)
+	# what it knows how to make
+	_st_section("It makes")
+	for pr in Defs.PROCESS:
+		if pr["at"] != st.kind:
+			continue
+		var secret: bool = pr.get("secret", false)
+		var found: bool = not secret or ws.is_secret_known(String(pr["id"]))
+		var row := _box(false, 3)
+		if found:
+			for im in pr["in"]:
+				row.add_child(_tex(Icons.mat(int(im))))
+				row.add_child(_label("%d" % int(pr["in"][im]), 12, CREAM))
+			row.add_child(_label("→", 12, DIM))
+			var po: Array = Defs.process_out(pr)
+			var ok_key: String = "m%d" % int((pr["give"] as Dictionary).keys()[0]) if pr.has("give") else String(pr["item"])
+			if not ok_key.begins_with("gear:"):
+				row.add_child(_tex(_out_icon(ok_key)))
+			var ol := _label("%d %s%s%s" % [int(po[2]), po[0], "  (secret)" if secret else "", "  (after dark)" if pr.get("night", false) else ""], 12, Color(1, 0.8, 1) if secret else CREAM)
+			row.add_child(ol)
+		else:
+			var heard: bool = game.items.has("hint_" + String(pr["id"]))
+			var sl2 := _label("?  " + (String(pr["hint"]) if heard else "A secret, yet to be found. Try a mix..."), 12, Color(0.85, 0.7, 1.0) if heard else DIM)
+			sl2.autowrap_mode = TextServer.AUTOWRAP_WORD
+			sl2.custom_minimum_size.x = 430
+			row.add_child(sl2)
+		_st_body.add_child(row)
+
 ## A full-screen overlay with a framed panel in the middle; the panel's VBox is in meta "box".
 func _screen(dim := Color(0.02, 0.015, 0.05, 0.86), trim := TRIM) -> Control:
 	var c := ColorRect.new()
@@ -803,7 +1045,7 @@ func _build_settings() -> void:
 	grid.add_theme_constant_override("v_separation", 1)
 	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold to levitate (once forged)"],
 			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate (dig a chest open)"],
-			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home"],
+			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home; a workshop: load it"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
 			["C", "The Wisp Forge"], ["J", "Recipe book"], ["M", "Map (Tab: the system)"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: shapes)"],
@@ -1155,6 +1397,8 @@ func _update_satchel(g) -> void:
 	for it in g.player.furn:
 		ik += String(it["name"]) + ";"
 	ik += "p%d" % int(g.items.get("potion", 0))
+	for did0 in Defs.DRAUGHTS:
+		ik += "%s%d%s" % [did0, int(g.items.get(did0, 0)), "*" if g.player.buffs.has(did0) else ""]
 	if ik == _inv_key:
 		return
 	_inv_key = ik
@@ -1171,6 +1415,17 @@ func _update_satchel(g) -> void:
 	var np := int(g.items.get("potion", 0))
 	if np > 0:
 		satchel.add_child(_slot(Icons.item("potion"), str(np), false, "Healing Draught  ×%d\nH to drink" % np))
+		n += 1
+	for did in Defs.DRAUGHTS:
+		var nd := int(g.items.get(did, 0))
+		if nd <= 0:
+			continue
+		var dsl := _slot(Icons.draught(did), str(nd), g.player.buffs.has(did), "%s  ×%d\n%s\nClick to drink" % [Defs.DRAUGHTS[did]["name"], nd, Defs.DRAUGHTS[did]["desc"]])
+		dsl.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				game.drink_draught(game.player, did)
+				_inv_key = "")
+		satchel.add_child(dsl)
 		n += 1
 	# furniture carried whole, one slot per kind
 	var fc := {}

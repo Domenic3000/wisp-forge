@@ -134,6 +134,10 @@ func screen_flash(col: Color, k: float) -> void:
 func _up(p: Vector2) -> Vector2:
 	return -game.basis_d(atan2(p.y, p.x))
 
+## up (away from the planet's middle) at p
+static func _up_of(p: Vector2) -> Vector2:
+	return p.normalized() if p.length_squared() > 0.0 else Vector2.UP
+
 func _rand_dir() -> Vector2:
 	return Vector2.from_angle(randf() * TAU)
 

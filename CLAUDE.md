@@ -300,6 +300,37 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   the morning; a picture `town_night.png`), `_test_requests` (and being remembered), `_test_kind_trade` (every
   kind's stock is real, and its danger's ward is sold).
 
+## Workshops (scripts/workshops.gd, workshop_art.gd; user, 22 Nov: real kilns and smelters, a small bonus for forging in a proper workshop, "some secrets that can be discovered through experimenting")
+- A station is an OBJECT (main `Station`, a Body like `Chest`; `new_station(kind)`), not cells: `Defs.STATIONS`
+  (kiln, smelter, still, anvil: size, "burn" fuel a tick, "spark" chance, build cost). Set down from build mode's
+  Workshops tab (`Build.CAT_WORKSHOPS` 7, kind "station": on level ground, not on another; one taken up,
+  `items["st_<kind>"]`, sets down free); Shift + right-click takes it up with what's in it (`take_at`). Saved in
+  `planet_state["stations"]` (`save_to` in `_world_meta`, `load_from` after `_make_chests`). Drawn by overlay
+  `_draw_stations`: body lit by the world, fire layer unlit and flickering (`_sprite(..., glow)`), a Still's jar
+  tinted by what it brews.
+- F beside one (`interact`, after the villagers) opens its panel: main state "station" (the world waits, but
+  `work_all` keeps running so you watch it), ui.gd `show_station`/`update_station`/`_render_station`: load from
+  the satchel (left 1, right 10), feed the fire (`Defs.FUEL_TICKS`: coal, wood, planks...), take back, take out,
+  and "It makes" (secrets as riddles heard, or "?").
+- Working (`_work`): what's loaded must be EXACTLY the kinds of a `Defs.PROCESS` entry (enough of each); a mix it
+  doesn't know does nothing. Then it burns fuel, warms (`heat`, 4 s from cold) and works batch after batch at
+  its heat into `out` ("m<mat>", "potion", "d_<draught>", "gear:<id>"). "night": only after dark. A secret's
+  first batch is a discovery (`items["secret_<id>"]`, toast, burst); hints (`items["hint_<id>"]`) come from
+  villagers (towns.gd `line_for` topic "secret") and torn notes in chests (`hint_note`).
+- Real fire (`_fire`, near a mage): smoke, embers, a light, and every `SPARK_EVERY` ticks a chance (`_spark`)
+  that a spark lights anything that burns just beside it (FIRE brushes). In water it goes out ("wet").
+- Refined materials: COPPERBAR 58 and WISPBAR 59 (Smelter only, `PLACE` 0; NM 60). Glass and roof tiles are
+  fired in the Kiln now (no forge recipe); many recipes take ingots (Copper Focus, Levitation, Fireball,
+  the skiff, wards...).
+- Secrets: kiln obsidian (ash + sand) and grown prism (glass + glowcap); smelter Wispsteel Band and Starsteel
+  Edge (`Defs.WORK_GEAR`, "once", read by `gear()`, `own_work_gear`); still draughts (`Defs.DRAUGHTS`: Ember,
+  Swiftfoot, Mana, Moonlit at night), drunk from the satchel (`drink_draught`), working through `gear()` while in
+  `Mage.buffs` (new stat "fire_dmg" in the hazards).
+- Masterwork: ore gear forged within `ANVIL_REACH` of an anvil station (`anvil_near`) keeps `items["q_<id>"]`
+  (`MASTERWORK` 1.25): `gear()` scales its mods ((mod - 1) x q + 1, an added stat x q), the once-applied ones too.
+- Test: `_test_workshops` ("workshops": on a natural slab in the air; pictures `workshops.png`,
+  `workshop_panel.png`).
+
 ## Spell effects (scripts/vfx.gd; user, 21 Nov: "epic vfx for the spells")
 - main `vfx` (a Node2D in `pix` after the overlay, its child `glow` additive via CanvasItemMaterial): its own
   particles in packed arrays (`spawn(kind, pos, vel, life, c0, c1, s0, s1, add, grav, drag, f)`; kinds DOT, STREAK,
@@ -667,7 +698,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

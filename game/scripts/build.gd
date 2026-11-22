@@ -14,11 +14,12 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks"]
+const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks", "Workshops"]
 const CAT_SATCHEL := 5        # furniture you carry (picked up whole, or forged): set down for free
 const CAT_BLOCKS := 6         # solid blocks, laid in straight lines and rectangles
+const CAT_WORKSHOPS := 7      # workshop stations (Defs.STATIONS, workshops.gd): objects, not cells
 ## the order the tabs are shown in (and Q/E steps through)
-const CAT_ORDER := [0, 6, 1, 2, 3, 4, 5]
+const CAT_ORDER := [0, 6, 1, 7, 2, 3, 4, 5]
 
 ## How back walls and blocks are laid (G cycles): painted with a round brush (back walls only), or
 ## dragged out (press, drag, release) as a straight line (snapped across, up or at 45 degrees), a
@@ -103,6 +104,11 @@ static func pieces() -> Array:
 		{"cat": 4, "name": "House", "kind": "structure", "struct": "house", "cost": {}},
 		{"cat": 4, "name": "Room", "kind": "structure", "struct": "room", "cost": {}},
 		{"cat": 4, "name": "Roof", "kind": "structure", "struct": "roof", "cost": {}},
+		# workshops: stations standing in the world (workshops.gd); one taken up sets down again for free
+		{"cat": 7, "name": "Kiln", "kind": "station", "station": "kiln", "cost": Defs.STATIONS["kiln"]["cost"]},
+		{"cat": 7, "name": "Smelter", "kind": "station", "station": "smelter", "cost": Defs.STATIONS["smelter"]["cost"]},
+		{"cat": 7, "name": "Still", "kind": "station", "station": "still", "cost": Defs.STATIONS["still"]["cost"]},
+		{"cat": 7, "name": "Anvil", "kind": "station", "station": "anvil", "cost": Defs.STATIONS["anvil"]["cost"]},
 	]
 
 ## The pieces you carry (Mage.furn: picked up whole with Shift + right-click, or forged at the Wisp
