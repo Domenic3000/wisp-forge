@@ -506,10 +506,13 @@ func _draw_layer(ci: CanvasItem, add: int) -> void:
 	var z: float = game.zoom
 	var vw := float(game.VW) + 40.0
 	var vh := float(game.VH) + 40.0
+	# (one transform for every particle: world_to_screen per particle worked out the view each time)
+	var xf: Transform2D = game.screen_xf()
+	var affine: bool = game.screen_xf_ok()
 	for i in P.size():
 		if A[i] != add:
 			continue
-		var sp: Vector2 = game.world_to_screen(P[i])
+		var sp: Vector2 = xf * P[i] if affine else game.world_to_screen(P[i])
 		var k := K[i]
 		if k != BEAM and k != BOLT and (sp.x < -40.0 or sp.y < -40.0 or sp.x > vw or sp.y > vh):
 			continue
@@ -526,7 +529,7 @@ func _draw_layer(ci: CanvasItem, add: int) -> void:
 				ci.draw_rect(Rect2(sp, Vector2(n2, n2)), c)
 				ci.draw_rect(Rect2(sp, Vector2(n2, 1.0)), c.lightened(0.25))
 			STREAK:
-				var tail: Vector2 = game.world_to_screen(P[i] - V[i] * maxf(1.0, s)) - sp
+				var tail: Vector2 = (xf * (P[i] - V[i] * maxf(1.0, s)) if affine else game.world_to_screen(P[i] - V[i] * maxf(1.0, s))) - sp
 				_line(ci, sp, sp + tail, c)
 			SHARD:
 				var dv := V[i].normalized() * s * 0.5

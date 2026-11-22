@@ -1622,6 +1622,18 @@ func world_to_screen(p: Vector2) -> Vector2:
 	var o := p - c
 	return Vector2(o.dot(basis_r(a)), o.dot(basis_d(a))) / zoom + Vector2(VW, VH) * 0.5
 
+## world_to_screen as one affine transform (xf * p), for loops over many points (particles, spell effects);
+## the unrolled view isn't affine: there `screen_xf_ok()` is false and callers use world_to_screen.
+func screen_xf() -> Transform2D:
+	var c := _view()
+	var a := view_angle()
+	var r := basis_r(a) / zoom
+	var d := basis_d(a) / zoom
+	return Transform2D(Vector2(r.x, d.x), Vector2(r.y, d.y), Vector2(-c.dot(r) + VW * 0.5, -c.dot(d) + VH * 0.5))
+
+func screen_xf_ok() -> bool:
+	return not unrolled()
+
 func screen_to_world(px: Vector2) -> Vector2:
 	var c := _view()
 	var a := view_angle()
@@ -1739,14 +1751,38 @@ func platform_below(x: float, y_from: float, y_to: float, w: float) -> bool:
 			return true
 	return false
 
+## (gsolid per grid type, 0..63: built once; read straight from the grid's bytes below)
+var _solid_t := PackedByteArray()
+func _solid_table() -> PackedByteArray:
+	if _solid_t.is_empty():
+		_solid_t.resize(64)
+		for t in 64:
+			var k: int = Defs.KIND[t] if t < Defs.KIND.size() else 0
+			_solid_t[t] = 1 if (t != Defs.TREASURE and t != Defs.SCAFFOLD and (k == Defs.K_SOLID or k == Defs.K_POWDER)) else 0
+	return _solid_t
+
+## Is any cell of a box solid (gsolid)? Read straight from the collision grid's bytes: the foes' moves try
+## many boxes a frame (a creature pressed against a wall tried 13 x 14 cells for each step it might climb),
+## and a call per cell cost a busy scene 55 ms a frame (the performance pass, 21 Nov).
 func box_solid(x: float, y: float, w: float, h: float) -> bool:
 	var x0 := int(floor(x))
 	var x1 := int(floor(x + w - 0.001))
 	var y0 := int(floor(y))
 	var y1 := int(floor(y + h - 0.001))
-	for yy in range(y0, y1 + 1):
-		for xx in range(x0, x1 + 1):
-			if gsolid(xx, yy):
+	var gs: int = gpu.GS
+	var base: int = gpu.grid_off + _gslot * gs * gs
+	var buf: PackedByteArray = gpu.grid
+	if x0 < 0 or y0 < 0 or x1 >= gs or y1 >= gs or base + (y1 + 1) * gs > buf.size():
+		for yy in range(y0, y1 + 1):
+			for xx in range(x0, x1 + 1):
+				if gsolid(xx, yy):
+					return true
+		return false
+	var st := _solid_table()
+	for yy2 in range(y0, y1 + 1):
+		var row := base + yy2 * gs
+		for xx2 in range(row + x0, row + x1 + 1):
+			if st[buf[xx2] & 0x3F] == 1:
 				return true
 	return false
 
@@ -1779,9 +1815,23 @@ func _rest_on(x: float, y: float, st: float, w: float, h: float) -> float:
 
 func box_count(x: float, y: float, w: float, h: float, m: int) -> int:
 	var n := 0
-	for yy in range(int(floor(y)), int(floor(y + h - 0.001)) + 1):
-		for xx in range(int(floor(x)), int(floor(x + w - 0.001)) + 1):
-			if gtype(xx, yy) == m:
+	var x0 := int(floor(x))
+	var x1 := int(floor(x + w - 0.001))
+	var y0 := int(floor(y))
+	var y1 := int(floor(y + h - 0.001))
+	var gs: int = gpu.GS
+	var base: int = gpu.grid_off + _gslot * gs * gs
+	var buf: PackedByteArray = gpu.grid
+	if x0 < 0 or y0 < 0 or x1 >= gs or y1 >= gs or base + (y1 + 1) * gs > buf.size():
+		for yy in range(y0, y1 + 1):
+			for xx in range(x0, x1 + 1):
+				if gtype(xx, yy) == m:
+					n += 1
+		return n
+	for yy2 in range(y0, y1 + 1):
+		var row := base + yy2 * gs
+		for xx2 in range(row + x0, row + x1 + 1):
+			if (buf[xx2] & 0x3F) == m:
 				n += 1
 	return n
 
@@ -3148,11 +3198,16 @@ func _update_enemies() -> void:
 			e.vx *= 0.9
 		# what it knows (sees you, heard a spell, was warned) and where it is heading
 		var gl := Vector2.ZERO
+		var tf0 := Time.get_ticks_usec()
 		if not e.boss:
 			FoeAI.think(self, e, tgt, dist)
 			gl = FoeAI.goal(self, e, tgt)
+		var tf1 := Time.get_ticks_usec()
+		prof_add("foes: think", tf1 - tf0)
 		if e.d.has("def"):
 			BossAI.tick(self, e, tgt, dist, dx, dy, g, slow_f)
+			prof_add("foes: creatures", Time.get_ticks_usec() - tf1)
+		tf1 = Time.get_ticks_usec()
 		match e.type:
 			"slime", "mimic":
 				# hops after you once it knows you're there; close by, a crouch and a leap aimed at you
@@ -3323,6 +3378,9 @@ func _update_enemies() -> void:
 						if absf(dx) < 38 and absf(dy) < 28:
 							hurt(tgt, 18.0, Vector2(signf(dx) * 3.0, -2.0), true)
 				e.vy += g
+		if not e.d.has("def"):
+			prof_add("foes: " + e.type, Time.get_ticks_usec() - tf1)
+		tf1 = Time.get_ticks_usec()
 		if e.d["fly"]:
 			e.vy *= 0.98
 		elif e.vy > 6.0:
@@ -3355,6 +3413,7 @@ func _update_enemies() -> void:
 				e.land_t -= 1
 			# (how long it has been pressed against a wall: its way about gives up on that way)
 			e.wall_t = e.wall_t + 1 if e.hit_wall and (e.on_ground or e.d["fly"]) else 0
+		prof_add("foes: moving", Time.get_ticks_usec() - tf1)
 		e.anim += absf(e.vx) * 0.2 + 0.02
 		if e.stuck > 30:
 			# wedged in (sand piled on, a block conjured into it): work it free to the nearest open
@@ -5756,7 +5815,7 @@ func local_time_text() -> String:
 func prof_add(sec: String, us: int) -> void:
 	var p = prof.get(sec)
 	if p == null:
-		p = [0.0, 0.0, 0, 0.0]      # average, recent peak, this frame, highest since prof_reset()
+		p = [0.0, 0.0, 0, 0.0, 0]   # average, recent peak, this frame, highest since prof_reset(), the last frame
 		prof[sec] = p
 	p[2] += us
 
@@ -5766,6 +5825,7 @@ func _prof_frame() -> void:
 		p[0] = lerpf(p[0], float(p[2]), 0.05)
 		p[1] = maxf(p[1] * 0.995, float(p[2]))
 		p[3] = maxf(p[3], float(p[2]))
+		p[4] = p[2]
 		p[2] = 0
 
 ## the biggest costs: "name 1.2 (peak 4.0)" in milliseconds, largest average first

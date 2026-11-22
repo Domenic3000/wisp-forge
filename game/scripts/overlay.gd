@@ -779,12 +779,19 @@ func _draw_all() -> void:
 	draw_rect(Rect2(wf - Vector2(1, 0), Vector2(3, 1)), Color8(90, 170, 255, 200))
 	draw_rect(Rect2(wf - Vector2(0, 1), Vector2(1, 3)), Color8(90, 170, 255, 200))
 	draw_rect(Rect2(wf, Vector2.ONE), Color8(245, 252, 255))
-	# particles
+	# particles (the light read where each is in the picture: near enough, the light is soft)
+	var pxf: Transform2D = game.screen_xf()
+	var paff: bool = game.screen_xf_ok()
+	var pm := Vector2(game.gpu.PMX, game.gpu.PMY)
 	for p in game.parts:
 		var c2: Color = p["col"]
 		if not p["self"]:
-			c2 = c2 * _lit(game.world_to_screen(p["pos"]))
-		_px(p["pos"], c2)
+			var psp: Vector2 = pxf * p["pos"] if paff else game.world_to_screen(p["pos"])
+			var lc: Color = game.gpu.light_at(psp + pm)
+			var lf := 0.04 + 0.96 * lc.a
+			c2 = c2 * Color(clampf(lc.r, 0.12, 1.0) * lf, clampf(lc.g, 0.12, 1.0) * lf, clampf(lc.b, 0.12, 1.0) * lf)
+		var psp2: Vector2 = pxf * p["pos"] if paff else game.world_to_screen(p["pos"])
+		draw_rect(Rect2(psp2.floor(), Vector2.ONE), c2)
 	tq = _part("draw: particles", tq)
 	# reticle + reach circle (the normal pointer takes over above menus)
 	if game.ui.mouse_over_ui():

@@ -656,7 +656,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -737,9 +737,20 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   settled powder or liquid), and what came loose is split into its joined-up pieces (`_spread` floods a byte
   mark array); each piece falls on its own, scraps under SMALL_TREE flutter off as leaves.
 - Profiler: `main.prof_add(section, usec)` anywhere; `prof` holds [average, recent peak, this frame, max since
-  `prof_reset`]. GPU stages are timed with RenderingDevice timestamps in `gpu.step` (simulation, collision grid,
+  `prof_reset`, last frame]. GPU stages are timed with RenderingDevice timestamps in `gpu.step` (simulation, collision grid,
   light, picture). F3 shows the top sections; `main.hitch_us` is the longest frame of the game's own work (tests
-  reset and read it). The test "frame time with no cap" turns vsync off and logs the breakdown.
+  reset and read it). The test "frame time with no cap" turns vsync off and logs the breakdown. Foes are timed by
+  part ("foes: think", "foes: creatures", "foes: <type>", "foes: moving", "foes: ecology"), drawing by overlay `_part`.
+- The busy-scene benchmark (`_test_bench`, "bench"; also run after "frame time with no cap"; user, 21 Nov: the
+  performance pass): 24 provoked foes, rain, a fireball every 20 frames, digging every frame, sand poured, vsync
+  off, 600 frames; prints every frame over 50 ms with the parts over 3 ms, each part's worst, a histogram. Passes
+  under 16.7 ms on average and 25 at the 95th percentile (27 ms average / 115 worst before; 7.6 / 14.7 after).
+- Hot paths: `box_solid` / `box_count` read the collision grid bytes straight from `gpu.grid` through a 64-entry
+  table (`_solid_table`), falling back on `gsolid` only off the grid's edge (cell by cell through `gsolid` they
+  took 55 ms a frame with 24 foes). Loops over many points (vfx particles, overlay particles) use
+  `main.screen_xf()` (world_to_screen as one Transform2D) when `screen_xf_ok()` (not the unrolled view), and
+  particles read the light straight from `gpu.light_at`. The remaining spike is chunks' `read_rect` (a GPU sync
+  when a tree or piece is lifted out, ~8 ms).
 - Readback: `gpu.step` copies counts, light, the picture and the collision grids into one buffer (`rb_buf`, offsets
   `rb_off`) read in one call; `grid` is that whole buffer, so index it from `grid_off` (grids) and `light_off`
   (light), never from 0.

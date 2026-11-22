@@ -447,6 +447,13 @@ func _test_hazards() -> void:
 	var hz_god0: bool = g.test_god
 	var hz_time0: float = g.time
 	g.spawn_timer = 999999                     # (no foe wanders in and muddles the sums)
+	# (out on a clear stretch under the open sky: where the earlier checks left you there may be a roof or
+	# a tree over you)
+	var hz_pos0: Vector2 = g.player.pos
+	var hz_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) - 20, 40, 80, 6)
+	var hz_a: float = (float(hz_st.x) + 20.5) / float(Defs.NS) * TAU
+	_go(Vector2(cos(hz_a), sin(hz_a)) * (g.gpu.surf_at(hz_a).x + 12.0))
+	await _frames(40)
 	g.test_god = false
 	await _frames(8)
 	var hz_open: bool = g.exposed
@@ -483,6 +490,8 @@ func _test_hazards() -> void:
 	var hz_si1: int = g.player.inv[Defs.STARIRON]
 	g.test_god = hz_god0
 	g.player.hp = g.player.max_hp
+	_go(hz_pos0)
+	await _frames(20)
 	var hz_ok := hz_open and hz_blk and hz_si1 == hz_si0
 	for hz_k2 in hz_res:
 		hz_ok = hz_ok and float(hz_res[hz_k2][0]) > 0.8 and float(hz_res[hz_k2][1]) < 0.05 and String(hz_res[hz_k2][2]) == hz_k2
@@ -1350,6 +1359,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_start()
+		elif only == "bench":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_bench()
 		elif only == "recipes":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3416,6 +3429,7 @@ func run() -> void:
 	var ptxt: String = g.prof_text(14, "; ")
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
 	_ok("frame time with no cap", uncapped < 16.7, "%.2f ms a frame (%.0f fps), longest %.1f ms (the game's own %.1f); average ms (peak): %s" % [uncapped, 1000.0 / uncapped, worst_us / 1000.0, g.hitch_us / 1000.0, ptxt])
+	await _test_bench()
 	# ---- the world keeps its pace when frames are slow (a laptop on battery) ----
 	var t_before: float = g.time
 	Engine.max_fps = 30
@@ -4637,6 +4651,122 @@ func _test_fog() -> void:
 	_go(fg_orig)
 	await _frames(20)
 
+## A busy scene, uncapped (user, 21 Nov: the performance pass): two dozen foes hunting you, a fireball every
+## 20 frames, digging all the while, sand poured from above, rain; where the frame's time goes.
+func _test_bench() -> void:
+	var bn_god0: bool = g.test_god
+	var bn_wild0: bool = g.test_no_wild
+	var bn_pos0: Vector2 = g.player.pos
+	g.test_god = true
+	g.test_no_wild = true
+	# (well away from where you arrived: its fires, pit and sand would spoil the wild-life checks set up there)
+	var bn_st := _clear_stretch(Build.cell_of(start_pos).x + 1400, 200, 60)
+	var bn_a: float = (float(bn_st.x) + 100.5) / float(Defs.NS) * TAU
+	var bn_up := Vector2(cos(bn_a), sin(bn_a))
+	var bn_side: Vector2 = g.basis_r(bn_a)
+	var bn_ground: float = g.gpu.surf_at(bn_a).x
+	_go(bn_up * (bn_ground + 14.0))
+	await _frames(40)
+	var bn_kinds := ["c_frostwolf", "c_boar", "c_hyena", "c_jackal", "c_ram", "c_deer", "skeleton", "skeleton", "slime", "bat"]
+	var bn_foes := []
+	for bn_k in 24:
+		var bn_t: String = bn_kinds[bn_k % bn_kinds.size()]
+		var bn_off := (40.0 + 7.0 * float(bn_k)) * (1.0 if bn_k % 2 == 0 else -1.0)
+		var bn_p: Vector2 = g.player.pos + bn_side * bn_off + bn_up * (30.0 if bn_t == "bat" else 6.0)
+		var bn_e = g.spawn_enemy(bn_t, g.free_spot(bn_p, 14.0, 14.0, 20))
+		bn_e.provoked = true
+		bn_e.alert_t = 600
+		bn_e.seen_pos = g.player.pos
+		bn_foes.append(bn_e)
+	var bn_rain0: float = g.rain
+	g.rain = 1.0
+	g.rain_target = 1.0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	RenderingServer.viewport_set_measure_render_time(g.get_viewport().get_viewport_rid(), true)
+	await _frames(20)
+	g.prof_reset()
+	g.hitch_us = 0
+	var bn_times := []
+	var bn_prev := {}
+	var bn_shown := 0
+	var bn_t0 := Time.get_ticks_usec()
+	for bn_f in 600:
+		g.player.hp = g.player.max_hp
+		if bn_f % 20 == 0:
+			var bn_dir: Vector2 = (bn_side * (1.0 if (bn_f / 20) % 2 == 0 else -1.0) + bn_up * 0.15).normalized()
+			g._spawn_proj("fireball", g.player.pos + bn_up * 4.0, bn_dir * 3.9, "player")
+		# digging beside you all the while
+		g.brushes.append([g.player.pos + bn_side * 18.0 * (1.0 if (bn_f / 90) % 2 == 0 else -1.0) - bn_up * 6.0, 7.5, 1, 0, 2, 0.0, 0, 0])
+		if bn_f % 150 == 0:
+			# sand poured from above
+			var bn_c: Vector2i = Build.cell_of(g.player.pos + bn_up * 60.0 + bn_side * 30.0)
+			var bn_d := PackedInt32Array()
+			bn_d.resize(30 * 14)
+			bn_d.fill(Defs.SAND | 0xFF00)
+			g.stamps.append({"x0": bn_c.x, "y0": bn_c.y, "w": 30, "h": 14, "data": bn_d})
+		await _frames(1)
+		var bn_now := Time.get_ticks_usec()
+		bn_times.append(bn_now - bn_t0)
+		if bn_now - bn_t0 > 50000 and bn_shown < 14:
+			# a slow frame: the parts whose worst grew in it
+			bn_shown += 1
+			var bn_grew := []
+			for bn_s2 in g.prof:
+				var bn_m := float(g.prof[bn_s2][4])
+				if bn_m > 3000.0:
+					bn_grew.append("%s %.1f" % [bn_s2, bn_m / 1000.0])
+			var bn_vp: RID = g.get_viewport().get_viewport_rid()
+			print("[bench] frame %d: %.0f ms (%s; process %.1f ms, the screen's drawing: CPU %.1f ms, GPU %.1f ms, set-up %.1f ms)" % [bn_f, (bn_now - bn_t0) / 1000.0, ", ".join(bn_grew),
+				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, RenderingServer.viewport_get_measured_render_time_cpu(bn_vp),
+				RenderingServer.viewport_get_measured_render_time_gpu(bn_vp), RenderingServer.get_frame_setup_time_cpu()])
+		for bn_s3 in g.prof:
+			bn_prev[bn_s3] = float(g.prof[bn_s3][3])
+		bn_t0 = bn_now
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
+	Engine.max_fps = 60
+	bn_times.sort()
+	var bn_sum := 0
+	for bn_v in bn_times:
+		bn_sum += int(bn_v)
+	var bn_avg := float(bn_sum) / bn_times.size() / 1000.0
+	var bn_p95 := float(bn_times[int(bn_times.size() * 0.95)]) / 1000.0
+	var bn_worst := float(bn_times[-1]) / 1000.0
+	var bn_alive := 0
+	for bn_e2 in bn_foes:
+		if not bn_e2.dead and g.enemies.has(bn_e2):
+			bn_alive += 1
+	var bn_txt: String = g.prof_text(20, "; ")
+	# (and the worst single frame of each part)
+	var bn_mx := []
+	for bn_s in g.prof:
+		bn_mx.append([float(g.prof[bn_s][3]), bn_s])
+	bn_mx.sort()
+	bn_mx.reverse()
+	var bn_mxt := []
+	for bn_i in mini(12, bn_mx.size()):
+		bn_mxt.append("%s %.1f" % [bn_mx[bn_i][1], float(bn_mx[bn_i][0]) / 1000.0])
+	print("[bench] the worst frame of each part (ms): " + "; ".join(bn_mxt))
+	var bn_hist := [0, 0, 0, 0, 0]
+	for bn_v2 in bn_times:
+		var bn_ms := float(bn_v2) / 1000.0
+		bn_hist[0 if bn_ms < 8.0 else (1 if bn_ms < 16.7 else (2 if bn_ms < 33.0 else (3 if bn_ms < 66.0 else 4)))] += 1
+	print("[bench] frames under 8 ms %d, 8-16.7 %d, 16.7-33 %d, 33-66 %d, over 66 %d" % bn_hist)
+	print("[bench] %.2f ms a frame on average, 95%% under %.2f, the worst %.1f (the game's own %.1f); foes %d, particles %d, vfx %d; %s" % [bn_avg, bn_p95, bn_worst,
+		g.hitch_us / 1000.0, g.enemies.size(), g.parts.size(), g.vfx.count(), bn_txt])
+	_ok("a busy scene holds 60 fps with room to spare", bn_avg < 16.7 and bn_p95 < 25.0,
+		"%.2f ms on average, 95%% of frames under %.2f ms, the worst %.1f ms; %d of 24 foes left; %s" % [bn_avg, bn_p95, bn_worst, bn_alive, bn_txt])
+	for bn_e3 in bn_foes:
+		g.enemies.erase(bn_e3)
+	g.projs.clear()
+	RenderingServer.viewport_set_measure_render_time(g.get_viewport().get_viewport_rid(), false)
+	g.rain = bn_rain0
+	g.rain_target = bn_rain0
+	_go(bn_pos0)
+	await _frames(60)
+	g.test_god = bn_god0
+	g.test_no_wild = bn_wild0
+
 ## The first frames after a planet is entered (user, 21 Nov: "a hitch on start up"): any frame over 40 ms is
 ## printed as `[<label>] frame N: T ms` with what took the time (the game's sections over 8 ms, the game's
 ## process, the drawing).
@@ -4957,12 +5087,23 @@ func _test_far_biomes() -> void:
 	var fh_a: float = (float(fh_st.x) + 20.5) / float(Defs.NS) * TAU
 	_go(Vector2(cos(fh_a), sin(fh_a)) * (g.gpu.surf_at(fh_a).x + 12.0))
 	await _frames(40)
+	# (only the air may hurt you here: the guardian's fight can leave a minion or a shot about, and one hit
+	# of 10 once spoiled the warded half)
+	var fh_calm := func() -> void:
+		for fh_e in g.enemies.duplicate():
+			if not fh_e.boss and fh_e.pos.distance_to(g.player.pos) < 250.0:
+				g.enemies.erase(fh_e)
+		for fh_pr in g.projs.duplicate():
+			if String(fh_pr["owner"]) != "player":
+				g.projs.erase(fh_pr)
+	fh_calm.call()
 	g.test_god = false
 	g.player.hp = g.player.max_hp
 	await _frames(150)
 	var fh_burnt: float = g.player.max_hp - g.player.hp
 	var fh_open: bool = g.exposed
 	g.player.heat_ward = true
+	fh_calm.call()
 	g.player.hp = g.player.max_hp
 	await _frames(150)
 	var fh_warded: float = g.player.max_hp - g.player.hp
