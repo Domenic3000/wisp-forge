@@ -201,6 +201,53 @@ static func frames(id: String, b: Dictionary) -> Dictionary:
 			out[id] = out[id + "_head"]
 	return out
 
+## One pose for a statue of the guardian at its lair (lairs.gd carves it in stone): a beast with its
+## jaws open, a toad croaking, a fungus swollen, a bird with its wings raised, a serpent reared up out of
+## its coils. Cropped to the figure; it faces right.
+static func statue(id: String, b: Dictionary) -> Image:
+	var sd := id.hash() & 0xffff
+	var img: Image
+	match String(b["plan"]):
+		"beast":
+			img = _beast(b, sd, {"mouth": 1.0, "lower": 0.25})
+		"toad":
+			img = _toad(b, sd, {"sac": 1.0})
+		"fungus":
+			img = _fungus(b, sd, {"swell": 0.6})
+		"bird":
+			img = _bird(b, sd, {"flap": 1.25, "talons": 1.0})
+		"serpent":
+			img = _serpent_reared(b, sd)
+		_:
+			return null
+	var ur := img.get_used_rect()
+	if ur.size.x <= 0 or ur.size.y <= 0:
+		return null
+	return img.get_region(ur)
+
+## a serpent reared up: its tail curled on the ground, its body rising in an S, its head on top, jaws open
+static func _serpent_reared(b: Dictionary, sd: int) -> Image:
+	var n: int = int(b.get("segs", 10))
+	var r: float = float(b["rad"])
+	var head := _serpent_head(b, sd, true)
+	var rise := r * float(n) * 0.62
+	var W := int(r * 9.0) + head.get_width() + 8
+	var H := int(rise + r * 3.0) + head.get_height() + 8
+	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var base := Vector2(float(W) * 0.38, float(H) - r * 1.3 - 2.0)
+	var pts := []
+	for k in n:
+		var t := 1.0 - float(k) / float(maxi(1, n - 1))          # 0 at the tail, 1 behind the head
+		pts.append(base + Vector2(sin(t * PI * 1.7) * r * 2.4 * (1.0 - t * 0.45), -t * rise))
+	for k2 in range(n - 1, -1, -1):
+		var sg := _segment(b, sd, seg_radius(b, k2), k2)
+		var at: Vector2 = pts[k2] - Vector2(sg.get_width(), sg.get_height()) * 0.5
+		img.blend_rect(sg, Rect2i(Vector2i.ZERO, sg.get_size()), Vector2i(at.round()))
+	var hp: Vector2 = pts[0] + Vector2(r * 0.4, -r * 0.7) - Vector2(float(head.get_width()) * 0.35, float(head.get_height()) * 0.55)
+	img.blend_rect(head, Rect2i(Vector2i.ZERO, head.get_size()), Vector2i(hp.round()))
+	return img
+
 ## how far below its picture's middle a bird's perched talons reach (cells): where it stands on a branch
 static func bird_feet(b: Dictionary) -> float:
 	var L: float = b["len"]

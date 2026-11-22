@@ -13,6 +13,7 @@ const Wardens := preload("res://scripts/wardens.gd")
 
 var N0: int = Defs.NS        # the surface shell's columns (Defs.NS), taken when a planet is planned
 const Props := preload("res://scripts/props.gd")
+const Lairs := preload("res://scripts/lairs.gd")
 ## the test mode keeps each blueprint (to draw it), the game doesn't need them after stamping
 var KEEP_DATA := "--test" in OS.get_cmdline_user_args()
 const KEEP := 0xffff              # keep foreground and background as generated
@@ -2111,14 +2112,15 @@ func label_at(pos: Vector2) -> String:
 	return ""
 
 # ------------------------------------------------------------------ lairs ---
-## A guardian's lair (Defs.BOSSES): an arena of level ground, paved in the middle and ramping back to
-## the land at both ends, cleared to the sky; tall pillars of the biome's stone at its edges (their
-## capitals in its trim: ice, timber, glowcaps...), broken stubs to take cover behind, and at one end
-## a stepped dais with an altar, braziers and a carved back wall, where a chest is sure, and a raised
-## mesa in the middle to fight up and down. The guardian waits in the middle (lair_list); it roams the
-## whole arena and follows you up to LEASH columns out of it.
-const LAIR_W := 440
-const LAIR_UP := 150           # air cleared over the arena floor
+## A guardian's lair (Defs.BOSSES): an arena of level ground, paved and ramping back to the land at its
+## gate's end, cleared to the sky, and dressed by lairs.gd: a gatehouse you come in by, a ruined
+## colonnade behind the fighting floor, the theme's own set (great trees, ice fangs, crags and a nest,
+## a drowned pool, giant mushrooms, lava channels...), and at the far end a dais with a statue of the
+## guardian in a niche of the backdrop that closes the arena (a sure chest on its steps). The guardian
+## waits in the middle of the fighting floor (lair_list); it roams the arena and follows you up to
+## LEASH columns out of it.
+const LAIR_W := 540
+const LAIR_UP := 170           # air cleared over the arena floor
 const LAIR_RAMP := 44          # columns at each end ramping back to the land
 const LEASH := 200.0           # how far past its arena a guardian follows you
 
@@ -2147,7 +2149,7 @@ func _lairs(build: bool) -> void:
 		for near in [N0 * 600 / 8192, N0 * 380 / 8192]:
 			for tryk in 4:
 				var slope: int = [40, 70, 100, 100][tryk]
-				var lw: int = [LAIR_W, LAIR_W, LAIR_W, 360][tryk]
+				var lw: int = [LAIR_W, LAIR_W, LAIR_W, 460][tryk]
 				for cd in cands:
 					var x: int = cd[0]
 					if cdist(x, spawn_col) < near or cdist(x, boss_col) < 200:
@@ -2213,9 +2215,7 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 	var bot := maxi(floor_row + 16, _ground_range(x0, W).y + 6)
 	var bp := BP.new(x0, top, W, bot - top + 1)
 	var fl := floor_row - top                     # the floor's top row, in the blueprint
-	var wall: int = bd["wall"]
 	var pave: int = bd["floor"]
-	var trim: int = bd["trim"]
 	# the arena: level, paved in the middle, ramping back to the land at the ends, open to the sky
 	var tops := PackedInt32Array()
 	tops.resize(W)
@@ -2244,26 +2244,12 @@ func _lair(x: int, b: String, slope: int, W: int, build: bool) -> bool:
 			# paving: two courses, set into the ground
 			for j2 in range(target, target + 2):
 				bp.fg(i, j2, pave, F_ANCHOR)
-	# the pillars at its rim, standing on the land where the ramps meet it (one may have fallen to a
-	# stub), capitals in the trim: the floor between them is all open to fight on
-	for side in 2:
-		var pw := 7
-		var pi := 3 if side == 0 else W - 3 - pw
-		var base := 0
-		for q in pw:
-			base = maxi(base, tops[pi + q])
-		var ph := rng.randi_range(44, 64)
-		if rng.randf() < 0.25:
-			ph = rng.randi_range(14, 24)
-		var ptop := mini(fl - ph, base - 12)          # (always standing well clear of the land)
-		_pillar(bp, bd, pi, pw, base, base - ptop, mini(base + 3, bp.h - 1))
-	_shrine(bp, bd, W, fl, LAIR_RAMP)
-	# a mesa in the middle (the guardian waits beside it): something to fight up and down
-	var mw := rng.randi_range(40, 58)
-	_mesa(bp, bd, W / 2 + rng.randi_range(18, 40) * (1 if rng.randf() < 0.5 else -1), fl, mw, rng.randi_range(12, 18))
+	# dressed: the gate, the colonnade, the theme's set, the dais and the statue, the backdrop
+	var sea_j := (water_row(x) - top) if drowned else -1
+	var mid := Lairs.open_arena(self, bp, bd, b, W, fl, tops, LAIR_RAMP, sea_j)
 	var row := top + fl
-	lair_list.append({"biome": b, "pos": _bp_at(bp, float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": false,
-		"tether": float(W) * 0.5 - 20.0 + LEASH, "arena": float(W) * 0.5 - 12.0, "ceil": float(LAIR_UP) - 20.0})
+	lair_list.append({"biome": b, "pos": _bp_at(bp, float(mid.x) + 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": false,
+		"tether": float(W) * 0.5 - 20.0 + LEASH, "arena": float(mid.y) + 10.0, "ceil": float(LAIR_UP) - 20.0, "bx0": posmod(x0, N0)})
 	_lair_cols.append(x)
 	_claim(x0, W, bd["lair"], top, bot)
 	_finish(bp, build)
@@ -2285,8 +2271,9 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 	var sx := -1
 	for k in range(30, W - 30 - SW, 10):
 		var c := x0 + k
-		if free_span(c, SW, 3) and not _any_wet(c, SW):
-			var gr := _ground_range(c, SW)
+		# (room for the gate's towers and braziers either side of it)
+		if free_span(c - 24, SW + 48, 3) and not _any_wet(c - 24, SW + 48):
+			var gr := _ground_range(c - 24, SW + 48)
 			if gr.y - gr.x <= 10:
 				sx = c
 				break
@@ -2295,12 +2282,11 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 		return false
 	var gtop := _ground_range(sx, SW).x
 	var hall_fl := ground_row(x) + 200                # the hall's floor (top row of its paving)
-	var top := gtop - 34
+	var top := gtop - 100
 	var bot := hall_fl + T + 2
 	var bp := BP.new(x0 - T, top, W + 2 * T, bot - top + 1)
 	var wall: int = bd["wall"]
 	var pave: int = bd["floor"]
-	var trim: int = bd["trim"]
 	var fl := hall_fl - top
 	var ox := T                                        # the hall's first inside column
 	# the hall: walls round it, the floor paved, a back wall, torches along the walls
@@ -2315,97 +2301,22 @@ func _lair_deep(x: int, b: String, build: bool) -> bool:
 	bp.rect(si, 0, si + SW - 1, fl - HH - 1, 0)
 	bp.rect_bg(si, 0, si + SW - 1, fl - HH - 1, wall)
 	_landings(bp, si, si + SW - 1, gtop - top + 12, fl - HH - 10)
-	# the gate on the surface: two posts and a lintel of the trim, open above the ground
+	# open above the ground over the shaft
 	var gl := gtop - top
 	bp.rect(si - 3, 0, si + SW + 2, gl - 1, 0)
-	bp.rect(si - 4, gl - 26, si - 1, gl - 1, wall)
-	bp.rect(si + SW, gl - 26, si + SW + 3, gl - 1, wall)
-	bp.rect(si - 6, gl - 29, si + SW + 5, gl - 27, trim)
-	# inside: columns at the ends, then the same shrine an open lair has
-	for side in 2:
-		var pw := 7
-		var pi := ox if side == 0 else ox + W - pw
-		_pillar(bp, bd, pi, pw, fl, HH)
-	_shrine(bp, bd, W, fl, ox + 4, ox)
-	_mesa(bp, bd, ox + W / 2 + rng.randi_range(20, 40) * (1 if rng.randf() < 0.5 else -1), fl, rng.randi_range(36, 50), rng.randi_range(10, 16))
+	# dressed by lairs.gd: the colonnade, the theme's set, the dais and the statue at the end away from
+	# the shaft; and a gate over the shaft on the surface
+	var mid := Lairs.hall(self, bp, bd, b, W, ox, fl, HH, si + SW / 2)
+	Lairs.shaft_gate(self, bp, bd, b, si, si + SW - 1, gl)
 	var row := top + fl
-	lair_list.append({"biome": b, "pos": _bp_at(bp, float(ox) + float(W) * 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": true,
-		"tether": float(W) * 0.5 - 18.0, "arena": float(W) * 0.5 - 8.0, "ceil": float(HH) - 24.0})
+	lair_list.append({"biome": b, "pos": _bp_at(bp, float(mid.x) + 0.5, row, Defs.R_TOP - float(row)), "name": bd["lair"], "deep": true,
+		"tether": float(W) * 0.5 - 18.0, "arena": float(mid.y) + 8.0, "ceil": float(HH) - 24.0, "bx0": posmod(x0 - T, N0)})
 	_lair_cols.append(x)
-	_claim(sx - 4, SW + 8, bd["lair"], top, bot)
+	_claim(sx - 26, SW + 52, bd["lair"], top, bot)
 	deep.append(Vector2i(x0 - T, x0 + W + T))
 	labels.append({"x0": posmod(x0, N0), "w": W, "ymin": hall_fl - HH - T, "ymax": bot, "name": bd["lair"]})
 	_finish(bp, build)
 	return true
-
-## a mesa of the lair's stone in the arena: `mw` wide at its foot on floor row fl, `mh` high, its
-## sides stepped in a cell a course (a guardian or you can climb it: never taller than its leap),
-## a course of trim on top
-func _mesa(bp: BP, bd: Dictionary, cx: int, fl: int, mw: int, mh: int) -> void:
-	var wall: int = bd["wall"]
-	var trim: int = bd["trim"]
-	for up in mh:
-		var hw := mw / 2 - up / 2
-		if hw < 4:
-			break
-		var j := fl - 1 - up
-		bp.rect(cx - hw, j, cx + hw, j, trim if up == mh - 1 else wall, F_ANCHOR)
-		bp.rect_bg(cx - hw, j, cx + hw, j, wall)
-
-## a pillar of the lair's stone, `ph` tall on floor row fl, a capital of its trim with a notched top
-func _pillar(bp: BP, bd: Dictionary, pi: int, pw: int, fl: int, ph: int, base := -1) -> void:
-	var wall: int = bd["wall"]
-	var trim: int = bd["trim"]
-	bp.solid(pi, fl - ph, pi + pw - 1, fl - 1 if base < 0 else base, wall)
-	bp.rect(pi - 1, fl - ph - 3, pi + pw, fl - ph - 1, trim)
-	if bd.has("glow"):
-		for gi in range(pi, pi + pw, 2):
-			bp.fg(gi, fl - ph - 4, int(bd["glow"]))
-	for k in rng.randi_range(1, 3):
-		var ni := pi + rng.randi_range(0, pw - 2)
-		bp.rect(ni, fl - ph - 3, ni + 1, fl - ph - 2 + rng.randi_range(0, 2), 0)
-
-## The shrine of a lair W wide (from column ox) on floor row fl: cover stubs on one side, at the
-## other a stepped dais with an altar, braziers and a carved stele, and a sure chest at its foot.
-func _shrine(bp: BP, bd: Dictionary, W: int, fl: int, edge: int, ox := 0) -> void:
-	var wall: int = bd["wall"]
-	var pave: int = bd["floor"]
-	var trim: int = bd["trim"]
-	var right := rng.randf() < 0.5
-	for q in ([0.3, 0.44] if right else [0.56, 0.7]):
-		var si := ox + int(float(W) * q) + rng.randi_range(-6, 6)
-		var sh := rng.randi_range(6, 13)
-		var sw := rng.randi_range(5, 8)
-		for i3 in sw:
-			var hgt := sh - absi(i3 - sw / 2) * rng.randi_range(0, 2)
-			bp.rect(si + i3, fl - hgt, si + i3, fl - 1, wall)
-		bp.fg(si + sw / 2, fl - sh - 1, int(bd.get("glow", trim)))
-	var dw := [38, 28, 18]
-	var dmid := ox + W - edge - 30 if right else ox + edge + 30
-	var lvl := fl
-	for k2 in 3:
-		var hw: int = dw[k2] / 2
-		bp.solid(dmid - hw, lvl - 3, dmid + hw, lvl - 1, wall if k2 < 2 else pave)
-		lvl -= 3
-	bp.rect(dmid - 4, lvl - 5, dmid + 4, lvl - 1, trim)          # (the stele is its back wall)
-	bp.rect(dmid - 5, lvl - 6, dmid + 5, lvl - 6, wall)
-	for k3 in 3:
-		bp.fg(dmid - 1 + k3, lvl - 7, Defs.CRYSTAL)
-	# the stele behind it, standing on the floor, tapering to a point
-	for up in range(0, 52):
-		var hw2 := 17 if up < 38 else 17 - int(float(up - 38) * 1.25)
-		var j3 := fl - 1 - up
-		for i4 in range(dmid - hw2, dmid + hw2 + 1):
-			var edge2 := absi(i4 - dmid) >= hw2 - 1
-			var carved := not edge2 and up > 10 and up < 44 and ((i4 + j3) % 6 == 0 or (i4 - j3) % 6 == 0)
-			bp.bg(i4, j3, pave if carved else wall)
-	# braziers either side of the altar, their flames set in the stele
-	for s2 in [-1, 1]:
-		var bi: int = dmid + s2 * 12
-		bp.rect(bi, lvl - 9, bi, lvl - 1, Defs.MASONRY)
-		bp.bg(bi, lvl - 10, Defs.TORCH)
-	# (the sure chest stands on the floor at the dais's foot, on the arena's side)
-	_chest(bp, dmid - 22 - Defs.CHEST_W if right else dmid + 22, fl, true)
 
 # --------------------------------------------------------------- dungeons ---
 ## A dungeon: a stone gatehouse on the surface with a shaft down to a grid of halls far below.

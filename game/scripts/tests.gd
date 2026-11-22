@@ -1065,6 +1065,16 @@ func _go(p: Vector2) -> void:
 ## a clear stretch (as `_clear_stretch`) whose ground is soft right through its top cells (dirt, sand,
 ## snow...: ecology.gd `soft`), so a burrower can live under it; the nearest found, else any clear one
 func _soft_stretch(from: int, w: int, h: int, level := 3) -> Vector2i:
+	# (hilly ground may have no stretch that level: then a little rougher, rather than wherever it fell)
+	for lv in [level, level * 2, level * 3]:
+		var at0 := from
+		for k0 in 14:
+			var st0 := _clear_stretch(at0, w, h, lv, 0, true)
+			if not _cs_found:
+				break
+			if _soft_at(st0, w):
+				return st0
+			at0 = st0.x + w + 60
 	var at := from
 	for k in 14:
 		var st := _clear_stretch(at, w, h, level)
@@ -1114,7 +1124,20 @@ func _powders(raw: PackedByteArray, c0: int, gr: int) -> Dictionary:
 ## `level` rows), outside any named structure, with nothing standing in the `h` rows over it (no log, wall,
 ## sand or water; trees are background and don't count) and, given `below`, solid ground that many rows
 ## under it: (first column, the highest ground row there)
-func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0) -> Vector2i:
+var _cs_found := false            # (whether the last `_clear_stretch` found one)
+
+## is the ground soft through its top cells at five points along a stretch?
+func _soft_at(st: Vector2i, w: int) -> bool:
+	for c in [st.x + 4, st.x + w / 4, st.x + w / 2, st.x + 3 * w / 4, st.x + w - 4]:
+		var gr: int = g.builds.ground_row(c)
+		var rr: Dictionary = g.gpu.read_rect(c, gr, 1, 10)
+		for v in rr["fg"]:
+			if not Ecology.soft(int(v) & 255):
+				return false
+	return true
+
+func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0, quiet := false) -> Vector2i:
+	_cs_found = true
 	var b = g.builds
 	var why := {"level": 0, "label": 0, "wet": 0, "standing": 0, "hollow": 0}
 	for cs_d in range(0, 2400, 12):
@@ -1157,7 +1180,9 @@ func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0) -> Vector
 					why["hollow"] += 1
 					continue
 			return Vector2i(c0, gmin)
-	print("[clear] no clear stretch %d x %d (level %d) near column %d: %s" % [w, h, level, from, str(why)])
+	_cs_found = false
+	if not quiet:
+		print("[clear] no clear stretch %d x %d (level %d) near column %d: %s" % [w, h, level, from, str(why)])
 	return Vector2i(from, b.ground_row(from))
 
 func _chest_obj(spot: Vector2i):
@@ -1317,6 +1342,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_guardians()
+		elif only == "lairs":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_lairs()
 		elif only == "wardens":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3429,7 +3458,7 @@ func run() -> void:
 	var ptxt: String = g.prof_text(14, "; ")
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
 	_ok("frame time with no cap", uncapped < 16.7, "%.2f ms a frame (%.0f fps), longest %.1f ms (the game's own %.1f); average ms (peak): %s" % [uncapped, 1000.0 / uncapped, worst_us / 1000.0, g.hitch_us / 1000.0, ptxt])
-	await _test_bench()
+	# (the busy-scene benchmark runs last: its fires, pits and poured sand spoiled the checks after it)
 	# ---- the world keeps its pace when frames are slow (a laptop on battery) ----
 	var t_before: float = g.time
 	Engine.max_fps = 30
@@ -3626,6 +3655,7 @@ func run() -> void:
 	g.player.breath = g.player.max_breath
 	g.chunks.clear()
 
+	await _test_lairs()
 	await _test_guardians()
 	await _test_wardens()
 
@@ -4088,6 +4118,7 @@ func run() -> void:
 
 	await _test_far_biomes()
 	await _test_worlds()
+	await _test_bench()
 
 	lines.append("")
 	lines.append("%d passed, %d failed, %.1f s" % [passed, failed, (Time.get_ticks_msec() - t_all) / 1000.0])
@@ -5337,6 +5368,71 @@ func _test_wardens() -> void:
 	await _frames(60)
 	_ok("each dungeon's warden waits in its hall, fights, and its fall breaks the reliquary's ward", wn_list.size() >= 2 and wn_ok == wn_list.size(),
 		"%d wardens: %s" % [wn_list.size(), "; ".join(wn_rows)])
+
+## The guardians' lairs dressed as places (lairs.gd; user, 21 Nov: "make the boss arenas feel waaay more
+## epic"): each has banners, a background of colonnade, set and statue, and its sure chest; pictures of
+## each, the whole blueprint (lair_<biome>_bp.png) and in the game at midday from the gate, the middle and
+## the dais (lair_<biome>_gate/_mid/_dais.png)
+func _test_lairs() -> void:
+	var lr_rows := []
+	var lr_ok := 0
+	var lr_n := 0
+	var lr_dir: String = g._real_save_dir().path_join("shots")
+	DirAccess.make_dir_recursive_absolute(lr_dir)
+	var lr_back: Vector2 = g.player.pos
+	var lr_god0: bool = g.test_god
+	var lr_time0: float = g.time
+	g.test_god = true
+	for lr_l in g.builds.lair_list:
+		var lr_bio: String = lr_l["biome"]
+		lr_n += 1
+		var lr_info: Dictionary = {}
+		for lr_in in g.builds.infos:
+			if int(lr_in["x0"]) == int(lr_l.get("bx0", -1)) and (lr_info.is_empty() or int(lr_in["w"]) > int(lr_info["w"])):
+				lr_info = lr_in
+		if lr_info.is_empty() or (lr_info.get("data", PackedInt32Array()) as PackedInt32Array).is_empty():
+			lr_rows.append("%s: no blueprint" % lr_bio)
+			continue
+		var lr_dat: PackedInt32Array = lr_info["data"]
+		var lr_ban := 0
+		var lr_back_cells := 0
+		var lr_natural := 0
+		for lr_v in lr_dat:
+			var lr_f: int = lr_v & 255
+			var lr_g: int = (lr_v >> 8) & 255
+			if lr_g == Defs.DECOR:
+				lr_ban += 1
+			elif lr_g != 0 and lr_g != 255 and (lr_f == 0 or lr_f == Defs.WATER) and (lr_v & 0x40000) != 0:
+				lr_back_cells += 1
+			if lr_f != 255 and (lr_v & 0x8000000) == 0 and (lr_v & 0x80000) != 0:
+				lr_natural += 1
+		var lr_chests: int = (lr_info.get("chests", []) as Array).size()
+		_bp_image(lr_info).save_png(lr_dir.path_join("lair_%s_bp.png" % lr_bio))
+		# in the game: from the middle, and either end
+		var lr_at: Vector2 = lr_l["pos"]
+		var lr_a := atan2(lr_at.y, lr_at.x)
+		var lr_side: Vector2 = g.basis_r(lr_a)
+		g.time = g.towns.time_for_hour(lr_at, 12.5)
+		g.rain = 0.0
+		g.rain_target = 0.0
+		for lr_k in 3:
+			var lr_off: float = [0.0, -1.0, 1.0][lr_k] * (float(lr_l["arena"]) + (10.0 if lr_l.get("deep", false) else 70.0))
+			var lr_p: Vector2 = lr_at + lr_side * lr_off
+			_go(lr_p.normalized() * (lr_at.length() + 30.0))
+			await _frames(45)
+			g.get_viewport().get_texture().get_image().save_png(lr_dir.path_join("lair_%s_%s.png" % [lr_bio, ["mid", "a", "b"][lr_k]]))
+		var lr_good := lr_ban >= 40 and lr_back_cells >= 2000 and lr_chests >= 1
+		if lr_good:
+			lr_ok += 1
+		lr_rows.append("%s%s: %d banner cells, %d background cells, %d natural rock, %d chests, %dx%d" % [lr_bio, " (underground)" if lr_l.get("deep", false) else "",
+			lr_ban, lr_back_cells, lr_natural, lr_chests, int(lr_info["w"]), int(lr_info["h"])])
+	g.time = lr_time0
+	g.test_god = lr_god0
+	_go(lr_back)
+	await _frames(20)
+	_ok("every guardian's lair is dressed: a gate, banners, its set, a statue, its chest", lr_n > 0 and lr_ok == lr_n,
+		"%d lairs; %s; no room: %s" % [lr_n, "; ".join(lr_rows), str(g.builds.lair_why)])
+
 
 ## the biome guardians (its own function so it can run alone: see `only`)
 var only_now := ""

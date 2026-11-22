@@ -5497,7 +5497,7 @@ func _respawn() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 36            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 37            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 const SEEN_MAGIC := 0x5345454e    # "SEEN": then the seen map (gpu_world.seen_bytes), compressed on its own
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)

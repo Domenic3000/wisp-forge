@@ -656,7 +656,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -686,13 +686,33 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   picture's edge); `_test_ui` checks no beast frame touches its edge.
   Lairs: buildings.gd `_lairs` runs LAST in `plan`, with its own RNG (so adding lairs moved no other structure:
   several tests depend on the layout near the start), one per biome: spots deep inside the biome first; an open
-  arena (`_lair`: dry, level enough, `LAIR_W` 440 wide (360 at a pinch), levelled and paved, ramping to the land,
-  cleared `LAIR_UP` 150 to the sky, a stepped `_mesa` beside the middle) at least 600/8192 of the way round from the
-  start, else an underground hall (`_lair_deep`: 360 x 120, 200 rows down, a shaft with landings from a small gate
-  on the surface), then the same at 380/8192; never within `LAIR_W` + 160 columns of another lair. Only biomes in
-  the planet's "guardians" get one (`guardian_biomes`). Both use `_pillar` and `_shrine` (cover stubs, a stepped dais
-  with an altar, braziers, a carved stele standing on the floor, a sure chest). `lair_list` ({biome, pos, name, deep,
-  tether, arena, ceil}) -> main `_spawn_guardians` (`Enemy.arena`: the arena's half width; `tether` reaches `LEASH`
+  arena (`_lair`: dry, level enough, `LAIR_W` 540 wide (460 at a pinch), levelled and paved, ramping to the land,
+  cleared `LAIR_UP` 170 to the sky) at least 600/8192 of the way round from the start, else an underground hall
+  (`_lair_deep`: 360 x 120, 200 rows down, a shaft with landings), then the same at 380/8192; never within `LAIR_W`
+  + 160 columns of another lair. Only biomes in the planet's "guardians" get one (`guardian_biomes`). Both are
+  DRESSED by `scripts/lairs.gd` (user, 21 Nov: "make the boss arenas feel waaay more epic ... an entrance ... themed
+  areas ... that fit the size of the bosses"): `open_arena` / `hall` / `shaft_gate`, per `Lairs.theme(biome)` (its
+  "set", "back", statue stones "stat" [light, main, dark outline, eyes], "glow", banner "cloth" palette pair, "roof",
+  "rock", "moss", "shade"). An open lair: a GATEHOUSE at the ramp's top (`GATE_W` 62: towers with pointed roofs,
+  battlements, arrow slits, a vaulted passage 48-58 high a guardian walks through, banners, torches, a raised
+  portcullis, the guardian's effigy on top, braziers); a ruined COLONNADE behind the fighting floor; the floor
+  `inlay`; the theme's SET (`dress`: glade trees and rune stones, temple trees with vines, mire pool and dead trees,
+  den ice spires, eyrie `crag`s and the roc's `nest`, pride `acacia`s and termite mounds, sands obelisks, hollow
+  giant `shroom`s, caldera obsidian spires and lava channels, sanctum kelp and glowing crystals); at the far end
+  (`far_end`, `BACK_W` 210) a stepped dais, a plinth and a STATUE of the guardian (`BossArt.statue`: one pose,
+  a serpent reared out of its coils; scaled up to 84 tall, carved in the theme's stones, eyes glowing) in an
+  arched niche of the BACKDROP (`backdrop`, `MASS_W` 62: cliff, glacier, caldera, outcrop with the pride rock's
+  lip (natural rock), ziggurat, ruin, temple front) that closes the arena; the sure chest at the statue's feet.
+  Everything tall is BACKGROUND (in a side view anything solid on the floor is in the way): in front only low cover
+  (<= 12), the dais, the gate and the backdrop; nothing solid within 64 of the middle (`keep`: where the guardian
+  waits and the tests put you). Natural rock carries blueprint bit 19 (`Lairs.NATURAL`, without the fixed-variant
+  bit): stamp.comp leaves it unbuilt, so it looks and acts like the land. All of it is anchored (the generator's
+  soundness pass keeps overhangs; in the game it stays until dug or blasted near). Lay writes a copy of the
+  blueprint's cells and `commit`s them, so nothing else may write the blueprint while a Lay is open. A hall gets
+  the colonnade (in its floor stone, to show on the wall), set, dais and statue (no backdrop); its shaft a gate on
+  the surface (`shaft_gate`). `lair_list` ({biome, pos (the fighting floor's middle), name, deep, tether, arena
+  (half the fighting floor), ceil, bx0 (the blueprint's x0, for the tests)}) -> main `_spawn_guardians`
+  (`Enemy.arena`: the arena's half width; `tether` reaches `LEASH`
   200 past it, so a guardian follows you out). A guardian wakes within `BossAI.WAKE` (110) or once you're in its arena.
   Left alone (you 300 away for 200 frames) it heals and goes home. Test mode sets `test_calm` (guardians stay asleep)
   except during the guardians' own test, so other checks aren't disturbed by a boss nearby. Beaten: `_guardian_falls`
@@ -704,7 +724,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Thalassa). A boss with "wet" gets a drowned arena (`_lair` levels it on the seabed and clears it to WATER below
   `water_row`, air above; `_lair_deep` can't work there); "swim" (a boss or creature) keeps to the water
   (`BossAI._swim_hold`: out of it, it can't rise). Swimmers spawn in water (`_try_spawn`'s open-cell path with the
-  liquid test reversed). Test: `_test_far_biomes` ("biomes": enters Cindrel and Thalassa, `_test_guardians(["ashland"])`
+  liquid test reversed). Lairs' test: `_test_lairs` ("lairs": banners, background, chest per lair; pictures
+  `lair_<biome>_bp.png` (the whole blueprint) and `lair_<biome>_mid/_a/_b.png` in the game). Test: `_test_far_biomes` ("biomes": enters Cindrel and Thalassa, `_test_guardians(["ashland"])`
   etc., the sanctum under water, the swimmers in the sea).
 - Wild creatures (`Defs.CREATURES`, foe type "c_<id>", `Defs.creature_enemy` / `creatures_of(where)`): two or so per
   biome and per depth underground ("cave1" upper caves, "cave2" middle, "cave3" the deep), grown by boss_art.gd's
@@ -741,7 +762,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   light, picture). F3 shows the top sections; `main.hitch_us` is the longest frame of the game's own work (tests
   reset and read it). The test "frame time with no cap" turns vsync off and logs the breakdown. Foes are timed by
   part ("foes: think", "foes: creatures", "foes: <type>", "foes: moving", "foes: ecology"), drawing by overlay `_part`.
-- The busy-scene benchmark (`_test_bench`, "bench"; also run after "frame time with no cap"; user, 21 Nov: the
+- The busy-scene benchmark (`_test_bench`, "bench"; the full run's LAST check, its fires and pits spoiled the checks
+  after it; user, 21 Nov: the
   performance pass): 24 provoked foes, rain, a fireball every 20 frames, digging every frame, sand poured, vsync
   off, 600 frames; prints every frame over 50 ms with the parts over 3 ms, each part's worst, a histogram. Passes
   under 16.7 ms on average and 25 at the 95th percentile (27 ms average / 115 worst before; 7.6 / 14.7 after).
