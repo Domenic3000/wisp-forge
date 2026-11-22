@@ -1384,6 +1384,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_workshops()
+		elif only == "remove":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_remove()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2651,6 +2655,7 @@ func run() -> void:
 
 	await _test_stairs()
 	await _test_workshops()
+	await _test_remove()
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
 	var furn0: int = g.player.furn.size()
@@ -5427,6 +5432,167 @@ func _test_wardens() -> void:
 
 ## Staircases (build mode, roadmap step 8): a flight one storey high set down on clear ground still
 ## stands a few seconds later (its posts hold it up), and the mage walks up it to the top
+## Taking away precisely and torches as one piece (user, 22 Nov): on a slab of natural stone up in open
+## air, a back wall with planks and a table in front of it; the Remove tab takes the furniture only (the
+## wall comes back behind it), then the blocks only, then one cell of wall; a cell taken from an anchored
+## building wakes what's round it; torches go down one at a time (standing on a floor, on a wall, by
+## Conjure), light the place and come back whole; Flatten cuts a mound and fills a dip.
+func _test_remove() -> void:
+	var rm_back: Vector2 = g.player.pos
+	var rm_time0: float = g.time
+	var m = g.player
+	m.inv[Defs.DIRT] += 60
+	var rm_a := atan2(m.pos.y, m.pos.x) + 0.14
+	var rm_up := Vector2(cos(rm_a), sin(rm_a))
+	var c0: Vector2i = Build.cell_of(rm_up * (g.gpu.surf_at(rm_a).x + 150.0))
+	var cx: int = c0.x
+	var top: int = c0.y                   # the slab's top row
+	var fl := top - 1                     # the open row on it
+	# (20 thick: what's taken wakes the rock within 15 of it, and a thin slab hanging in the air, woken,
+	# would give way under what's built on it; the planet's ground is held by the rest of the planet)
+	var SW := 120
+	var SH := 20
+	var sd := PackedInt32Array()
+	sd.resize(SW * SH)
+	sd.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top, "w": SW, "h": SH, "data": sd})
+	# an anchored built block hanging under its far end (as a generated building is)
+	var hd := PackedInt32Array()
+	hd.resize(8 * 8)
+	hd.fill(Defs.MASONRY | 0xFF00 | 0x20000)
+	g.stamps.append({"x0": posmod(cx + 104, Defs.NS), "y0": top + SH, "w": 8, "h": 8, "data": hd})
+	await _frames(4)
+	_go(_cell_pos(cx + 40, fl - 12))
+	await _frames(30)
+	var txt := []
+	var ok := {}
+	# a wall, planks in front of it, a table in front of it
+	g.stamps.append(Build.shape_stamp(Build.shape_cells(Vector2i(cx + 10, fl - 15), Vector2i(cx + 33, fl), 2, 1), Defs.MASONRY, true))
+	g.stamps.append(Build.shape_stamp(Build.shape_cells(Vector2i(cx + 12, fl - 3), Vector2i(cx + 17, fl), 2, 1), Defs.PLANK, false))
+	var tab: Dictionary = Build.design({"prop": "table"}, 7)
+	g.stamps.append(Build.prop_stamp(Build.prop_cells(tab["rows"], cx + 26, fl, false), Build.Props.kind_id("table")))
+	await _frames(12)
+	var count := func() -> Vector3i:
+		var rr: Dictionary = g.gpu.read_rect(posmod(cx + 8, Defs.NS), fl - 18, 28, 20)
+		var pl := 0
+		var wl := 0
+		var dc := 0
+		for v in rr["fg"]:
+			if (int(v) & 255) == Defs.PLANK:
+				pl += 1
+		for b in rr["bg"]:
+			if (int(b) & 255) == Defs.MASONRY:
+				wl += 1
+			elif (int(b) & 255) == Defs.DECOR:
+				dc += 1
+		return Vector3i(pl, wl, dc)
+	var n0: Vector3i = count.call()
+	var area: Array = Build.shape_cells(Vector2i(cx + 8, fl - 17), Vector2i(cx + 35, fl), 2, 1)
+	var pl0: int = m.inv[Defs.PLANK]
+	g.remove_cells(m, area, "furn")
+	await _frames(12)
+	var n1: Vector3i = count.call()
+	g.remove_cells(m, area, "front")
+	await _frames(12)
+	var n2: Vector3i = count.call()
+	g.remove_cells(m, [Vector2i(cx + 20, fl - 8)], "back")
+	await _frames(12)
+	var n3: Vector3i = count.call()
+	ok["layers"] = n0.x >= 20 and n0.z > 10 and n1.z == 0 and n1.x == n0.x and n1.y >= n0.y + n0.z - 4 \
+		and n2.x == 0 and n2.y == n1.y and n3.y == n2.y - 1 and m.inv[Defs.PLANK] >= pl0 + n0.x
+	txt.append("planks/wall/furniture %s, furniture taken %s, blocks taken %s, a cell of wall %s" % [str(n0), str(n1), str(n2), str(n3)])
+	# a cell taken from an anchored building wakes what's round it
+	var anch := func() -> int:
+		var rr2: Dictionary = g.gpu.read_rect(posmod(cx + 104, Defs.NS), top + SH, 8, 8)
+		var na := 0
+		for v2 in rr2["fg"]:
+			if (int(v2) & 255) == Defs.MASONRY and (int(v2) & 0x40000000) != 0:
+				na += 1
+		return na
+	_go(_cell_pos(cx + 100, top + SH + 14))
+	await _frames(20)
+	var an0: int = anch.call()
+	g.remove_cells(m, [Vector2i(cx + 108, top + SH + 7)], "front")
+	await _frames(12)
+	var an1: int = anch.call()
+	ok["wake"] = an0 >= 60 and an1 <= 10
+	txt.append("anchored block: %d anchored cells, %d after taking one" % [an0, an1])
+	# torches: standing on the floor, on the wall, by Conjure; light; taken up whole
+	_go(_cell_pos(cx + 40, fl - 12))
+	await _frames(20)
+	m.inv[Defs.TORCH] = 6
+	var t_stand: bool = g.place_torch(m, _cell_pos(cx + 45, fl - 4))
+	var t_wall: bool = g.place_torch(m, _cell_pos(cx + 22, fl - 10))
+	var tk: Dictionary = g.torch_plan(Vector2i(cx + 22, fl - 10))
+	m.mat = Defs.TORCH
+	m.cast_latch = false
+	g._conjure(m, _cell_pos(cx + 55, fl - 3))
+	var inv_after: int = m.inv[Defs.TORCH]
+	await _frames(20)
+	var rr3: Dictionary = g.gpu.read_rect(posmod(cx + 8, Defs.NS), fl - 18, 60, 20)
+	var flames := 0
+	for b3 in rr3["bg"]:
+		if (int(b3) & 255) == Defs.TORCH:
+			flames += 1
+	g.lights.clear()
+	g._torch_lights()
+	var lit := 0
+	for L in g.lights:
+		if absf(float(L[1]) - Build.TORCH_R) < 10.0:
+			lit += 1
+	var nt: int = (g.planet_state.get("torches", []) as Array).size()
+	for tq in g.planet_state.get("torches", []):
+		var tfc: Vector2i = Build.cell_of(Vector2(float(tq[0]), float(tq[1])))
+		print("[torch] flame at %s from the slab's corner, background %d" % [str(tfc - Vector2i(cx, fl)), g._bg_at(tfc.x, tfc.y)])
+	ok["torches"] = t_stand and t_wall and inv_after == 3 and flames >= 15 and lit >= 3 and nt >= 3 and not bool(tk["standing"])
+	txt.append("placed standing %s, on the wall %s, by Conjure (torches 6 -> %d), flame cells %d, lights %d, remembered %d" % [t_stand, t_wall, inv_after, flames, lit, nt])
+	# a picture at night
+	var na_a: float = atan2(m.pos.y, m.pos.x)
+	g.time = fposmod((na_a + PI - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+	await _frames(30)
+	_shot("torches_night.png")
+	g.time = rm_time0
+	var inv_t: int = m.inv[Defs.TORCH]
+	var up_ok: bool = g._pick_up_furniture(m, _cell_pos(cx + 45, fl - 4))
+	await _frames(70)
+	g._check_torches()
+	var nt2: int = (g.planet_state.get("torches", []) as Array).size()
+	ok["take"] = up_ok and m.inv[Defs.TORCH] == inv_t + 1 and nt2 == nt - 1
+	txt.append("taken up: %s, torches %d -> %d, remembered %d -> %d" % [up_ok, inv_t, m.inv[Defs.TORCH], nt, nt2])
+	# flatten: a mound cut, a dip filled
+	g.stamps.append(Build.shape_stamp(Build.shape_cells(Vector2i(cx + 70, fl - 3), Vector2i(cx + 80, fl), 2, 1), Defs.DIRT, false))
+	var dip := PackedInt32Array()
+	dip.resize(6 * 2)
+	dip.fill(0xFF00)
+	g.stamps.append({"x0": posmod(cx + 86, Defs.NS), "y0": top, "w": 6, "h": 2, "data": dip})
+	_go(_cell_pos(cx + 80, fl - 14))
+	await _frames(20)
+	var plan: Dictionary = g.flatten_plan(Vector2i(cx + 66, top), Vector2i(cx + 96, top))
+	var fr: Dictionary = g.flatten_apply(m, plan, Defs.DIRT)
+	await _frames(20)
+	var rr4: Dictionary = g.gpu.read_rect(posmod(cx + 66, Defs.NS), fl - 4, 31, 7)
+	var above := 0
+	var holes := 0
+	for j in 7:
+		for i in 31:
+			var t4: int = int(rr4["fg"][j * 31 + i]) & 255
+			if j < 5 and t4 != 0:
+				above += 1
+			if j >= 5 and t4 == 0:
+				holes += 1
+	ok["flatten"] = int(fr["cut"]) >= 40 and int(fr["fill"]) >= 10 and above == 0 and holes == 0
+	txt.append("flatten: cut %d, filled %d; left above the line %d, holes in the ground %d" % [int(fr["cut"]), int(fr["fill"]), above, holes])
+	_go(rm_back)
+	await _frames(20)
+	var all_ok := true
+	var bad := []
+	for k in ok:
+		if not ok[k]:
+			all_ok = false
+			bad.append(k)
+	_ok("precise removal (a layer at a time, physics wakes), flatten, and torches as one piece with their own light", all_ok,
+		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
+
 func _test_stairs() -> void:
 	var sr_back: Vector2 = g.player.pos
 	g.player.inv[Defs.PLANK] += 400

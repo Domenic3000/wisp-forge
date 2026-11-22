@@ -14,12 +14,29 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks", "Workshops"]
+const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks", "Workshops", "Remove"]
 const CAT_SATCHEL := 5        # furniture you carry (picked up whole, or forged): set down for free
 const CAT_BLOCKS := 6         # solid blocks, laid in straight lines and rectangles
 const CAT_WORKSHOPS := 7      # workshop stations (Defs.STATIONS, workshops.gd): objects, not cells
+## taking things away precisely (user, 22 Nov: "a precise way to be able to remove materials, flatten
+## the ground, remove background decorations without removing the entire background"): a layer at a
+## time, in the same shapes as blocks, and levelling the ground. What's taken goes into the satchel.
+const CAT_REMOVE := 8
 ## the order the tabs are shown in (and Q/E steps through)
-const CAT_ORDER := [0, 6, 1, 7, 2, 3, 4, 5]
+const CAT_ORDER := [0, 6, 8, 1, 7, 2, 3, 4, 5]
+## Flatten: everything solid up to FLAT_CUT rows over the line you drag is cut away, and dips under it
+## filled from the satchel down to ground no more than FLAT_FILL rows below (deeper, it's left alone)
+const FLAT_CUT := 40
+const FLAT_FILL := 24
+const FLAT_W := 160
+## A torch (user, 22 Nov: "a torch model that placed as one piece and gave a nice range of lighting"):
+## one piece for one torch, a sconce on a wall or a standing torch on a floor, its flame real torch
+## cells; main.gd gives each a light TORCH_R across (`_torch_lights`)
+const TORCH_R := 60.0
+const SCONCE := [".t.", "ttt", ".t.", "yIy", ".W.", ".w.", ".i."]
+const STANDING := [".t.", "ttt", ".t.", "yIy", ".W.", ".w.", ".W.", ".w.", ".W.", ".w.", ".d.", "ddd"]
+const TORCH_FLAME := 1          # the row of the flame's middle (from the top)
+const TORCH_CELLS_MAX := 40     # (a piece this small with torch cells in it is a torch: picked up, a torch again)
 
 ## How back walls and blocks are laid (G cycles): painted with a round brush (back walls only), or
 ## dragged out (press, drag, release) as a straight line (snapped across, up or at 45 degrees), a
@@ -91,6 +108,7 @@ static func pieces() -> Array:
 		{"cat": 2, "name": "Banner", "kind": "prop", "prop": "banner", "cost": {Defs.LEAF: 4, Defs.PLANK: 1}},
 		{"cat": 2, "name": "Potted Plant", "kind": "prop", "prop": "plant", "cost": {Defs.LEAF: 2, Defs.DIRT: 2}},
 		{"cat": 2, "name": "Rug", "kind": "prop", "prop": "rug", "cost": {Defs.LEAF: 3}},
+		{"cat": 2, "name": "Torch", "kind": "torch", "cost": {Defs.TORCH: 1}},
 		{"cat": 3, "name": "Lamp Post", "kind": "prop", "prop": "lamp", "arg": true, "cost": {Defs.MASONRY: 2, Defs.TORCH: 1}},
 		{"cat": 3, "name": "Sign", "kind": "prop", "prop": "sign", "arg": "home", "cost": {Defs.PLANK: 4}},
 		{"cat": 3, "name": "Fence", "kind": "prop", "prop": "fence", "arg": 16, "cost": {Defs.PLANK: 4}},
@@ -109,6 +127,13 @@ static func pieces() -> Array:
 		{"cat": 7, "name": "Smelter", "kind": "station", "station": "smelter", "cost": Defs.STATIONS["smelter"]["cost"]},
 		{"cat": 7, "name": "Still", "kind": "station", "station": "still", "cost": Defs.STATIONS["still"]["cost"]},
 		{"cat": 7, "name": "Anvil", "kind": "station", "station": "anvil", "cost": Defs.STATIONS["anvil"]["cost"]},
+		{"cat": 8, "name": "Remove Blocks", "kind": "remove", "layer": "front", "cost": {}},
+		{"cat": 8, "name": "Remove Back Walls", "kind": "remove", "layer": "back", "cost": {}},
+		{"cat": 8, "name": "Remove Furniture", "kind": "remove", "layer": "furn", "cost": {}},
+		{"cat": 8, "name": "Remove Everything", "kind": "remove", "layer": "all", "cost": {}},
+		{"cat": 8, "name": "Flatten with Dirt", "kind": "flatten", "mat": Defs.DIRT, "cost": {}},
+		{"cat": 8, "name": "Flatten with Stone", "kind": "flatten", "mat": Defs.STONE, "cost": {}},
+		{"cat": 8, "name": "Flatten with Sand", "kind": "flatten", "mat": Defs.SAND, "cost": {}},
 	]
 
 ## The pieces you carry (Mage.furn: picked up whole with Shift + right-click, or forged at the Wisp
@@ -126,7 +151,7 @@ static func carried_pieces(furn: Array) -> Array:
 static func furniture_recipes() -> Array:
 	var out := []
 	for p in pieces():
-		if int(p["cat"]) == 2:
+		if int(p["cat"]) == 2 and p.has("prop"):
 			out.append({"id": "furn_" + String(p["prop"]), "cat": "Furniture", "name": p["name"], "cost": p["cost"],
 				"furniture": p["prop"], "desc": "Carried in your satchel; set it down from build mode's Satchel tab."})
 	return out
@@ -233,8 +258,8 @@ static func payable(piece: Dictionary, inv: PackedInt32Array) -> Dictionary:
 		var c: Dictionary = piece[key]
 		if c.is_empty() and key == "cost" and piece["kind"] == "structure":
 			return {}                   # not worked out yet
-		if piece["kind"] == "carried":
-			return {Defs.AIR: 0}        # already yours: nothing to pay
+		if piece["kind"] == "carried" or piece["kind"] == "remove" or piece["kind"] == "flatten":
+			return {Defs.AIR: 0}        # already yours, or taking away: nothing to pay
 		var ok := true
 		for m in c:
 			if inv[int(m)] < int(c[m]):

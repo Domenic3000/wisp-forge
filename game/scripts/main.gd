@@ -351,6 +351,8 @@ var stamps: Array = []        # small blueprints to write into the world before 
 var build_why_cell := Vector2i.ZERO
 var build_why := ""                # why the last preview didn't fit (for the tests)
 var _build_warn_t := 0
+var _flat_key := ""          # (the flatten preview: worked out again only when the drag moves)
+var _flat_plan := {}
 var build_last := ""          # what the last click did (for the test report)
 var build_last_stamp := {}
 var _low_hp_t := 0               # when the low-health reminder may show again    # and where its blueprint went
@@ -926,6 +928,7 @@ func _write_frame_params() -> void:
 		view_c = c
 		ustep = ustep_next
 	gpu.setp(1, Vector4(c.x, c.y, atan2(c.y, c.x), zoom))
+	_torch_lights()                          # (before the count of lights goes in)
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, mini(lights.size(), 32)))
 	var b := _biome_at(atan2(player.pos.y, player.pos.x))
 	var wmat := Defs.WATER
@@ -2150,6 +2153,8 @@ func _tick() -> void:
 	vfx.tick()
 	weather.tick()
 	prof_add("shots and particles", Time.get_ticks_usec() - tq)
+	if frame % 60 == 7:
+		_check_torches()
 	_update_weather()
 	_update_climate()
 	_update_sky_events()
@@ -2632,6 +2637,17 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 			v |= 0                                     # nothing behind: the background is left empty
 		data[(k / n - j0) * w + (k % n - i0)] = v
 	stamps.append({"x0": posmod(c0 + i0, Defs.NS), "y0": r0 + j0, "w": w, "h": h, "data": data})
+	# a torch (a small piece with a flame) is a torch again, not a carried decoration
+	var n_flame := 0
+	for kf in cells:
+		if (bgs[kf] & 255) == Defs.TORCH:
+			n_flame += 1
+	if kid == 0 and n_flame >= 3 and cells.size() <= Build.TORCH_CELLS_MAX:
+		m.inv[Defs.TORCH] += 1
+		audio.play("place", Build.cell_pos(c0 + (i0 + i1) / 2, r0 + (j0 + j1) / 2), 0.6, 1.2)
+		if m.local:
+			ui.toast("+ 1 Torch", Color(1, 0.85, 0.5), 1.4)
+		return true
 	var rows := []
 	for ln2 in pix:
 		rows.append("".join(ln2))
@@ -2749,6 +2765,11 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 	if m.mat <= 0 or m.inv[m.mat] <= 0:
 		return
 	var p := _reach(m, aim)
+	if m.mat == Defs.TORCH:
+		# torches go down one a click, as a whole torch (a sconce, or standing on a floor)
+		m.cast_latch = true
+		place_torch(m, p)
+		return
 	# conjuring onto a foe doesn't bury it: the forming stone strikes it and shoves it aside, and
 	# nothing is placed there
 	var struck := false
@@ -4630,10 +4651,10 @@ func _build_key(k: int) -> bool:
 		build_cat = Build.CAT_ORDER[posmod(oi + (1 if k == KEY_E else -1), Build.CAT_ORDER.size())]
 		build_drag = false
 		return true
-	var shaped: bool = build_piece().get("kind", "") in ["wall", "block"]
+	var shaped: bool = build_piece().get("kind", "") in ["wall", "block", "remove"]
 	if shaped and k == KEY_G:
 		build_shape = (build_shape + 1) % Build.SHAPES.size()
-		if build_piece()["kind"] == "block" and build_shape == 0:
+		if build_piece()["kind"] != "wall" and build_shape == 0:
 			build_shape = 1                   # blocks aren't painted
 		build_drag = false
 		ui.toast("Lay: " + Build.SHAPES[build_shape], Color(0.95, 0.85, 0.55), 1.0)
@@ -4729,6 +4750,12 @@ func _update_build(m: Mage) -> void:
 	var tree_in_way := false
 	if kind == "block" or (kind == "wall" and build_shape != 0):
 		_update_shape(m, piece)
+		return
+	if kind == "remove":
+		_update_remove(m, piece)
+		return
+	if kind == "flatten":
+		_update_flatten(m, piece)
 		return
 	build_drag = false
 	if kind == "wall":
@@ -4925,6 +4952,14 @@ func _update_build(m: Mage) -> void:
 		if int(m.items.get("st_" + sk, 0)) > 0:
 			cost = {Defs.AIR: 0}              # (one you took up: set down again for free)
 		place = {"station": sk, "pos": spos}
+	elif kind == "torch":
+		var tp := torch_plan(cell)
+		ok = tp["ok"]
+		build_why = tp["why"]
+		for c in tp["cells"]:
+			var ch2: String = c[2]
+			cells.append([Build.cell_pos(int(c[0]), int(c[1])), Color(1, 0.75, 0.3) if ch2 == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch2])])])
+		place = {"stamp": Build.prop_stamp(tp["cells"], 0), "torch": tp["flame"]}
 	elif kind == "platform":
 		for i in Build.PLATFORM_W:
 			var cx := cell.x - Build.PLATFORM_W / 2 + i
@@ -4943,7 +4978,7 @@ func _update_build(m: Mage) -> void:
 		return
 	if not ok:
 		if _build_warn_t <= frame:
-			ui.toast("A tree is in the way: fell it first" if tree_in_way else "It doesn't fit there", Color(1, 0.6, 0.5), 1.2)
+			ui.toast("A tree is in the way: fell it first" if tree_in_way else ("Torch: " + build_why if kind == "torch" else "It doesn't fit there"), Color(1, 0.6, 0.5), 1.2)
 			_build_warn_t = frame + 40
 		return
 	for mt2 in cost:
@@ -4951,6 +4986,8 @@ func _update_build(m: Mage) -> void:
 	if place.has("stamp"):
 		stamps.append(place["stamp"])
 		build_last_stamp = place["stamp"]
+	if place.has("torch"):
+		add_torch(place["torch"])
 	if kind == "carried":
 		m.furn.remove_at(int(piece["item"]))      # it's set down: no longer carried
 	if place.has("station"):
@@ -5042,6 +5079,427 @@ func _update_shape(m: Mage, piece: Dictionary) -> void:
 		elif need == 0 and not too_big:
 			ui.toast("No room there", Color(1, 0.6, 0.5), 1.2)
 		build_last = build_last if ok else "%s: not laid (%s)" % [piece["name"], what]
+
+# ------------------------------------------------------- taking away, precisely --
+## (user, 22 Nov: "a precise way to be able to remove materials, flatten the ground, remove background
+## decorations without remove the entire background"; physics applies: what's taken away wakes what's
+## round it, as digging does, so a building held only by what you took comes down)
+
+## the material a removed cell gives (as the dig's collectAs), or -1 if it gives nothing
+static func _collect_as(t: int) -> int:
+	if t == Defs.TIMBER or t == Defs.ROOT:
+		return Defs.WOOD
+	if t == Defs.LITTER:
+		return Defs.LEAF
+	if t == Defs.OPENCHEST or t == Defs.DECOR or t == Defs.WOODDOOR:
+		return Defs.PLANK
+	if t == Defs.TORCH:
+		return -1
+	return t if Defs.COLLECT[t] == 1 else -1
+
+## the cells of `cells` ([Vector2i], columns near you) as a block: [c0 (the short way round), r0, w, h, rel]
+static func _cells_box(cells: Array) -> Array:
+	var n0: int = Defs.NS
+	var base: int = cells[0].x
+	var rel := []
+	var c0 := 1 << 30
+	var c1 := -(1 << 30)
+	var r0 := 1 << 30
+	var r1 := -(1 << 30)
+	for c in cells:
+		var rc := Vector2i(base + posmod(c.x - base + n0 / 2, n0) - n0 / 2, c.y)
+		rel.append(rc)
+		c0 = mini(c0, rc.x)
+		c1 = maxi(c1, rc.x)
+		r0 = mini(r0, rc.y)
+		r1 = maxi(r1, rc.y)
+	return [c0, r0, c1 - c0 + 1, r1 - r0 + 1, rel]
+
+## does this cell look like it has something of `layer` to take (from the collision grid: exact for
+## blocks and furniture; a back wall the planet made itself, a cave's, doesn't show there)
+func _removable_guess(c: Vector2i, layer: String) -> bool:
+	var t := type_at(Build.cell_pos(c.x, c.y))
+	var kd: int = Defs.KIND[t]
+	var front := t != Defs.TREASURE and t != Defs.WOODDOOR and (kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID)
+	var bga := _bg_at(c.x, c.y)
+	match layer:
+		"front":
+			return front
+		"furn":
+			return bga == 1
+		"back":
+			return bga == 2 or bga == 3
+	return front or bga > 0
+
+## Remove tab: press, drag and let go as with blocks (a click with no drag takes a square as thick as
+## [ ] sets: one cell at 1); only the chosen layer is taken
+func _update_remove(m: Mage, piece: Dictionary) -> void:
+	var layer: String = piece["layer"]
+	var shape: int = maxi(build_shape, 1)
+	var d := m.input.aim - m.pos
+	if d.length() > Build.SHAPE_REACH:
+		d = d.normalized() * Build.SHAPE_REACH
+	var cell := Build.cell_of(m.pos + d)
+	if m.input.dig and build_drag:
+		build_drag = false
+		build_click = false
+		return
+	if build_click and not build_drag:
+		build_drag = true
+		build_drag_from = Build.cell_pos(cell.x, cell.y)
+	build_click = false
+	var from := Build.cell_of(build_drag_from) if build_drag else cell
+	var cells: Array = Build.shape_cells(from, cell, shape, build_thick)
+	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
+	var prev := []
+	var n := 0
+	if not too_big:
+		for c in cells:
+			if _removable_guess(c, layer):
+				n += 1
+				prev.append([Build.cell_pos(c.x, c.y), Color(1.0, 0.3, 0.25)])
+			else:
+				prev.append([Build.cell_pos(c.x, c.y), Color(0.75, 0.75, 0.8, 0.5)])
+	build_prev = {"cells": prev, "ok": not too_big}
+	build_prev["text"] = ("Too big to take in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS) if too_big else \
+		("%s %s: %d cells%s" % [Build.SHAPES[shape], piece["name"], n, " or so" if layer == "back" or layer == "all" else ""])
+	if build_drag and not m.input.cast:
+		build_drag = false
+		if too_big:
+			return
+		var r := remove_cells(m, cells, layer)
+		var got: int = r["n"]
+		if got > 0:
+			audio.play("dig", m.pos + d, 0.6)
+			build_last = "%s: %d cells" % [piece["name"], got]
+		else:
+			ui.toast("Nothing there to take" if not r["hard"] else "Too hard for your staff", Color(1, 0.7, 0.5), 1.2)
+
+## Takes away `layer` ("front" blocks, "back" walls and plants, "furn" furniture and torches, "all") from
+## these cells: reads them (exactly), stamps them out, puts what they give into the satchel and wakes
+## what's round them. Returns {n: cells taken, hard: something was too hard for the staff}.
+func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
+	var box := _cells_box(cells)
+	var c0: int = box[0]
+	var r0: int = box[1]
+	var w: int = box[2]
+	var h: int = box[3]
+	var rr: Dictionary = gpu.read_rect(posmod(c0, Defs.NS), r0, w, h)
+	var fgs: PackedInt32Array = rr["fg"]
+	var bgs: PackedInt32Array = rr["bg"]
+	var data := PackedInt32Array()
+	data.resize(w * h)
+	data.fill(0xffff)
+	var got := {}
+	var flames := 0
+	var n := 0
+	var hard := false
+	var taken := []
+	for rc: Vector2i in box[4]:
+		var k := (rc.y - r0) * w + (rc.x - c0)
+		var t: int = fgs[k] & 255
+		var b: int = bgs[k]
+		var bm: int = b & 255
+		var v := 0xffff
+		var kd: int = Defs.KIND[t]
+		if (layer == "front" or layer == "all") and t != 0 and t != Defs.TREASURE and t != Defs.WOODDOOR \
+				and (kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID):
+			if Defs.HARD[t] <= m.tier:
+				v = (v & ~0xff)
+				var gm := _collect_as(t)
+				if gm > 0:
+					got[gm] = int(got.get(gm, 0)) + 1
+			else:
+				hard = true
+		if bm != 0 and bm != Defs.TREASURE and bm != Defs.OPENCHEST:
+			var furn := bm == Defs.DECOR or bm == Defs.TORCH
+			var take_bg := (layer == "furn" and furn) or (layer == "back" and not furn) or layer == "all"
+			if take_bg and Defs.HARD[bm] > m.tier and not furn:
+				hard = true
+				take_bg = false
+			if take_bg:
+				var nb := 0
+				if layer == "furn" and bm == Defs.DECOR:
+					# the wall it stood in front of comes back (furniture remembers it)
+					var bmk: int = Defs.BEHIND[((b >> 22) & 3) | (((b >> 28) & 7) << 2)]
+					if bmk != 0:
+						nb = (bmk << 8) | 0x40000 | (0x20000 if (b & 0x8000) != 0 else 0)
+				v = (v & 0xff) | nb
+				if bm == Defs.TORCH:
+					flames += 1
+				else:
+					var gb := _collect_as(bm)
+					if gb > 0:
+						got[gb] = int(got.get(gb, 0)) + 1
+		if v != 0xffff:
+			data[k] = v
+			n += 1
+			taken.append(rc)
+	if n == 0:
+		return {"n": 0, "hard": hard}
+	stamps.append({"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data})
+	for gm2 in got:
+		m.inv[int(gm2)] += int(got[gm2])
+	if flames > 0:
+		m.inv[Defs.TORCH] += maxi(1, int(round(flames / 5.0)))     # (a torch's flame is five cells)
+	_wake_round(m, taken)
+	var mid: Vector2 = Build.cell_pos(taken[taken.size() / 2].x, taken[taken.size() / 2].y)
+	for q in mini(10, n):
+		var tc: Vector2i = taken[randi() % taken.size()]
+		_particle(Build.cell_pos(tc.x, tc.y), Vector2(randf() - 0.5, randf() - 0.8) * 0.5, 14 + randi() % 10, Color(0.9, 0.8, 0.6), false, 0.03)
+	if m.local and not got.is_empty():
+		var parts := []
+		for gm3 in got:
+			parts.append("%d %s" % [int(got[gm3]), Defs.NAMES[int(gm3)]])
+		ui.toast("+ " + ", ".join(parts.slice(0, 3)), Color(0.95, 0.85, 0.55), 1.4)
+	audio.play("dig", mid, 0.4)
+	return {"n": n, "hard": hard}
+
+## physics applies: what was round the taken cells is woken (brush mode 11, as digging wakes the
+## ground and buildings round a hole), so whatever held on only by them comes down
+func _wake_round(m: Mage, taken: Array) -> void:
+	if taken.is_empty():
+		return
+	var step := maxi(1, taken.size() / 10)
+	var k := 0
+	while k < taken.size():
+		var tc: Vector2i = taken[k]
+		brushes.append([Build.cell_pos(tc.x, tc.y), 3.0, 11, 0, m.tier, 0, 0, m.slot])
+		k += step
+
+## Flatten: press where the ground should be (that row is its new top), drag along, let go. Over the
+## line everything solid is cut away (up to FLAT_CUT rows), under it dips are filled from the satchel
+## (down to ground at most FLAT_FILL rows below). Returns the plan {cut: [cells], fill: [cells, deepest
+## first]} for the columns from a to b.
+func flatten_plan(a: Vector2i, b: Vector2i) -> Dictionary:
+	var n0: int = Defs.NS
+	var dx := posmod(b.x - a.x + n0 / 2, n0) - n0 / 2
+	dx = clampi(dx, -Build.FLAT_W, Build.FLAT_W)
+	var level := a.y
+	var cut := []
+	var fill := []
+	for q in absi(dx) + 1:
+		var col := posmod(a.x + signi(dx) * q, n0)
+		for j in range(level - Build.FLAT_CUT, level):
+			var t := type_at(Build.cell_pos(col, j))
+			var kd: int = Defs.KIND[t]
+			if (kd == Defs.K_SOLID or kd == Defs.K_POWDER) and t != Defs.TREASURE and t != Defs.WOODDOOR:
+				cut.append(Vector2i(col, j))
+		var ground := -1
+		for j2 in range(level, level + Build.FLAT_FILL + 1):
+			if _solid_at(col, j2):
+				ground = j2
+				break
+		if ground > level:
+			for j3 in range(ground - 1, level - 1, -1):
+				fill.append(Vector2i(col, j3))
+	fill.sort_custom(func(p1, p2): return p1.y > p2.y)
+	return {"cut": cut, "fill": fill, "level": level}
+
+func _update_flatten(m: Mage, piece: Dictionary) -> void:
+	var mt: int = piece["mat"]
+	var d := m.input.aim - m.pos
+	if d.length() > Build.SHAPE_REACH:
+		d = d.normalized() * Build.SHAPE_REACH
+	var cell := Build.cell_of(m.pos + d)
+	if m.input.dig and build_drag:
+		build_drag = false
+		build_click = false
+		return
+	if build_click and not build_drag:
+		build_drag = true
+		build_drag_from = Build.cell_pos(cell.x, cell.y)
+	build_click = false
+	var from := Build.cell_of(build_drag_from) if build_drag else cell
+	var key := "%s|%s|%d" % [str(from), str(cell), frame / 10]
+	if key != _flat_key:
+		_flat_key = key
+		_flat_plan = flatten_plan(from, Vector2i(cell.x, from.y))
+	var cut: Array = _flat_plan["cut"]
+	var fill: Array = _flat_plan["fill"]
+	var prev := []
+	var fcol := Color.hex((Defs.PAL[mt * 4] << 8) | 0xff)
+	for c in cut:
+		prev.append([Build.cell_pos(c.x, c.y), Color(1.0, 0.3, 0.25)])
+	for c2 in fill:
+		prev.append([Build.cell_pos(c2.x, c2.y), fcol])
+	# the line itself
+	var dx := posmod(cell.x - from.x + Defs.NS / 2, Defs.NS) - Defs.NS / 2
+	for q in absi(clampi(dx, -Build.FLAT_W, Build.FLAT_W)) + 1:
+		prev.append([Build.cell_pos(from.x + signi(dx) * q, from.y - 1), Color(1.0, 0.95, 0.6)])
+	build_prev = {"cells": prev, "ok": true}
+	var have: int = m.inv[mt]
+	build_prev["text"] = "Flatten: cut %d, fill %d %s%s" % [cut.size(), fill.size(), Defs.NAMES[mt],
+		(" (you have %d: the deepest dips first)" % have) if fill.size() > have else ""]
+	if build_drag and not m.input.cast:
+		build_drag = false
+		var r := flatten_apply(m, _flat_plan, mt)
+		_flat_key = ""
+		if r["cut"] + r["fill"] == 0:
+			ui.toast("Already level there" if not r["hard"] else "Too hard for your staff", Color(1, 0.7, 0.5), 1.2)
+		else:
+			build_last = "Flatten: cut %d, filled %d" % [r["cut"], r["fill"]]
+			audio.play("dig", m.pos + d, 0.6)
+
+## carries out a flatten plan: the cut cells read back exactly (what's too hard stays), the dips filled
+## with `mt` as far as the satchel goes, deepest first; returns {cut, fill, hard}
+func flatten_apply(m: Mage, plan: Dictionary, mt: int) -> Dictionary:
+	var cut: Array = plan["cut"]
+	var fill: Array = plan["fill"]
+	var all := cut + fill
+	if all.is_empty():
+		return {"cut": 0, "fill": 0, "hard": false}
+	var box := _cells_box(all)
+	var c0: int = box[0]
+	var r0: int = box[1]
+	var w: int = box[2]
+	var h: int = box[3]
+	var rel: Array = box[4]
+	var rr: Dictionary = gpu.read_rect(posmod(c0, Defs.NS), r0, w, h)
+	var fgs: PackedInt32Array = rr["fg"]
+	var data := PackedInt32Array()
+	data.resize(w * h)
+	data.fill(0xffff)
+	var got := {}
+	var n_cut := 0
+	var hard := false
+	var taken := []
+	for q in cut.size():
+		var rc: Vector2i = rel[q]
+		var k := (rc.y - r0) * w + (rc.x - c0)
+		var t: int = fgs[k] & 255
+		var kd: int = Defs.KIND[t]
+		if t == 0 or t == Defs.TREASURE or t == Defs.WOODDOOR or not (kd == Defs.K_SOLID or kd == Defs.K_POWDER):
+			continue
+		if Defs.HARD[t] > m.tier:
+			hard = true
+			continue
+		data[k] = 0xff00
+		n_cut += 1
+		taken.append(rc)
+		var gm := _collect_as(t)
+		if gm > 0:
+			got[gm] = int(got.get(gm, 0)) + 1
+	for gm2 in got:
+		m.inv[int(gm2)] += int(got[gm2])
+	var n_fill := 0
+	for q2 in fill.size():
+		if m.inv[mt] <= 0:
+			break
+		var rc2: Vector2i = rel[cut.size() + q2]
+		var k2 := (rc2.y - r0) * w + (rc2.x - c0)
+		var t2: int = fgs[k2] & 255
+		var kd2: int = Defs.KIND[t2]
+		if not (kd2 == Defs.K_EMPTY or kd2 == Defs.K_GAS or kd2 == Defs.K_LIQUID or t2 == Defs.SNOW or t2 == Defs.ASH):
+			continue
+		if _body_in(Build.cell_pos(rc2.x, rc2.y)):
+			continue
+		data[k2] = 0xff00 | mt
+		m.inv[mt] -= 1
+		n_fill += 1
+	if n_cut + n_fill > 0:
+		stamps.append({"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data})
+		_wake_round(m, taken)
+	return {"cut": n_cut, "fill": n_fill, "hard": hard}
+
+# ------------------------------------------------------------------ torches --
+## A torch is one piece (user, 22 Nov: placing torches laid a whole brush of them): pointed at with a
+## floor close under it (and no built back wall there), a standing torch on that floor; otherwise a sconce
+## on the wall where you point.
+## Its flame is real torch cells (it burns, it's dug and fallen with what holds it); its light is a
+## point light TORCH_R across (`_torch_lights`), remembered in planet_state["torches"].
+## Returns {ok, why, cells (prop cells), flame (world point)}.
+func torch_plan(cell: Vector2i) -> Dictionary:
+	var rows: Array = Build.SCONCE
+	var bottom := cell.y + 3
+	# (pointed at a built back wall it hangs there; otherwise near a floor it stands on it)
+	var fl := -1 if _bg_at(cell.x, cell.y) == 2 else _floor_below(cell.x, cell.y, Build.STANDING.size())
+	if fl >= 0:
+		rows = Build.STANDING
+		bottom = fl
+	var pc := Build.prop_cells(rows, cell.x, bottom, false)
+	var ok := true
+	var why := ""
+	var held := rows == Build.STANDING
+	var cp := Build.cell_pos(cell.x, cell.y)
+	var under: bool = cp.length() < gpu.surf_at(atan2(cp.y, cp.x)).x - 6.0     # (a cave: its wall is behind)
+	for c in pc:
+		var cc := Vector2i(int(c[0]), int(c[1]))
+		var bga := _bg_at(cc.x, cc.y)
+		if not _open_at(cc.x, cc.y) or bga == 1 or bga == 3 or bga < 0:
+			ok = false
+			why = "no room for it there"
+		if bga == 2:
+			held = true
+		for o in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1)]:
+			if _solid_at(cc.x + o.x, cc.y + o.y):
+				held = true
+	if not held and not under:
+		if ok:
+			why = "nothing to hang it on: point at a wall, or near a floor"
+		ok = false
+	var top := bottom - rows.size() + 1
+	return {"ok": ok, "why": why, "cells": pc, "flame": Build.cell_pos(cell.x, top + Build.TORCH_FLAME), "standing": rows == Build.STANDING}
+
+## puts a torch down where `p` is (Conjure with torches chosen, or build mode); true if it went down
+func place_torch(m: Mage, p: Vector2) -> bool:
+	if m.inv[Defs.TORCH] <= 0:
+		return false
+	var tp := torch_plan(Build.cell_of(p))
+	if not tp["ok"]:
+		if m.local and _build_warn_t <= frame:
+			ui.toast("Torch: " + String(tp["why"]), Color(1, 0.7, 0.5), 1.4)
+			_build_warn_t = frame + 40
+		return false
+	stamps.append(Build.prop_stamp(tp["cells"], 0))
+	m.inv[Defs.TORCH] -= 1
+	add_torch(tp["flame"])
+	audio.play("place", p, 0.6, 1.2)
+	return true
+
+func add_torch(flame: Vector2) -> void:
+	var tl: Array = planet_state.get("torches", [])
+	tl.append([flame.x, flame.y, frame])
+	planet_state["torches"] = tl
+
+## every so often: a torch whose flame is gone (burnt, dug, taken up, fallen) is forgotten
+func _check_torches() -> void:
+	var tl: Array = planet_state.get("torches", [])
+	if tl.is_empty():
+		return
+	for k in range(tl.size() - 1, -1, -1):
+		var t: Array = tl[k]
+		if frame - int(t[2]) < 45 and frame >= int(t[2]):
+			continue                              # (its cells go in at the next GPU frame)
+		var fp := Vector2(float(t[0]), float(t[1]))
+		if fp.distance_to(player.pos) > 220.0:
+			continue
+		var bga := _bg_at(Build.cell_of(fp).x, Build.cell_of(fp).y)
+		if bga == 0 or bga == 2:
+			tl.remove_at(k)
+
+## the torches near the view as point lights, nearest first, into whatever of the 32 is left
+func _torch_lights() -> void:
+	var tl: Array = planet_state.get("torches", [])
+	if tl.is_empty() or space.active:
+		return
+	var room := 32 - lights.size()
+	if room <= 0:
+		return
+	var reach := float(VW + VH) * 0.5 * maxf(zoom, 0.01) + Build.TORCH_R
+	var near := []
+	for k in tl.size():
+		var t: Array = tl[k]
+		var fp := Vector2(float(t[0]), float(t[1]))
+		var dd := fp.distance_to(cam_c)
+		if dd < reach:
+			near.append([dd, fp, k])
+	near.sort_custom(func(a, b): return a[0] < b[0])
+	for q in mini(room, near.size()):
+		var fp2: Vector2 = near[q][1]
+		var ph := float(near[q][2]) * 1.7
+		var fl := 0.93 + 0.04 * sin(time * 0.31 + ph) + 0.03 * sin(time * 0.77 + ph * 2.3)
+		lights.append([fp2, Build.TORCH_R * fl, Color(1.8, 1.2, 0.58) * fl])
 
 ## is a mage or a foe standing at this world position (a block laid there would trap them)?
 func _body_in(wp: Vector2) -> bool:

@@ -1216,6 +1216,21 @@ func _update_build_bar(g) -> void:
 			var ptxt: String = g.build_prev.get("text", "")
 			if ptxt != "":
 				hint += "\n" + ptxt
+		elif piece["kind"] == "remove":
+			var shp2: String = Build.SHAPES[maxi(g.build_shape, 1)]
+			var what: String = {"front": "blocks and ground only", "back": "back walls and plants only", "furn": "furniture and torches only (the wall behind stays)", "all": "everything"}[String(piece["layer"])]
+			hint = "%s (%s), %s%s\nclick for one cell, or press, drag, let go  ·  G shape  ·  [ ] thickness  ·  B leaves" % [piece["name"], what, shp2,
+				(", %d thick" % g.build_thick) if shp2 != "Rectangle" else ""]
+			var ptxt2: String = g.build_prev.get("text", "")
+			if ptxt2 != "":
+				hint += "\n" + ptxt2
+		elif piece["kind"] == "flatten":
+			hint = "%s: press where the ground should be, drag along, let go\ncut above the line, dips filled from your satchel  ·  B leaves" % piece["name"]
+			var ptxt3: String = g.build_prev.get("text", "")
+			if ptxt3 != "":
+				hint += "\n" + ptxt3
+		elif piece["kind"] == "torch":
+			hint = "Torch: %s\nclick to place: near a floor it stands, on a wall it hangs  ·  or choose torches and cast Conjure  ·  B leaves" % cost_txt
 		elif piece["kind"] == "stairs":
 			hint = "%s, %d high (%d steps): %s" % [piece["name"], g.build_rise, (g.build_rise + Build.STAIR_STEP - 1) / Build.STAIR_STEP, cost_txt if cost_txt != "" else "point at the floor where it starts"]
 			hint += "\nclick to build  ·  [ ] a step higher or lower  ·  - = a storey  ·  T turn it  ·  B leaves"

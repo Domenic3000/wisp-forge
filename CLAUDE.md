@@ -642,6 +642,31 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `_built_at`); a post through a tree refuses it ("a tree is in the way"). Test: `_test_stairs` ("stairs": on a
   NATURAL slab in open air (a built one woke with the stairs on it and fell), stands, and you walk up it;
   `stairs.png`).
+- Taking away precisely (user, 22 Nov: "a precise way to be able to remove materials, flatten the ground, remove
+  background decorations without remove the entire background"; physics applies): build mode's Remove tab
+  (`Build.CAT_REMOVE` 8, kinds "remove" with "layer" front / back / furn / all, and "flatten" with a fill "mat").
+  Remove drags the block shapes (a click is a thick x thick square, one cell at 1): main `_update_remove` previews
+  from the collision grid (`_removable_guess`; a cave's natural back wall doesn't show there), and on release
+  `remove_cells(m, cells, layer)` reads the block back (`_cells_box`, `gpu.read_rect`), stamps out exactly that
+  layer where the staff's tier can (HARD), furniture giving back the wall it hid (`Defs.BEHIND`), and puts what it
+  gives in the satchel (`_collect_as`, as the dig's collectAs; five flame cells are a torch). `_wake_round` then
+  adds brushes of mode 11 (brush.comp: only the anchor-clearing of digging, within rad + 12) over what was taken,
+  so what held on only by it comes down. Flatten (`flatten_plan(a, b)`: the row you press is the new top; solid
+  and powder up to `FLAT_CUT` over it cut, open cells down to ground within `FLAT_FILL` under it filled, deepest
+  first; `flatten_apply` reads back, cuts what the staff can, fills from the satchel, wakes). Test: `_test_remove`
+  ("remove": on a 20-thick natural slab in the air, as a thin slab woken would give way; picture
+  `torches_night.png`).
+- Torches are one piece (user, 22 Nov: placing torches laid a whole brush of them; "a torch model that placed as one
+  piece and gave a nice range of lighting"): `Build.SCONCE` (3 x 7) / `STANDING` (3 x 12) prop rows, flame 't'
+  cells (real TORCH) over an iron cup and a wooden handle. main `torch_plan(cell)`: pointed at a built back wall, a
+  sconce; else with a floor within 12 under the cursor, standing on it; else a sconce, if a wall, solid beside it
+  or a cave (6+ under the surface) holds it. `place_torch(m, p)` (build mode's Furniture tab "Torch", or Conjure
+  with torches chosen: one a click, `cast_latch`), `add_torch` -> `planet_state["torches"]` ([x, y, frame] of the
+  flame). `_torch_lights` (in `_write_frame_params` BEFORE the light count is set) puts the nearest in view into
+  what's left of the 32 point lights, `TORCH_R` 60 across, warm, flickering; `_check_torches` (every 60 ticks)
+  forgets one whose flame cell isn't furniture any more in the collision grid. Digging leaves torch cells
+  (brush.comp keepBg), deconstruct puts a flame out without giving anything, and Shift + right-click on a torch
+  piece (kind 0, 3+ flame cells, at most `TORCH_CELLS_MAX` cells) gives back one torch (`_pick_up_furniture`).
 - Straight building (build.gd `SHAPES`, main's `_update_shape`): back walls (Back Walls tab) and solid blocks
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the

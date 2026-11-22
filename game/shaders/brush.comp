@@ -2,7 +2,7 @@
 // Brushes live in P.p[88 + 2k] = (x, y, radius, mode) and P.p[89 + 2k] = (mat, power, budget, exclR)
 // (excavating, mode 1: budget is how much faster than usual the staff digs).
 // counts[t] = cells collected per material; C_HARD = blocked by hardness; C_PLACED = placed;
-// C_CHEST_OPEN = chest cells opened (mode 7). Mode 9 opens or closes a door; mode 10 paints back walls (build mode). Each player has their own CNT counters: owner = mode >> 4.
+// C_CHEST_OPEN = chest cells opened (mode 7). Mode 9 opens or closes a door; mode 10 paints back walls (build mode); mode 11 only wakes what's round it (build mode's precise removal). Each player has their own CNT counters: owner = mode >> 4.
 // pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame, 0, 0)
 #include "common"
 #include "world"
@@ -37,7 +37,7 @@ void main() {
 		// treated as part of the planet, so a piece you cut free will fall
 		// (only what this staff could dig: a wall of something harder, like a vault's obsidian,
 		// stays exactly where it is even if you dig all the way round it)
-		if ((mode == 1 || mode == 2 || mode == 6 || mode == 8) && dist < rad + 12.0) {
+		if ((mode == 1 || mode == 2 || mode == 6 || mode == 8 || mode == 11) && dist < rad + 12.0) {
 			if ((c & ST_ANCHOR) != 0u && HARD[t] <= power) c &= ~ST_ANCHOR;
 			if (HARD[bgm] <= power) ab &= ~BG_ANCHOR;    // a generated building's walls wake up too
 		}
@@ -46,6 +46,7 @@ void main() {
 			if (FUEL[t] > 0u && t != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[t] << 16); continue; }
 			if (t == 0u && bgm != 0u && FUEL[bgm] > 0u && bgm != M_TORCH) { c = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); ab = decorGone(ab); continue; }
 		}
+		if (mode == 11) continue;   // (only that: what was round cells taken away precisely wakes)
 		if (mode == 1 && dist > rad && dist < rad + 1.6) {
 			// knock off lone pixels around the hole so the mage doesn't snag on them
 			if (isBlock(t) && HARD[t] <= power && COLLECT[t] == 1u) {
@@ -57,7 +58,7 @@ void main() {
 		}
 		if (dist > rad) continue;
 		if (mode == 1) { // excavate
-			bool keepBg = (ab & BG_WALL) != 0u || bgm == M_TREASURE || bgm == M_OPENCHEST || bgm == M_DECOR;
+			bool keepBg = (ab & BG_WALL) != 0u || bgm == M_TREASURE || bgm == M_OPENCHEST || bgm == M_DECOR || bgm == M_TORCH;
 			if ((t == 0u || KIND[t] == K_GAS) && bgm != 0u && !keepBg) {
 				// nothing in front: harvest the background plant / decoration (never a building's
 				// walls or furniture: those need the deconstruct action)
@@ -100,6 +101,8 @@ void main() {
 			if (bgm != 0u && bgm != M_TREASURE) {
 				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
 				if (R > 0.35) continue;
+				// (a torch's flame goes out: torches come back whole, picked up as a piece)
+				if (bgm == M_TORCH) { ab = 0u; continue; }
 				atomicAdd(counts.n[ob + (collectAs(bgm))], 1u);
 				ab = decorGone(ab);          // (furniture: the wall behind it stays)
 			}
