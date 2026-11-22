@@ -27,6 +27,11 @@ const F_FILL := 0x10000
 const F_ANCHOR := 0x20000
 const F_WALL := 0x40000
 const NATURAL := 0x80000
+## a living plant in the background (bit 20 without the fixed-variant bit; bits 21-26: which plant of
+## this blueprint): stamp.comp gives it a plant id of its own, so a lair's trees and giant mushrooms
+## stand and fall like the planet's own (held by their wood on the ground, felled whole) instead of
+## being built back walls (they broke apart where the stonework's spans gave out)
+const PLANT := 0x100000
 const BANNER := 13                 # props.gd KINDS: a banner (pick it up whole and it stays a banner)
 
 const GATE_W := 62                 # the gatehouse's width
@@ -95,6 +100,8 @@ class Lay:
 	var sd := 0
 	var simg: Image = null        # the guardian's statue pose (drawn once a lair)
 	var simg_done := false
+	var tree_id := 0              # (the plant being drawn: `p`, layer 3)
+	var n_trees := 0
 
 	func _init(p_pl, p_bp, boss: Dictionary, bio: String, w0: int, o: int, f: int, rt: bool) -> void:
 		pl = p_pl
@@ -148,6 +155,18 @@ class Lay:
 			var f0 := v & 255
 			c[k] = f0 | ((m & 255) << 8) | F_WALL | F_ANCHOR | (v & (NATURAL | F_FILL))
 
+	## a cell of the plant being drawn (`begin_plant`), in the background
+	func p(i: int, j: int, m: int) -> void:
+		if ok(i, j):
+			var k := j * bw + i
+			var v: int = c[k]
+			c[k] = (v & 255) | ((m & 255) << 8) | PLANT | ((tree_id & 63) << 21) | (v & (NATURAL | F_FILL))
+
+	## the cells drawn from now (`p`, layer 3) are one plant of their own
+	func begin_plant() -> void:
+		n_trees += 1
+		tree_id = n_trees % 64
+
 	## open the front (air, or water under a drowned lair's sea); the back stays
 	func clear(i: int, j: int) -> void:
 		if ok(i, j):
@@ -187,12 +206,14 @@ class Lay:
 	func fg_of(i: int, j: int) -> int:
 		return c[j * bw + i] & 255 if ok(i, j) else 255
 
-	## layer 0 built front, 1 natural front, 2 back
+	## layer 0 built front, 1 natural front, 2 back, 3 the plant being drawn
 	func put(layer: int, i: int, j: int, m: int) -> void:
 		if layer == 0:
 			s(i, j, m)
 		elif layer == 1:
 			n(i, j, m)
+		elif layer == 3:
+			p(i, j, m)
 		else:
 			b(i, j, m)
 
@@ -245,6 +266,7 @@ static func arch(L: Lay, i0: int, i1: int, base: int, ph: int, t: int, m: int, l
 ## a great tree in the background: a swaying trunk flaring into roots, branches reaching out and up,
 ## crowns of leaves (none if dead: gnarled twigs instead), vines hanging from the crowns
 static func tree(L: Lay, cx: float, base: int, hgt: int, tw: float, wood: int, leaf: int, dead := false, vines := 0) -> void:
+	L.begin_plant()
 	var tth := int(float(hgt) * 0.62)
 	var ph := L.rng.randf() * TAU
 	var tops := []
@@ -254,7 +276,7 @@ static func tree(L: Lay, cx: float, base: int, hgt: int, tw: float, wood: int, l
 			wv += tw * 1.1 * pow(1.0 - float(up) / 12.0, 2.0)
 		var x := cx + sin(float(up) * 0.05 + ph) * tw * 0.45
 		for i in range(int(round(x - wv * 0.5)), int(round(x + wv * 0.5)) + 1):
-			L.b(i, base - 1 - up, wood)
+			L.p(i, base - 1 - up, wood)
 	var topx := cx + sin(float(tth) * 0.05 + ph) * tw * 0.45
 	# roots arching over the ground either side
 	for k in 4:
@@ -266,7 +288,7 @@ static func tree(L: Lay, cx: float, base: int, hgt: int, tw: float, wood: int, l
 			var x2 := cx + sgn * (tw * 0.4 + rl * t)
 			var y2 := float(base - 1) - sin(t * PI) * rh - (1.0 - t) * 3.0
 			for th2 in maxi(1, int((1.0 - t) * tw * 0.3)):
-				L.b(int(round(x2)), int(round(y2)) - th2, wood)
+				L.p(int(round(x2)), int(round(y2)) - th2, wood)
 	# branches
 	var nb := L.rng.randi_range(4, 6)
 	for k2 in nb:
@@ -285,14 +307,14 @@ static func tree(L: Lay, cx: float, base: int, hgt: int, tw: float, wood: int, l
 			ey = y0 - rise * sin(t2 * PI * 0.5) + (bl * 0.12) * t2 * t2
 			var r2 := lerpf(tw * 0.32, 1.0, t2)
 			for dy in range(-int(r2), int(r2) + 1):
-				L.b(int(round(ex)), int(round(ey)) + dy, wood)
+				L.p(int(round(ex)), int(round(ey)) + dy, wood)
 		if dead:
 			# gnarled twigs
 			for q3 in 3:
 				var a := -PI * 0.5 + side * L.rng.randf_range(0.2, 1.2)
 				var tl := L.rng.randf_range(5.0, 12.0)
 				for q4 in int(tl):
-					L.b(int(round(ex + cos(a) * q4)), int(round(ey + sin(a) * q4)), wood)
+					L.p(int(round(ex + cos(a) * q4)), int(round(ey + sin(a) * q4)), wood)
 		else:
 			tops.append(Vector3(ex, ey, bl))
 	if not dead:
@@ -300,9 +322,9 @@ static func tree(L: Lay, cx: float, base: int, hgt: int, tw: float, wood: int, l
 		for tp: Vector3 in tops:
 			var rx: float = tp.z * 0.42 + 7.0
 			var ry := rx * 0.5
-			blob(L, tp.x, tp.y - ry * 0.3, rx, ry, leaf, 2, 0.35)
-			blob(L, tp.x + rx * 0.45, tp.y + ry * 0.2, rx * 0.6, ry * 0.6, leaf, 2, 0.35)
-			blob(L, tp.x - rx * 0.45, tp.y + ry * 0.25, rx * 0.55, ry * 0.55, leaf, 2, 0.35)
+			blob(L, tp.x, tp.y - ry * 0.3, rx, ry, leaf, 3, 0.35)
+			blob(L, tp.x + rx * 0.45, tp.y + ry * 0.2, rx * 0.6, ry * 0.6, leaf, 3, 0.35)
+			blob(L, tp.x - rx * 0.45, tp.y + ry * 0.25, rx * 0.55, ry * 0.55, leaf, 3, 0.35)
 			# vines hanging from under the crown
 			for v in vines:
 				var vx := tp.x + L.rng.randf_range(-rx * 0.8, rx * 0.8)
@@ -312,10 +334,13 @@ static func tree(L: Lay, cx: float, base: int, hgt: int, tw: float, wood: int, l
 					var vj := int(tp.y + ry * 0.5) + q5
 					if vj >= base - 2:
 						break
-					L.b(int(vx) + wob, vj, leaf)
+					L.p(int(vx) + wob, vj, leaf)
 
 ## a giant mushroom: a curving stalk with a ring, a domed cap with gills under it and glowing spots
 static func shroom(L: Lay, cx: float, base: int, hgt: int, sw: float, capw: float, layer: int) -> void:
+	if layer == 2:
+		L.begin_plant()
+		layer = 3
 	var bend := L.rng.randf_range(-0.22, 0.22) * float(hgt)
 	var stalk := Defs.STALK
 	var x := cx
@@ -899,18 +924,19 @@ static func nest(L: Lay, cx: int, base: int) -> void:
 
 ## an acacia: a leaning, forked trunk under a broad flat crown
 static func acacia(L: Lay, cx: int, base: int, hgt: int) -> void:
+	L.begin_plant()
 	var lean := L.rng.randf_range(-0.3, 0.3)
 	var fork := int(float(hgt) * 0.55)
 	for up in fork:
 		for q in range(-2, 3):
-			L.b(cx + int(round(lean * up)) + q, base - 1 - up, Defs.WOOD)
+			L.p(cx + int(round(lean * up)) + q, base - 1 - up, Defs.WOOD)
 	var fx := float(cx) + lean * fork
 	for side: int in [-1, 1]:
 		for up2 in hgt - fork:
 			var x := fx + side * float(up2) * 0.8
 			for q2 in range(-1, 2):
-				L.b(int(round(x)) + q2, base - 1 - fork - up2, Defs.WOOD)
-		blob(L, fx + side * float(hgt - fork) * 0.8, float(base - hgt - 3), 22.0, 5.0, Defs.LEAF, 2, 0.3)
+				L.p(int(round(x)) + q2, base - 1 - fork - up2, Defs.WOOD)
+		blob(L, fx + side * float(hgt - fork) * 0.8, float(base - hgt - 3), 22.0, 5.0, Defs.LEAF, 3, 0.3)
 
 # --------------------------------------------------------------- an arena ---
 ## Dress an open-air lair (buildings.gd `_lair` has levelled and paved it): `tops` is the ground's top

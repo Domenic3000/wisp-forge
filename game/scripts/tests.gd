@@ -1024,8 +1024,10 @@ func _test_sky() -> void:
 				sk_ok[sk_id] = float(st.get("aurora_mana", 0.0)) > 1.0 and g.sky_level("aurora") > 0.5
 				sk_txt.append("aurora: %.1f extra mana under it (open sky %s)" % [float(st.get("aurora_mana", 0.0)), g.exposed])
 			"hail":
-				sk_ok[sk_id] = int(st.get("hail_hits", 0)) >= 1 and g.player.hp < sk_hp0
-				sk_txt.append("hail: %d stings, health %.0f -> %.0f" % [int(st.get("hail_hits", 0)), sk_hp0, g.player.hp])
+				# (its own stones, bouncing and lying on the ground: not rain cells, which it doesn't drop)
+				var sk_ws: Dictionary = g.weather.stats
+				sk_ok[sk_id] = int(st.get("hail_hits", 0)) >= 1 and g.player.hp < sk_hp0 and int(sk_ws["hail_bounces"]) >= 5 and int(sk_ws["landed"]) >= 3 and float(g.gpu.params[12]) == 0.0
+				sk_txt.append("hail: %d stings, health %.0f -> %.0f, %d stones bounced, %d lay on the ground, rain cells %.4f" % [int(st.get("hail_hits", 0)), sk_hp0, g.player.hp, int(sk_ws["hail_bounces"]), int(sk_ws["landed"]), float(g.gpu.params[12])])
 				g.test_god = true
 				g.player.hp = g.player.max_hp
 			"bloodmoon":
@@ -1035,6 +1037,25 @@ func _test_sky() -> void:
 				sk_ok[sk_id] = int(st.get("bursts", 0)) >= 2
 				sk_txt.append("fireworks: %d bursts" % int(st.get("bursts", 0)))
 		g.end_sky_event()
+	g.time = sk_time0
+	# rain: streaks over the falling drops, splashing where they land (only where it rains here)
+	if String(g._biome_at(sk_a)["weather"]) == "rain":
+		_go(sk_at)
+		g.time = sk_day
+		var sk_r0: int = int(g.weather.stats["rain_splashes"])
+		g.rain_target = 1.0
+		g.rain = 1.0
+		g.sky_rain = 1.0
+		g.weather_timer = 99999
+		await _frames(120)
+		g.get_viewport().get_texture().get_image().save_png(sk_dir.path_join("sky_rain.png"))
+		var sk_sp: int = int(g.weather.stats["rain_splashes"]) - sk_r0
+		sk_ok["rain"] = sk_sp >= 10
+		sk_txt.append("rain: %d splashes" % sk_sp)
+		g.rain_target = 0.0
+		g.rain = 0.0
+		g.sky_rain = 0.0
+		g.weather_timer = 1800
 	g.time = sk_time0
 	_go(sk_from)                              # (back where it found you: its lava and fires stay there)
 	await _frames(20)
@@ -1046,8 +1067,18 @@ func _test_sky() -> void:
 		if not bool(sk_ok[sk_k]):
 			sk_all = false
 			sk_bad.append(sk_k)
-	_ok("sky events: each kind of planet's meteors, eruptions, squalls, sandstorms, wisps, auroras, hail, blood moons and fireworks", sk_all and sk_ok.size() == 9,
+	_ok("sky events: each kind of planet's meteors, eruptions, squalls, sandstorms, wisps, auroras, hail, blood moons and fireworks", sk_all and sk_ok.size() >= 9,
 		"; ".join(sk_txt) + ("" if sk_all else " (not working: %s)" % ", ".join(sk_bad)))
+
+## is surface column c within a lair (its arena, gate and backdrop, with a margin)?
+func _near_lair(c: int) -> bool:
+	for l in g.builds.lair_list:
+		var lp: Vector2 = l["pos"]
+		var lc := int(fposmod(atan2(lp.y, lp.x), TAU) / TAU * Defs.NS)
+		var d := posmod(c - lc, Defs.NS)
+		if mini(d, Defs.NS - d) < 420:
+			return true
+	return false
 
 func _go(p: Vector2) -> void:
 	# (a check that left you dead would leave every check after it running on the death screen: say so
@@ -2112,8 +2143,8 @@ func run() -> void:
 		var best_n := 0
 		for k in 64:
 			var c0 := k * N0 / 64
-			if b.biome(c0 + 60) != bname or b.biome(c0) != bname:
-				continue
+			if b.biome(c0 + 60) != bname or b.biome(c0) != bname or _near_lair(c0) or _near_lair(c0 + 120):
+				continue                  # (the planet's own plants: a lair's great trees are lairs.gd's)
 			var n_t := _plants(raw_t, toff, c0, b.ground_row(c0 + 60))
 			if n_t > best_n:
 				best_n = n_t
@@ -2133,7 +2164,7 @@ func run() -> void:
 		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("biome_%s.png" % bname))
 		var after_t := _plants(g.gpu.read_world(), toff, best_col, gr2)
 		tree_lines.append("%s %d->%d" % [bname, best_n, after_t])
-		if after_t < int(best_n * 0.95):           # (a twig or a stray branch may drop; a tree mustn't)
+		if after_t < int(best_n * 0.99):           # (knitted as the planet is made: nothing should drop)
 			tree_ok = false
 	_ok("trees stand when you come near, in every biome", tree_ok and biomes_seen > 0, ", ".join(tree_lines))
 
@@ -2150,6 +2181,8 @@ func run() -> void:
 			var grc: int = b.ground_row(col)
 			var nw := 0
 			var idc := 0
+			if _near_lair(col):
+				continue                  # (a lair's great trees are living plants too, but grown by lairs.gd)
 			for j in range(grc - 40, grc):
 				var a := rw.decode_u32(toff + Defs.raw_idx(j, col) * 4)
 				if (a & 255) == Defs.WOOD and (a & 0x80000000) != 0:
@@ -2255,6 +2288,8 @@ func run() -> void:
 			var feet := 0
 			for i in range(-600, 601):
 				var cb: int = posmod(tcol + i, N0)
+				if _near_lair(cb):
+					continue
 				var grb: int = b.ground_row(cb)
 				var foot := -1
 				var lid := 0
@@ -5496,7 +5531,10 @@ func _test_lairs() -> void:
 		var lr_ban := 0
 		var lr_back_cells := 0
 		var lr_natural := 0
+		var lr_plant := 0
 		for lr_v in lr_dat:
+			if (lr_v & 0x8000000) == 0 and (lr_v & 0x100000) != 0 and ((lr_v >> 8) & 255) != 0:
+				lr_plant += 1
 			var lr_f: int = lr_v & 255
 			var lr_g: int = (lr_v >> 8) & 255
 			if lr_g == Defs.DECOR:
@@ -5514,17 +5552,58 @@ func _test_lairs() -> void:
 		g.time = g.towns.time_for_hour(lr_at, 12.5)
 		g.rain = 0.0
 		g.rain_target = 0.0
+		var lr_made := 0
+		if lr_plant > 0:
+			# (as it was made, before anyone came near: plant cells, how many are at the edge of falling,
+			# and how many of the blueprint's plant cells went in without their plant id)
+			var lr_r0: Dictionary = g.gpu.read_rect(int(lr_info["x0"]), int(lr_info["y0"]), int(lr_info["w"]), int(lr_info["h"]),
+				int(lr_info.get("ax", lr_info["x0"])), int(lr_info.get("aw", lr_info["w"])))
+			var lr_bg0: PackedInt32Array = lr_r0["bg"]
+			var lr_fg0: PackedInt32Array = lr_r0["fg"]
+			var lr_n0 := 0
+			var lr_hi := 0
+			var lr_mx := 0
+			var lr_lost := 0
+			var lr_cov := 0
+			for lr_q in mini(lr_bg0.size(), lr_dat.size()):
+				var lr_bq: int = lr_bg0[lr_q]
+				var lr_dq: int = lr_dat[lr_q]
+				var lr_isp: bool = (lr_dq & 0x8000000) == 0 and (lr_dq & 0x100000) != 0 and ((lr_dq >> 8) & 255) != 0
+				if lr_isp and (lr_bq & 0x80000000) == 0:
+					lr_lost += 1
+				if (lr_bq & 0x80000000) != 0 and (lr_bq & 255) != 0:
+					lr_n0 += 1
+					var lr_sq := (lr_bq >> 8) & 63
+					lr_mx = maxi(lr_mx, lr_sq)
+					if lr_sq >= 62:
+						lr_hi += 1
+					if lr_isp and (lr_fg0[lr_q] & 255) != 0:
+						lr_cov += 1
+			lr_made = lr_n0
+			print("[lairplants] %s: %d plant cells, %d at 62, support up to %d, %d lost their id, %d behind something in front" % [lr_bio, lr_n0, lr_hi, lr_mx, lr_lost, lr_cov])
 		for lr_k in 3:
 			var lr_off: float = [0.0, -1.0, 1.0][lr_k] * (float(lr_l["arena"]) + (10.0 if lr_l.get("deep", false) else 70.0))
 			var lr_p: Vector2 = lr_at + lr_side * lr_off
 			_go(lr_p.normalized() * (lr_at.length() + 30.0))
 			await _frames(45)
 			g.get_viewport().get_texture().get_image().save_png(lr_dir.path_join("lair_%s_%s.png" % [lr_bio, ["mid", "a", "b"][lr_k]]))
-		var lr_good := lr_ban >= 40 and lr_back_cells >= 2000 and lr_chests >= 1
+		# its trees and giant mushrooms are living plants: still standing after you've been about (they
+		# were built back walls once, and broke apart)
+		var lr_live := -1
+		if lr_plant > 0:
+			_go(lr_at.normalized() * (lr_at.length() + 30.0))
+			await _frames(240)
+			var lr_rr: Dictionary = g.gpu.read_rect(int(lr_info["x0"]), int(lr_info["y0"]), int(lr_info["w"]), int(lr_info["h"]),
+				int(lr_info.get("ax", lr_info["x0"])), int(lr_info.get("aw", lr_info["w"])))
+			lr_live = 0
+			for lr_bv in lr_rr["bg"]:
+				if (int(lr_bv) & 0x80000000) != 0 and (int(lr_bv) & 255) != 0:
+					lr_live += 1
+		var lr_good := lr_ban >= 40 and lr_back_cells >= 1500 and lr_chests >= 1 and (lr_plant == 0 or (lr_made >= int(lr_plant * 0.85) and lr_live >= int(lr_made * 0.98)))
 		if lr_good:
 			lr_ok += 1
-		lr_rows.append("%s%s: %d banner cells, %d background cells, %d natural rock, %d chests, %dx%d" % [lr_bio, " (underground)" if lr_l.get("deep", false) else "",
-			lr_ban, lr_back_cells, lr_natural, lr_chests, int(lr_info["w"]), int(lr_info["h"])])
+		lr_rows.append("%s%s: %d banner cells, %d background cells, %d natural rock, %d chests, %dx%d, plants %d, %d made -> %d standing" % [lr_bio, " (underground)" if lr_l.get("deep", false) else "",
+			lr_ban, lr_back_cells, lr_natural, lr_chests, int(lr_info["w"]), int(lr_info["h"]), lr_plant, lr_made, lr_live])
 	g.time = lr_time0
 	g.test_god = lr_god0
 	_go(lr_back)

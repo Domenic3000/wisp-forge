@@ -3,7 +3,8 @@
 // leaves); reaching sideways, hanging or leaning diagonally costs 1, so a tall tree stands
 // while a cut-off piece counts up and drops. Runs six times per frame so a cut tree
 // comes down quickly.
-// pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame * passes + pass, 0, 0)
+// pc.a = (-, y0, y1, -)  pc.d = window angles (common winCount)  pc.b = (-, frame * passes + pass, mode, 0)
+// (mode 1: knitting, once as a planet is made; see below)
 #include "common"
 #include "world"
 #include "bglayer"
@@ -65,7 +66,38 @@ void main() {
 			ivec3 qUL = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 2), qUR = qU.x < 0 ? ivec3(-1) : stepC(qU.x, qU.y, qU.z, 3);
 			ivec3 qDL = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 2), qDR = qD.x < 0 ? ivec3(-1) : stepC(qD.x, qD.y, qD.z, 3);
 			mn = min(mn, min(min(supAt(qUL, id), supAt(qUR, id)), min(supAt(qDL, id), supAt(qDR, id))));
-			ns = min(min(supAt(qD, id), mn + 1u), 62u);
+			// resting on its own cell below costs nothing, and so does resting on one diagonally below
+			// (user, 22 Nov: a lair's great trees came apart where nothing touched them): a branch or a
+			// crown two or more cells thick carries itself out sideways, so only a plant cut off from
+			// its ground (or a bit of one tree left among another's cells) ever comes down
+			ns = min(min(min(supAt(qD, id), min(supAt(qDL, id), supAt(qDR, id))), mn + 1u), 62u);
+			// Knitting (pc.b.z == 1: once, over the whole planet, as it is made). Where trees overlap, each
+			// cell went to one of them (gen.comp flora: wood wins, then the nearest trunk), and that can leave
+			// a piece of a crown or a mushroom cap cut off from its own wood by its neighbour's: a piece with
+			// nothing of its own holding it up. Such a piece becomes part of the tree it leans on (the same
+			// kind of plant), so it stands; it used to fall apart as soon as you came near.
+			if (pc.b.z == 1 && ns >= 62u && id != 0u) {
+				uint cls = ab >> 30;
+				uint bestS = 61u, bestA = 0u;
+				ivec3 qs[8] = ivec3[8](qU, qD, qL, qR, qUL, qUR, qDL, qDR);
+				for (int k = 0; k < 8; k++) {
+					if (qs[k].x < 0) continue;
+					uint na = aux.a[cellIdx(qs[k].x, qs[k].y, qs[k].z)];
+					if ((na & 255u) == 0u || (na & BG_WALL) != 0u || (na >> 30) != cls || plantId(na) == id) continue;
+					uint s2 = (na >> 8) & 63u;
+					if (s2 < bestS) { bestS = s2; bestA = na; }
+				}
+				if (bestA != 0u) { ab = (ab & 0xFFFFu) | (bestA & 0xFFFF0000u); ns = bestS + 1u; }
+			}
+		}
+		if (pc.b.z == 1) {
+			// (knitting settles who holds up whom; on its last pass (pc.b.w) whatever still has nothing
+			// holding it is trimmed away: the tip of a vine or a twig too far out to carry, or a scrap
+			// with no plant beside it to take it. Support only ever rises from nothing during the
+			// knitting, so by then a cell at 62 really is that far from its ground)
+			if (pc.b.w == 1 && ns >= 62u && (ab & 0x80000000u) != 0u) { aux.a[i] = 0u; return; }
+			aux.a[i] = (ab & ~0x3f00u) | (ns << 8);
+			return;
 		}
 		uint olds = (ab >> 8) & 63u;
 		// a felled tree or bush (a plant with an id) waits a moment for scripts/chunks.gd to lift it out

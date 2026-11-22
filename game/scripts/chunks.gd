@@ -202,9 +202,9 @@ func _read_around(p: Vector2, size: Vector2i, up_frac: float) -> Array:
 
 ## A felled tree: the cells of that plant (its id is in background bits 16-31) no longer joined, through
 ## each other, to its wood resting on the ground.
-func _take_tree(m, wp: Vector2) -> void:
+func _take_tree(m, wp: Vector2, big := false) -> void:
 	var tr := Time.get_ticks_usec()
-	var R := _read_around(wp, TREE_READ, 0.6)
+	var R := _read_around(wp, TREE_READ * 2 if big else TREE_READ, 0.5 if big else 0.6)
 	g.prof_add("lift: read", Time.get_ticks_usec() - tr)
 	tr = Time.get_ticks_usec()
 	if R.is_empty():
@@ -251,6 +251,16 @@ func _take_tree(m, wp: Vector2) -> void:
 	g.prof_add("lift: find", Time.get_ticks_usec() - tr)
 	if loose.is_empty():
 		return
+	# a tree bigger than the block (a lair's great trees): what looks loose may reach out of it to its
+	# own wood on the ground, so look again over a block twice the size (user, 22 Nov: whole lair trees
+	# were lifted out and toppled when only a twig had come loose)
+	if not big:
+		for k in loose:
+			var bi := k % w
+			var bj := k / w
+			if bi == 0 or bj == 0 or bi == w - 1 or bj == h - 1:
+				_take_tree(m, wp, true)
+				return
 	var tp := Time.get_ticks_usec()
 	# what came loose, split into the pieces actually joined together: each falls on its own (a few
 	# stray cells must not fall as one object with a gap through it), and scraps flutter away as leaves

@@ -613,7 +613,9 @@ func _stabilize_pass(bp: BP) -> int:
 				fgb[k] = 1 if kd == Defs.K_SOLID else (2 if kd == Defs.K_POWDER else 0)
 			elif f == 255 and j >= groundj[i]:
 				nat[k] = 1
-			if g != 255 and g != 0 and (v & F_WALL) != 0:
+			# (a lair's living plant, bit 20 without the fixed-variant bit, bears load as the back wall it
+			# stands in place of did, but is never cut: it stands by the plants' own rules in the game)
+			if g != 255 and g != 0 and ((v & F_WALL) != 0 or (v & 0x8100000) == 0x100000):
 				bgb[k] = 1
 	# buckets by cost (0..63): linked lists of entries (node = cell * 2 + layer)
 	var e_node := PackedInt32Array()
@@ -723,7 +725,7 @@ func _stabilize_pass(bp: BP) -> int:
 			_note_cut(bp, Defs.NAMES[v3 & 255], k)
 			v3 = v3 & ~255
 			removed += 1
-		if bgb[k] == 1 and bs[k] > span[(v3 >> 8) & 255]:
+		if bgb[k] == 1 and bs[k] > span[(v3 >> 8) & 255] and (v3 & 0x8100000) != 0x100000:
 			_note_cut(bp, "bg " + Defs.NAMES[(v3 >> 8) & 255], k)
 			v3 = v3 & ~0xff00 & ~F_WALL
 			removed += 1

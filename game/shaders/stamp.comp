@@ -6,6 +6,8 @@
 // background wall too), bit 18 = background is a built back wall,
 // bits 19-26 = colour variant, used when bit 27 is set (chests use it to know which part they are),
 // bits 28-31 = a furniture piece's kind (props.gd KINDS), kept in background bits 24-27.
+// Without bit 27: bit 19 = natural rock (not built), bit 20 = the background is a living plant (bits
+// 21-26: which plant of the blueprint; it gets a tree's plant id).
 // pc.a = (x0, y0, w, h)  pc.b = (dataOffset, seed, mode, anchor column)  pc.c.x = anchor width
 // mode 1 (raw, scripts/chunks.gd setting a fallen piece down): two words per cell, the front cell and
 // the background cell exactly as they go in the world (0xffffffff = leave it); each only lands where
@@ -36,6 +38,12 @@ void put(int idx, int i, int j, int w, int col, int row) {
 	if (bc != 255u) {
 		uint a = bc == 0u ? 0u : (bc | ((d & 0x40000u) != 0u ? BG_WALL : 0u) | ((d & 0x20000u) != 0u ? BG_ANCHOR : 0u));
 		if (bc != 0u && (d & 0x8000000u) != 0u) a |= (((d >> 19) & 255u) << 16) | (((d >> 28) & 15u) << 24);   // which part of a chest; a prop's colour and kind
+		// (bit 20 without a fixed variant: a living plant, plant bits 21-26 of this blueprint: a lair's
+		// trees and giant mushrooms get a tree's plant id, so they stand and fall as the planet's own do)
+		if (bc != 0u && (d & 0x8000000u) == 0u && (d & 0x100000u) != 0u) {
+			uint pid = 0x8000u | (hashu(uint(pc.b.y) * 2654435761u ^ ((d >> 21) & 63u) * 40503u ^ 0x51ED27u) % 0x3FFFu);
+			a = bc | (pid << 16);
+		}
 		if (bc == M_DECOR) {
 			// the wall this piece stands in front of: the back wall already here (furniture set down
 			// in a room), or else the nearest wall beside it along its row in the blueprint (a

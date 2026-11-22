@@ -22,6 +22,7 @@ const Towns := preload("res://scripts/towns.gd")
 const Workshops := preload("res://scripts/workshops.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const Vfx := preload("res://scripts/vfx.gd")
+const Weather := preload("res://scripts/weather.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
 const Audio := preload("res://scripts/audio.gd")
@@ -245,6 +246,7 @@ var space                 # above the orbit band: the space view and the staff-j
 var towns                 # the living villages' folk, talk and trade (towns.gd)
 var workshops             # the workshop stations on this planet (workshops.gd)
 var vfx                   # the spells' effects (vfx.gd): its own particles, glow, flashes
+var weather               # rain, hail, snow, ash, embers, dust as you see them (weather.gd)
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
 var view_tex: ImageTexture
 var view_rect: TextureRect
@@ -585,6 +587,9 @@ func _ready() -> void:
 	vfx.game = self
 	vfx.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pix.add_child(vfx)
+	weather = Weather.new()
+	weather.game = self
+	pix.add_child(weather)
 	map_view = MapView.new()
 	map_view.game = self
 	map_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -932,7 +937,10 @@ func _write_frame_params() -> void:
 	var rr_target := rain if b["weather"] != "clear" else 0.0
 	sky_rain += (rr_target - sky_rain) * 0.012
 	var rr := sky_rain
-	gpu.setp(3, Vector4(rr * 0.0015 if rr > 0.05 else 0.0, wmat, rr, flash))
+	# (a hail storm drops no rain cells: weather.gd's stones are the hail, and a falling drop drawn
+	# pale would look just like them)
+	var fall_rate := rr * 0.0015 if rr > 0.05 and sky_ev != "hail" else 0.0
+	gpu.setp(3, Vector4(fall_rate, wmat, maxf(rr, 0.5 * sky_ramp()) if sky_ev == "hail" else rr, flash))
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
 	# (w, flags: 1 the close view drawn in strips (see screenToWorld), 2 out in space: clear past the
 	# orbit band, where space.gd draws the stars under the picture)
@@ -2140,6 +2148,7 @@ func _tick() -> void:
 	_check_door_fire()
 	_update_particles()
 	vfx.tick()
+	weather.tick()
 	prof_add("shots and particles", Time.get_ticks_usec() - tq)
 	_update_weather()
 	_update_climate()
@@ -3700,35 +3709,41 @@ func _update_climate() -> void:
 	wind += (cw * (0.3 + 0.7 * rain) * gust * _wind_dir + sky_wind * gust - wind) * 0.01
 	if frame % 4 == 0:
 		exposed = _open_sky(player.pos)
-	if player.dead or not exposed:
+	_weather_fx()
+
+## What's falling or blowing, drawn by weather.gd, each with its own look (user, 22 Nov: hail looked the
+## same as rain): rain streaks and splashes over the simulated drops, hail stones that bounce and melt
+## (no rain cells fall in a hail storm: render.comp draws a falling drop pale, like a hailstone), swaying
+## snowflakes, tumbling ash, embers rising off a volcanic world, dust and sand blown along. They come in
+## at the edges of the screen and stop on anything solid, so a roof keeps them off. Only near the
+## surface: underground, in space or on the map nothing falls.
+func _weather_fx() -> void:
+	if weather == null or player.dead or space.active or state == "map":
 		return
 	var a := atan2(player.pos.y, player.pos.x)
+	if player.pos.length() < gpu.surf_at(a).x - 60.0:
+		return
 	var br := basis_r(a)
 	var bd := basis_d(a)
 	var b := _biome_at(a)
-	var flake := Color(0.95, 0.97, 1.0)
-	var n := 0.0
-	var fall := 0.25
-	var grav := 0.0
-	var lit := false
-	if float(clim.get("dust", 0.0)) > 0.0 and b["weather"] == "clear" and rain > 0.2:
-		flake = Color(0.9, 0.76, 0.5)                    # a dust storm
-		n = rain * float(clim["dust"]) * 3.0
-		fall = 0.05
-	elif float(clim.get("heat", 0.0)) > 0.0:
-		flake = Color(1.0, 0.55, 0.2) if randf() < 0.7 else Color(1.0, 0.8, 0.35)
-		n = 0.35 * float(clim["heat"])                   # embers drifting up off a volcanic world
-		fall = -0.35
-		grav = -0.002
-		lit = true
-	elif b["weather"] == "snow" and absf(wind) > 0.25:
-		n = absf(wind) * 2.2                             # a blizzard
-		fall = 0.4
-	for k in int(n) + (1 if randf() < n - floorf(n) else 0):
-		var sp := Vector2(randf() * float(VW), randf() * float(VH))
-		var wp: Vector2 = screen_to_world(sp)
-		var v: Vector2 = br * (wind * 2.6 + (randf() - 0.5) * 0.3) + bd * (fall + (randf() - 0.5) * 0.15)
-		_particle(wp, v, 50 + randi() % 50, flake, lit, grav)
+	var wk: String = b["weather"]
+	var hail := sky_ev == "hail"
+	if hail:
+		weather.emit(weather.HAIL, 4.5 * sky_ramp(), br, bd, wind)
+	elif wk == "rain" and sky_rain > 0.08:
+		weather.emit(weather.RAIN, sky_rain * 5.0, br, bd, wind)
+	elif wk == "snow" and sky_rain > 0.08:
+		weather.emit(weather.SNOW, sky_rain * 2.4, br, bd, wind)
+	elif wk == "ash" and sky_rain > 0.08:
+		weather.emit(weather.ASH, sky_rain * 2.0, br, bd, wind)
+	if wk == "snow" and absf(wind) > 0.25:
+		weather.emit(weather.SNOW, absf(wind) * 2.6, br, bd, wind)     # a blizzard
+	if float(clim.get("dust", 0.0)) > 0.0 and wk == "clear" and rain > 0.2:
+		weather.emit(weather.DUST, rain * float(clim["dust"]) * 3.0, br, bd, wind)     # a dust storm
+	if sky_ev == "sandstorm":
+		weather.emit(weather.DUST, 5.0 * sky_ramp(), br, bd, wind)
+	if float(clim.get("heat", 0.0)) > 0.0:
+		weather.emit(weather.EMBER, 0.35 * float(clim["heat"]), br, bd, wind)     # embers drifting up
 
 # ============================================================ sky events ====
 ## Now and then something happens in the sky (Defs.SKY_EVENTS), picked by the planet's kind and the
@@ -3954,10 +3969,7 @@ func _sky_sandstorm(ramp: float) -> void:
 	sky_tint = Color(0.78, 0.6, 0.36, (0.08 if under else 0.3) * ramp)
 	if under:
 		return
-	var a := atan2(player.pos.y, player.pos.x)
-	for k in int(5.0 * ramp):
-		var wp: Vector2 = screen_to_world(Vector2(randf() * float(VW), randf() * float(VH)))
-		_particle(wp, basis_r(a) * (wind * 3.5 + (randf() - 0.5) * 0.4) + basis_d(a) * (randf() - 0.4) * 0.3, 40 + randi() % 40, Color(0.86, 0.72, 0.48), false, 0.0)
+	# (the sand itself is blown along by weather.gd, `_weather_fx`)
 
 ## will-o'-wisps: lights drifting a little above the ground, shy of you; catch one for its wisp ore
 func _spawn_sky_wisps(n: int) -> void:
@@ -3999,16 +4011,18 @@ func _sky_wisps() -> void:
 ## hail: pellets of ice racing down; out in the open now and then one stings
 func _sky_hail(ramp: float) -> void:
 	sky_wind = 0.3 * _wind_dir * ramp
+	# (the stones themselves are weather.gd's, `_weather_fx`: chunky, bouncing, melting; a cold grey haze)
+	sky_tint = Color(0.62, 0.7, 0.82, 0.12 * ramp)
 	if not exposed:
 		return
-	var a := atan2(player.pos.y, player.pos.x)
-	for k in int(4.0 * ramp):
-		var wp: Vector2 = screen_to_world(Vector2(randf() * float(VW), randf() * float(VH) * 0.8))
-		_particle(wp, basis_d(a) * randf_range(2.2, 3.2) + basis_r(a) * wind, 22 + randi() % 12, Color(0.88, 0.95, 1.0), false, 0.0)
 	if _sky_next <= 0:
 		_sky_next = randi_range(35, 70)
 		hurt(player, 1.5, Vector2.ZERO, true)
 		audio.play("hit", player.pos, 0.35, 1.6)
+		# (a stone cracks on your hat)
+		var up: Vector2 = -basis_d(atan2(player.pos.y, player.pos.x))
+		for q in 4:
+			weather.spawn(weather.CHIP, player.pos + up * 9.0, up.rotated(randf_range(-1.3, 1.3)) * randf_range(0.5, 1.3), 12 + randi() % 8)
 		sky_stats["hail_hits"] = int(sky_stats.get("hail_hits", 0)) + 1
 		if int(sky_stats["hail_hits"]) == 1:
 			ui.toast("Hail stings you: get under a roof", Color(0.8, 0.9, 1.0), 2.5)
@@ -5493,6 +5507,8 @@ func _make_world(index: int, arriving: bool) -> void:
 		towns.clear()
 	if vfx != null:
 		vfx.clear()
+	if weather != null:
+		weather.clear()
 	wind = 0.0
 	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
 		Defs.set_geometry(float(planet["radius"]))
@@ -5586,6 +5602,19 @@ func _make_world(index: int, arriving: bool) -> void:
 		gpu.stamp(builds.structs, int(planet["seed"]))
 		gpu.flush()
 		_gt("stamp")
+		# every plant's support settled, and pieces of overlapping crowns given to the tree they lean on
+		var kw: Array = gpu.knit_windows()
+		if arriving:
+			var kp := 0
+			while kp < gpu.KNIT_PASSES:
+				gpu.knit_plants(kw, 10, kp)
+				kp += 10
+				_phase("knit plants")
+				await tree.process_frame
+				_phase_go()
+		else:
+			gpu.knit_plants(kw, gpu.KNIT_PASSES)
+		_gt("knit plants")
 		# let the ruins fall into ruin: unsupported pieces drop and break before you arrive
 		if arriving:
 			for k in 75:
@@ -5802,7 +5831,7 @@ func _respawn() -> void:
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"
-const GEN_VERSION := 37            # bump when the structure generator changes; older planets regenerate
+const GEN_VERSION := 38            # bump when the structure generator changes; older planets regenerate
 const WORLD_MAGIC := 0x57465732   # "WFW2": foreground cells, then the background layer
 const SEEN_MAGIC := 0x5345454e    # "SEEN": then the seen map (gpu_world.seen_bytes), compressed on its own
 var planet_state := {}            # per-planet facts saved with the world (boss defeated, where you were)

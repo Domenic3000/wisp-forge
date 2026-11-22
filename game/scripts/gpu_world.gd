@@ -379,6 +379,54 @@ func generate_band(job: Array) -> void:
 	rd.submit()
 	rd.sync()
 
+## Knitting the planet's plants (plants.comp mode 1; user, 22 Nov: "i have also seen normal trees and
+## mushrooms fall apart before i touch them"): where trees or mushroom caps overlap, gen.comp gives each
+## cell to one of them, which can leave a piece of one cut off from its own wood. Run once as the planet
+## is made (after the stamps: a lair's trees too), the passes settle every plant's support and give any
+## such piece to the plant it leans on, so nothing is left to break off when you come near.
+const KNIT_PASSES := 160
+const KNIT_CHUNKS := 24
+
+## the windows the knitting covers: the land round the whole planet, from a little under the ground
+## to over the tallest trees, in KNIT_CHUNKS slices each as deep as its own ground needs
+func knit_windows() -> Array:
+	var wins := []
+	var n: int = surface.size() / 8
+	if n == 0:
+		return wins
+	for c in KNIT_CHUNKS:
+		var i0 := c * n / KNIT_CHUNKS
+		var i1 := maxi((c + 1) * n / KNIT_CHUNKS, i0 + 1)
+		var rmin := 1e9
+		var rmax := -1e9
+		for i in range(i0, i1):
+			rmin = minf(rmin, surface[i * 8])
+			rmax = maxf(rmax, surface[i * 8])
+		var y0 := clampi(Defs.row_at(rmax + 125.0), -Defs.ORBIT_ROWS, Defs.ROWS)
+		var y1 := clampi(Defs.row_at(rmin - 30.0) + 1, -Defs.ORBIT_ROWS, Defs.ROWS)
+		if y0 >= y1:
+			continue
+		var span := TAU / float(KNIT_CHUNKS) + 0.004
+		var s0 := Defs.shell_of_row(y0)
+		wins.append({"y0": y0, "y1": y1, "th0": TAU * float(c) / float(KNIT_CHUNKS) - 0.002, "span": span,
+			"s0": s0, "s1": Defs.shell_of_row(y1 - 1), "maxc": win_count(s0, span) + 4})
+	return wins
+
+## `passes` knitting passes over `wins` (knit_windows), the passes from `from` on of KNIT_PASSES (the
+## last one trims what nothing holds)
+func knit_plants(wins: Array, passes: int, from := 0) -> void:
+	flush()
+	if wins.is_empty():
+		return
+	var cl := rd.compute_list_begin()
+	for it in range(from, from + passes):
+		var last := 1 if it == KNIT_PASSES - 1 else 0
+		for w in wins:
+			_dispatch(cl, "plants", "plants", [0, w.y0, w.y1, 0, 0, it, 1, last], _wf(w), groups(w.maxc, 16), groups(w.y1 - w.y0, 16))
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+
 ## Writes generated structures into the planet. Each: {x0, y0, w, h, data: PackedInt32Array}.
 func stamp(structs: Array, seed: int) -> void:
 	flush()

@@ -275,6 +275,21 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   across the view as particles. Prism Crystal is rarer (gen.comp thresholds, chest loot), and so are draughts in
   chests (0.1 + rare x 0.3).
 
+## Weather you can tell apart (scripts/weather.gd; user, 22 Nov: "a hail storm that looked the same as rain ... weather patterns need distinct art")
+- main `weather` (a Node2D in `pix` after vfx): its own particles in packed arrays, whole game pixels, lit by
+  `gpu.light_at` (embers unlit), each kind with its own look and landing: RAIN thin slanting streaks + SPLASH,
+  HAIL 2-3 px stones (white core, pale-blue edge, dark rim) that bounce twice (CHIP), then lie melting, SNOW
+  swaying dots and crosses that rest a moment, ASH dark tumbling flakes, EMBER flickering sparks rising, DUST
+  streaks along the wind. `emit(kind, n, br, bd, wind)` brings them in at the top edge (and the windward side);
+  `_hit` steps a cell at a time against the collision grid (solid, powder or liquid), so a roof keeps them off.
+  `CAP` per kind, `stats` (hail_bounces, rain_splashes, landed) for the tests.
+- main `_weather_fx` (from `_update_climate`, near the surface only, not in space or on the map) says what
+  falls: the biome's "weather" while `sky_rain` is up (the GPU's rain, snow and ash cells still fall too:
+  real matter), a blizzard in wind, dust storms, embers on a hot world, the sandstorm and hail events.
+  A hail storm drops NO rain cells (P.p[3].x 0: render.comp draws a falling drop pale, just like a hailstone),
+  only weather.gd's stones, with a cold haze (`sky_tint`); a sting cracks a stone on your hat.
+- Test: in `_test_sky` (hail: stones bounced and lay, no rain cells; rain: splashes; `sky_rain.png`).
+
 ## Sky events (main.gd `_update_sky_events`; user, 20 Nov: "weather and sky events for each kind of planet")
 - `Defs.SKY_EVENTS`: meteors, eruption, squall, sandstorm, wisps, aurora, hail, bloodmoon, fireworks, each with a
   weight per planet kind ("kinds"), "when" (night/day/any), "dur" and a message. Every `SKY_EVENT_EVERY` ticks a
@@ -290,7 +305,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   110-220 cells off; smoke, glow, rumbles, PROJ "lavabomb" (splat lava) every 22-45 ticks), squall (gale, rain,
   `lightning_strike(cells)`: a drawn bolt, fire, hurts within 12), sandstorm (gale, haze, blown sand), wisps (5
   drifting lights, shy of you; touching one gives 4 Wisp Ore and 30 mana), aurora (mana regen x2 under the open
-  sky), hail (pellets; a sting every 35-70 ticks in the open), bloodmoon (`spawn_mult` 2.5, up to 12 foes),
+  sky), hail (weather.gd stones; a sting every 35-70 ticks in the open), bloodmoon (`spawn_mult` 2.5, up to 12 foes),
   fireworks (rockets that burst into coloured particles). The HUD's weather shows the event, then " · <hazard>!".
   Test: `_test_sky` ("sky").
 
@@ -529,7 +544,22 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   - bit 15: anchored (generated structures stay as built until digging nearby clears it, like bit 30 in front)
   - bits 16-31: plant id (bit 31 set; 0x8000 range = a tree, 0xC000 range = a bush), written by gen.comp.
     `shaders/plants.comp` (6 passes per frame) only lets cells of the same plant hold each other up, and a
-    tree is only held by its wood touching the ground, so a cut tree drops whole and fast.
+    tree is only held by its wood touching the ground, so a cut tree drops whole and fast. Resting on its own
+    cell below OR diagonally below is free (sideways and hanging cost 1, 62 = loose), so a branch or crown two
+    or more cells thick carries itself out (user, 22 Nov: lair trees and natural trees and mushrooms fell apart
+    untouched).
+  - Knitting (plants.comp mode 1, pc.b.z = 1; `gpu.knit_windows` / `knit_plants`, `KNIT_PASSES` 160, run in
+    `_make_world` right after the stamps, ~130 ms): over the whole land, a piece of one plant that gen.comp's
+    overlap rules cut off from its own wood takes the id of the plant of its kind it leans on, and on the last
+    pass (pc.b.w = 1) any plant cell still at 62 (support only rises from 0 while knitting, so it really is
+    that far: a vine tip, a scrap) is trimmed. Nothing is left to come loose when you arrive.
+  - Lairs' trees and giant mushrooms are living plants: lairs.gd `Lay.p` / `begin_plant` (layer 3) sets
+    blueprint bit 20 (`Lairs.PLANT`, without the fixed-variant bit 27) and a per-plant number in bits 21-26;
+    stamp.comp gives them a tree id hashed from the stamp seed and that number. (They were anchored back walls,
+    and broke apart when the lair woke.) The generator's soundness pass (`_stabilize_pass`) lets them bear load
+    as the back wall they stand in place of, never cutting them (a hall's wall hangs on its trees). Tests
+    that look at the planet's own trees skip lairs (`_near_lair`). chunks.gd `_take_tree` reads again over a block twice the size when
+    what looks loose touches the block's edge (a lair tree is taller than `TREE_READ`).
 - A building's back walls are load-bearing (`support.comp`); the anchored flag is cleared near digging (`brush.comp`),
   but only for materials the digging staff could dig (so a vault's obsidian never comes loose early).
 - A structure wakes as a whole: in `support.comp` an anchored built cell (front with ST_BUILT, or a BG_WALL back
