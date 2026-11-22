@@ -329,6 +329,7 @@ var test_move := 0           # test mode: walk the local mage this way (-1, 0, 1
 var test_aim := Vector2.ZERO # test mode: where the local mage points (zero: the mouse)
 var test_cast := false       # test mode: hold the left button
 var test_dig := false        # test mode: hold the right button
+var test_sail := false       # test mode: hold Shift (the Starsail)
 var test_calm := false       # test mode: the biome guardians stay asleep (except while their own test runs)
 var test_no_wild := false    # test mode: no wild creatures come by themselves (their own test spawns them)
 # build mode (B): see build.gd
@@ -392,6 +393,7 @@ class PlayerInput:
 	var cast := false          # casting the selected spell
 	var dig := false           # excavating (held, or a quick tap)
 	var decon := false         # deconstructing background tiles (Shift + right mouse)
+	var sail := false          # Shift held: the skiff's Starsail, out in space
 	var aim := Vector2.ZERO    # world position of the cursor
 
 class Mage extends Body:
@@ -2070,6 +2072,7 @@ func _read_local_input(m: Mage) -> void:
 	var shift := Input.is_key_pressed(KEY_SHIFT)
 	inp.dig = (can_act and rmb and not shift) or test_dig
 	inp.decon = can_act and rmb and shift
+	inp.sail = (shift and state == "play") or test_sail
 
 func _tick() -> void:
 	frame += 1
@@ -4147,7 +4150,7 @@ func recipe_done(r: Dictionary) -> bool:
 		"drive": return skiff_reach() > int(planet.get("index", 0))
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
-	if r.has("gear") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam":
+	if r.has("gear") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam" or r["id"] == "sail":
 		return items.has(String(r["id"]))
 	return false
 
@@ -4164,7 +4167,7 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier3": return tier == 2
 		"tier4": return tier == 3 and items.has("heart")
 		"drive": return tier >= 4 and items.has("skiff")
-		"engine", "beam": return items.has("skiff")
+		"engine", "beam", "sail": return items.has("skiff")
 	if r.has("gear"):
 		# (gear from a planet kind's own ore: once you've found some, and what it builds on)
 		var need := String(Defs.GEAR[r["id"]].get("needs", ""))
@@ -4364,7 +4367,7 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"tier3": return "Needs Copper Focus"
 		"tier4": return "Needs Obsidian Focus + the Ember Heart"
 		"drive": return "Needs the Core Siphon and the Wisp Skiff"
-		"engine", "beam": return "Needs the Wisp Skiff"
+		"engine", "beam", "sail": return "Needs the Wisp Skiff"
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
 		"mend": return "Find the Scroll of Mending in a chest"
@@ -4449,7 +4452,7 @@ func craft(r: Dictionary) -> bool:
 			mana_regen = 0.32
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
-		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate":
+		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate", "sail":
 			items[String(r["id"])] = true
 		"drive":
 			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
@@ -5124,12 +5127,13 @@ func toggle_forge() -> void:
 ## The map (M) is a menu of its own: the game waits while it's open (the play camera never zooms
 ## out). "planet": the GPU draws the planet zoomed out, turned to `map_ang` (A/D or a drag turn it;
 ## W/S or the wheel zoom, the last level fits the whole planet); map_view.gd draws the markers.
-## "system" (Tab): the round of planets. Out in space it opens on the system.
+## "space" (Tab): the galaxy chart (map_view.gd). Out in space it opens on that.
 var map_tab := "planet"
 var map_zoom_i := 1
 var map_ang := 0.0
 var _map_back := {}
 var _map_drag := false
+var _map_moved := 0.0          # (how far the mouse went while held: a click sets a waypoint, a drag pans)
 
 func map_zooms() -> Array:
 	# (the last fits the whole planet with its orbit band, whatever its size)
@@ -5141,8 +5145,10 @@ func open_map() -> void:
 	state = "map"
 	_map_back = {"cam": cam_c, "zoom": zoom, "view": view_rect.visible}
 	map_ang = atan2(player.pos.y, player.pos.x)
-	map_tab = "system" if space.active and not space.live else "planet"
+	map_tab = "space" if space.active and not space.live else "planet"
+	map_view.centre_on_you()
 	_map_drag = false
+	_map_moved = 0.0
 	space.visible = false                    # (out there: the map is drawn on its own)
 	overlay.queue_redraw()
 	ui.show_map(self)
@@ -5181,6 +5187,20 @@ func _map_camera() -> void:
 	view_rect.visible = map_tab == "planet"
 
 func _map_tick(_delta: float) -> void:
+	if map_tab == "space":
+		# the galaxy chart: WASD or the arrows pan
+		var pv := Vector2.ZERO
+		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+			pv.x -= 1.0
+		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+			pv.x += 1.0
+		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+			pv.y -= 1.0
+		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+			pv.y += 1.0
+		if pv != Vector2.ZERO:
+			map_view.pan(pv * 6.0)
+		return
 	var turn := 0.0
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
 		turn += 1.0
@@ -5194,9 +5214,20 @@ func _map_key(k: int) -> void:
 	if k == KEY_M or k == KEY_ESCAPE:
 		close_map()
 	elif k == KEY_TAB:
-		map_tab = "system" if map_tab == "planet" else "planet"
+		map_tab = "space" if map_tab == "planet" else "planet"
+		if map_tab == "space":
+			map_view.centre_on_you()
 		_map_camera()
 		ui.show_map(self)
+	elif map_tab == "space":
+		if k == KEY_EQUAL or k == KEY_KP_ADD:
+			map_view.zoom_by(1.0 / 1.6)
+		elif k == KEY_MINUS or k == KEY_KP_SUBTRACT:
+			map_view.zoom_by(1.6)
+		elif k == KEY_H:
+			map_view.centre_on_you()
+		elif k == KEY_BACKSPACE or k == KEY_DELETE:
+			space.waypoint = null
 	elif k == KEY_W or k == KEY_UP or k == KEY_EQUAL or k == KEY_KP_ADD:
 		map_zoom_i -= 1
 		_map_camera()
@@ -5205,6 +5236,9 @@ func _map_key(k: int) -> void:
 		_map_camera()
 
 func _map_mouse(ev: InputEvent) -> void:
+	if map_tab == "space":
+		_space_chart_mouse(ev)
+		return
 	if ev is InputEventMouseButton:
 		if ev.button_index == MOUSE_BUTTON_LEFT:
 			_map_drag = ev.pressed
@@ -5218,6 +5252,35 @@ func _map_mouse(ev: InputEvent) -> void:
 		# (the planet follows the mouse: dragging right turns it so what was on the left comes over)
 		map_ang += ev.relative.x / float(scale_px) * zoom / maxf(player.pos.length(), 200.0)
 		_map_camera()
+
+## the galaxy chart: the wheel zooms about the cursor, a drag pans, a click marks a waypoint (it shows
+## out in space), a right click clears it
+func _space_chart_mouse(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton:
+		var mp: Vector2 = ev.position / float(scale_px)
+		if ev.button_index == MOUSE_BUTTON_LEFT:
+			if ev.pressed:
+				_map_drag = true
+				_map_moved = 0.0
+			else:
+				if _map_drag and _map_moved < 3.0:
+					space.waypoint = map_view.to_galaxy(mp)
+					audio.play("ui_click", null, 0.5)
+				_map_drag = false
+		elif ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
+			space.waypoint = null
+		elif ev.pressed and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+			# (about the cursor: what's under it stays under it)
+			var before: PackedFloat64Array = map_view.to_galaxy(mp)
+			map_view.zoom_by(1.0 / 1.25 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1.25)
+			var after: PackedFloat64Array = map_view.to_galaxy(mp)
+			map_view.gc[0] += before[0] - after[0]
+			map_view.gc[1] += before[1] - after[1]
+	elif ev is InputEventMouseMotion and _map_drag:
+		var rel: Vector2 = ev.relative / float(scale_px)
+		_map_moved += rel.length()
+		if _map_moved >= 3.0:
+			map_view.pan(-rel)
 
 # ========================================================== planet setup ===
 ## ---- save slots: each its own folder under saves/ (slot_1, slot_2, slot_3) ----
@@ -5309,6 +5372,7 @@ func start_game(use_save: bool) -> void:
 		_delete_worlds()
 		# a new journey: a system of planets of its own (the test mode keeps the classic one)
 		Defs.world_seed = 0 if testing else 1 + randi() % 0xFFFFFE
+		space.load_state({})
 		player.inv.fill(0)
 		# (a modest start: a little Wisp Mote, no Spark Bolt and no levitation until they're forged)
 		known = ["mote", "conjure"]
@@ -5809,7 +5873,7 @@ func _save_path() -> String:
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1, "learned": learned.keys(),
-		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played}
+		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played, "space": space.save_state()}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
@@ -5826,6 +5890,8 @@ func _load_save():
 
 func _apply_save(s: Dictionary) -> void:
 	Defs.world_seed = int(s.get("world_seed", 0))      # (journeys from before every game had its own: the classic system)
+	var sps = s.get("space", {})
+	space.load_state(sps if sps is Dictionary else {})
 	var a: Array = s.get("inv", [])
 	for i in mini(a.size(), Defs.NM):
 		player.inv[i] = int(a[i])

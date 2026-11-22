@@ -556,11 +556,71 @@ const BIOMES := {
 ## (world_seed 0, the test mode) uses SYSTEM; every game's own system is grown from its seed.
 const SYSTEM := [Vector2(0, 0), Vector2(-52000, 18000), Vector2(41000, 47000), Vector2(66000, -24000), Vector2(-30000, -61000)]
 
-func planet_pos(i: int) -> Vector2:
-	var rnd := Vector2(float(i / SYSTEM.size()) * 400000.0, 0.0)
+## ---- the galaxy (user, 22 Nov: "eventually i want space to be infinite with content in space") ----
+## Every round of five planets is a star system, and the systems lie without end on a jittered grid
+## SYS_GAP apart, numbered outward in a square spiral from the first (system r holds planets 5r..5r+4,
+## so a Core Drive's reach, index + 1, leads on to the next system out). Galaxy positions are kept as
+## pairs of doubles (`planet_g`, `system_g`): a Vector2 is single precision, a cell off a few million
+## cells out; `g_rel` gives one point relative to another exactly, and space.gd keeps its origin near
+## you (its `org`), so nothing on screen ever needs a big number.
+const SYS_GAP := 600000.0
+const SYS_JITTER := 0.28
+var _sys_cache := {}
+
+## the grid cell of system r: 0 at (0, 0), then round and round outward
+func spiral_cell(r: int) -> Vector2i:
+	if r <= 0:
+		return Vector2i.ZERO
+	var k := int(ceil((sqrt(float(r + 1)) - 1.0) * 0.5))
+	while (2 * k + 1) * (2 * k + 1) <= r:
+		k += 1
+	while k > 1 and (2 * k - 1) * (2 * k - 1) > r:
+		k -= 1
+	var i := r - (2 * k - 1) * (2 * k - 1)
+	var side := 2 * k
+	var s := i / side
+	var o := i % side
+	match s:
+		0: return Vector2i(k, -k + 1 + o)
+		1: return Vector2i(k - 1 - o, k)
+		2: return Vector2i(-k, k - 1 - o)
+	return Vector2i(-k + 1 + o, -k)
+
+## the system in grid cell c (the inverse of spiral_cell)
+func spiral_index(c: Vector2i) -> int:
+	var k := maxi(absi(c.x), absi(c.y))
+	if k == 0:
+		return 0
+	var base := (2 * k - 1) * (2 * k - 1)
+	var side := 2 * k
+	if c.x == k and c.y > -k:
+		return base + (c.y + k - 1)
+	if c.y == k and c.x < k:
+		return base + side + (k - 1 - c.x)
+	if c.x == -k and c.y < k:
+		return base + 2 * side + (k - 1 - c.y)
+	return base + 3 * side + (c.x + k - 1)
+
+## where system r lies (its first planet), in galaxy cells, as doubles
+func system_g(r: int) -> PackedFloat64Array:
+	var key := "%d:%d" % [world_seed, r]
+	if _sys_cache.has(key):
+		return _sys_cache[key]
+	var out := PackedFloat64Array([0.0, 0.0])
+	if r > 0:
+		var c := spiral_cell(r)
+		var jr := RandomNumberGenerator.new()
+		jr.seed = hash([world_seed, r, 5])
+		out[0] = (float(c.x) + jr.randf_range(-SYS_JITTER, SYS_JITTER)) * SYS_GAP
+		out[1] = (float(c.y) + jr.randf_range(-SYS_JITTER, SYS_JITTER)) * SYS_GAP
+	_sys_cache[key] = out
+	return out
+
+## planet i's place in its system, from the system's first planet
+func planet_local(i: int) -> Vector2:
 	var k := i % SYSTEM.size()
 	if world_seed == 0 or k == 0:
-		return SYSTEM[k] + rnd if world_seed == 0 else rnd
+		return SYSTEM[k] if world_seed == 0 else Vector2.ZERO
 	# this game's round: the planets spread round the home one, each at its own distance
 	var prng := RandomNumberGenerator.new()
 	prng.seed = hash([world_seed, i / SYSTEM.size(), 11])
@@ -571,7 +631,23 @@ func planet_pos(i: int) -> Vector2:
 		var d := prng.randf_range(46000.0, 74000.0)
 		if q == k:
 			p = Vector2(cos(a), sin(a)) * d
-	return p + rnd
+	return p
+
+## planet i in galaxy cells (doubles)
+func planet_g(i: int) -> PackedFloat64Array:
+	var sg := system_g(i / SYSTEM.size())
+	var l := planet_local(i)
+	return PackedFloat64Array([sg[0] + l.x, sg[1] + l.y])
+
+## a - b, exactly (both galaxy points as doubles), as a Vector2
+func g_rel(a: PackedFloat64Array, b: PackedFloat64Array) -> Vector2:
+	return Vector2(a[0] - b[0], a[1] - b[1])
+
+## planet i in galaxy cells as a Vector2 (single precision: only exact near the first system; use
+## planet_g and g_rel for anything far out)
+func planet_pos(i: int) -> Vector2:
+	var g := planet_g(i)
+	return Vector2(g[0], g[1])
 
 ## ---- the planets ----
 ## Every planet is half as wide again as the first designs (PLANET_SCALE). The classic system is
@@ -801,7 +877,7 @@ const LEARN := {
 	"sandstone": {"find": [SAND]},
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
-	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]},
+	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]}, "sail": {"find": [STARIRON]},
 	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
 	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
@@ -1172,6 +1248,7 @@ const RECIPES := [
 	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISPBAR: 4, COPPERBAR: 3}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it carries the skiff through the next planet's storm belt. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids, and a world with an ore of its own wants some of that too."},
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
+	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars. Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 ]
 

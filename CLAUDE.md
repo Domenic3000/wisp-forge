@@ -104,8 +104,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   sky), the other planets (procedural discs from their biomes, `_disc_image`, or the pictures taken as you left
   them, a Sprite2D masked to a disc, placed by the world->screen affine) and markers at the edge pointing to each.
   Back below `R_SPACE - 10` moving inward: `exit()`, a short cooldown. Space shares the world coordinates of `space.home` (the planet the GPU holds, at
-  the origin); every planet's place is `Defs.planet_pos(i)` (`Defs.SYSTEM`, a round of five; the next round lies
-  400000 along x), and `bodies` are the round's planets relative to home. The nearest planet (`near`, `centre`)
+  the origin while you're near it: see The galaxy); every planet's place is `Defs.planet_g(i)` (`Defs.SYSTEM`, a
+  round of five, is a star system), and `bodies` are the planets of the systems near you. The nearest planet (`near`, `centre`)
   pulls, sets the zoom, and turns the view (`view_ang`, eased; `main.view_angle()` uses it in space); the skiff's
   `centre` is set to it so it levels over that planet.
 - Travel: once another planet is clearly nearer (`NEARER` of home's distance), `space.travel(i)` saves the old
@@ -167,6 +167,54 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   world: the close view's columns widen with height and would stretch it); its riders are drawn inside that
   transform (`_draw_mage(..., place)`), so they sit and turn with it. Air drag 0.97 a tick below `R_TOP` (none above);
   coming back from space it sheds its speed to 8 a tick, and glows coming down fast through the air.
+
+## The galaxy (scripts/galaxy.gd, space.gd, map_view.gd; user, 22 Nov: "eventually i want space to be infinite with content in space"; "there is no space map")
+- Systems: every round of five planets is a star system; system r holds planets 5r..5r+4 (so a Core Drive's
+  reach, index + 1, leads on to the next system out). `Defs.system_g(r)`: grid cell `spiral_cell(r)` (a square
+  spiral from (0, 0); `spiral_index` is its inverse) times `SYS_GAP` (600000) plus a seeded jitter; system 0 is
+  at (0, 0), so the first system's planets are where they always were. Galaxy positions are DOUBLES
+  (PackedFloat64Array [x, y]): `planet_g`, `system_g`, `g_rel(a, b)` (exact a - b as a Vector2); `planet_pos` is
+  only exact near the first system. `planet_local(i)` = the planet's offset in its system.
+- Space's origin follows you: space.gd `org` is the galaxy point at (0, 0) out there. Past `RECENTRE` (80000)
+  from it (and not `live`) everything out there is moved over (`_shift`: players, skiff, camera, wisp,
+  particles, vfx (`vfx.shift`), rocks, bodies, bolts) and `org` with it; back within `BACK_HOME` of home it's
+  put back on home exactly (the GPU world needs home at the origin). `home_at()` (home out there), `at_home()`
+  (landing and the live planet need it), `galaxy_of`/`local_of`, `player_g()`. Overlay draws only space's
+  things while not live, so the planet's objects never show at their old coordinates.
+- `bodies` are the planets of the systems within `Galaxy.BODY_R` of you (`_make_bodies` every 30 ticks; each
+  has "sys"); a new system's discs grow one a tick (`_grow_disc`, a plain disc meanwhile). With no planet near,
+  `near` is {} and "down" stays as it was. Markers: the planets of the system you're in, the three nearest
+  other systems, the nearest rock or comet, a waypoint.
+- Sectors (`Galaxy.SECTOR` 25000): `sector_content(s)` is grown from (world seed, s): an asteroid field
+  (`FIELD`), a great field (`BIG`) or a comet (`COMET`), nothing within `NEAR_PLANET` of a planet. `_stream`
+  loads the 3 x 3 round you (`_load_sector`: one rock a tick from `_sect_plan`) and drops sectors past 2
+  (`_unload_sector`). Asteroid `sect` (sector key; "" = home's clusters, saved with the world; `home_rocks()`),
+  `touched` (mined), `orbit`/`loop_at` (a comet: `Galaxy.comet_at(orbit, game.time)` from its loop's middle,
+  so it's where it should be whenever you come; tail by `_comet_tail`). A sector with a mined rock keeps it
+  in `sect_state` (rock saves with "rel" from the sector's corner).
+- Nebulae: `Galaxy.nebula(gx, gy)` (low-frequency noise: density, colour from a palette); space.gd tints the view
+  and drifts dust (`neb`, `neb_col`).
+- Charting: `_scan` every 30 ticks out there marks sectors within `SCAN_R` as `seen` and charts systems within
+  `CHART_R` (a toast); on a planet `planet_tick` marks its own. `save_state`/`load_state` in progress.json
+  "space" (seen, charted, waypoint, sectors). Saving far out still returns you to home's orbit band on load.
+- The Starsail (recipe "sail", Travel, `items["sail"]`; `PlayerInput.sail` = Shift): `_sail` runs the skiff up to
+  `SAIL_SPEED` (320) the way it's steered, capped by `_clearance` (what's in the way ahead: planets' air or
+  storm belts, rocks near the line) / `SAIL_CLEAR`; let go and it sheds the extra speed (x0.96 a tick). Near
+  stars streak past at speed; a glow round the skiff.
+- The map's "space" tab (map_view.gd `_draw_space`): galaxy coordinates north up, `gc` (centre, doubles), `gz`
+  (cells a pixel, `Z_MIN`..`Z_MAX`); WASD/arrows or a drag pan, the wheel zooms about the cursor, + / -, H
+  centres on you, a click sets `space.waypoint`, a right click (or Backspace) clears it. The fog and nebulae
+  are a small picture made again when the view moves (`_background`); sector grid and explored sectors'
+  fields and comets close in; every star (named once charted), a charted system's planets (discs, storm-belt
+  rings) closer in; you, the waypoint and a line to it, a scale bar. The HUD says "Deep space" and the nearest
+  planet's distance while you're away from home.
+- A journey to another planet only begins within `TRAVEL_R` (40000) of it (and clearly nearer than home): far
+  out, which planet is "nearer" means nothing, and making one is work.
+- Test: `_test_galaxy` ("galaxy"; in the full run right after the skiff's journey to Cindrel): the spiral, the
+  Starsail (sailing the way farthest from every planet, home too), recentring, a field streamed in and kept as
+  mined, a comet on its loop, a nebula (both chosen 80000+ from any planet, or a journey begins), the chart,
+  saving, back home and landing; pictures `galaxy_*.png`. The wild-life checks (`_test_creatures`,
+  `_test_ecology`) pass alone but now and then fail in the full run (what earlier checks leave near the start).
 
 ## Progression and climate (user, 20 Nov: fewer towns unless it's that kind of planet; the progression pass)
 - Settlement: `Defs.CLIMATES[kind]` "settle" scales buildings.gd's structure count (26 per 8192 columns x settle:
@@ -698,7 +746,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "galaxy", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

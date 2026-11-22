@@ -146,6 +146,15 @@ static func fx(id: String) -> Dictionary:
 
 # ------------------------------------------------------------------ ticking ---
 
+## everything moved by d (space's origin followed you: space.gd `_shift`)
+func shift(d: Vector2) -> void:
+	for i in P.size():
+		P[i] += d
+		if K[i] == BOLT:
+			V[i] += d
+	for f in _flashes:
+		f[0] += d
+
 func tick() -> void:
 	_t += 1
 	var t0 := Time.get_ticks_usec()

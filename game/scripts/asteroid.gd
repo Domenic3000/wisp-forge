@@ -21,6 +21,10 @@ var rad := 20.0              # its rough radius (cells): the light's sphere, the
 var dust := 0                # (carved since it was last rebuilt: rebuilding waits a few frames)
 var img: Image               # its picture, kept so mining only clears the pixels it takes
 var img_dirty := false
+var sect := ""                # the galaxy sector it belongs to (space.gd streams them); "" = one of home's clusters
+var touched := false          # mined since it was grown (its sector keeps it as it is now)
+var orbit := {}               # a comet's loop (galaxy.gd comet_at); empty for a drifting rock
+var loop_at := Vector2.ZERO   # (a comet: the middle of its loop, from its sector's corner)
 
 static func make(sd: int, radius: float, knd: String) -> RefCounted:
 	var a = load("res://scripts/asteroid.gd").new()
@@ -172,6 +176,8 @@ func split_off(idx: PackedInt32Array) -> RefCounted:
 	var b = load("res://scripts/asteroid.gd").new()
 	b.kind = kind
 	b.seed_ = seed_
+	b.sect = sect
+	b.touched = true
 	b.setup(i1 - i0 + 3, j1 - j0 + 3)
 	for k2 in idx:
 		var nk: int = (k2 / w - j0 + 1) * b.w + (k2 % w - i0 + 1)
@@ -205,6 +211,7 @@ func rebuild() -> void:
 func take(k: int) -> void:
 	cells[k] = 0
 	dust += 1
+	touched = true
 	if img != null:
 		img.set_pixel(k % w, k / w, Color(0, 0, 0, 0))
 		img_dirty = true

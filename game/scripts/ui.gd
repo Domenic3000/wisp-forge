@@ -12,6 +12,7 @@ extends CanvasLayer
 const TitleScreen := preload("res://scripts/title_screen.gd")
 const Build := preload("res://scripts/build.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
+const Galaxy := preload("res://scripts/galaxy.gd")
 const Icons := preload("res://scripts/icons.gd")
 
 var _book_head: Control = null   # the recipe book's heading in the forge (J scrolls there)
@@ -1047,9 +1048,9 @@ func _build_settings() -> void:
 			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate (dig a chest open)"],
 			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home; a workshop: load it"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
-			["C", "The Wisp Forge"], ["J", "Recipe book"], ["M", "Map (Tab: the system)"],
+			["C", "The Wisp Forge"], ["J", "Recipe book"], ["M", "Map (Tab: the galaxy)"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: shapes)"],
-			["K", "Call the skiff"], ["Esc", "Settings"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
+			["K", "Call the skiff"], ["Shift", "Starsail (skiff, in space)"], ["Esc", "Settings"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 12, GOLD))
 		grid.add_child(_label(pair[1], 12, TEXT))
 	right.add_child(grid)
@@ -1135,12 +1136,12 @@ func _build_map_bar() -> void:
 	v.add_child(map_hint)
 
 func show_map(g) -> void:
-	if g.map_tab == "system":
-		map_title.text = "The system"
-		map_hint.text = "Tab: the planet    M or Esc: close"
+	if g.map_tab == "space":
+		map_title.text = "The galaxy"
+		map_hint.text = "WASD or drag: move    wheel or + / -: zoom    click: waypoint (right click clears)    H: you    Tab: the planet    M: close"
 	else:
 		map_title.text = "Map of %s" % String(g.planet.get("name", ""))
-		map_hint.text = "A / D or drag: turn    W / S or wheel: zoom    Tab: the system    M or Esc: close"
+		map_hint.text = "A / D or drag: turn    W / S or wheel: zoom    Tab: the galaxy    M or Esc: close"
 	map_bar.visible = true
 
 func hide_map() -> void:
@@ -1282,6 +1283,20 @@ func update_hud(g) -> void:
 			wn = String(Defs.SKY_EVENTS[g.sky_ev]["name"])
 		if g.hazard != "":
 			wn += " · " + String(Defs.HAZARDS[g.hazard]["name"]) + "!"
+		var where: String = "%s · %s" % [g.planet["name"], g.region_name()]
+		if g.space.active and not g.space.at_home():
+			# (far out: where you are is the galaxy, not the planet's ground)
+			var nr: Dictionary = g.space.near
+			if nr.is_empty():
+				where = "Deep space"
+				depth_txt = "Between the stars"
+			else:
+				where = "Deep space · the %s system" % Galaxy.star_name(int(nr["sys"]))
+				var dk: float = maxf(0.0, (g.space.centre - g.space.galaxy_focus_local()).length() - float(nr["top"]))
+				depth_txt = "%s %.0fk away" % [nr["name"], dk / 1000.0]
+			wn = "Nebula" if g.space.neb > 0.3 else "Clear"
+			if g.space.sailing:
+				wn += " · Starsail"
 		var tiers := ["", "I · Stone", "II · Copper", "III · Obsidian", "IV · Core Siphon"]
 		var extra := ""
 		if g.heat_ward:
@@ -1297,7 +1312,7 @@ func update_hud(g) -> void:
 				nrel += 1
 		if nrel > 0:
 			extra += " · %d relic%s" % [nrel, "" if nrel == 1 else "s"]
-		info.text = "%s · %s\n%s · %s · %s\nStaff %s%s\n%d coins · %d FPS" % [g.planet["name"], g.region_name(), depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, int(g.items.get("coins", 0)), Engine.get_frames_per_second()]
+		info.text = "%s\n%s · %s · %s\nStaff %s%s\n%d coins · %d FPS" % [where, depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, int(g.items.get("coins", 0)), Engine.get_frames_per_second()]
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
 			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]

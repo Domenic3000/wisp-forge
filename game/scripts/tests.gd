@@ -214,7 +214,10 @@ func _test_towns() -> void:
 	if not tn_walk.is_empty():
 		g.player.pos = tn_walk[0].pos + tn_walk[0].pos.normalized() * 2.0
 		if g.towns.talk(g.player):
-			tn_said = tn_walk[0].say
+			# (whoever was nearest answered: not always the one you stood by, with folk walking past)
+			for tn_v in tn_walk + tn_keep:
+				if tn_said == "" and String(tn_v.say) != "":
+					tn_said = tn_v.say
 	# trade with a keeper
 	var tn_shop := false
 	var tn_buy := false
@@ -1350,6 +1353,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_workshops()
+		elif only == "galaxy":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_galaxy()
 		elif only == "lairs":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3754,16 +3761,16 @@ func run() -> void:
 			break
 	g.test_jump = false
 	g.space._ensure_rocks(true)
-	var as_n0: int = g.space.rocks.size()
+	var as_n0: int = g.space.home_rocks().size()
 	var as_kinds := {}
-	for as_a in g.space.rocks:
+	for as_a in g.space.home_rocks():
 		as_kinds[as_a.kind] = int(as_kinds.get(as_a.kind, 0)) + 1
 	var as_r = null                          # (the biggest stony one)
-	for as_a2 in g.space.rocks:
+	for as_a2 in g.space.home_rocks():
 		if as_a2.kind == "stony" and (as_r == null or as_a2.mass > as_r.mass):
 			as_r = as_a2
 	if as_r == null:
-		as_r = g.space.rocks[0]
+		as_r = g.space.home_rocks()[0]
 	as_r.omega = 0.0                          # (held still, so the spot you dig at stays put)
 	as_r.vel = Vector2.ZERO
 	# its surface on the side facing the planet, and you a little off it
@@ -3809,17 +3816,17 @@ func run() -> void:
 			as_in += 1
 	g.space.vel = Vector2.ZERO
 	# cut it through the middle (a band three cells wide across its grid): it drifts apart in two
-	var as_cnt0: int = g.space.rocks.size()
+	var as_cnt0: int = g.space.home_rocks().size()
 	var as_mid: int = as_r.h / 2
 	for as_j in range(as_mid - 1, as_mid + 2):
 		for as_i in as_r.w:
 			if as_r.cells[as_j * as_r.w + as_i] != 0:
 				as_r.take(as_j * as_r.w + as_i)
 	await _frames(20)
-	var as_cnt1: int = g.space.rocks.size()
+	var as_cnt1: int = g.space.home_rocks().size()
 	var as_d0 := 0.0
 	var as_other = null
-	for as_a3 in g.space.rocks:
+	for as_a3 in g.space.home_rocks():
 		if as_a3 != as_r and (as_other == null or (as_a3.pos - as_r.pos).length() < (as_other.pos - as_r.pos).length()):
 			as_other = as_a3
 	if as_other != null:
@@ -3841,7 +3848,7 @@ func run() -> void:
 	await _frames(60)
 	_ok("an asteroid: the view comes in close, you mine it, bump it and cut it in two",
 		as_n0 >= 6 and as_kinds.size() >= 2 and as_zoom < 1.6 and not as_live and as_inv1 - as_inv0 >= 20 and as_c0 - as_c1 >= as_inv1 - as_inv0
-			and as_in == 0 and as_cnt1 > as_cnt0 and as_d1 > as_d0 + 1.0 and as_nsave == g.space.rocks.size() and as_back >= 0,
+			and as_in == 0 and as_cnt1 > as_cnt0 and as_d1 > as_d0 + 1.0 and as_nsave == g.space.home_rocks().size() and as_back >= 0,
 		"%d rocks (%s); zoom by it %.2f (live planet %s); mined %d cells into the satchel (%d -> %d cells); inside it %d of 60 frames flying at it; cut through: %d -> %d rocks, the pieces %.1f -> %.1f apart; %d saved; back down after %d ticks" % [as_n0, str(as_kinds), as_zoom, as_live, as_inv1 - as_inv0, as_c0, as_c1, as_in, as_cnt0, as_cnt1, as_d0, as_d1, as_nsave, as_back])
 	g.test_god = true
 
@@ -4115,6 +4122,8 @@ func run() -> void:
 	_ok("the skiff carries you to another planet, made while you fly, and you land on it",
 		tv_board and tv_in >= 0 and tv_arrive >= 0 and tv_back >= 0 and tv_land >= 0 and int(g.planet["index"]) == 1 and absf(Defs.RS0 - float(g.planet["radius"])) < 0.5 and tv_with and absf(tv_above) < 200.0 and tv_saved and tv_gap < 250000,
 		"aboard %s; out after %d ticks; %s made and moved over to after %d ticks (held off while it was made: %s; longest frame %.0f ms at %s); in its orbit band %d ticks later, landed %d ticks after that, %.0f above its ground line (radius %.0f), you aboard %s; both worlds saved %s" % [tv_board, tv_in, g.planet["name"], tv_arrive, tv_held, tv_gap / 1000.0, tv_gap_at, tv_back - tv_arrive, tv_land, tv_above, Defs.RS0, tv_with, tv_saved])
+
+	await _test_galaxy()
 
 	# ---- a planet of another size: Fenhollow is laid out and generated to fit ----
 	var sp_t := Time.get_ticks_msec()
@@ -5860,12 +5869,17 @@ func _test_workshops() -> void:
 	var wk_back: Vector2 = g.player.pos
 	var wk_items0: Dictionary = g.items.duplicate(true)
 	var wk_n0: int = ws.list.size()
+	var wk_w0 := [g.rain, g.rain_target, g.weather_timer]     # (clear weather: rain pooling round a station puts its fire out)
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
 	var wk_rows := []
 	var wk_ok := true
 	for wk_m in [Defs.STONE, Defs.DIRT, Defs.SAND, Defs.COAL, Defs.COPPER, Defs.ASH, Defs.SHROOM, Defs.EMBER, Defs.WATER, Defs.BRICK, Defs.GLASS, Defs.PLANK, Defs.LEAF]:
 		g.player.inv[wk_m] += 60
 	# the slab
-	var wk_a := atan2(g.player.pos.y, g.player.pos.x) + 0.1
+	# (well away from where you arrived: the wild-life checks are set up there, and the burning cage's ash falls)
+	var wk_a := atan2(g.player.pos.y, g.player.pos.x) + 0.45
 	var wk_up := Vector2(cos(wk_a), sin(wk_a))
 	var wk_c: Vector2i = Build.cell_of(wk_up * (g.gpu.surf_at(wk_a).x + 150.0))
 	var WKW := 150
@@ -6033,7 +6047,7 @@ func _test_workshops() -> void:
 	for wk_s in 40:
 		if ws._spark(kiln):
 			wk_caught += 1
-	await _frames(300)
+	await _frames(150)
 	var wk_p1: int = wk_planks.call()
 	var wk_ok8: bool = kiln.lit and wk_caught > 0 and wk_p1 < wk_p0
 	wk_rows.append("%sa lit kiln's sparks: %d of 40 caught the planks round it, %d plank cells -> %d" % ["" if wk_ok8 else "(!) ", wk_caught, wk_p0, wk_p1])
@@ -6108,8 +6122,318 @@ func _test_workshops() -> void:
 	g.items = wk_items0
 	g.player.buffs.clear()
 	g.time = wk_time0
+	g.rain = float(wk_w0[0])
+	g.rain_target = float(wk_w0[1])
+	g.weather_timer = int(wk_w0[2])
 	_go(wk_back)
 	await _frames(20)
 	print("[workshops] " + "\n[workshops] ".join(wk_rows))
 	_ok("workshops: kilns, smelters and stills work their loads with real fire, secrets are found by trying mixes", wk_ok, "; ".join(wk_rows))
+
+## Infinite space (galaxy.gd, space.gd; user, 22 Nov): the galaxy's maths (the spiral of systems, the
+## first system where it always was), then out in the skiff: the Starsail runs it up to speed away from
+## every planet, space's origin follows (`_shift`) so you stay near (0, 0) however far out, the sectors
+## round you stream in with their asteroid fields; a rock mined in one is kept as it was when you leave
+## and come back; a comet keeps to its loop; a nebula tints the view; the map charts it all and holds a
+## waypoint; what you've charted is saved; and back home, space's origin is home again and you land.
+## Pictures: galaxy_sail.png, galaxy_field.png, galaxy_comet.png, galaxy_nebula.png, galaxy_map.png,
+## galaxy_map_far.png.
+func _test_galaxy() -> void:
+	var gx_rows := []
+	var gx_ok := true
+	var G = load("res://scripts/galaxy.gd")
+	# the maths
+	var gx_bij := true
+	var gx_seen := {}
+	for r in 3000:
+		var c: Vector2i = Defs.spiral_cell(r)
+		if gx_seen.has(c) or Defs.spiral_index(c) != r:
+			gx_bij = false
+		gx_seen[c] = true
+	var gx_first: bool = Defs.system_g(0)[0] == 0.0 and Defs.system_g(0)[1] == 0.0 and Defs.planet_pos(1) - Defs.planet_pos(0) == (Defs.SYSTEM[1] - Defs.SYSTEM[0] if Defs.world_seed == 0 else Defs.planet_pos(1) - Defs.planet_pos(0))
+	var gx_far: Vector2 = Defs.g_rel(Defs.planet_g(5 * 2000 + 3), Defs.planet_g(5 * 2000))
+	var gx_n := 0
+	for sy in 20:
+		for sx in 20:
+			if not G.sector_content(Vector2i(sx - 300, sy + 170)).is_empty():
+				gx_n += 1
+	var gx_ok1: bool = gx_bij and gx_first and gx_far.length() > 40000.0 and gx_far.length() < 80000.0 and gx_n > 120 and gx_n < 260
+	gx_rows.append("[home %d] %sthe spiral of systems is one to one %s, the first system as it was %s, a planet of system 2000 from its first exactly %.0f away, %d of 400 sectors hold something" % [g.space.home, "" if gx_ok1 else "(!) ", gx_bij, gx_first, gx_far.length(), gx_n])
+	gx_ok = gx_ok and gx_ok1
+	# the skiff, and up into space
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var gx_up: Vector2 = sk.pos.normalized()
+	sk.pos = gx_up * (Defs.R_SPACE - 11.0)
+	sk.vel = gx_up * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	# (well clear of home first: straight out)
+	for k1 in 200:
+		g.test_aim = sk.pos + sk.pos.normalized() * 1000.0
+		await _frames(1)
+	var gx_in: bool = g.space.active
+	var home0: int = g.space.home
+	# out, by the Starsail, the way with no planet in it
+	g.items["sail"] = true
+	var best_dir := Vector2.RIGHT
+	var best_sep := -1.0
+	var out_dir: Vector2 = sk.pos.normalized()
+	for q in 72:
+		var d := Vector2.from_angle(TAU * float(q) / 72.0)
+		# (as far as can be from the way to every planet, home too: sail near one and a journey to it
+		# begins, as it should)
+		var sep := 9.0
+		for b in g.space.bodies:
+			var o: Vector2 = b["pos"] - sk.pos
+			if o.length() < 1.0:
+				continue
+			sep = minf(sep, absf(angle_difference(o.angle(), d.angle())))
+		if sep > best_sep:
+			best_sep = sep
+			best_dir = d
+	print("[galaxy] out_dir %s best_dir %s (sep %.2f), skiff at %s" % [str(out_dir), str(best_dir), best_sep, str(sk.pos)])
+	g.test_sail = true
+	var gx_top := 0.0
+	var gx_rec0: int = g.space.stats["recentred"]
+	var gx_maxpos := 0.0
+	var gx_shot := false
+	for k2 in 720:
+		g.test_aim = sk.pos + best_dir * 1000.0
+		await _frames(1)
+		gx_top = maxf(gx_top, sk.vel.length())
+		gx_maxpos = maxf(gx_maxpos, sk.pos.length())
+		if not gx_shot and sk.vel.length() > 250.0:
+			gx_shot = true
+			await _frames(2)
+			_shot("galaxy_sail.png")
+	var gx_from_home: float = Defs.g_rel(g.space.player_g(), Defs.planet_g(home0)).length()
+	g.test_sail = false
+	for k3 in 200:
+		g.test_aim = sk.pos + best_dir * 1000.0
+		await _frames(1)
+		if sk.vel.length() < 60.0:
+			break
+	g.test_cast = false
+	var gx_slow: float = sk.vel.length()
+	var gx_ok2: bool = gx_in and gx_top > 250.0 and gx_from_home > 100000.0 and g.space.stats["recentred"] > gx_rec0 and gx_maxpos < g.space.RECENTRE + 1000.0 and not g.space.at_home() and gx_slow < 60.0
+	gx_rows.append("[home %d] %sout in space %s; the Starsail ran up to %.0f a tick, %.0f out from home, space's origin followed %d times (never more than %.0f from (0, 0)), let go it slowed to %.0f" % [g.space.home, "" if gx_ok2 else "(!) ", gx_in, gx_top, gx_from_home, g.space.stats["recentred"] - gx_rec0, gx_maxpos, gx_slow])
+	gx_ok = gx_ok and gx_ok2
+	# a field: its rocks stream in; one mined, left behind and come back to, as it was left
+	var gp: PackedFloat64Array = g.space.player_g()
+	var sc: Vector2i = G.sector_of(gp[0], gp[1])
+	var field_s = null
+	var comet_s = null
+	for rr in range(1, 12):
+		for dy in range(-rr, rr + 1):
+			for dx in range(-rr, rr + 1):
+				if maxi(absi(dx), absi(dy)) != rr:
+					continue
+				var s2: Vector2i = sc + Vector2i(dx, dy)
+				var cont: Array = G.sector_content(s2)
+				if cont.is_empty():
+					continue
+				# (well away from every planet: come near one and a journey to it begins, as it should)
+				var s2g: PackedFloat64Array = G.sector_g(s2)
+				var s2x: float = s2g[0] + (cont[0]["at"] as Vector2).x
+				var s2y: float = s2g[1] + (cont[0]["at"] as Vector2).y
+				var by_planet := false
+				for pr in G.systems_near(s2x, s2y, 200000.0):
+					for pk in Defs.SYSTEM.size():
+						if Defs.g_rel(Defs.planet_g(pr * Defs.SYSTEM.size() + pk), PackedFloat64Array([s2x, s2y])).length() < 80000.0:
+							by_planet = true
+				if by_planet:
+					continue
+				if field_s == null and cont[0]["type"] == "field":
+					field_s = s2
+				if comet_s == null and cont[0]["type"] == "comet":
+					comet_s = s2
+	var gx_ok3 := false
+	var f_n := -1
+	var f_got := -1
+	var f_saved := false
+	var f_back := -1
+	var f_c1 := -1
+	if field_s != null:
+		var fc: Dictionary = G.sector_content(field_s)[0]
+		var fsg: PackedFloat64Array = G.sector_g(field_s)
+		var fat: Vector2 = fc["at"]
+		var fkey: String = G.key_of(field_s)
+		sk.pos = g.space.local_of(PackedFloat64Array([fsg[0] + fat.x, fsg[1] + fat.y])) + Vector2(0, -1400.0)
+		sk.vel = Vector2.ZERO
+		await _frames(120)
+		var mine = null
+		f_n = 0
+		for a in g.space.rocks:
+			if a.sect == fkey:
+				f_n += 1
+				mine = a
+		_shot("galaxy_field.png")
+		if mine != null:
+			var c0: int = mine.count()
+			var took := 0
+			for ci in mine.cells.size():
+				if mine.cells[ci] != 0 and took < 40:
+					mine.take(ci)
+					took += 1
+			mine.settle_mass()
+			f_c1 = mine.count()
+			f_got = c0 - f_c1
+			# far off (the sector goes), then back
+			sk.pos += best_dir * 90000.0
+			await _frames(60)
+			f_saved = g.space.sect_state.has(fkey) and not g.space._loaded.has(fkey)
+			sk.pos = g.space.local_of(PackedFloat64Array([fsg[0] + fat.x, fsg[1] + fat.y])) + Vector2(0, -1400.0)
+			sk.vel = Vector2.ZERO
+			await _frames(120)
+			for a2 in g.space.rocks:
+				if a2.sect == fkey and a2.count() == f_c1:
+					f_back = f_c1
+		gx_ok3 = f_n == (fc["rocks"] as Array).size() and f_got == 40 and f_saved and f_back == f_c1
+	gx_rows.append("[home %d] %sa field's %d rocks streamed in, 40 cells mined (%d), kept when left %s, found again as left %s" % [g.space.home, "" if gx_ok3 else "(!) ", f_n, f_got, f_saved, f_back == f_c1 and f_c1 >= 0])
+	gx_ok = gx_ok and gx_ok3
+	# a comet on its loop
+	var gx_ok4 := false
+	var cm_moved := 0.0
+	var cm_err := -1.0
+	if comet_s != null:
+		var cc: Dictionary = G.sector_content(comet_s)[0]
+		var csg: PackedFloat64Array = G.sector_g(comet_s)
+		var cat: Vector2 = cc["at"]
+		var cp: Vector2 = G.comet_at(cc["rocks"][0]["orbit"], g.time)
+		sk.pos = g.space.local_of(PackedFloat64Array([csg[0] + cat.x + cp.x, csg[1] + cat.y + cp.y])) + Vector2(0, -260.0)
+		sk.vel = Vector2.ZERO
+		await _frames(90)
+		var cm = null
+		for a3 in g.space.rocks:
+			if not a3.orbit.is_empty():
+				cm = a3
+		if cm != null:
+			sk.pos = cm.pos + Vector2(0, -260.0)
+			sk.vel = Vector2.ZERO
+			var p0: Vector2 = cm.pos
+			await _frames(30)
+			cm_moved = cm.pos.distance_to(p0)
+			var want: Vector2 = g.space.local_of(PackedFloat64Array([csg[0] + cat.x, csg[1] + cat.y])) + G.comet_at(cm.orbit, g.time)
+			cm_err = cm.pos.distance_to(want)
+			# (close by for its picture, its tail streaming behind it)
+			for k6 in 40:
+				sk.pos = cm.pos + Vector2(-70.0, -60.0)
+				sk.vel = Vector2.ZERO
+				await _frames(1)
+			_shot("galaxy_comet.png")
+		gx_ok4 = cm != null and cm_moved > 20.0 and cm_err >= 0.0 and cm_err < 8.0
+	gx_rows.append("[home %d] %sa comet keeps to its loop: moved %.0f in half a second, %.1f off where its loop puts it" % [g.space.home, "" if gx_ok4 else "(!) ", cm_moved, cm_err])
+	gx_ok = gx_ok and gx_ok4
+	# a nebula
+	var nb_at = null
+	var gp2: PackedFloat64Array = g.space.player_g()
+	for ny in range(-30, 31):
+		for nx in range(-30, 31):
+			var tx: float = gp2[0] + float(nx) * 100000.0
+			var ty: float = gp2[1] + float(ny) * 100000.0
+			if float(G.nebula(tx, ty)[0]) > 0.7 and nb_at == null:
+				var nb_clear := true
+				for pr2 in G.systems_near(tx, ty, 200000.0):
+					for pk2 in Defs.SYSTEM.size():
+						if Defs.g_rel(Defs.planet_g(pr2 * Defs.SYSTEM.size() + pk2), PackedFloat64Array([tx, ty])).length() < 80000.0:
+							nb_clear = false
+				if nb_clear:
+					nb_at = PackedFloat64Array([tx, ty])
+	var gx_neb := -1.0
+	if nb_at != null:
+		sk.pos = g.space.local_of(nb_at)
+		sk.vel = Vector2.ZERO
+		await _frames(150)
+		gx_neb = g.space.neb
+		_shot("galaxy_nebula.png")
+	var gx_far2: float = Defs.g_rel(g.space.player_g(), Defs.planet_g(home0)).length()
+	var gx_ok5: bool = nb_at != null and gx_neb > 0.4 and sk.pos.length() < g.space.RECENTRE + 1000.0
+	gx_rows.append("[home %d] %sa nebula %.0fk out: thick %.2f round you, the skiff still %.0f from space's origin" % [g.space.home, "" if gx_ok5 else "(!) ", gx_far2 / 1000.0, gx_neb, sk.pos.length()])
+	gx_ok = gx_ok and gx_ok5
+	# the map: charted, explored, a waypoint
+	var wp_g: PackedFloat64Array = g.space.player_g()
+	g.space.waypoint = PackedFloat64Array([wp_g[0] + 30000.0, wp_g[1] - 12000.0])
+	g.open_map()
+	await _frames(10)
+	var map_ok: bool = g.state == "map" and g.map_tab == "space"
+	_shot("galaxy_map.png")
+	g.map_view.zoom_by(60.0)
+	await _frames(10)
+	_shot("galaxy_map_far.png")
+	g.close_map()
+	await _frames(4)
+	var ss: Dictionary = g.space.save_state()
+	var js = JSON.parse_string(JSON.stringify(ss))
+	var seen_n: int = g.space.seen.size()
+	var ch_n: int = g.space.charted.size()
+	g.space.load_state(js)
+	var gx_ok6: bool = map_ok and g.state == "play" and seen_n > 30 and g.space.seen.size() == seen_n and g.space.charted.size() == ch_n and g.space.waypoint != null and (field_s == null or g.space.sect_state.has(G.key_of(field_s)))
+	gx_rows.append("[home %d] %sthe galaxy chart opened %s; %d sectors explored and %d systems charted, saved and loaded (%d, %d), the waypoint kept %s" % [g.space.home, "" if gx_ok6 else "(!) ", map_ok, seen_n, ch_n, g.space.seen.size(), g.space.charted.size(), g.space.waypoint != null])
+	gx_ok = gx_ok and gx_ok6
+	g.space.waypoint = null
+	# home: space's origin goes back onto it, and you land
+	# (along the way you left: clear of the system's other planets, so no journey to one of them begins)
+	sk.pos = g.space.home_at() + best_dir * 30000.0
+	sk.vel = Vector2.ZERO
+	await _frames(5)
+	var gx_home: bool = g.space.at_home() and g.space.home == home0 and g.space.org[0] == Defs.planet_g(home0)[0] and g.space.org[1] == Defs.planet_g(home0)[1]
+	sk.pos = sk.pos.normalized() * (Defs.R_SPACE + 150.0)
+	sk.vel = -sk.pos.normalized() * 6.0
+	g.test_cast = true
+	var gx_back := -1
+	for k4 in 600:
+		g.test_aim = sk.pos * 0.3
+		await _frames(1)
+		if not g.space.active:
+			gx_back = k4
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	var gx_land := -1
+	for k5 in 1800:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			gx_land = k5
+			break
+	g.test_down = false
+	g.items.erase("sail")
+	await _frames(30)
+	# (the chart from home: the home system, close in)
+	g.open_map()
+	g._map_key(KEY_TAB)
+	g.map_view.gz = 300.0
+	g.map_view.centre_on_you()
+	await _frames(10)
+	_shot("galaxy_map_home.png")
+	g.close_map()
+	await _frames(10)
+	var gx_ok7: bool = gx_home and gx_back >= 0 and gx_land >= 0 and g.player.aboard == sk and g.space.live
+	gx_rows.append("[home %d] %sback home: space's origin on it exactly %s (home %d, was %d; travelling %s), in its orbit band after %d ticks, landed %d ticks later" % [g.space.home, "" if gx_ok7 else "(!) ", gx_home, g.space.home, home0, g.travelling, gx_back, gx_land])
+	gx_ok = gx_ok and gx_ok7
+	print("[galaxy] " + "\n[galaxy] ".join(gx_rows))
+	_ok("infinite space: the Starsail, space's origin following you, streamed sectors kept as you left them, comets, nebulae, the galaxy chart, and home again", gx_ok, "; ".join(gx_rows))
+
+func _shot(fname: String) -> void:
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join(fname))
 
