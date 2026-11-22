@@ -334,6 +334,8 @@ var test_cast := false       # test mode: hold the left button
 var test_dig := false        # test mode: hold the right button
 var test_sail := false       # test mode: hold Shift (the Starsail)
 var test_calm := false       # test mode: the biome guardians stay asleep (except while their own test runs)
+## (the test mode's world seed for a new journey: 0, the classic system, but in the "newgame" check)
+var test_seed := 0
 var test_no_wild := false    # test mode: no wild creatures come by themselves (their own test spawns them)
 # build mode (B): see build.gd
 var build_on := false
@@ -672,6 +674,10 @@ func _process(delta: float) -> void:
 	gpu.flush()
 	prof_add("read back", gpu.read_us)
 	gpu.read_us = 0
+	if not _autosave.is_empty():
+		tp = Time.get_ticks_usec()
+		_autosave_step()
+		prof_add("autosave", Time.get_ticks_usec() - tp)
 	if gpu.fresh:
 		tp = Time.get_ticks_usec()
 		_take_gpu_results()
@@ -2186,7 +2192,7 @@ func _tick() -> void:
 	if frame % 3600 == 0:
 		save_game()
 	if frame % 7200 == 0:
-		save_world(false)
+		_autosave_begin()
 
 func _update_camera(aim: Vector2) -> void:
 	var a := atan2(player.pos.y, player.pos.x)
@@ -3626,6 +3632,9 @@ func _check_cleared() -> void:
 		ui.toast("The area falls quiet", Color(0.7, 0.9, 1.0), 2.5)
 
 func _try_spawn() -> void:
+	if not _spawn_req.is_empty():
+		_spawn_finish()
+		return
 	spawn_timer -= 1
 	if spawn_timer > 0 or dead:
 		return
@@ -3634,11 +3643,7 @@ func _try_spawn() -> void:
 	if frame < quiet_until and player.pos.distance_to(quiet_at) < QUIET_R and sky_ev != "bloodmoon":
 		return
 	var night := _local_daylight(player.pos) < 0.3
-	var count := 0
-	for e in enemies:
-		if not e.boss:
-			count += 1
-	if count >= spawn_cap(night):
+	if _spawn_room() <= 0:
 		return
 	var a := atan2(player.pos.y, player.pos.x)
 	var sa: Vector4 = gpu.surf_at(a)
@@ -3688,7 +3693,6 @@ func _try_spawn() -> void:
 	# Foes come in from out of sight, never popping up (or dropping in) on screen. How far the
 	# view reaches from the mage, in world cells (a screen pixel is ustep * r cells across):
 	var reach_x := VW * 0.5 * zoom * maxf(1.0, ustep * r) + float(d["w"]) + 10.0
-	var reach_y := VH * 0.5 * zoom + float(d["h"]) + 10.0
 	var cv := _view()
 	var ca := atan2(cv.y, cv.x)
 	if (not d["fly"] or go == "burrow" or go == "slither") and r > sa.x - 14.0 and not swim:
@@ -3708,8 +3712,9 @@ func _try_spawn() -> void:
 			var first := spawn_enemy(type, gp)
 			if d.has("def"):
 				Ecology.on_spawn(self, first)
-			# (a pack or a herd comes together, a few strides apart, following the first)
-			for pk in pack - 1:
+			# (a pack or a herd comes together, a few strides apart, following the first: as many as the
+			# cap leaves room for)
+			for pk in mini(pack - 1, _spawn_room()):
 				var pa := ga + side * float(pk + 1) * (float(d["w"]) + 6.0) / maxf(gs.x, 1.0)
 				var mate := spawn_enemy(type, Vector2(cos(pa), sin(pa)) * (gpu.surf_at(pa).x + float(d["h"]) * 0.5 + 1.0))
 				mate.leader = first
@@ -3720,51 +3725,99 @@ func _try_spawn() -> void:
 	# nearer than SPAWN_MIN_DIST, read straight from the world there (the collision grid is little wider
 	# than the view, and a walker put in over the screen fell into it: user, 22 Nov). A walker stands on a
 	# floor, a flier is in open air, a swimmer in water; it waits there, still, until you come near.
+	# The read goes out with the next GPU frame (`gpu.request_rect`) and `_spawn_finish` places it when
+	# it's back: read at once, it stalled the frame (user, 22 Nov: a hitch).
+	_spawn_req = {"type": type, "reach": reach_x, "surf_flier": r > sa.x - 14.0 and not swim, "tries": 0}
+	_spawn_ask()
+
+## a waiting spawn's next look: a rectangle off to one side of you
+func _spawn_ask() -> void:
 	var pc := Build.cell_of(player.pos)
+	var side := -1 if randf() < 0.5 else 1
+	var dc := side * int(maxf(float(_spawn_req["reach"]), SPAWN_MIN_DIST) + randf_range(10.0, 70.0))
+	var c0 := pc.x + dc - SPAWN_RW / 2
+	var r0 := pc.y - (70 if bool(_spawn_req["surf_flier"]) else 45)
+	_spawn_req["c0"] = c0
+	_spawn_req["r0"] = r0
+	_spawn_req["id"] = gpu.request_rect(posmod(c0, Defs.NS), r0, SPAWN_RW, SPAWN_RH)
+	_spawn_req["t"] = frame
+	_spawn_req["tries"] = int(_spawn_req["tries"]) + 1
+
+## how many more foes the cap (`spawn_cap`, by the local time of day) has room for
+func _spawn_room() -> int:
+	var count := 0
+	for e in enemies:
+		if not e.boss:
+			count += 1
+	return spawn_cap(_local_daylight(player.pos) < 0.3) - count
+
+const SPAWN_RW := 40
+const SPAWN_RH := 90
+var _spawn_req := {}
+
+## A waiting spawn's rectangle is back: find an open box the foe's size in it (a walker on a floor);
+## no room, another look (three at most).
+func _spawn_finish() -> void:
+	var rr: Dictionary = gpu.take_rect(int(_spawn_req["id"]))
+	if rr.is_empty():
+		if frame - int(_spawn_req["t"]) > 20:
+			_spawn_req = {}              # (lost: a planet made meanwhile, say)
+		return
+	var type: String = _spawn_req["type"]
+	var d: Dictionary = Defs.enemy_def(type)
+	var swim: bool = d["def"].get("swim", false) if d.has("def") else false
+	var walker: bool = not d["fly"] and not swim
+	var surf_flier: bool = _spawn_req["surf_flier"]
 	var bw := int(ceil(float(d["w"]))) + 2
 	var bh := int(ceil(float(d["h"]))) + 2
-	var walker: bool = not d["fly"] and not swim
-	var surf_flier: bool = r > sa.x - 14.0 and not swim
-	for tries in 3:
-		var side := -1 if randf() < 0.5 else 1
-		var dc := side * int(maxf(reach_x, SPAWN_MIN_DIST) + randf_range(10.0, 70.0))
-		var RW := 40
-		var RH := 90
-		var c0 := pc.x + dc - RW / 2
-		var r0 := pc.y - (70 if surf_flier else 45)
-		var rr: Dictionary = gpu.read_rect(posmod(c0, Defs.NS), r0, RW, RH)
-		var fgs: PackedInt32Array = rr["fg"]
-		var open := func(t: int) -> bool:
-			var kd: int = Defs.KIND[t]
-			return (kd == Defs.K_LIQUID) if swim else (kd == Defs.K_EMPTY or kd == Defs.K_GAS)
-		var i0 := randi() % RW
-		for q in RW:
-			var ic := (i0 + q * 7) % RW
-			if ic - bw / 2 < 0 or ic + bw / 2 >= RW:
+	var c0: int = _spawn_req["c0"]
+	var fgs: PackedInt32Array = rr["fg"]
+	var RW := SPAWN_RW
+	var RH := SPAWN_RH
+	# open[x + y * RW], then run[...]: how many open cells end at that one, counting down from above
+	var run := PackedInt32Array()
+	run.resize(RW * RH)
+	for yy in RH:
+		for xx in RW:
+			var kd: int = Defs.KIND[fgs[yy * RW + xx] & 255]
+			var op: bool = (kd == Defs.K_LIQUID) if swim else (kd == Defs.K_EMPTY or kd == Defs.K_GAS)
+			run[yy * RW + xx] = ((run[(yy - 1) * RW + xx] if yy > 0 else 0) + 1) if op else 0
+	var i0 := randi() % RW
+	for q in 12:
+		var ic := (i0 + q * 7) % RW
+		if ic - bw / 2 < 0 or ic + bw / 2 >= RW:
+			continue
+		for jb in range(bh, RH - 1):
+			if walker:
+				var ft: int = Defs.KIND[fgs[jb * RW + ic] & 255]
+				if ft != Defs.K_SOLID and ft != Defs.K_POWDER:
+					continue
+			var fits := true
+			for xx2 in range(ic - bw / 2, ic + bw / 2 + 1):
+				if run[(jb - 1) * RW + xx2] < bh:
+					fits = false
+					break
+			if not fits:
 				continue
-			for jb in range(bh, RH - 1):
-				var fits := true
-				for yy in range(jb - bh, jb):
-					for xx in range(ic - bw / 2, ic + bw / 2 + 1):
-						if not open.call(fgs[yy * RW + xx] & 255):
-							fits = false
-							break
-					if not fits:
-						break
-				if not fits:
-					continue
-				var ft: int = fgs[jb * RW + ic] & 255
-				if walker and Defs.KIND[ft] != Defs.K_SOLID and Defs.KIND[ft] != Defs.K_POWDER:
-					continue
-				var sp := Build.cell_pos(c0 + ic, jb - bh / 2)
-				if surf_flier and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
-					continue                  # (a bird of the surface comes in through the air, not a cave)
-				var cfirst := spawn_enemy(type, sp)
-				if d.has("def"):
-					Ecology.on_spawn(self, cfirst)
-				if type == "bat" and randf() < 0.5:
-					spawn_enemy(type, sp + basis_r(atan2(sp.y, sp.x)) * 6.0 - basis_d(atan2(sp.y, sp.x)) * 4.0)
+			var sp := Build.cell_pos(c0 + ic, jb - bh / 2)
+			if surf_flier and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
+				continue                  # (a bird of the surface comes in through the air, not a cave)
+			if sp.distance_to(player.pos) < SPAWN_MIN_DIST - 2.0:
+				continue                  # (you came this way while it was read)
+			if _spawn_room() <= 0:
+				_spawn_req = {}               # (the cap filled up while this was read back)
 				return
+			var cfirst := spawn_enemy(type, sp)
+			if d.has("def"):
+				Ecology.on_spawn(self, cfirst)
+			if type == "bat" and randf() < 0.5 and _spawn_room() > 0:
+				spawn_enemy(type, sp + basis_r(atan2(sp.y, sp.x)) * 6.0 - basis_d(atan2(sp.y, sp.x)) * 4.0)
+			_spawn_req = {}
+			return
+	if int(_spawn_req["tries"]) < 3:
+		_spawn_ask()
+	else:
+		_spawn_req = {}
 
 ## Inside a cloud: wisps of vapour stream past you with the wind, in front of everything.
 func _cloud_wisps() -> void:
@@ -6040,7 +6093,7 @@ func start_game(use_save: bool) -> void:
 	else:
 		_delete_worlds()
 		# a new journey: a system of planets of its own (the test mode keeps the classic one)
-		Defs.world_seed = 0 if testing else 1 + randi() % 0xFFFFFE
+		Defs.world_seed = test_seed if testing else 1 + randi() % 0xFFFFFE
 		space.load_state({})
 		player.inv.fill(0)
 		# (a modest start: a little Wisp Mote, no Spark Bolt and no levitation until they're forged)
@@ -6546,7 +6599,14 @@ func _save_dir() -> String:
 	return d
 
 func _real_save_dir() -> String:
+	# beside the game folder while developing; an exported game (Build game.bat) keeps its saves in the
+	# player's own data folder (%APPDATA%\Wisp Forge\saves), never beside the .exe (Program Files can't be written)
 	var d := ProjectSettings.globalize_path("res://").path_join("../saves").simplify_path()
+	if OS.has_feature("template"):
+		d = OS.get_data_dir().path_join("Wisp Forge").path_join("saves")
+		if "--test" in OS.get_cmdline_user_args():
+			# (a built game's test run, `Wisp Forge.exe -- --test`, reports beside the .exe)
+			d = OS.get_executable_path().get_base_dir().path_join("saves")
 	if not DirAccess.dir_exists_absolute(d):
 		DirAccess.make_dir_recursive_absolute(d)
 	return d
@@ -6624,9 +6684,62 @@ func _apply_save(s: Dictionary) -> void:
 func _world_path(i: int) -> String:
 	return _save_dir().path_join("world_%d.wfw" % i)
 
+## The autosave (every two minutes): the world copied on the GPU at once, read back a slice a frame
+## (`gpu.snapshot_step`, 8 MB a frame, about 3 ms) and written on a thread, so play never stops for it.
+var _autosave := {}
+var autosave_log := []        # (each slice's time, for the tests)
+
+func _autosave_begin() -> void:
+	if planet.is_empty() or gpu == null or gpu.rd == null or travelling or not _autosave.is_empty():
+		return
+	if _save_task >= 0 and not WorkerThreadPool.is_task_completed(_save_task):
+		return
+	if chunks != null and not chunks.list.is_empty():
+		chunks.settle_all()
+	if not stamps.is_empty():
+		gpu.stamp(stamps, frame)
+		stamps.clear()
+	var ta := Time.get_ticks_usec()
+	_autosave = {"meta": _world_meta(false), "path": _world_path(int(planet["index"])), "index": int(planet["index"])}
+	prof_add("autosave: meta", Time.get_ticks_usec() - ta)
+	ta = Time.get_ticks_usec()
+	gpu.snapshot_begin()
+	prof_add("autosave: copy", Time.get_ticks_usec() - ta)
+
+func _autosave_step() -> void:
+	if travelling or planet.is_empty() or int(planet.get("index", -1)) != int(_autosave["index"]):
+		gpu.snapshot_cancel()
+		_autosave = {}
+		return
+	var ts := Time.get_ticks_usec()
+	var done: bool = gpu.snapshot_step(8 << 20)
+	autosave_log.append(Time.get_ticks_usec() - ts)
+	if not done:
+		return
+	if _save_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_save_task)
+	_save_task = WorkerThreadPool.add_task(_write_world_parts.bind(String(_autosave["path"]), gpu.snap_raw, String(_autosave["meta"]), gpu.snap_seen))
+	gpu.snap_raw = []
+	gpu.snap_seen = []
+	_autosave = {}
+
+## (on the saving thread) the autosave's slices joined, then written as any save
+func _write_world_parts(path: String, raw_parts: Array, meta: String, seen_parts: Array) -> void:
+	var raw := PackedByteArray()
+	for part in raw_parts:
+		raw.append_array(part)
+	var seen := PackedByteArray()
+	for part2 in seen_parts:
+		seen.append_array(part2)
+	_write_world_file(path, raw, meta, seen)
+
 func save_world(blocking: bool, without_skiff := false) -> void:
 	if planet.is_empty() or gpu == null or gpu.rd == null or travelling:
 		return
+	if not _autosave.is_empty():
+		# (a save of the world as it is now: the autosave on its way would only write an older one over it)
+		gpu.snapshot_cancel()
+		_autosave = {}
 	if _save_task >= 0:
 		if not WorkerThreadPool.is_task_completed(_save_task):
 			if not blocking:
@@ -6653,6 +6766,9 @@ func save_world(blocking: bool, without_skiff := false) -> void:
 func save_world_async(without_skiff := false) -> void:
 	if planet.is_empty() or gpu == null or gpu.rd == null or travelling:
 		return
+	if not _autosave.is_empty():
+		gpu.snapshot_cancel()
+		_autosave = {}
 	await saves_done()
 	if chunks != null and not chunks.list.is_empty():
 		chunks.settle_all()

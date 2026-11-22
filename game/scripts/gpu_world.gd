@@ -16,6 +16,12 @@ var plant_iters := 6     # background plant support passes per frame (plants.com
 var pending := false     # a submission is in flight
 var fresh := false       # results collected that main.gd hasn't taken yet
 var sub_frames := []     # the collision grid frames of the last submission
+## Rectangles read back WITH a frame instead of stalling it (`request_rect` / `take_rect`): they wait
+## in rect_reqs, go out with the next frame's commands (rect_out) and come back in its flush (rect_done)
+var rect_reqs := []
+var rect_out := []
+var rect_done := {}
+var _rect_id := 0
 var wait_us := 0         # how long the last collect waited for the GPU
 var read_us := 0         # and how long reading its results back took
 var gpu_us := {}         # GPU time per stage of the last frame (timestamps), for the profiler
@@ -629,6 +635,14 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 		rd.capture_timestamp("light")
 		cl = rd.compute_list_begin()
 		_dispatch(cl, "render", "render", [PW, PH, LW, LH], [], groups(PW, 16), groups(PH, 16))
+	if not sim_only:
+		# rectangles asked for since the last frame are copied out at its end (`request_rect`)
+		for rq in rect_reqs:
+			var rbuf := rd.storage_buffer_create(int(rq[3]) * int(rq[4]) * 8)
+			var rset := _mkset("rectread", [[0, world_buf], [8, aux_buf], [9, rbuf]])
+			_dispatch_set(cl, "rectread", rset, [posmod(int(rq[1]), Defs.NS), int(rq[2]), int(rq[3]), int(rq[4]), int(rq[5]), int(rq[6])], groups(int(rq[3]), 16), groups(int(rq[4]), 16))
+			rect_out.append([rq[0], rbuf, rset, int(rq[3]) * int(rq[4])])
+		rect_reqs.clear()
 	rd.compute_list_end()
 	rd.capture_timestamp("picture")
 	if not sim_only:
@@ -675,6 +689,13 @@ func flush() -> void:
 	tq = Time.get_ticks_usec()
 	view_img = Image.create_from_data(PW, PH, false, Image.FORMAT_RGBA8, vb)
 	read_parts["read: picture to image"] = Time.get_ticks_usec() - tq
+	for ro in rect_out:
+		var both := rd.buffer_get_data(ro[1]).to_int32_array()
+		var nn: int = ro[3]
+		rect_done[ro[0]] = {"fg": both.slice(0, nn), "bg": both.slice(nn, 2 * nn)}
+		rd.free_rid(ro[2])
+		rd.free_rid(ro[1])
+	rect_out.clear()
 	fresh = true
 	read_us = Time.get_ticks_usec() - t0
 
@@ -790,6 +811,21 @@ func read_rect(c0: int, r0: int, w: int, h: int, ax := -1, aw := 1) -> Dictionar
 	read_us += Time.get_ticks_usec() - t0
 	return {"fg": both.slice(0, w * h), "bg": both.slice(w * h, 2 * w * h)}
 
+## Ask for a rectangle of the world (as `read_rect`) without stalling: it goes out with the next frame
+## and comes back when that frame is read, a frame or two later. Returns an id for `take_rect`.
+func request_rect(c0: int, r0: int, w: int, h: int, ax := -1, aw := 1) -> int:
+	_rect_id += 1
+	rect_reqs.append([_rect_id, c0, r0, w, h, posmod(Defs.anchor_c if ax < 0 else ax, Defs.NS), aw])
+	return _rect_id
+
+## A requested rectangle ({"fg", "bg"}) once it's back (then forgotten), else {}.
+func take_rect(id: int) -> Dictionary:
+	if not rect_done.has(id):
+		return {}
+	var out: Dictionary = rect_done[id]
+	rect_done.erase(id)
+	return out
+
 ## Both layers (and, `with_seen`, the seen map after them: what a save keeps).
 func read_world(with_seen := false) -> PackedByteArray:
 	flush()
@@ -821,10 +857,87 @@ func read_world_async() -> Array:
 		var o := 0
 		while o < n:
 			var sz := mini(step, n - o)
-			out.append_array(rd.buffer_get_data(buf, o, sz))
+			out.append_array(_read_slice(buf, o, sz))
 			o += sz
 			await Engine.get_main_loop().process_frame
 	return [out, read_seen()]
+
+## An autosave's copy of the world: taken on the GPU in one go (a consistent moment, a millisecond or so),
+## then read back a slice a frame (`snapshot_step`) while the game goes on; read in one go, the whole
+## planet (175 MB for Verdance) held the frame for a moment every two minutes.
+var _snap_buf := RID()        # the snapshot being read (or none)
+var _slice_buf := RID()       # a slice at a time is copied here and read from here
+var _slice_n := 0
+var _snap_keep := RID()       # its buffer, made at the first autosave and kept till the world goes
+var _snap_ranges := []        # [offset, size, into "raw" or "seen"] still to read
+var snap_raw := []            # the slices read so far (joined on the saving thread: joined here,
+var snap_seen := []           # growing one array to 175 MB copied it over and over: a 46 ms frame)
+
+func snapshot_begin() -> void:
+	snapshot_cancel()
+	flush()
+	var n: int = Defs.total_cells() * 4
+	var sb: int = seen_bytes()
+	# (kept between autosaves: making a buffer this size took most of the 13 ms this step cost)
+	if not _snap_keep.is_valid():
+		_snap_keep = rd.storage_buffer_create(n * 2 + sb)
+	_snap_buf = _snap_keep
+	rd.buffer_copy(world_buf, _snap_buf, 0, 0, n)
+	rd.buffer_copy(aux_buf, _snap_buf, 0, n, n)
+	rd.buffer_copy(seen_buf, _snap_buf, 0, n * 2, sb)
+	rd.submit()
+	rd.sync()
+	snap_raw = []
+	snap_seen = []
+	_snap_ranges = [[0, n * 2, true], [n * 2, sb, false]]
+
+## Reads the next slice of the snapshot (call with nothing in flight: right after `flush`); true once
+## it's all read (snap_raw, snap_seen).
+func snapshot_step(step: int) -> bool:
+	if not _snap_buf.is_valid():
+		return true
+	flush()
+	var left := step
+	while left > 0 and not _snap_ranges.is_empty():
+		var rg: Array = _snap_ranges[0]
+		var sz: int = mini(left, int(rg[1]))
+		var part := _read_slice(_snap_buf, int(rg[0]), sz)
+		if bool(rg[2]):
+			snap_raw.append(part)
+		else:
+			snap_seen.append(part)
+		rg[0] = int(rg[0]) + sz
+		rg[1] = int(rg[1]) - sz
+		left -= sz
+		if int(rg[1]) <= 0:
+			_snap_ranges.pop_front()
+	if _snap_ranges.is_empty():
+		_snap_buf = RID()
+		return true
+	return false
+
+## A slice of a big buffer, copied on the GPU into a small one and read from there: read straight out
+## of the 175 MB world buffers every slice cost ~13 ms whatever its size; this way 4 MB takes ~1.5 ms.
+func _read_slice(buf: RID, off: int, sz: int) -> PackedByteArray:
+	flush()                   # (nothing may be in flight when this submits)
+	if not _slice_buf.is_valid() or _slice_n < sz:
+		if _slice_buf.is_valid():
+			rd.free_rid(_slice_buf)
+		_slice_buf = rd.storage_buffer_create(sz)
+		_slice_n = sz
+	rd.buffer_copy(buf, _slice_buf, off, 0, sz)
+	rd.submit()
+	rd.sync()
+	return rd.buffer_get_data(_slice_buf, 0, sz)
+
+func snapshot_busy() -> bool:
+	return _snap_buf.is_valid()
+
+func snapshot_cancel() -> void:
+	_snap_buf = RID()
+	_snap_ranges = []
+	snap_raw = []
+	snap_seen = []
 
 ## A saved world: both layers, then the seen map if the save has one (one from before it: none seen).
 func write_world(data: PackedByteArray) -> void:
@@ -841,6 +954,16 @@ func cleanup() -> void:
 	if rd == null:
 		return
 	flush()
+	snapshot_cancel()
+	if _snap_keep.is_valid():
+		rd.free_rid(_snap_keep)
+	_snap_keep = RID()
+	if _slice_buf.is_valid():
+		rd.free_rid(_slice_buf)
+	_slice_buf = RID()
+	_slice_n = 0
+	rect_reqs.clear()
+	rect_done.clear()
 	for k in sets:
 		if sets[k].is_valid() and rd.uniform_set_is_valid(sets[k]):
 			rd.free_rid(sets[k])

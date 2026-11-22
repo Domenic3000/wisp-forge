@@ -67,6 +67,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Vacuum (react.comp, row < 0): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
   holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
 - Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).
+- The parallax background (render.comp `skyColor`; user, 22 Nov: "make the background look higher detail and
+  fade into each other better"): far mountains (ridged noise at 0.12 of your speed, crests lit on the sun's
+  side by their slope, rock strata, snow over a ragged snowline, a pale crest line), far hills (0.25) and near
+  hills (0.5) with the tree line (each tree shaded by height and sun side, leaves speckled, pines in tiers,
+  ragged crowns). Hills take the colour of the biome's top ground (`palColor` of P.p[8 + 2b].z) mixed with
+  the haze; each layer is mottled in its own coordinates (so its detail drifts with it) and misted toward
+  its foot where a nearer layer rises in front (`mist`, 26-40 rows), so layers fade into each other.
 - The view (user, 20 Nov: "switch from bent strips to world coordinates"): the close view is the world as it is
   (setting "view": "world", the default), turned so up points away from the planet's centre, a pixel always
   `zoom` world units, so nothing squeezes going up or down; the horizon curves a little. `_write_frame_params`
@@ -450,11 +457,36 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`MENU_W`, one width), Play opens the journeys panel (`show_slots`; Back or Esc `show_main`): a card per save slot
   (`CARD_W`) and its Delete (`DEL_W`), an empty slot's card the whole row, so every row lines up. Test: `_test_ui` checks both and saves
   `ui_slots.png`.
+- Forge cards line up (user, 22 Nov: "the forge buttons are moving based on how much text is in the box"): a
+  row's cards are as tall as its tallest (GridContainer), and `_recipe_card` puts an expanding gap under the
+  description, then the lock text, the cost chips and ALWAYS a button (Forge, or greyed "Locked"/"Forged"), so
+  costs and buttons sit at the bottom of every card. Icons (missing artwork: wards, travel, staff and body
+  recipes all showed a red book): `Icons.thing(id)` (`THING_ART` shapes + `THINGS` id -> [shape, colours]: the
+  foci as staves by tier, feather, rings, bloom, crystal, the wards (shield, amulets, veil, mask), skiff, Core
+  Drive, engine, sail, beam, the smelter's band and edge, a recipe scroll), `Icons.prop(kind)` (a furniture
+  recipe drawn from the piece itself, seed 7, shrunk to 13 px) and `Icons.prop_rows(rows)` (a carried piece in
+  the satchel). ui `_recipe_icon(r)` picks; locked book pages show it dimmed; shops and stations use them too.
+  Shop and station panels are violet like the rest. Speech bubbles and keepers' "[F]" go on after the mages
+  (overlay `bubbles`), so the mage never hides the words.
 - The satchel is a grid of `_slot`s (icon at 2x, count), the spell bar slots with glyphs, their number, the
   cooldown and a red wash when mana is short (`_draw_slot_over`), the chosen spell's name over it; the forge
   fills the screen (`show_forge`: 3-5 columns), with a tab per category (jumps the list) and cost chips
   (`_cost_chip`); shops in two columns. Test: `_test_ui` ("ui": the font has every character the game writes,
   whole-pixel scale, satchel and spell bar on screen; pictures `ui_hud/forge/settings/shop/title.png`).
+
+## Building the game to share (Build game.bat; user, 22 Nov: "build the game into an easily distributable .exe")
+- `Build game.bat` (repo root): finds the console Godot in engine/, works out the template version from
+  `--version` (4.7.2.stable -> templates "4.7.2.stable", release "4.7.2-stable"), and if Godot's export templates
+  aren't in %APPDATA%\Godot\export_templates\<version> asks (Y/N, No after 30 s) before downloading them (~1 GB,
+  from the godotengine GitHub release; unpacked with tar). Then `--headless --export-release "Windows Desktop"`
+  (game/export_presets.cfg: one .exe with the pack embedded, `*.comp` shaders included as plain files, audio/
+  left out) into build\Wisp Forge\, the music copied beside it into "music", a README, and build\Wisp Forge.zip.
+  Its steps go to build\build_log.txt ("BUILD OK" at the end). build/ is git-ignored.
+- An exported game (`OS.has_feature("template")`): saves in %APPDATA%\Wisp Forge\saves (`_real_save_dir`; never
+  beside the .exe), music from the "music" folder beside the .exe (audio.gd `music_dir`). A built game's own test
+  run (`"Wisp Forge.exe" -- --test`, e.g. with saves\test_only.txt "newgame" beside it) reports into a saves
+  folder beside the .exe instead (run Build game.bat again afterwards: it wipes build\Wisp Forge first). Checked
+  22 Nov: the built game starts, compiles its shaders, plays its music, makes and saves a new world.
 
 ## Music (scripts/audio.gd)
 - Tracks in game/audio/music/ by name: mood (surface_day, surface_night, underground, deep, boss, space, title) or
@@ -840,7 +872,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "galaxy", "remove", "spawns", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -957,6 +989,24 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `main.screen_xf()` (world_to_screen as one Transform2D) when `screen_xf_ok()` (not the unrolled view), and
   particles read the light straight from `gpu.light_at`. The remaining spike is chunks' `read_rect` (a GPU sync
   when a tree or piece is lifted out, ~8 ms).
+- No stalls (user, 22 Nov: "a small hitch when starting a new game"; a performance pass): `gpu.read_rect` waits
+  for the frame in flight (flush + its own submit and sync), so code that reads now and then while you play
+  asks instead: `gpu.request_rect(c0, r0, w, h)` goes out with the next frame's commands (dispatched at the end
+  of `step`, read in its `flush`) and `take_rect(id)` has it a frame or two later. Spawning uses it
+  (`_spawn_req`, `_spawn_ask`, `_spawn_finish`: the first creature a few seconds into a new game stalled the
+  frame and then searched the block cell by cell; now open runs per column, `run`). The AUTOSAVE (every 7200
+  ticks) no longer reads the planet back in one go (about 175 MB at ~0.75 GB/s: a quarter-second freeze every
+  two minutes): `_autosave_begin` copies the world, back layer and seen map into a kept buffer on the GPU
+  (`gpu.snapshot_begin`, `_snap_keep`, made at the first autosave), `_autosave_step` (right after the frame's
+  flush) reads 8 MB a frame (`snapshot_step`), and `_write_world_parts` joins the slices and writes on a thread.
+  Reading a slice straight out of a big buffer costs ~13 ms a call whatever its size (Godot's path for a buffer
+  that size); `gpu._read_slice` copies it on the GPU into a small buffer (`_slice_buf`) and reads that: 4 MB in
+  ~1.5 ms. `read_world_async` (leaving a planet) uses it too.
+  A save of the world as it is now (`save_world`, `save_world_async`) cancels one on its way. Music is read on a
+  worker thread (audio.gd `_read_music`, taken in by `_take_music`). Off-screen foes aren't drawn (overlay: most
+  of them wait 160+ cells off), and `_sprite` reads the light once. Test: `_test_newgame` ("newgame": the title,
+  Play on an empty slot with a grown seed (`test_seed`), 900 frames traced with creatures coming by, then an
+  autosave; not in the full run).
 - Readback: `gpu.step` copies counts, light, the picture and the collision grids into one buffer (`rb_buf`, offsets
   `rb_off`) read in one call; `grid` is that whole buffer, so index it from `grid_off` (grids) and `light_off`
   (light), never from 0.

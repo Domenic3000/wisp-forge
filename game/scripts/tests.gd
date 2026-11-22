@@ -1397,6 +1397,8 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_remove()
+		elif only == "newgame":
+			await _test_newgame()
 		elif only == "spawns":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4875,7 +4877,7 @@ func _test_bench() -> void:
 ## The first frames after a planet is entered (user, 21 Nov: "a hitch on start up"): any frame over 40 ms is
 ## printed as `[<label>] frame N: T ms` with what took the time (the game's sections over 8 ms, the game's
 ## process, the drawing).
-func _trace_frames(label: String, n: int) -> void:
+func _trace_frames(label: String, n: int, over_ms := 40.0, part_ms := 8.0) -> void:
 	var tf_draw := {"pre": 0, "draw": 0}
 	var tf_pre := func() -> void:
 		tf_draw["pre"] = Time.get_ticks_usec()
@@ -4893,18 +4895,67 @@ func _trace_frames(label: String, n: int) -> void:
 		var tf_dt := tf_now - tf_t0
 		tf_t0 = tf_now
 		tf_worst = maxi(tf_worst, tf_dt)
-		if tf_dt > 40000:
+		if tf_dt > int(over_ms * 1000.0):
 			tf_big += 1
 			var tf_secs := []
 			for tf_s in g.prof:
-				if float(g.prof[tf_s][3]) > 8000.0:
+				if float(g.prof[tf_s][3]) > part_ms * 1000.0:
 					tf_secs.append("%s %.0f" % [tf_s, float(g.prof[tf_s][3]) / 1000.0])
 			print("[%s] frame %d: %.0f ms (%s; process %.0f ms, drawing %.0f ms)" % [label, tf_k, tf_dt / 1000.0, ", ".join(tf_secs),
 				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, float(tf_draw["draw"]) / 1000.0])
 		g.prof_reset()
 	RenderingServer.frame_pre_draw.disconnect(tf_pre)
 	RenderingServer.frame_post_draw.disconnect(tf_post)
-	print("[%s] %d frames: the slowest %.0f ms, %d over 40 ms" % [label, n, tf_worst / 1000.0, tf_big])
+	print("[%s] %d frames: the slowest %.0f ms, %d over %.0f ms" % [label, n, tf_worst / 1000.0, tf_big, over_ms])
+
+## A new journey as the player starts one (user, 22 Nov: "there is a small hitch when starting a new
+## game"): the title, then Play on an empty slot (a grown system, not the classic one), then the first
+## ten seconds traced frame by frame, every frame over 20 ms printed with its parts over 3 ms.
+func _test_newgame() -> void:
+	g.ui.show_title(true)
+	g.state = "title"
+	await _frames(90)
+	g.test_seed = 4242
+	var ng_t0 := Time.get_ticks_msec()
+	await g.start_game(false)
+	var ng_ms := Time.get_ticks_msec() - ng_t0
+	print("[newgame] made %s in %d ms" % [String(g.planet.get("name", "?")), ng_ms])
+	g.prof_reset()
+	g.hitch_us = 0
+	# (as in a real game: creatures come by, the first of them a few seconds in)
+	g.test_no_wild = false
+	await _trace_frames("newgame", 900, 20.0, 3.0)
+	g.test_no_wild = true
+	var ng_foes := 0
+	for e in g.enemies:
+		if not e.boss:
+			ng_foes += 1
+	print("[newgame] %d foes came by; draw calls %d, objects %d" % [ng_foes, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)])
+	_ok("a new journey starts without a hitch", g.hitch_us < 50000, "the game's longest frame of its own work %.0f ms (made in %d ms)" % [g.hitch_us / 1000.0, ng_ms])
+	# the two-minute autosave: copied on the GPU, read back a slice a frame, written on a thread
+	await g.saves_done()
+	var ng_path: String = g._world_path(int(g.planet["index"]))
+	var ng_m0 := FileAccess.get_modified_time(ng_path)
+	await _frames(70)                    # (file times are whole seconds)
+	g.hitch_us = 0
+	g.prof_reset()
+	g.autosave_log.clear()
+	g._autosave_begin()
+	var ng_frames := 0
+	while not g._autosave.is_empty() and ng_frames < 900:
+		await _frames(1)
+		ng_frames += 1
+	var ng_parts := []
+	for ng_s in g.prof:
+		if float(g.prof[ng_s][3]) > 3000.0:
+			ng_parts.append("%s %.1f" % [ng_s, float(g.prof[ng_s][3]) / 1000.0])
+	print("[autosave] the worst of each part (ms): %s; slices %d, the slowest %d us" % [", ".join(ng_parts), g.autosave_log.size(), g.autosave_log.max() if not g.autosave_log.is_empty() else 0])
+	var ng_hitch: int = g.hitch_us
+	await g.saves_done()
+	var ng_m1 := FileAccess.get_modified_time(ng_path)
+	_ok("the autosave goes on while you play", g._autosave.is_empty() and ng_m1 > ng_m0 and ng_hitch < 20000,
+		"read back over %d frames, the longest frame %.0f ms, the file written: %s" % [ng_frames, ng_hitch / 1000.0, ng_m1 > ng_m0])
+	g.test_seed = 0
 
 ## A modest start (user, 21 Nov): no levitation until it's forged (holding jump in the air you fall), then
 ## you float; the first spell is the Wisp Mote, and Spark Bolt and Levitation are forged.

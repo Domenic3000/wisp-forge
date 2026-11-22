@@ -11,3 +11,5 @@ Claude's outputs/
 # shader syntax-check output (tools/build_shaders.py)
 out/
 game/out/
+# the built game (Build game.bat)
+build/

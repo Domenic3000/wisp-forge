@@ -6,6 +6,7 @@
 extends RefCounted
 
 const INK := Color(0.03, 0.02, 0.06)
+const _PROPS := preload("res://scripts/props.gd")
 
 ## what a material's icon looks like (by id; the rest: a block, or a pile for powders, a drop for liquids)
 const MAT_STYLE := {
@@ -42,6 +43,52 @@ const ITEM_ART := {
 	"skull": [".###.", "#####", "#.#.#", "#####", ".#.#."],
 	"book": ["########.", "#rrrrrr#.", "#ryyyyr##", "#rrrrrr#w", "#ryyyyr#w", "#rrrrrr#w", "#rrrrrr#w", "########w", ".wwwwwwww"],
 }
+## things you forge or buy that aren't a material, spell or draught (a recipe's or ward's own picture;
+## `thing(id)` picks the art and its colours by id: `THINGS`)
+const THING_ART := {
+	"staff": [".......##.", "......#ow#", "......#wo#", ".....b.##.", "....b.....", "...b......", "..b.......", ".b........", "b........."],
+	"feather": [".......w.", "......wwl", ".....wwwl", "....wwwwl", "...wwwlw.", "..wwwlw..", "..wwlw...", ".wl......", ".l.......", "l........"],
+	"rings": ["..ooooo..", ".o.....o.", "o..www..o", "o.w...w.o", "o.w.y.w.o", "o.w...w.o", "o..www..o", ".o.....o.", "..ooooo.."],
+	"bloom": ["..p...p..", ".pPp.pPp.", "..pyyyp..", ".pPyyyPp.", "..pPpPp..", "....g....", "..g.g....", "...gg.g..", "....gg...", "....g...."],
+	"crystal": ["....#....", "...#w#...", "..#wo##..", "..#oo##..", ".#woo###.", ".#ooo###.", "..#oo##..", "...#o#...", "....#...."],
+	"shield": ["#########", "#ssssssS#", "#sffffsS#", "#sfwwfsS#", "#sfwwfsS#", ".#sffsS#.", ".#ssssS#.", "..#ssS#..", "...###..."],
+	"amulet": ["c.......c", ".c.....c.", "..c...c..", "...c.c...", "...###...", "..#ooo#..", "..#owo#..", "..#ooo#..", "...###..."],
+	"veil": ["..yyyyy..", ".yyyyyyy.", "yywyyyyyy", "yyyyyyyyy", "vvvvvvvvv", "vVvVvVvVv", "vvvvvvvvv", ".v.v.v.v."],
+	"mask": [".#######.", "#mmmmmmm#", "#m##m##m#", "#mmmmmmm#", "#mmm#mmm#", ".#mmmmm#.", "..#fff#..", "..#f#f#..", "...###..."],
+	"skiff": ["...ggggg...", "..g.....g..", ".g...o...g.", "bbbbbbbbbbb", ".bBBBBBBBb.", "..bbbbbbb..", "...o...o..."],
+	"drive": ["..#####..", ".#iiiii#.", "#ii###ii#", "#i#rrr#i#", "#i#rwr#i#", "#i#rrr#i#", "#ii###ii#", ".#iiiii#.", "..#####.."],
+	"engine": ["..iiiii..", ".iIIIIIi.", ".iIiiiIi.", ".iIIIIIi.", "..iiiii..", "...fff...", "..fwwwf..", "...fwf...", "....f...."],
+	"sail": ["....m....", "....ms...", "....mss..", "....msss.", "....mssss", "....msss.", "....mss..", "bbbbbbbbb", ".bbbbbbb."],
+	"lens": ["..###....", ".#www#...", "#wcccw#..", "#wcccwoo.", "#wcccwooo", ".#www#...", "..###....", "..#.#....", ".##.##..."],
+	"band": ["..#####..", ".#ooooo#.", "#oo...oo#", "#o.....o#", "#o..w..o#", "#oo...oo#", ".#ooooo#.", "..#####.."],
+	"blade": ["........w", ".......wo", "......wo.", ".....wo..", "....wo...", "...wo....", ".#wo.....", "..#......", ".b.#.....", "b........"],
+	"scroll": ["yyyyyyyy.", "ywwwwwwy.", ".wkkkkw..", ".wwwwww..", ".wkkkw...", ".wwwwww..", ".wkkkkw..", "ywwwwwwy.", "yyyyyyyy."],
+}
+## id -> [art, {char: colour}]
+const THINGS := {
+	"tier2": ["staff", {"b": Color(0.55, 0.36, 0.2), "o": Color(0.95, 0.55, 0.25), "w": Color(1, 0.85, 0.6), "#": Color(0.45, 0.22, 0.08)}],
+	"tier3": ["staff", {"b": Color(0.42, 0.28, 0.18), "o": Color(0.5, 0.3, 0.75), "w": Color(0.85, 0.7, 1.0), "#": Color(0.16, 0.08, 0.26)}],
+	"tier4": ["staff", {"b": Color(0.3, 0.2, 0.15), "o": Color(1.0, 0.4, 0.2), "w": Color(1, 0.95, 0.5), "#": Color(0.5, 0.1, 0.05)}],
+	"levitate": ["feather", {"w": Color(0.92, 0.95, 1.0), "l": Color(0.55, 0.6, 0.8)}],
+	"wide": ["rings", {"o": Color(0.4, 0.6, 1.0), "w": Color(0.85, 0.92, 1.0), "y": Color(1, 0.8, 0.3)}],
+	"vital": ["bloom", {"p": Color(0.9, 0.3, 0.45), "P": Color(1, 0.6, 0.7), "y": Color(1, 0.85, 0.35), "g": Color(0.3, 0.7, 0.3)}],
+	"mana": ["crystal", {"#": Color(0.12, 0.2, 0.55), "o": Color(0.35, 0.55, 1.0), "w": Color(0.85, 0.95, 1.0)}],
+	"ward": ["shield", {"#": Color(0.2, 0.2, 0.25), "s": Color(0.62, 0.64, 0.7), "S": Color(0.4, 0.42, 0.48), "f": Color(1.0, 0.45, 0.15), "w": Color(1, 0.88, 0.4)}],
+	"heat_ward": ["shield", {"#": Color(0.2, 0.2, 0.25), "s": Color(0.62, 0.64, 0.7), "S": Color(0.4, 0.42, 0.48), "f": Color(1.0, 0.45, 0.15), "w": Color(1, 0.88, 0.4)}],
+	"hearth": ["amulet", {"c": Color(0.85, 0.65, 0.3), "#": Color(0.45, 0.12, 0.05), "o": Color(1.0, 0.45, 0.15), "w": Color(1, 0.9, 0.5)}],
+	"tidecharm": ["amulet", {"c": Color(0.75, 0.78, 0.85), "#": Color(0.08, 0.2, 0.45), "o": Color(0.3, 0.6, 1.0), "w": Color(0.85, 0.95, 1.0)}],
+	"sunveil": ["veil", {"y": Color(1.0, 0.82, 0.3), "w": Color(1, 1, 0.85), "v": Color(0.82, 0.72, 0.55), "V": Color(0.95, 0.88, 0.72)}],
+	"fenmask": ["mask", {"#": Color(0.12, 0.22, 0.12), "m": Color(0.38, 0.6, 0.32), "f": Color(0.6, 0.6, 0.55)}],
+	"skiff": ["skiff", {"g": Color(0.6, 0.9, 1.0), "b": Color(0.5, 0.32, 0.18), "B": Color(0.72, 0.5, 0.3), "o": Color(0.55, 0.95, 1.0)}],
+	"drive": ["drive", {"#": Color(0.15, 0.15, 0.22), "i": Color(0.5, 0.55, 0.68), "r": Color(1.0, 0.35, 0.15), "w": Color(1, 0.9, 0.45)}],
+	"engine": ["engine", {"i": Color(0.4, 0.44, 0.55), "I": Color(0.65, 0.7, 0.82), "f": Color(0.4, 0.8, 1.0), "w": Color(0.9, 1, 1)}],
+	"sail": ["sail", {"m": Color(0.5, 0.32, 0.18), "s": Color(0.6, 0.92, 1.0), "b": Color(0.45, 0.3, 0.17)}],
+	"beam": ["lens", {"#": Color(0.3, 0.32, 0.4), "w": Color(0.75, 0.8, 0.9), "c": Color(0.75, 0.5, 1.0), "o": Color(0.85, 0.7, 1.0)}],
+	"gear:wispband": ["band", {"#": Color(0.15, 0.25, 0.35), "o": Color(0.5, 0.85, 0.95), "w": Color(1, 1, 1)}],
+	"gear:staredge": ["blade", {"w": Color(0.95, 0.95, 1.0), "o": Color(0.6, 0.65, 0.8), "#": Color(0.85, 0.7, 0.3), "b": Color(0.45, 0.3, 0.18)}],
+	"recipe": ["scroll", {"y": Color(0.75, 0.55, 0.3), "w": Color(0.95, 0.9, 0.75), "k": Color(0.45, 0.35, 0.3)}],
+}
+
 const ITEM_COL := {
 	"potion": {"#": Color(0.45, 0.08, 0.14), "r": Color(0.9, 0.2, 0.3), "w": Color(1, 0.85, 0.85), "c": Color(0.7, 0.52, 0.3)},
 	"coin": {"#": Color(0.6, 0.38, 0.06), "y": Color(1.0, 0.8, 0.25), "w": Color(1, 0.97, 0.75)},
@@ -103,6 +150,62 @@ static func item(key: String) -> ImageTexture:
 	if _cache.has(k):
 		return _cache[k]
 	var tex := _outlined(_art(ITEM_ART[key], ITEM_COL[key]))
+	_cache[k] = tex
+	return tex
+
+## a forged or bought thing's own picture (`THINGS`), or null when it has none
+static func thing(id: String) -> ImageTexture:
+	if not THINGS.has(id):
+		return null
+	var k := "t_" + id
+	if _cache.has(k):
+		return _cache[k]
+	var t: Array = THINGS[id]
+	var tex := _outlined(_art(THING_ART[t[0]], t[1]))
+	_cache[k] = tex
+	return tex
+
+## a piece of furniture's icon: its own pixel rows (props.gd's palette), shrunk to fit 13 x 13
+static func prop_rows(rows: Array) -> ImageTexture:
+	var k := "p_" + str(hash(rows))
+	if _cache.has(k):
+		return _cache[k]
+	var h := rows.size()
+	var w := 0
+	for r in rows:
+		w = maxi(w, (r as String).length())
+	var stp := maxi(1, int(ceil(float(maxi(w, h)) / 13.0)))
+	var ow := maxi(1, (w + stp - 1) / stp)
+	var oh := maxi(1, (h + stp - 1) / stp)
+	var img := Image.create(ow, oh, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in oh:
+		for x in ow:
+			# (the first filled pixel of the block, so thin legs and edges aren't lost)
+			var ch := "."
+			for dy in stp:
+				for dx in stp:
+					var yy := y * stp + dy
+					var xx := x * stp + dx
+					if ch == "." and yy < h and xx < (rows[yy] as String).length():
+						ch = (rows[yy] as String)[xx]
+			if ch != "." and _PROPS.CHARS.has(ch):
+				img.set_pixel(x, y, Color(String(_PROPS.PALETTE[int(_PROPS.CHARS[ch])])))
+			elif ch == "t":
+				img.set_pixel(x, y, Color(1.0, 0.7, 0.2))
+	var tex := _outlined(img)
+	_cache[k] = tex
+	return tex
+
+## a furniture recipe's icon: the piece drawn with a fixed seed (its look in the forge never flickers)
+static func prop(kind: String) -> ImageTexture:
+	var k := "pk_" + kind
+	if _cache.has(k):
+		return _cache[k]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var d: Dictionary = _PROPS.make(kind, rng, null)
+	var tex := prop_rows(d.get("rows", ["#"]))
 	_cache[k] = tex
 	return tex
 

@@ -71,16 +71,36 @@ func play(sname: String, wpos = null, vol := 1.0, pitch := 1.0) -> void:
 	p.play()
 
 func _process(_delta: float) -> void:
+	if _music_task >= 0:
+		_take_music()
 	for k in _cool.keys():
 		_cool[k] = int(_cool[k]) - 1
 	_update_music()
 
 # -------------------------------------------------------------------- music ---
+## Where the music is: game/audio/music, or in an exported game the "music" folder beside the .exe
+## (kept out of the game's pack, so its files stay plain and a track can be swapped by hand).
+static func music_dir() -> String:
+	if OS.has_feature("template"):
+		var outside := OS.get_executable_path().get_base_dir().path_join("music")
+		if DirAccess.dir_exists_absolute(outside):
+			return outside
+	return "res://audio/music"
+
+var _music_task := -1
+var _music_loaded := {}
+
+## The tracks are read on a worker thread (some 40 MB: read at start-up it held the window blank for a
+## moment); `_process` takes them in when they're ready.
 func _load_music() -> void:
-	var dir := "res://audio/music"
+	var dir := music_dir()
+	_music_task = WorkerThreadPool.add_task(_read_music.bind(dir))
+
+func _read_music(dir: String) -> void:
 	var d := DirAccess.open(dir)
 	if d == null:
 		return
+	var got := {}
 	for fn in d.get_files():
 		var path := dir.path_join(fn)
 		var stream: AudioStream = null
@@ -90,17 +110,28 @@ func _load_music() -> void:
 			m.loop = true
 			stream = m
 		elif fn.ends_with(".ogg"):
-			var o := AudioStreamOggVorbis.load_from_file(ProjectSettings.globalize_path(path))
+			var o := AudioStreamOggVorbis.load_from_file(path if path.is_absolute_path() and not path.begins_with("res://") else ProjectSettings.globalize_path(path))
 			if o:
 				o.loop = true
 				stream = o
-		if stream == null:
-			continue
-		var key := track_key(fn)
+		if stream != null:
+			got[fn] = stream
+	_music_loaded = got
+
+func _take_music() -> void:
+	if _music_task < 0 or not WorkerThreadPool.is_task_completed(_music_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_music_task)
+	_music_task = -1
+	var names := _music_loaded.keys()
+	names.sort()
+	for fn in names:
+		var key := track_key(String(fn))
 		if key != "":
 			if not tracks.has(key):
 				tracks[key] = []
-			tracks[key].append(stream)
+			tracks[key].append(_music_loaded[fn])
+	_music_loaded = {}
 	print("[Wisp Forge] music: %s" % str(tracks.keys()))
 
 ## which list a music file joins: "mood", or "kind:mood" for a planet kind's own ("" for none)

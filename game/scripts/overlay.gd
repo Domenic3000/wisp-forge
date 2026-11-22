@@ -405,8 +405,9 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	var z: float = game.zoom
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
 	draw_set_transform(sp, rot, sc)
-	var mod := Color(4, 4, 4) if white else (tint if glow else _lit(game.world_to_screen(wpos)) * tint)
-	mod.a = alpha * (1.0 if glow else _lit(game.world_to_screen(wpos)).a)
+	var lc: Color = Color(1, 1, 1) if glow else _lit(game.world_to_screen(wpos))
+	var mod := Color(4, 4, 4) if white else (tint if glow else lc * tint)
+	mod.a = alpha * lc.a
 	# feet (the last opaque row above the outline) rest on the bottom of the body box, wherever they are in
 	# the frame: a frame with empty rows under its feet (most of the grown creatures had one or two, a
 	# small one four) stood that much over the ground (user, 21 Nov: "look more like their feet are on
@@ -704,21 +705,29 @@ func _draw_all() -> void:
 			draw_texture(c.tex_f, c.img_origin, cm)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	tq = _part("draw: chunks", tq)
-	# what the villagers are saying (they're drawn before the chests: `_draw_folk`)
+	# what the villagers are saying (they're drawn before the chests: `_draw_folk`); the bubbles
+	# themselves go on after the mages, so a mage standing by never hides the words
+	var bubbles := []
 	for v2 in game.towns.folk:
 		if v2.fade > 0:
 			continue
 		if v2.say_t > 0 and v2.say != "":
-			_bubble(v2.pos, v2.say, clampf(float(v2.say_t) / 30.0, 0.0, 1.0))
+			bubbles.append([v2.pos, v2.say, clampf(float(v2.say_t) / 30.0, 0.0, 1.0)])
 		elif v2.keeper and (v2.pos as Vector2).distance_to(game.player.pos) < 60.0:
-			_bubble(v2.pos, "%s · %s  [F]" % [v2.name, Defs.SHOPS[v2.role]["title"]], 0.75)
+			bubbles.append([v2.pos, "%s · %s  [F]" % [v2.name, Defs.SHOPS[v2.role]["title"]], 0.75])
 		else:
 			_folk_mark(v2)
 
 	_draw_carcasses()
 	tq = _part("draw: words, carcasses", tq)
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
+	var vr := Rect2(-120.0, -120.0, float(game.VW) + 240.0, float(game.VH) + 240.0)
 	for e in game.enemies:
+		# (off the screen, nothing to draw: foes come in 160+ cells away and wait there, so most of the
+		# list often is; a serpent's tail can reach in from further off)
+		var reach: float = 120.0 + (float(e.trail.size()) * 3.0 if e.d.has("def") else 0.0)
+		if not vr.grow(reach - 120.0).has_point(game.world_to_screen(e.pos)):
+			continue
 		var tl: float = FoeAI.tell(e)
 		var tint := Color(1, 1, 1).lerp(Color(2.2, 0.75, 0.5), tl)
 		var sq := 1.0 - 0.22 * tl if (e.type == "slime" or e.type == "mimic") else 1.0
@@ -787,6 +796,8 @@ func _draw_all() -> void:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)
+	for bb in bubbles:
+		_bubble(bb[0], bb[1], bb[2])
 	tq = _part("draw: mages", tq)
 	# the skiff (over its riders: the hull hides their legs, the canopy is glass)
 	_draw_skiff()

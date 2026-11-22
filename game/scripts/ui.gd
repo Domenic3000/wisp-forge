@@ -623,7 +623,7 @@ func _build_forge() -> void:
 ## A village keeper's shop: what they sell (for coins) on the left, what they'll buy on the right, by
 ## their trade (towns.gd `shop_def`); towns.gd does the trading.
 func _build_shop() -> void:
-	shop = _panel(Color(0.07, 0.05, 0.035, 0.97), TRIM, 7)
+	shop = _panel(Color(0.05, 0.04, 0.09, 0.97), TRIM, 7)
 	shop.set_anchors_preset(Control.PRESET_CENTER)
 	shop.custom_minimum_size = Vector2(420, 280)
 	shop.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -694,9 +694,12 @@ func _sale_icon(it: Dictionary) -> Texture2D:
 	if it.has("chart"):
 		return Icons.item("letter")
 	if it.has("recipe"):
-		return Icons.item("book")
-	if it.has("item") or it.has("heat_ward"):
-		return Icons.mat(Defs.CRYSTAL)
+		return Icons.thing("recipe")
+	if it.has("heat_ward"):
+		return Icons.thing("heat_ward")
+	if it.has("item"):
+		var own: Texture2D = Icons.thing(String(it["item"]))
+		return own if own != null else Icons.mat(Defs.CRYSTAL)
 	if it.has("meal") or it.has("rest"):
 		return Icons.item("heart")
 	return Icons.item("coin")
@@ -760,7 +763,7 @@ func _render_shop() -> void:
 ## ten), its fire to feed, what's in it (click to take it back out), what it made, and what it knows how to
 ## make, its secrets as riddles you've heard or question marks.
 func _build_station() -> void:
-	station = _panel(Color(0.07, 0.045, 0.035, 0.97), TRIM, 7)
+	station = _panel(Color(0.05, 0.04, 0.09, 0.97), TRIM, 7)
 	station.set_anchors_preset(Control.PRESET_CENTER)
 	station.custom_minimum_size = Vector2(470, 300)
 	station.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -889,7 +892,8 @@ func _out_icon(key: String) -> Texture2D:
 		return Icons.item("potion")
 	if Defs.DRAUGHTS.has(key):
 		return Icons.draught(key)
-	return Icons.item("book")
+	var own: Texture2D = Icons.thing(key)
+	return own if own != null else Icons.thing("recipe")
 
 func _render_station() -> void:
 	for c in _st_body.get_children():
@@ -1565,15 +1569,18 @@ func _update_satchel(g) -> void:
 		n += 1
 	# furniture carried whole, one slot per kind
 	var fc := {}
+	var frows := {}
 	var forder := []
 	for it in g.player.furn:
 		var fn: String = it["name"]
 		if not fc.has(fn):
 			fc[fn] = 0
 			forder.append(fn)
+			frows[fn] = it.get("rows", [])
 		fc[fn] = int(fc[fn]) + 1
 	for fn2 in forder:
-		satchel.add_child(_slot(Icons.item("chair"), str(fc[fn2]), false, "%s  ×%d\nB, the Satchel tab, to set it down" % [fn2, fc[fn2]]))
+		var fic: Texture2D = Icons.prop_rows(frows[fn2]) if not (frows[fn2] as Array).is_empty() else Icons.item("chair")
+		satchel.add_child(_slot(fic, str(fc[fn2]), false, "%s  ×%d\nB, the Satchel tab, to set it down" % [fn2, fc[fn2]]))
 		n += 1
 	if n == 0:
 		var e := _label("Right-click\nto dig", 11, DIM)
@@ -1653,6 +1660,24 @@ func _render_forge() -> void:
 		_forge_scroll.scroll_vertical = int(bh.position.y))
 	forge_tabs.add_child(bt)
 
+## a recipe's icon: the spell's glyph, what it makes, its own picture (Icons.THINGS), the piece of
+## furniture itself, its ore, or a scroll
+func _recipe_icon(r: Dictionary) -> Texture2D:
+	if r.has("spell"):
+		return Icons.spell(String(r["spell"]))
+	if r.has("give") and not (r["give"] as Dictionary).is_empty():
+		return Icons.mat(int((r["give"] as Dictionary).keys()[0]))
+	var own: Texture2D = Icons.thing(String(r.get("id", "")))
+	if own != null:
+		return own
+	if r.has("furniture"):
+		return Icons.prop(String(r["furniture"]))
+	if r.has("ore") and int(r["ore"]) >= 0:
+		return Icons.mat(int(r["ore"]))
+	if r.has("potion") or String(r.get("cat", "")) == "Potions":
+		return Icons.item("potion")
+	return Icons.thing("recipe")
+
 ## a recipe not yet learned: its name, and where it's learned
 func _book_page(r: Dictionary) -> Control:
 	var p := PanelContainer.new()
@@ -1662,8 +1687,8 @@ func _book_page(r: Dictionary) -> Control:
 	p.add_child(v)
 	var top := _box(false, 3)
 	v.add_child(top)
-	var ic := _tex(Icons.item("book"))
-	ic.modulate = Color(0.6, 0.6, 0.7)
+	var ic := _tex(_recipe_icon(r))
+	ic.modulate = Color(0.45, 0.45, 0.55)
 	top.add_child(ic)
 	var nm := _label(String(r["name"]), 12, Color(0.62, 0.6, 0.72))
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -1692,19 +1717,7 @@ func _recipe_card(r: Dictionary) -> Control:
 	p.add_child(v)
 	var top := _box(false, 3)
 	v.add_child(top)
-	# its icon: the spell's glyph, what it makes, its ore, or a book
-	var it: Texture2D = Icons.item("book")
-	if r.has("spell"):
-		it = Icons.spell(String(r["spell"]))
-	elif r.has("give") and not (r["give"] as Dictionary).is_empty():
-		it = Icons.mat(int((r["give"] as Dictionary).keys()[0]))
-	elif r.has("ore") and int(r["ore"]) >= 0:
-		it = Icons.mat(int(r["ore"]))
-	elif String(r.get("cat", "")) == "Potions":
-		it = Icons.item("potion")
-	elif String(r.get("cat", "")) == "Furniture":
-		it = Icons.item("chair")
-	top.add_child(_tex(it))
+	top.add_child(_tex(_recipe_icon(r)))
 	var nm := _head(r["name"], 12, CREAM)
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
 	nm.custom_minimum_size.x = 120
@@ -1716,24 +1729,29 @@ func _recipe_card(r: Dictionary) -> Control:
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	dl.custom_minimum_size = Vector2(138, 0)
 	v.add_child(dl)
+	# (the cards of a row are as tall as its tallest: everything below the description sits at the
+	# bottom, so the costs and the button line up across the row whatever the text above them)
+	var gap := Control.new()
+	gap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(gap)
+	if not done and not unlocked:
+		var ll := _label(game.recipe_lock_text(r), 11, DIM)
+		ll.autowrap_mode = TextServer.AUTOWRAP_WORD
+		ll.custom_minimum_size = Vector2(138, 0)
+		v.add_child(ll)
 	var costs := HFlowContainer.new()
 	costs.add_theme_constant_override("h_separation", 5)
 	costs.add_theme_constant_override("v_separation", 1)
 	v.add_child(costs)
 	for k in r["cost"]:
 		costs.add_child(_cost_chip(int(k), int(r["cost"][k])))
-	if done:
-		v.add_child(_label("✓ Forged", 11, DIM))
-	elif not unlocked:
-		var ll := _label(game.recipe_lock_text(r), 11, DIM)
-		ll.autowrap_mode = TextServer.AUTOWRAP_WORD
-		ll.custom_minimum_size = Vector2(138, 0)
-		v.add_child(ll)
-	else:
-		var b := _button("Forge")
-		b.disabled = not aff
+	# every card ends in a button of the same size: Forge, or greyed out saying why not
+	var b := _button("Forged" if done else ("Locked" if not unlocked else "Forge"))
+	b.disabled = done or not unlocked or not aff
+	if not done and unlocked:
 		b.pressed.connect(_on_craft.bind(r))
-		v.add_child(b)
+	v.add_child(b)
 	return p
 
 func _on_hot_input(ev: InputEvent, idx: int) -> void:
