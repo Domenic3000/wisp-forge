@@ -925,7 +925,7 @@ func hide_forge() -> void:
 ## when the satchel can't pay), and the chosen piece's cost.
 func _update_build_bar(g) -> void:
 	var piece: Dictionary = g.build_piece()
-	var key := "%d|%d|%s|%d|%d|%d|%s|%d|%d|%s" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {})), g.build_shape, g.build_thick, str(g.build_prev.get("text", ""))]
+	var key := "%d|%d|%s|%d|%d|%d|%s|%d|%d|%s|%d" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {})), g.build_shape, g.build_thick, str(g.build_prev.get("text", "")), g.build_rise]
 	if key == _build_key:
 		return
 	_build_key = key
@@ -973,6 +973,9 @@ func _update_build_bar(g) -> void:
 			var ptxt: String = g.build_prev.get("text", "")
 			if ptxt != "":
 				hint += "\n" + ptxt
+		elif piece["kind"] == "stairs":
+			hint = "%s, %d high (%d steps): %s" % [piece["name"], g.build_rise, (g.build_rise + Build.STAIR_STEP - 1) / Build.STAIR_STEP, cost_txt if cost_txt != "" else "point at the floor where it starts"]
+			hint += "\nclick to build  ·  [ ] a step higher or lower  ·  - = a storey  ·  T turn it  ·  B leaves"
 		elif piece["kind"] == "carried":
 			hint = "%s: yours, carried in the satchel\nclick to set it down  ·  T mirror  ·  B leaves" % piece["name"]
 		else:

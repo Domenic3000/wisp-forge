@@ -522,6 +522,17 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   most of the bed is still there (`_home_pos`).
 - Collision grid background bits: 0x40 furniture, 0x80 built back wall, 0xC0 a tree (building over one would
   fell it, so build mode refuses; bushes are just covered).
+- Staircases (build.gd "stairs" pieces in "Doors & Stairs": Wooden, Stone, Brick; roadmap step 8): steps
+  `STAIR_STEP` (4) up and along, so the mage (step_h 5) walks up; a flight `STAIR_BAND` thick under the treads;
+  a post of back wall down to the floor every `STAIR_POST` columns and under the last step (support reaches only
+  12 cells sideways through planks: a flight held at its foot alone gave way); balusters and a two-thick handrail
+  (a one-cell diagonal touches only at corners and fell). `Build.stair_cells` / `stair_stamp` / `stair_cost` (a
+  quarter of the flight, a tenth of posts and rail); main `_update_build` "stairs": its foot on the highest ground
+  under its first step, it climbs away from you (`build_flip`, T), `build_rise` ([ ] a step, - = a storey,
+  8..160); the treads need open space, under them it merges into a hillside (never into anything built,
+  `_built_at`); a post through a tree refuses it ("a tree is in the way"). Test: `_test_stairs` ("stairs": on a
+  NATURAL slab in open air (a built one woke with the stairs on it and fell), stands, and you walk up it;
+  `stairs.png`).
 - Straight building (build.gd `SHAPES`, main's `_update_shape`): back walls (Back Walls tab) and solid blocks
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
@@ -656,7 +667,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

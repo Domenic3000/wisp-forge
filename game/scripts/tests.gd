@@ -1342,6 +1342,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_guardians()
+		elif only == "stairs":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_stairs()
 		elif only == "lairs":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2598,6 +2602,8 @@ func run() -> void:
 	_ok("build mode puts up a whole house", house_ok and house_doors == 2, "fits somewhere: %s, its doors: %d; last click: %s; %s" % [house_ok, house_doors, g.build_last, "; ".join(house_why)])
 	_ok("build mode puts up walls, furniture and doors", n_wall >= 8 and n_decor >= 20 and n_door >= 60 and doors_mid == doors_before + 1,
 		"wall cells %d (%d when painted), table cells %d (fit %s; %s; in its blueprint's box: %d at once, %d a second later, %d at the end; box %s, holds %s), door cells %d (fit %s), doors %d -> %d" % [n_wall, wall_first, n_decor, table_ok, table_last, table_now, table_later, count_decor.call(rawb), str([tstamp.get("x0"), tstamp.get("y0"), tstamp.get("w"), tstamp.get("h")]), str(box_mats), n_door, door_ok, doors_before, doors_mid])
+
+	await _test_stairs()
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
 	var furn0: int = g.player.furn.size()
@@ -5368,6 +5374,85 @@ func _test_wardens() -> void:
 	await _frames(60)
 	_ok("each dungeon's warden waits in its hall, fights, and its fall breaks the reliquary's ward", wn_list.size() >= 2 and wn_ok == wn_list.size(),
 		"%d wardens: %s" % [wn_list.size(), "; ".join(wn_rows)])
+
+
+## Staircases (build mode, roadmap step 8): a flight one storey high set down on clear ground still
+## stands a few seconds later (its posts hold it up), and the mage walks up it to the top
+func _test_stairs() -> void:
+	var sr_back: Vector2 = g.player.pos
+	g.player.inv[Defs.PLANK] += 400
+	g.player.inv[Defs.WOOD] += 200
+	var sr_foot := 0
+	var sr_gr := 0
+	var sr_fit := false
+	var sr_why := ""
+	if not g.build_on:
+		g._toggle_build()
+	g.build_cat = 1
+	var sr_list: Array = g.build_list()
+	for sr_k in sr_list.size():
+		if String(sr_list[sr_k]["name"]) == "Wooden Stairs":
+			g.build_idx[1] = sr_k
+	g.build_flip = false
+	g.build_rise = 40
+	# (on a slab of stone up in open air, so no tree or house is in its way, wherever you arrived)
+	var sr_a := atan2(g.player.pos.y, g.player.pos.x) - 0.12
+	var sr_up := Vector2(cos(sr_a), sin(sr_a))
+	var sr_c: Vector2i = Build.cell_of(sr_up * (g.gpu.surf_at(sr_a).x + 150.0))
+	var SRW := 110
+	var sr_d := PackedInt32Array()
+	sr_d.resize(SRW * 4)
+	sr_d.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)     # (natural rock: a built slab would wake with the stairs on it and fall)
+	g.stamps.append({"x0": posmod(sr_c.x, Defs.NS), "y0": sr_c.y, "w": SRW, "h": 4, "data": sr_d, "ax": sr_c.x, "aw": SRW})
+	await _frames(4)
+	sr_foot = sr_c.x + 70                         # it climbs toward lower columns (right on screen)
+	sr_gr = sr_c.y
+	_go(_cell_pos(sr_foot + 18, sr_gr - 12, sr_c.x, SRW))
+	await _frames(30)
+	g.test_aim = _cell_pos(sr_foot, sr_gr - 3, sr_c.x, SRW)
+	await _frames(4)
+	sr_fit = g.build_prev.get("ok", false)
+	sr_why = g.build_why
+	var sr_cost: String = str(g.build_piece().get("cost", {}))
+	g.build_click = true
+	await _frames(20)
+	g.test_aim = Vector2.ZERO
+	if g.build_on:
+		g._toggle_build()
+	var sr_count := func() -> int:
+		var rr: Dictionary = g.gpu.read_rect(sr_foot - 44, sr_gr - 50, 48, 60)
+		var n := 0
+		for v in rr["fg"]:
+			if (int(v) & 255) == Defs.PLANK:
+				n += 1
+		return n
+	await _frames(10)
+	var sr_n0: int = sr_count.call()
+	await _frames(240)
+	var sr_n1: int = sr_count.call()
+	# walk up it
+	_go(_cell_pos(sr_foot + 10, sr_gr - 12, sr_c.x, SRW))
+	await _frames(40)
+	var sr_r0: float = g.player.pos.length()
+	var sr_best := 0.0
+	g.test_move = 1
+	for sr_f in 300:
+		await _frames(1)
+		sr_best = maxf(sr_best, g.player.pos.length() - sr_r0)
+		if sr_best >= 38.0:
+			break
+	g.test_move = 0
+	await _frames(20)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("stairs.png"))
+	# (cleared away again: the slab, the flight, its posts and rail)
+	var sr_clear := PackedInt32Array()
+	sr_clear.resize(SRW * 64)
+	sr_clear.fill(Defs.AIR)
+	g.stamps.append({"x0": posmod(sr_c.x, Defs.NS), "y0": sr_c.y - 60, "w": SRW, "h": 64, "data": sr_clear, "ax": sr_c.x, "aw": SRW})
+	_go(sr_back)
+	await _frames(10)
+	_ok("build mode: a staircase stands on its posts and you walk up it", sr_fit and sr_n0 >= 120 and sr_n1 >= sr_n0 * 0.95 and sr_best >= 32.0,
+		"fits %s (%s), cost %s; %d plank cells placed, %d four seconds later; walking up it you rose %.0f of its 40" % [sr_fit, sr_why, sr_cost, sr_n0, sr_n1, sr_best])
 
 ## The guardians' lairs dressed as places (lairs.gd; user, 21 Nov: "make the boss arenas feel waaay more
 ## epic"): each has banners, a background of colonnade, set and statue, and its sure chest; pictures of

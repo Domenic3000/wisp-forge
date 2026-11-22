@@ -328,6 +328,7 @@ var build_last_stamp := {}
 var _low_hp_t := 0               # when the low-health reminder may show again    # and where its blueprint went
 var build_w := 40             # structures: width ([ and ]), storeys (- and =), style (T)
 var build_floors := 1
+var build_rise := 40          # a staircase's height (one storey: Buildings.STOREY)
 var build_style := 0
 var _struct_key := ""
 var _struct := {}             # the planned structure under the cursor (worked out when something changes)
@@ -4515,6 +4516,13 @@ func _build_key(k: int) -> bool:
 		build_thick = clampi(build_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
 		return true
 	var structure: bool = build_piece().get("kind", "") == "structure"
+	var stairs: bool = build_piece().get("kind", "") == "stairs"
+	if stairs and (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT):
+		build_rise = clampi(build_rise + (Build.STAIR_STEP if k == KEY_BRACKETRIGHT else -Build.STAIR_STEP), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
+		return true
+	if stairs and (k == KEY_MINUS or k == KEY_EQUAL):
+		build_rise = clampi(build_rise + (40 if k == KEY_EQUAL else -40), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
+		return true
 	if k == KEY_R:
 		build_seed = randi()
 		return true
@@ -4537,6 +4545,10 @@ func _build_key(k: int) -> bool:
 			build_idx[build_cat] = n
 		return true
 	return false
+
+## a block someone built (a structure's, or yours) at a cell, not the planet's own ground
+func _built_at(col: int, row: int) -> bool:
+	return type_at(Build.cell_pos(col, row)) in [Defs.BRICK, Defs.MASONRY, Defs.PLANK, Defs.TILE, Defs.GLASS, Defs.MOSSBLOCK, Defs.RUNESTONE, Defs.WOODDOOR]
 
 func _solid_at(col: int, row: int) -> bool:
 	var t := type_at(Build.cell_pos(col, row))
@@ -4684,6 +4696,70 @@ func _update_build(m: Mage) -> void:
 		tree_in_way = _struct.get("tree", false)
 		build_prev = {"tex": _struct.get("tex"), "corner": _struct.get("corner", Vector2.ZERO), "ok": ok and not cost.is_empty(), "cells": []}
 		place = {"structure": _struct}
+	elif kind == "stairs":
+		# its foot where you point, on the highest ground under its first step; it climbs away from you
+		# (T turns it), a post down to the floor every few columns
+		var sdir := 1 if build_flip else -1
+		var sbottom := _floor_span(cell.x if sdir > 0 else cell.x - Build.STAIR_STEP + 1, Build.STAIR_STEP, cell.y - 6, 40)
+		if sbottom < 0:
+			ok = false
+			build_why = "no floor under its foot"
+			sbottom = cell.y
+		var sc := Build.stair_cells(cell.x, sbottom, build_rise, sdir)
+		var post_to := {}
+		var free_bg := {}
+		var fcol := Color.hex((Defs.PAL[int(piece["mat"]) * 4] << 8) | 0xff)
+		var bcol := Color.hex((Defs.PAL[int(piece["post"]) * 4] << 8) | 0xff).darkened(0.35)
+		# the treads need open space; under them the flight merges into a hillside it meets (ground
+		# there is left as it is), but never into anything built
+		var kept := []
+		for f in sc["front"]:
+			var fc := Vector2i(int(f[0]), int(f[1]))
+			if not _open_at(fc.x, fc.y):
+				var ft := type_at(Build.cell_pos(fc.x, fc.y))
+				if not f[2] and _solid_at(fc.x, fc.y) and ft != Defs.WOODDOOR and not _built_at(fc.x, fc.y):
+					continue
+				if ok:
+					build_why = "cell %s: %s" % [str(fc), Defs.NAMES[ft]]
+				ok = false
+			kept.append(f)
+			cells.append([Build.cell_pos(fc.x, fc.y), fcol])
+		sc["front"] = kept
+		var sheld := 0
+		for q in Build.STAIR_STEP:
+			if _solid_at(cell.x + sdir * q, sbottom + 1):
+				sheld += 1
+		if sheld * 2 < Build.STAIR_STEP:
+			ok = false
+			build_why = "its foot isn't on the ground"
+		# (a post goes down to the floor; one that would cut through a tree means the tree is in the way:
+		# left out, the flight there would have nothing to hold it and give way)
+		for pp in sc["posts"]:
+			var fr := _floor_below(int(pp[0]), int(pp[1]) + 1, 120)
+			if fr >= 0:
+				post_to[int(pp[0])] = fr
+				for r in range(int(pp[1]), fr + 1):
+					var pbg := _bg_at(int(pp[0]), r)
+					if pbg == 0:
+						free_bg[Vector2i(int(pp[0]), r)] = true
+					elif pbg == 3:
+						tree_in_way = true
+						if ok:
+							build_why = "a tree where a post goes"
+						ok = false
+		for rl in sc["rail"]:
+			if _bg_at(int(rl[0]), int(rl[1])) == 0:
+				free_bg[Vector2i(int(rl[0]), int(rl[1]))] = true
+		var st2 := Build.stair_stamp(sc, post_to, free_bg, int(piece["mat"]), int(piece["post"]), int(piece["rail"]))
+		var front_at := {}
+		for f2 in sc["front"]:
+			front_at[Vector2i(int(f2[0]), int(f2[1]))] = true
+		for kb in free_bg:
+			if not front_at.has(kb):
+				cells.append([Build.cell_pos(kb.x, kb.y), bcol])
+		piece["cost"] = Build.stair_cost(int(piece["mat"]), int(piece["post"]), int(st2["front"]), int(st2["back"]))
+		cost = Build.payable(piece, m.inv)
+		place = {"stamp": st2["stamp"]}
 	elif kind == "platform":
 		for i in Build.PLATFORM_W:
 			var cx := cell.x - Build.PLATFORM_W / 2 + i

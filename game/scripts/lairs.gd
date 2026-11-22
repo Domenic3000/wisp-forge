@@ -93,6 +93,8 @@ class Lay:
 	var sea := -1                 # a drowned lair: the water's top row (else -1)
 	var gtop := PackedInt32Array()   # the ground's top row under each blueprint column (foundations)
 	var sd := 0
+	var simg: Image = null        # the guardian's statue pose (drawn once a lair)
+	var simg_done := false
 
 	func _init(p_pl, p_bp, boss: Dictionary, bio: String, w0: int, o: int, f: int, rt: bool) -> void:
 		pl = p_pl
@@ -372,8 +374,14 @@ static func brazier(L: Lay, i: int, base: int, hgt: int, stand: int, bowl: int, 
 ## a guardian's effigy in stone (background): its statue pose scaled to fit maxw x maxh, standing on row
 ## base, centred on column cx, facing toward the gate (`face` -1 = left). The picture's dark outline is
 ## the dark stone, its light parts the light stone, the rest the main stone; its eyes glow.
+static func statue_img(L: Lay) -> Image:
+	if not L.simg_done:
+		L.simg = BossArt.statue("boss_" + L.biome, L.bd["body"])
+		L.simg_done = true
+	return L.simg
+
 static func statue(L: Lay, cx: int, base: int, maxw: float, maxh: float, face: int) -> Vector2i:
-	var img: Image = BossArt.statue("boss_" + L.biome, L.bd["body"])
+	var img: Image = statue_img(L)
 	if img == null:
 		return Vector2i.ZERO
 	var sc := minf(maxh / float(img.get_height()), maxw / float(img.get_width()))
@@ -487,7 +495,7 @@ static func far_end(L: Lay, ua: int, mass: bool, cap: int) -> Vector2i:
 	var maxh := float(mini(cap - rise * steps - (62 if mass else 14), 84))
 	var maxw := float(ub - p0 - 24)
 	var scx := (p0 + 18 + ub) / 2
-	var img: Image = BossArt.statue("boss_" + L.biome, L.bd["body"])
+	var img: Image = statue_img(L)
 	var sz := Vector2i(int(maxw), int(maxh))
 	if img != null:
 		var sc := clampf(minf(maxh / float(img.get_height()), maxw / float(img.get_width())), 0.6, 3.0)

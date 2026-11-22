@@ -5,6 +5,7 @@ extends RefCounted
 ##    they are load-bearing like a generated building's walls;
 ##  - doors (a 3 x 30 doorway filled with door cells, then opened and closed like any other door);
 ##  - platforms (a strip of one-way scaffold);
+##  - staircases (a flight of steps you walk up, on posts down to the floor, with a handrail);
 ##  - furniture and outdoor details, grown by props.gd: you see the exact design before placing it,
 ##    R rolls a new one, T mirrors it.
 ## Placed things are ordinary cells (they obey the physics: put a shelf on nothing and it falls),
@@ -13,7 +14,7 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Back Walls", "Doors & Platforms", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks"]
+const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks"]
 const CAT_SATCHEL := 5        # furniture you carry (picked up whole, or forged): set down for free
 const CAT_BLOCKS := 6         # solid blocks, laid in straight lines and rectangles
 ## the order the tabs are shown in (and Q/E steps through)
@@ -37,6 +38,17 @@ const DOOR_W := 3
 const DOOR_H := 30
 const PLATFORM_W := 9
 const WALL_R := 2.6
+## Staircases (user, 21 Nov roadmap: "staircases as pieces"): steps STAIR_STEP up and along (the mage
+## steps up 5 by himself, so you just walk up), a flight STAIR_BAND thick under its treads, a post of
+## back wall down to the floor every STAIR_POST columns (a flight held only at its foot would give way:
+## support reaches only 12 cells sideways through planks), balusters and a handrail RAIL_H over the
+## treads. [ ] change its height a step at a time, - = a storey at a time; T turns it the other way.
+const STAIR_STEP := 4
+const STAIR_BAND := 6
+const STAIR_POST := 8
+const RAIL_H := 10
+const STAIR_RISE_MIN := 8
+const STAIR_RISE_MAX := 160
 
 ## The catalogue. kind: "wall" (painted), "door", "platform", "prop" (a props.gd design, `prop` is
 ## its name, `arg` its option). cost: material id -> amount (a wall's cost is per cell).
@@ -58,6 +70,9 @@ static func pieces() -> Array:
 		{"cat": 6, "name": "Glass Window", "kind": "block", "mat": Defs.GLASS, "cost": {Defs.GLASS: 1}},
 		{"cat": 1, "name": "Wooden Door", "kind": "door", "cost": {Defs.WOODDOOR: 1}, "alt": {Defs.PLANK: 8}},
 		{"cat": 1, "name": "Platform", "kind": "platform", "cost": {Defs.PLANK: 4}},
+		{"cat": 1, "name": "Wooden Stairs", "kind": "stairs", "mat": Defs.PLANK, "post": Defs.WOOD, "rail": Defs.WOOD, "cost": {}},
+		{"cat": 1, "name": "Stone Stairs", "kind": "stairs", "mat": Defs.MASONRY, "post": Defs.MASONRY, "rail": Defs.MASONRY, "cost": {}},
+		{"cat": 1, "name": "Brick Stairs", "kind": "stairs", "mat": Defs.BRICK, "post": Defs.BRICK, "rail": Defs.WOOD, "cost": {}},
 		{"cat": 2, "name": "Table", "kind": "prop", "prop": "table", "cost": {Defs.PLANK: 6}},
 		{"cat": 2, "name": "Chair", "kind": "prop", "prop": "chair", "cost": {Defs.PLANK: 3}},
 		{"cat": 2, "name": "Bed", "kind": "prop", "prop": "bed", "cost": {Defs.PLANK: 8, Defs.LEAF: 4}},
@@ -295,6 +310,85 @@ static func prop_stamp(cells: Array, kid := 0) -> Dictionary:
 		else:
 			data[k] = (Defs.DECOR << 8) | ((int(Props.CHARS[ch]) & 255) << 19) | 0x8000000 | 0x40000 | ((kid & 15) << 28)
 	return {"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data}
+
+## A staircase's cells: its foot at column `col` standing on row `bottom` (the lowest open row, with
+## ground under it), climbing `rise` rows toward `dir` (+1 higher columns, -1 lower). Returns
+## {front: [[col, row, tread]] (the flight: treads on top), posts: [[col, top row]] (each runs down to
+## the floor), rail: [[col, row]], top: the top tread's row, n: steps}.
+static func stair_cells(col: int, bottom: int, rise: int, dir: int) -> Dictionary:
+	var n := maxi(1, (rise + STAIR_STEP - 1) / STAIR_STEP)
+	var front := []
+	var posts := []
+	var rail := []
+	for k in n:
+		var top := bottom - STAIR_STEP * (k + 1) + 1
+		for q in STAIR_STEP:
+			var u := k * STAIR_STEP + q
+			var c := col + dir * u
+			for t in STAIR_BAND:
+				if top + t > bottom:
+					break
+				front.append([c, top + t, t < 2])
+			# a post every STAIR_POST columns (two wide), and the last step's
+			if u % STAIR_POST == 2 or u % STAIR_POST == 3 or (k == n - 1 and q >= 2):
+				posts.append([c, top])
+			# a baluster at each step's middle; the handrail runs straight up the flight
+			var rr := bottom - u - RAIL_H - 1
+			if q == 2:
+				for h in range(top - 1, rr, -1):
+					rail.append([c, h])
+			rail.append([c, rr])
+			rail.append([c, rr - 1])       # (two thick: a one-cell diagonal touches only at corners and falls)
+	return {"front": front, "posts": posts, "rail": rail, "top": bottom - STAIR_STEP * n + 1, "n": n}
+
+## A staircase as a blueprint (anchored near you): `cells` from stair_cells, `post_to` col -> the floor
+## row its post reaches down to (a column without one has none), `free_bg` col|row -> true where the
+## background is empty (posts and rails only go there). Returns {stamp, front, back}.
+static func stair_stamp(sc: Dictionary, post_to: Dictionary, free_bg: Dictionary, mat: int, post: int, rail_m: int) -> Dictionary:
+	var cells := {}      # Vector2i -> value
+	for f in sc["front"]:
+		cells[Vector2i(int(f[0]), int(f[1]))] = mat | (255 << 8)
+	var back := 0
+	for pp in sc["posts"]:
+		var pc: int = pp[0]
+		if not post_to.has(pc):
+			continue
+		for r in range(int(pp[1]), int(post_to[pc]) + 1):
+			var key := Vector2i(pc, r)
+			if not free_bg.has(key):
+				continue
+			var v: int = cells.get(key, 0xff)
+			cells[key] = (v & 0xff) | (post << 8) | 0x40000
+			back += 1
+	for rl in sc["rail"]:
+		var key2 := Vector2i(int(rl[0]), int(rl[1]))
+		if cells.has(key2) or not free_bg.has(key2):
+			continue
+		cells[key2] = 0xff | (rail_m << 8) | 0x40000
+		back += 1
+	var c0 := 1 << 30
+	var c1 := -(1 << 30)
+	var r0 := 1 << 30
+	var r1 := -(1 << 30)
+	for kk in cells:
+		c0 = mini(c0, kk.x)
+		c1 = maxi(c1, kk.x)
+		r0 = mini(r0, kk.y)
+		r1 = maxi(r1, kk.y)
+	var w := c1 - c0 + 1
+	var h := r1 - r0 + 1
+	var data := PackedInt32Array()
+	data.resize(w * h)
+	data.fill(0xffff)
+	for kk2 in cells:
+		data[(kk2.y - r0) * w + (kk2.x - c0)] = cells[kk2]
+	return {"stamp": {"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data}, "front": (sc["front"] as Array).size(), "back": back}
+
+## what a staircase costs: a quarter of its flight in its stone or planks, a tenth of its posts and rail
+static func stair_cost(mat: int, post: int, front: int, back: int) -> Dictionary:
+	var c := {mat: maxi(1, (front + 3) / 4)}
+	c[post] = int(c.get(post, 0)) + maxi(1, (back + 9) / 10)
+	return c
 
 ## a strip of scaffold, as a blueprint
 static func platform_stamp(col: int, row: int) -> Dictionary:
