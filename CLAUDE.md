@@ -394,6 +394,21 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Test: `_test_workshops` ("workshops": on a natural slab in the air; pictures `workshops.png`,
   `workshop_panel.png`).
 
+## Shaping the world is magic (user, 22 Nov: "tie excavating and removing blocks to mana ... everything ideally would be tied into the fact that we are using magic including vfx")
+- Mana per cell, harder costs more: main `dig_mana(t)` = `DIG_MANA` (0.08) x (1 + 1.5 x HARD) x gear("mana_cost");
+  `_apply_counts` spends it for everything the GPU brushes collected this frame (dig, deconstruct, plants) and
+  `place_mana(cells)` (`PLACE_MANA` 0.04) for what conjuring / back-wall painting placed (C_PLACED), and lights
+  the HUD's mana bar (`Mage.mana_spent_t`). `has_mana(m, need, p, what)`: below `MANA_FLOOR` (1) digging,
+  deconstructing and conjuring don't start (a toast, `vfx.fizzle`). Precise removal and Flatten work out their cost
+  from what they read back and `pay_mana` it first (nothing happens without it; previews say "about N mana");
+  build pieces pay `_place_mana_of(place)` (cells stamped, a door's doorway, a structure's blueprint; a torch
+  `TORCH_MANA` 2, a workshop `STATION_MANA` 8), shapes `place_mana(cells)`. `free_magic` (the test mode, but in
+  `_test_remove`'s mana check) makes it all free.
+- vfx.gd: `dig(m, p, r, take)` every frame of digging / deconstructing (motes along a tether from the staff's
+  tip, a turning rune circle where it bites, loosened sparks drawn home), `conjure(p, col)`, `shape_burst(cells,
+  place)` (remove/flatten: mana-blue sparks rising; laying blocks: gold motes gathering; a rune circle over the
+  middle), `place_flash(p, size)` (a piece put up), `fizzle(p)`. `MANA_COL` / `SHAPE_COL`.
+
 ## Spell effects (scripts/vfx.gd; user, 21 Nov: "epic vfx for the spells")
 - main `vfx` (a Node2D in `pix` after the overlay, its child `glow` additive via CanvasItemMaterial): its own
   particles in packed arrays (`spawn(kind, pos, vel, life, c0, c1, s0, s1, add, grav, drag, f)`; kinds DOT, STREAK,
@@ -406,7 +421,17 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `blink`, `mend`. Test: `_test_vfx` ("vfx": each spell cast on fresh ground, pictures `vfx_<spell>_fly/_hit.png`,
   particles die away, the effects' worst frame under 4 ms).
 
-## The UI (scripts/ui.gd, pixel_font.gd, icons.gd; user, 21 Nov: a pixel-art UI)
+## The UI (scripts/ui.gd, pixel_font.gd, icons.gd; user, 21 Nov: a pixel-art UI; 22 Nov: arcane and decluttered)
+- Arcane style, all through `_frame`: panels (pad 4 and up) are runed 24 x 24 nine-slices tiled in the middle (an
+  ink outline, the astral-violet `TRIM`, a dark gap, a faint `MANA`-blue inner line, a cut gem in each corner, a
+  faint field of stars inside); smaller frames (slots, small buttons, recipe cards) are plain 8 x 8. Gold is for
+  what's chosen, `MANA` blue trims a recipe you can forge now.
+- Decluttered HUD: the plate shows health, mana (shining while mana goes on shaping, a red wash under 1), breath
+  when it matters, the place and the time (weather only when there is some, depth only underground; FPS and the
+  profile only on F3; requests under it). The satchel is a POUCH (what Conjure places, draughts, coins, "I
+  satchel") until I or Tab (`toggle_satchel`, `satchel_open`) opens the grid; its heading names the staff and the
+  relics. Toasts are short notes at the bottom left (four at most, the same note freshens the one showing). The
+  spell bar sits in a runed panel. `_test_ui` saves `ui_hud_pouch.png` and `ui_hud.png` (open).
 - ui.gd's `root` is scaled by `U` (screen pixels per UI pixel: floor(screen height / 540), so 2 at 1080p and
   1440p) and sized to the screen in UI pixels (`_relayout` on resize): every size in ui.gd is UI pixels. Screen
   rectangles of controls: `_on_screen(c)` (get_global_rect ignores the scale). Tooltips pop up outside the root,

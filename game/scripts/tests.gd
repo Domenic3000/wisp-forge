@@ -282,6 +282,12 @@ func _test_ui() -> void:
 			g.known.append(sp)
 	g.ui._inv_key = ""
 	g.ui._hot_key = ""
+	g.ui.toast("Spark Bolt learned", Color(0.6, 0.9, 1.0), 4.0)
+	g.ui.toast("+ 12 Stone, 4 Copper", Color(0.95, 0.85, 0.55), 4.0)
+	await _frames(20)
+	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_hud_pouch.png"))
+	g.ui.satchel_open = true
+	g.ui._inv_key = ""
 	await _frames(20)
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_hud.png"))
 	var sr: Rect2 = ui._on_screen(ui.satchel_panel)
@@ -292,6 +298,8 @@ func _test_ui() -> void:
 	if hr.size.x < 50 or not Rect2(Vector2.ZERO, vs).encloses(hr):
 		bad.append("the spell bar is off the screen (%s)" % hr)
 	var slots: int = ui.satchel.get_child_count()
+	g.ui.satchel_open = false
+	g.ui._inv_key = ""
 	g.ui.show_forge()
 	await _frames(10)
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_forge.png"))
@@ -1334,6 +1342,7 @@ func run() -> void:
 	lines.append("GPU: %s" % RenderingServer.get_video_adapter_name())
 	lines.append("")
 	g.test_god = true
+	g.free_magic = true         # (digging and building cost no mana, but in the check about it)
 
 	# ---- a picture of the animated title screen (saves/shots/title.png) ----
 	var tdir: String = g._real_save_dir().path_join("shots")
@@ -5576,12 +5585,39 @@ func _test_remove() -> void:
 	for j in 7:
 		for i in 31:
 			var t4: int = int(rr4["fg"][j * 31 + i]) & 255
-			if j < 5 and t4 != 0:
+			# (ground left standing; rain or snow falling through doesn't count)
+			if j < 5 and t4 != 0 and Defs.KIND[t4] == Defs.K_SOLID and t4 != Defs.SNOW:
 				above += 1
 			if j >= 5 and t4 == 0:
 				holes += 1
 	ok["flatten"] = int(fr["cut"]) >= 40 and int(fr["fill"]) >= 10 and above == 0 and holes == 0
 	txt.append("flatten: cut %d, filled %d; left above the line %d, holes in the ground %d" % [int(fr["cut"]), int(fr["fill"]), above, holes])
+	# shaping is magic: taking costs mana by hardness, with none left nothing happens, digging drains it
+	g.free_magic = false
+	m.mana = m.max_mana
+	var mn0: float = m.mana
+	var rs: Dictionary = g.remove_cells(m, Build.shape_cells(Vector2i(cx + 100, top), Vector2i(cx + 109, top + 3), 2, 1), "front")
+	var mn_spent: float = mn0 - m.mana
+	var want: float = 40.0 * g.dig_mana(Defs.STONE)
+	m.mana = 0.0
+	var rs0: Dictionary = g.remove_cells(m, [Vector2i(cx + 100, top + 6)], "front")
+	var nb0: int = g.brushes.size()
+	g._excavate(m, _cell_pos(cx + 102, top + 6))
+	var nb1: int = g.brushes.size()
+	m.mana = m.max_mana
+	_go(_cell_pos(cx + 60, top - 10))
+	await _frames(10)
+	g.test_aim = _cell_pos(cx + 60, top + 2)
+	g.test_dig = true
+	await _frames(30)
+	_shot("dig_magic.png")
+	await _frames(10)
+	g.test_dig = false
+	g.test_aim = Vector2.ZERO
+	var dug_spent: float = m.max_mana - m.mana
+	g.free_magic = true
+	ok["mana"] = int(rs["n"]) == 40 and absf(mn_spent - want) < 0.5 and int(rs0["n"]) == 0 and nb1 == nb0 and dug_spent > 2.0
+	txt.append("mana: taking 40 stone cost %.1f (%.1f), with none left took %d, dug with none: %d brushes; digging 40 frames spent %.1f" % [mn_spent, want, int(rs0["n"]), nb1 - nb0, dug_spent])
 	_go(rm_back)
 	await _frames(20)
 	var all_ok := true

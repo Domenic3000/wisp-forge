@@ -308,6 +308,7 @@ var spawn_angle := 0.0
 var builds = null          # the planet's planned structures (ruins, castles, towns...)
 var testing := false       # started by "Run tests.bat" (--test): uses saves/test, reports, quits
 var test_god := false      # the test mode keeps the mage alive except when it checks damage
+var free_magic := false    # the test mode digs and builds without mana, except in the check about it
 var perf_us := 0           # time spent in the GPU step (for the test report)
 var perf_n := 0
 var _tests = null
@@ -351,6 +352,7 @@ var stamps: Array = []        # small blueprints to write into the world before 
 var build_why_cell := Vector2i.ZERO
 var build_why := ""                # why the last preview didn't fit (for the tests)
 var _build_warn_t := 0
+var _mana_warn_t := 0
 var _flat_key := ""          # (the flatten preview: worked out again only when the drag moves)
 var _flat_plan := {}
 var build_last := ""          # what the last click did (for the test report)
@@ -415,6 +417,7 @@ class Mage extends Body:
 	var mana := 100.0
 	var max_mana := 100.0
 	var mana_regen := 0.22
+	var mana_spent_t := 0      # (frames since mana went on shaping the world: the HUD's bar glows)
 	var breath := 600.0
 	var max_breath := 600.0
 	var inv := PackedInt32Array()
@@ -1004,10 +1007,13 @@ func _apply_counts(m: Mage) -> void:
 				audio.play("creak", dp)
 				_creak_t = 900
 	var total := 0
+	var spent := 0.0
 	for t in Defs.NM:
 		if cn[t] > 0:
 			m.inv[t] += cn[t]
 			total += cn[t]
+			if t != Defs.TREASURE:
+				spent += float(cn[t]) * dig_mana(t)
 			if t >= Defs.FIREOPAL and t <= Defs.SILVER and not m.items.has("found_%d" % t):
 				m.items["found_%d" % t] = true
 				if m.local:
@@ -1028,6 +1034,12 @@ func _apply_counts(m: Mage) -> void:
 			shake = maxf(shake, 4.0)
 	if cn[Defs.C_HARD] > 0:
 		m.dig_blocked = 30
+	# (shaping is magic: what was dug and placed this frame is paid for in mana)
+	if m.pending_place > 0:
+		spent += place_mana(mini(cn[Defs.C_PLACED], m.pending_place))
+	if spent > 0.0 and not free_magic:
+		m.mana = maxf(0.0, m.mana - spent)
+		m.mana_spent_t = 20
 	if m.pending_place > 0:
 		var pm := m.pending_mat if m.pending_mat >= 0 else m.mat
 		m.inv[pm] = maxi(0, m.inv[pm] - mini(cn[Defs.C_PLACED], m.pending_place))
@@ -2317,6 +2329,8 @@ func _update_player(m: Mage) -> void:
 		regen *= 2.0                                   # (under the aurora)
 		sky_stats["aurora_mana"] = float(sky_stats.get("aurora_mana", 0.0)) + m.mana_regen
 	m.mana = minf(m.max_mana, m.mana + regen)
+	if m.mana_spent_t > 0:
+		m.mana_spent_t -= 1
 	# no health comes back by itself: only a draught or Mending, a little each frame
 	if m.heal_left > 0.0 and not m.dead:
 		var hh := minf(m.heal_left, Defs.HEAL_RATE)
@@ -2461,8 +2475,45 @@ func _reach(m: Mage, aim: Vector2) -> Vector2:
 		d = d.normalized() * rl
 	return c + d
 
+# ----------------------------------------------------------- shaping is magic --
+## (user, 22 Nov: "tie excavating and removing blocks to mana ... everything ideally would be tied into the
+## fact that we are using magic"; chose mana per cell, harder costs more, and a little to place things)
+const DIG_MANA := 0.08         # mana a cell of soft ground costs to take; each step of hardness adds 1.5x that
+const PLACE_MANA := 0.04       # mana a cell put in place costs (conjured, laid, built), on top of the material
+const TORCH_MANA := 2.0
+const STATION_MANA := 8.0
+const MANA_FLOOR := 1.0        # below this you can't dig, take away or conjure
+
+## the mana a cell of material t costs to take away
+func dig_mana(t: int) -> float:
+	return DIG_MANA * (1.0 + 1.5 * float(Defs.HARD[t])) * gear("mana_cost", player)
+
+func place_mana(cells: int) -> float:
+	return PLACE_MANA * float(cells) * gear("mana_cost", player)
+
+## is there mana enough to begin (digging, conjuring...)? If not, the staff fizzles and you're told
+func has_mana(m: Mage, need: float, p: Vector2, what: String) -> bool:
+	if free_magic or m.mana >= need:
+		return true
+	if m.local and _mana_warn_t <= frame:
+		_mana_warn_t = frame + 50
+		ui.toast("Not enough mana to %s (%d of %d): wait for it to come back" % [what, int(m.mana), int(ceil(need))], Color(0.55, 0.75, 1.0), 1.6)
+		vfx.fizzle(p)
+		audio.play("fizzle" if audio.sfx.has("fizzle") else "hit", p, 0.35, 1.8)
+	return false
+
+## spends mana if there is enough (true), else says so (false)
+func pay_mana(m: Mage, amount: float, p: Vector2, what: String) -> bool:
+	if not has_mana(m, amount, p, what):
+		return false
+	if not free_magic:
+		m.mana = maxf(0.0, m.mana - amount)
+	return true
+
 func _excavate(m: Mage, aim: Vector2) -> void:
 	var p := _reach(m, aim)
+	if not has_mana(m, MANA_FLOOR, p, "dig"):
+		return
 	audio.play("dig", p, 0.7)
 	# digging at a door (open or shut) takes the whole door down: it goes into the satchel as a Door
 	var dd := _door_at(p, m.dig_r * 0.6)
@@ -2475,7 +2526,7 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 	# (a plain staff digs slowly; each focus digs faster: tier 1 at 0.55, 2 at 0.8, 3 at 1, 4 at 1.2)
 	var tier_rate: float = [0.55, 0.55, 0.8, 1.0, 1.2][clampi(m.tier, 0, 4)]
 	brushes.append([p, m.dig_r, 1, 0, m.tier, gear("dig_rate", m) * tier_rate - 1.0, 0, m.slot])
-	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
+	vfx.dig(m, p, m.dig_r)
 
 ## Shift + right mouse: take background tiles (a building's back walls, furniture, plants). It is how
 ## you clear a wall on purpose; plain right-click never touches a building's walls.
@@ -2484,6 +2535,8 @@ func _deconstruct(m: Mage, aim: Vector2) -> void:
 	if m.decon_pause > 0:
 		m.decon_pause -= 1
 		return
+	if not has_mana(m, MANA_FLOOR, p, "take that away"):
+		return
 	if m.local and workshops.take_at(m, p):
 		m.decon_pause = 20
 		return
@@ -2491,7 +2544,7 @@ func _deconstruct(m: Mage, aim: Vector2) -> void:
 		m.decon_pause = 15       # a moment's pause, then harvesting carries on while the button is held
 		return
 	brushes.append([p, m.dig_r * 0.8, 8, 0, m.tier, 0, 0, m.slot])
-	lights.append([p, 10.0, Color(0.9, 0.6, 0.3)])
+	vfx.dig(m, p, m.dig_r * 0.8, true)
 
 # ------------------------------------------------------------ furniture --
 var _pick_miss := Vector2i(-99999, 0)   # where a look for furniture last found none (and when)
@@ -2770,6 +2823,8 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 		m.cast_latch = true
 		place_torch(m, p)
 		return
+	if not has_mana(m, MANA_FLOOR, p, "conjure"):
+		return
 	# conjuring onto a foe doesn't bury it: the forming stone strikes it and shoves it aside, and
 	# nothing is placed there
 	var struck := false
@@ -2786,6 +2841,7 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 	var budget := mini(m.inv[m.mat], 14)
 	m.pending_place = budget
 	brushes.append([p, 2.6, 5, m.mat, 0, budget, 9.0, m.slot])
+	vfx.conjure(p, Defs.COLOR[m.mat])
 	audio.play("place", p, 0.6)
 
 func _update_projectiles() -> void:
@@ -4573,6 +4629,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_interact()
 		elif k == KEY_K:
 			call_skiff()
+		elif k == KEY_I or k == KEY_TAB:
+			ui.toggle_satchel()
 		elif k == KEY_M:
 			open_map()
 		elif k == KEY_F8 or k == KEY_F7:
@@ -4760,12 +4818,13 @@ func _update_build(m: Mage) -> void:
 	build_drag = false
 	if kind == "wall":
 		build_prev = {"circle": [p, Build.WALL_R], "ok": not cost.is_empty(), "cells": []}
-		if m.input.cast and not cost.is_empty():
+		if m.input.cast and not cost.is_empty() and has_mana(m, MANA_FLOOR, p, "build that"):
 			var mt: int = piece["mat"]
 			var budget := mini(m.inv[mt], 14)
 			m.pending_place = budget
 			m.pending_mat = mt
 			brushes.append([p, Build.WALL_R, 10, mt, 0, budget, 0.0, m.slot])
+			vfx.conjure(p, Defs.COLOR[mt])
 		elif m.input.cast:
 			_build_need(piece)
 		build_click = false
@@ -4969,6 +5028,8 @@ func _update_build(m: Mage) -> void:
 		place = {"stamp": Build.platform_stamp(cell.x, cell.y)}
 	if kind != "structure":
 		build_prev = {"cells": cells, "ok": ok and not cost.is_empty()}
+	if not place.is_empty() and frame % 10 == 0 or not build_prev.has("mana"):
+		build_prev["mana"] = _place_mana_of(place) if not place.is_empty() else 0.0
 	if not build_click:
 		return
 	build_click = false
@@ -4980,6 +5041,8 @@ func _update_build(m: Mage) -> void:
 		if _build_warn_t <= frame:
 			ui.toast("A tree is in the way: fell it first" if tree_in_way else ("Torch: " + build_why if kind == "torch" else "It doesn't fit there"), Color(1, 0.6, 0.5), 1.2)
 			_build_warn_t = frame + 40
+		return
+	if not pay_mana(m, _place_mana_of(place), p, "build that"):
 		return
 	for mt2 in cost:
 		m.inv[int(mt2)] -= int(cost[mt2])
@@ -5014,8 +5077,34 @@ func _update_build(m: Mage) -> void:
 			doors.append(_door_rec(sbp.x0 + int(dd[0]), sbp.y0 + int(dd[1]), int(dd[2]), int(dd[3]), int(dd[4]), Defs.anchor_c, 1))
 		_struct_key = ""          # it's there now: work out the next one afresh
 	audio.play("place", p, 0.9)
-	for k in 8:
-		_particle(p + Vector2(randf() - 0.5, randf() - 0.5) * 6.0, Vector2(randf() - 0.5, -randf()) * 0.6, 18 + randi() % 12, Color(0.95, 0.85, 0.55), true, 0.02)
+	var psize := 8.0
+	if place.has("stamp"):
+		psize = float(maxi(int(place["stamp"]["w"]), int(place["stamp"]["h"])))
+	elif place.has("structure"):
+		psize = 40.0
+	elif place.has("door"):
+		psize = 30.0
+	vfx.place_flash(p, psize)
+
+## what putting a piece up costs in mana: its cells (a stamp's written cells, a door's doorway, a
+## structure's blueprint), a torch or a workshop as one
+func _place_mana_of(place: Dictionary) -> float:
+	if place.has("torch"):
+		return TORCH_MANA * gear("mana_cost", player)
+	if place.has("station"):
+		return STATION_MANA * gear("mana_cost", player)
+	var n := 0
+	if place.has("stamp"):
+		for v in place["stamp"]["data"]:
+			if (int(v) & 0xffff) != 0xffff:
+				n += 1
+	if place.has("door"):
+		n += Build.DOOR_W * Build.DOOR_H
+	if place.has("structure"):
+		for v2 in place["structure"]["bp"].c:
+			if (int(v2) & 0xffff) != 0xffff:
+				n += 1
+	return maxf(1.0, place_mana(n))
 
 ## Plans a structure under the cursor: a house or room stands on the highest ground under its
 ## footprint, with a plinth of its own stone down to the ground under the rest (at most
@@ -5066,10 +5155,15 @@ func _update_shape(m: Mage, piece: Dictionary) -> void:
 	elif need > m.inv[mt]:
 		what += " (you have %d)" % m.inv[mt]
 	build_prev["text"] = what
+	var mn := place_mana(need)
+	build_prev["text"] = String(build_prev["text"]) + "  ·  %d mana" % int(ceil(mn))
 	if build_drag and not m.input.cast:
 		build_drag = false
+		if ok and not pay_mana(m, mn, m.pos + d, "lay that"):
+			return
 		if ok:
 			stamps.append(Build.shape_stamp(good, mt, back))
+			vfx.shape_burst(good, true)
 			build_last_stamp = stamps[stamps.size() - 1]
 			m.inv[mt] -= need
 			build_last = "%s: %d cells" % [piece["name"], need]
@@ -5153,16 +5247,19 @@ func _update_remove(m: Mage, piece: Dictionary) -> void:
 	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
 	var prev := []
 	var n := 0
+	var est := 0.0
 	if not too_big:
 		for c in cells:
 			if _removable_guess(c, layer):
 				n += 1
+				var gt := type_at(Build.cell_pos(c.x, c.y))
+				est += dig_mana(gt) if (layer == "front" or layer == "all") and gt != 0 else DIG_MANA * 1.5
 				prev.append([Build.cell_pos(c.x, c.y), Color(1.0, 0.3, 0.25)])
 			else:
 				prev.append([Build.cell_pos(c.x, c.y), Color(0.75, 0.75, 0.8, 0.5)])
 	build_prev = {"cells": prev, "ok": not too_big}
 	build_prev["text"] = ("Too big to take in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS) if too_big else \
-		("%s %s: %d cells%s" % [Build.SHAPES[shape], piece["name"], n, " or so" if layer == "back" or layer == "all" else ""])
+		("%s %s: %d cells%s  ·  about %d mana" % [Build.SHAPES[shape], piece["name"], n, " or so" if layer == "back" or layer == "all" else "", int(ceil(est))])
 	if build_drag and not m.input.cast:
 		build_drag = false
 		if too_big:
@@ -5172,7 +5269,7 @@ func _update_remove(m: Mage, piece: Dictionary) -> void:
 		if got > 0:
 			audio.play("dig", m.pos + d, 0.6)
 			build_last = "%s: %d cells" % [piece["name"], got]
-		else:
+		elif not r.has("mana"):
 			ui.toast("Nothing there to take" if not r["hard"] else "Too hard for your staff", Color(1, 0.7, 0.5), 1.2)
 
 ## Takes away `layer` ("front" blocks, "back" walls and plants, "furn" furniture and torches, "all") from
@@ -5195,6 +5292,7 @@ func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
 	var n := 0
 	var hard := false
 	var taken := []
+	var mana := 0.0
 	for rc: Vector2i in box[4]:
 		var k := (rc.y - r0) * w + (rc.x - c0)
 		var t: int = fgs[k] & 255
@@ -5206,6 +5304,7 @@ func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
 				and (kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID):
 			if Defs.HARD[t] <= m.tier:
 				v = (v & ~0xff)
+				mana += dig_mana(t)
 				var gm := _collect_as(t)
 				if gm > 0:
 					got[gm] = int(got.get(gm, 0)) + 1
@@ -5225,6 +5324,7 @@ func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
 					if bmk != 0:
 						nb = (bmk << 8) | 0x40000 | (0x20000 if (b & 0x8000) != 0 else 0)
 				v = (v & 0xff) | nb
+				mana += dig_mana(bm)
 				if bm == Defs.TORCH:
 					flames += 1
 				else:
@@ -5237,7 +5337,11 @@ func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
 			taken.append(rc)
 	if n == 0:
 		return {"n": 0, "hard": hard}
+	var at0: Vector2i = taken[taken.size() / 2]
+	if not pay_mana(m, mana, Build.cell_pos(at0.x, at0.y), "take that away"):
+		return {"n": 0, "hard": hard, "mana": true}
 	stamps.append({"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data})
+	vfx.shape_burst(taken, false)
 	for gm2 in got:
 		m.inv[int(gm2)] += int(got[gm2])
 	if flames > 0:
@@ -5329,12 +5433,17 @@ func _update_flatten(m: Mage, piece: Dictionary) -> void:
 		prev.append([Build.cell_pos(from.x + signi(dx) * q, from.y - 1), Color(1.0, 0.95, 0.6)])
 	build_prev = {"cells": prev, "ok": true}
 	var have: int = m.inv[mt]
-	build_prev["text"] = "Flatten: cut %d, fill %d %s%s" % [cut.size(), fill.size(), Defs.NAMES[mt],
-		(" (you have %d: the deepest dips first)" % have) if fill.size() > have else ""]
+	var fest := place_mana(mini(fill.size(), have))
+	for c3 in cut:
+		fest += dig_mana(type_at(Build.cell_pos(c3.x, c3.y)))
+	build_prev["text"] = "Flatten: cut %d, fill %d %s%s  ·  about %d mana" % [cut.size(), fill.size(), Defs.NAMES[mt],
+		(" (you have %d: the deepest dips first)" % have) if fill.size() > have else "", int(ceil(fest))]
 	if build_drag and not m.input.cast:
 		build_drag = false
 		var r := flatten_apply(m, _flat_plan, mt)
 		_flat_key = ""
+		if r.has("mana"):
+			return
 		if r["cut"] + r["fill"] == 0:
 			ui.toast("Already level there" if not r["hard"] else "Too hard for your staff", Color(1, 0.7, 0.5), 1.2)
 		else:
@@ -5398,8 +5507,25 @@ func flatten_apply(m: Mage, plan: Dictionary, mt: int) -> Dictionary:
 		m.inv[mt] -= 1
 		n_fill += 1
 	if n_cut + n_fill > 0:
+		var cost := place_mana(n_fill)
+		for tk in taken:
+			cost += dig_mana(fgs[(tk.y - r0) * w + (tk.x - c0)] & 255)
+		var at1: Vector2i = taken[0] if not taken.is_empty() else rel[cut.size()]
+		if not pay_mana(m, cost, Build.cell_pos(at1.x, at1.y), "flatten that"):
+			# (nothing happens: the satchel gets back what it gave, and what was cut isn't taken)
+			for gm3 in got:
+				m.inv[int(gm3)] -= int(got[gm3])
+			m.inv[mt] += n_fill
+			return {"cut": 0, "fill": 0, "hard": hard, "mana": true}
 		stamps.append({"x0": posmod(c0, Defs.NS), "y0": r0, "w": w, "h": h, "data": data})
 		_wake_round(m, taken)
+		vfx.shape_burst(taken, false)
+		var filled := []
+		for q3 in fill.size():
+			var rc3: Vector2i = rel[cut.size() + q3]
+			if data[(rc3.y - r0) * w + (rc3.x - c0)] != 0xffff:
+				filled.append(rc3)
+		vfx.shape_burst(filled, true)
 	return {"cut": n_cut, "fill": n_fill, "hard": hard}
 
 # ------------------------------------------------------------------ torches --
@@ -5451,9 +5577,12 @@ func place_torch(m: Mage, p: Vector2) -> bool:
 			ui.toast("Torch: " + String(tp["why"]), Color(1, 0.7, 0.5), 1.4)
 			_build_warn_t = frame + 40
 		return false
+	if not pay_mana(m, TORCH_MANA * gear("mana_cost", m), p, "light a torch"):
+		return false
 	stamps.append(Build.prop_stamp(tp["cells"], 0))
 	m.inv[Defs.TORCH] -= 1
 	add_torch(tp["flame"])
+	vfx.place_flash(tp["flame"], 8.0)
 	audio.play("place", p, 0.6, 1.2)
 	return true
 

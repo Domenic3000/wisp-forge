@@ -421,6 +421,108 @@ func mend(m) -> void:
 	light(m.pos, 34.0, gc * 1.2, 40)
 	stats["mends"] = int(stats.get("mends", 0)) + 1
 
+# ------------------------------------------------------- shaping the world ---
+## (user, 22 Nov: "everything ideally would be tied into the fact that we are using magic including vfx";
+## chose clear but light): digging is a tether of wisp light from the staff and a turning circle of runes
+## where it bites, matter drawn home as motes; what's taken away dissolves upward in mana-blue sparks,
+## what's put in place gathers from gold motes with a flash of runes; with no mana left the staff fizzles.
+const MANA_COL := Color(0.45, 0.85, 1.0)
+const SHAPE_COL := Color(1.0, 0.86, 0.5)
+
+## every frame of digging (or taking away, `take`): the tether, the rune circle, a mote or two home
+func dig(m, p: Vector2, r: float, take := false) -> void:
+	if not _showing():
+		return
+	var col: Color = Color(1.0, 0.7, 0.4) if take else MANA_COL
+	var clear := Color(col.r, col.g, col.b, 0.0)
+	var tip: Vector2 = game._staff(m, p)[0]
+	var to := p - tip
+	var dl := to.length()
+	# the tether: a few motes running along it, faster than the eye can count
+	if dl > 2.0 and _t % 2 == 0:
+		for k in 2:
+			var f0 := randf() * 0.3
+			spawn(DOT, tip + to * f0, to / dl * minf(dl * 0.2, 6.0), int(dl * 0.7 / minf(dl * 0.2, 6.0)) + 1, Color(0.9, 1, 1), clear, 1.0, 1.0, true, 0.0, 1.0)
+	# a circle of runes turning where it bites (one at a time: a new one as the old fades)
+	if _t % 14 == 0:
+		spawn(RUNE, p, Vector2.ZERO, 16, col * Color(1, 1, 1, 0.55), clear, r * 0.95, r * 1.05, true, 0.0, 1.0, 0.08 if not take else -0.08)
+	# what's loosened rises as sparks and is drawn to you
+	if _t % 3 == 0:
+		var q := p + _rand_dir() * randf() * r
+		var home: Vector2 = (m.pos - q)
+		spawn(DOT, q, home.normalized() * 1.6 + _rand_dir() * 0.3, int(home.length() / 1.6) + 2, col, clear, 1.0, 1.0, true, 0.0, 1.0)
+	if _t % 4 == 0:
+		light(p, 12.0, col * 0.7, 4)
+	stats["digs"] = int(stats.get("digs", 0)) + 1
+
+## conjuring: matter gathering at the point from motes, a small rune flash now and then
+func conjure(p: Vector2, mc: Color) -> void:
+	if not _showing():
+		return
+	var clear := Color(SHAPE_COL.r, SHAPE_COL.g, SHAPE_COL.b, 0.0)
+	if _t % 2 == 0:
+		var o := _rand_dir() * randf_range(4.0, 8.0)
+		spawn(DOT, p + o, -o / 7.0, 7, mc.lightened(0.3), clear, 1.0, 1.0, true, 0.0, 1.0)
+	if _t % 16 == 0:
+		spawn(RUNE, p, Vector2.ZERO, 14, SHAPE_COL * Color(1, 1, 1, 0.5), clear, 3.5, 4.5, true, 0.0, 1.0, 0.1)
+		light(p, 10.0, SHAPE_COL * 0.6, 6)
+
+## cells taken away (`place` false: mana-blue sparks rising out of them) or put in place (`place` true:
+## gold motes gathering into them), with a circle of runes over the middle and a light
+func shape_burst(cells: Array, place: bool) -> void:
+	if cells.is_empty() or not _showing():
+		return
+	var col: Color = SHAPE_COL if place else MANA_COL
+	var clear := Color(col.r, col.g, col.b, 0.0)
+	var n := cells.size()
+	var mid := Vector2.ZERO
+	var step := maxi(1, n / 28)
+	var used := 0
+	var k := 0
+	while k < n:
+		var c: Vector2i = cells[k]
+		var wp: Vector2 = game.Build.cell_pos(c.x, c.y)
+		mid += wp
+		used += 1
+		var up := _up(wp)
+		if place:
+			var o := _rand_dir() * randf_range(3.0, 7.0)
+			spawn(DOT, wp + o, -o / 8.0, 8, Color(1, 1, 0.9), clear, 1.0, 1.0, true, 0.0, 1.0)
+		else:
+			spawn(DOT, wp, up * randf_range(0.2, 0.6) + _rand_dir() * 0.2, 14 + randi() % 12, Color(0.85, 0.97, 1), clear, 1.0, 1.0, true, 0.0, 0.97)
+		k += step
+	mid /= float(maxi(used, 1))
+	var size := clampf(sqrt(float(n)) * 0.9, 3.0, 16.0)
+	spawn(RUNE, mid, Vector2.ZERO, 20, col * Color(1, 1, 1, 0.7), clear, size * 0.8, size * 1.1, true, 0.0, 1.0, 0.09 if place else -0.09)
+	spawn(RING, mid, Vector2.ZERO, 10, col, clear, 1.0, size * 1.3)
+	light(mid, 14.0 + size * 1.5, col * 0.9, 12)
+	stats["shapes"] = int(stats.get("shapes", 0)) + 1
+
+## a piece put in place round p, about `size` cells across (furniture, a door, a torch, a house)
+func place_flash(p: Vector2, size: float) -> void:
+	if not _showing():
+		return
+	var clear := Color(SHAPE_COL.r, SHAPE_COL.g, SHAPE_COL.b, 0.0)
+	var r := clampf(size * 0.5, 3.0, 26.0)
+	for k in int(clampf(size, 8.0, 30.0)):
+		var o := _rand_dir() * randf_range(r, r + 6.0)
+		spawn(DOT, p + o, -o / 9.0, 9, Color(1, 1, 0.9), clear, 1.0, 1.0, true, 0.0, 1.0)
+	spawn(RUNE, p, Vector2.ZERO, 22, SHAPE_COL * Color(1, 1, 1, 0.75), clear, r * 0.8, r * 1.05, true, 0.0, 1.0, 0.08)
+	spawn(RING, p, Vector2.ZERO, 10, SHAPE_COL, clear, 1.0, r * 1.4)
+	light(p, 16.0 + r, SHAPE_COL, 12)
+	stats["shapes"] = int(stats.get("shapes", 0)) + 1
+
+## the staff fizzles: no mana for that
+func fizzle(p: Vector2) -> void:
+	if not _showing():
+		return
+	var gc := Color(0.55, 0.6, 0.75)
+	var clear := Color(gc.r, gc.g, gc.b, 0.0)
+	for k in 6:
+		spawn(STREAK, p, _rand_dir() * randf_range(0.3, 0.9), 6 + randi() % 6, Color(0.8, 0.85, 1), clear, 1.5, 1.0, true, 0.03, 0.85)
+	spawn(SMOKE, p, _up(p) * 0.15, 24, Color(0.5, 0.52, 0.6, 0.5), Color(0.5, 0.52, 0.6, 0.0), 2.0, 5.0, false, -0.005, 0.98)
+	stats["fizzles"] = int(stats.get("fizzles", 0)) + 1
+
 # ------------------------------------------------------------------ drawing ---
 
 func _draw() -> void:

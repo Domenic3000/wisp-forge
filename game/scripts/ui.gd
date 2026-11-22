@@ -37,6 +37,11 @@ var build_box: VBoxContainer
 var _build_key := ""
 var satchel: GridContainer
 var satchel_panel: PanelContainer
+var satchel_open := false          # (I or Tab) the whole satchel; closed, a pouch
+var pouch: HBoxContainer
+var pouch_hint: Label
+var _satchel_full := []            # the open satchel's parts (hidden while it's a pouch)
+var mp_glow: Control
 var _satchel_scroll: ScrollContainer
 var death_txt: Label
 var _to_title_btn: Button
@@ -81,14 +86,17 @@ var _frames := {}         # cached frame styles
 var _loading_base := ""
 var _t := 0.0
 
-const GOLD := Color(1, 0.82, 0.23)
-const CREAM := Color(1, 0.93, 0.7)
-const DIM := Color(0.62, 0.62, 0.78)
-const TEXT := Color(0.88, 0.89, 1)
-const PANEL_BG := Color(0.055, 0.045, 0.1, 0.93)
-const TRIM := Color(0.8, 0.6, 0.24)
-const TRIM_DIM := Color(0.36, 0.31, 0.5)
-const OUTLINE := Color(0.03, 0.02, 0.06)
+## (user, 22 Nov: "the ui for everything needs a re-work again"; chose arcane and decluttered: a
+## spellbook look, runed frames with a mana-blue inner line and gem corners, gold for what you choose)
+const GOLD := Color(1, 0.84, 0.36)
+const CREAM := Color(0.98, 0.94, 0.82)
+const DIM := Color(0.6, 0.62, 0.8)
+const TEXT := Color(0.88, 0.9, 1)
+const PANEL_BG := Color(0.045, 0.04, 0.1, 0.93)
+const TRIM := Color(0.56, 0.48, 0.88)          # astral violet
+const TRIM_DIM := Color(0.3, 0.27, 0.5)
+const OUTLINE := Color(0.02, 0.015, 0.05)
+const MANA := Color(0.45, 0.85, 1.0)           # the inner line, gems, the mana bar's glow
 const GOOD := Color(0.6, 0.95, 0.55)
 const BAD := Color(0.98, 0.55, 0.5)
 
@@ -134,18 +142,22 @@ static func fsize(size: int) -> int:
 	return PixelFont.SIZE * (1 if size < 19 else (2 if size < 28 else 3))
 
 # ---------------------------------------------------------------- style --
-## A pixel frame as a 9-slice: dark ink outline (round corners), a trim, a darker inner trim, a stud in
-## each corner. `pad`: the content's margin (UI pixels).
+## A pixel frame as a 9-slice. Panels (pad 4 and up) are runed: an ink outline, the trim, a dark gap, a
+## faint mana-blue inner line, and a cut gem in each corner; small frames (slots) are plainer: ink, trim,
+## a glint at each corner. `pad`: the content's margin (UI pixels).
 func _frame(bg: Color, trim: Color, pad := 4, pad_x := -1, k := 1) -> StyleBoxTexture:
 	if pad_x < 0:
 		pad_x = pad
 	var key := "%s|%s|%d|%d|%d" % [bg.to_html(), trim.to_html(), pad, pad_x, k]
 	if _frames.has(key):
 		return _frames[key]
-	var n := 10
+	var ornate := pad >= 4
+	var n := 24 if ornate else 8
+	var mg := 6 if ornate else 3
 	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
-	var inner := trim.darkened(0.55)
-	var stud := trim.lightened(0.55)
+	var gap := bg.darkened(0.35)
+	var line := Color(MANA.r, MANA.g, MANA.b, 0.42 * bg.a)
+	var gem_lit := trim.lightened(0.6)
 	for y in n:
 		for x in n:
 			var ring := mini(mini(x, y), mini(n - 1 - x, n - 1 - y))
@@ -157,16 +169,40 @@ func _frame(bg: Color, trim: Color, pad := 4, pad_x := -1, k := 1) -> StyleBoxTe
 				c = OUTLINE
 			elif ring == 1:
 				c = trim
-			elif ring == 2:
-				c = inner
-			if (x == 1 or x == n - 2) and (y == 1 or y == n - 2):
-				c = stud
+			elif ornate and ring == 2:
+				c = gap
+			elif ornate and ring == 3:
+				c = line
+			elif not ornate and ring == 2:
+				c = trim.darkened(0.6)
+			if ornate:
+				# a gem in each corner: a diamond of trim round a mana-blue heart with a white glint
+				var cx := 2 if x < n / 2 else n - 3
+				var cy := 2 if y < n / 2 else n - 3
+				var dd := absi(x - cx) + absi(y - cy)
+				if dd <= 2:
+					c = OUTLINE if dd == 2 else (gem_lit if dd == 1 else MANA)
+					if dd == 0:
+						c = Color(0.9, 1, 1)
+			elif (x == 1 or x == n - 2) and (y == 1 or y == n - 2):
+				c = trim.lightened(0.55)
+			# inside a runed panel, a faint field of stars (the middle tiles, so it never stretches)
+			if ornate and ring >= mg and c == bg:
+				var u := (x - mg) % 12
+				var v := (y - mg) % 12
+				if (u == 2 and v == 3) or (u == 8 and v == 9) or (u == 9 and v == 2):
+					c = Color(bg.lightened(0.16), bg.a)
+				elif u == 5 and v == 7:
+					c = Color(bg.lerp(MANA, 0.12), bg.a)
 			img.set_pixel(x, y, c)
 	if k > 1:
 		img.resize(n * k, n * k, Image.INTERPOLATE_NEAREST)
 	var sb := StyleBoxTexture.new()
 	sb.texture = ImageTexture.create_from_image(img)
-	sb.set_texture_margin_all(3 * k)
+	sb.set_texture_margin_all(mg * k)
+	if ornate:
+		sb.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+		sb.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
 	sb.content_margin_left = pad_x * k
 	sb.content_margin_right = pad_x * k
 	sb.content_margin_top = pad * k
@@ -393,15 +429,15 @@ func _build_hud() -> void:
 	hud.visible = false
 	root.add_child(hud)
 	# the character plate: health, mana, breath and where you are
-	var plate := _panel(Color(0.05, 0.04, 0.09, 0.84), TRIM, 4)
+	var plate := _panel(Color(0.045, 0.04, 0.1, 0.82), TRIM, 4)
 	plate.position = Vector2(5, 4)
-	plate.custom_minimum_size = Vector2(150, 0)
+	plate.custom_minimum_size = Vector2(130, 0)
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(plate)
 	var bars := _box(true, 2)
 	plate.add_child(bars)
-	hp_bar = _bar(Color(0.86, 0.2, 0.26), 10)
-	mp_bar = _bar(Color(0.26, 0.42, 0.95), 10)
+	hp_bar = _bar(Color(0.86, 0.2, 0.26), 9)
+	mp_bar = _bar(Color(0.3, 0.6, 1.0), 9)
 	br_bar = _bar(Color(0.5, 0.85, 0.92), 5)
 	hp_lbl = _label("", 12, Color.WHITE)
 	mp_lbl = _label("", 12, Color.WHITE)
@@ -422,9 +458,21 @@ func _build_hud() -> void:
 		bars.add_child(row)
 		if pair[0] == "bubble":
 			br_row = row
-	bars.add_child(_rule(140))
+	bars.add_child(_rule(120))
 	info = _label("", 12, Color(0.86, 0.87, 1))
 	bars.add_child(info)
+	# the mana bar shines while mana goes on shaping the world (digging, taking away, building)
+	mp_glow = Control.new()
+	mp_glow.set_anchors_preset(Control.PRESET_FULL_RECT)
+	mp_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mp_glow.draw.connect(func():
+		var gk: float = clampf(float(game.player.mana_spent_t) / 20.0, 0.0, 1.0) if game != null and game.player != null else 0.0
+		if gk > 0.0:
+			var a := 0.35 + 0.25 * sin(_t * 18.0)
+			mp_glow.draw_rect(Rect2(Vector2(-1, -1), mp_glow.size + Vector2(2, 2)), Color(MANA.r, MANA.g, MANA.b, a * gk), false, 1.0)
+		if game != null and game.player != null and game.player.mana < 1.0:
+			mp_glow.draw_rect(Rect2(Vector2.ZERO, mp_glow.size), Color(0.6, 0.1, 0.2, 0.3 + 0.15 * sin(_t * 6.0))))
+	mp_bar.add_child(mp_glow)
 
 	# the spell bar: a slot per spell (its glyph, its number, the cooldown shading it), the chosen one's
 	# name and cost over it
@@ -438,10 +486,14 @@ func _build_hud() -> void:
 	hot_name = _head("", 12, CREAM)
 	hot_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hb.add_child(hot_name)
+	var hpan := _panel(Color(0.045, 0.04, 0.1, 0.78), TRIM, 4)
+	hpan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	hpan.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hb.add_child(hpan)
 	hotbar = HBoxContainer.new()
 	hotbar.add_theme_constant_override("separation", 2)
 	hotbar.alignment = BoxContainer.ALIGNMENT_CENTER
-	hb.add_child(hotbar)
+	hpan.add_child(hotbar)
 
 	build_bar = _panel(Color(0.05, 0.04, 0.09, 0.9), TRIM, 4)
 	build_bar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -466,7 +518,9 @@ func _build_hud() -> void:
 	var sh := _head("Satchel", 12)
 	sh.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sv.add_child(sh)
-	sv.add_child(_rule(136))
+	var srule := _rule(136)
+	sv.add_child(srule)
+	_satchel_full = [sh, srule]
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.custom_minimum_size = Vector2(140, 0)
@@ -477,13 +531,20 @@ func _build_hud() -> void:
 	satchel.add_theme_constant_override("h_separation", 1)
 	satchel.add_theme_constant_override("v_separation", 1)
 	scroll.add_child(satchel)
+	_satchel_full.append(scroll)
+	# closed (the usual), the satchel is a pouch: what Conjure places, your draughts and coins
+	pouch = _box(false, 3)
+	pouch.mouse_filter = Control.MOUSE_FILTER_PASS
+	sv.add_child(pouch)
+	pouch_hint = _label("I  satchel", 11, DIM)
 
+	# what's just happened: a few short notes at the left, above the bottom, out of the way of play
 	toasts = VBoxContainer.new()
-	toasts.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	toasts.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	toasts.position.y = 4
+	toasts.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	toasts.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	toasts.position = Vector2(5, -8)
 	toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	toasts.alignment = BoxContainer.ALIGNMENT_BEGIN
+	toasts.alignment = BoxContainer.ALIGNMENT_END
 	toasts.add_theme_constant_override("separation", 1)
 	root.add_child(toasts)
 
@@ -1045,10 +1106,10 @@ func _build_settings() -> void:
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 1)
 	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold to levitate (once forged)"],
-			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate (dig a chest open)"],
+			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate: mana by how hard"],
 			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home; a workshop: load it"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
-			["C", "The Wisp Forge"], ["J", "Recipe book"], ["M", "Map (Tab: the galaxy)"],
+			["C", "The Wisp Forge"], ["J", "Recipe book"], ["I / Tab", "Open or close the satchel"], ["M", "Map (Tab: the galaxy)"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: shapes)"],
 			["K", "Call the skiff"], ["Shift", "Starsail (skiff, in space)"], ["Esc", "Settings"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
 		grid.add_child(_label(pair[0], 12, GOLD))
@@ -1168,7 +1229,7 @@ func hide_forge() -> void:
 ## when the satchel can't pay), and the chosen piece's cost.
 func _update_build_bar(g) -> void:
 	var piece: Dictionary = g.build_piece()
-	var key := "%d|%d|%s|%d|%d|%d|%s|%d|%d|%s|%d" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {})), g.build_shape, g.build_thick, str(g.build_prev.get("text", "")), g.build_rise]
+	var key := "%d|%d|%s|%d|%d|%d|%s|%d|%d|%s|%d" % [g.build_cat, int(g.build_idx[g.build_cat]), _inv_key, g.build_w, g.build_floors, g.build_style, str(piece.get("cost", {})), g.build_shape, g.build_thick, str(g.build_prev.get("text", "")) + str(int(ceil(float(g.build_prev.get("mana", 0.0))))), g.build_rise]
 	if key == _build_key:
 		return
 	_build_key = key
@@ -1238,22 +1299,42 @@ func _update_build_bar(g) -> void:
 			hint = "%s: yours, carried in the satchel\nclick to set it down  ·  T mirror  ·  B leaves" % piece["name"]
 		else:
 			hint += "\nclick to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else ("  ·  hold to paint  ·  G shape" if piece["kind"] == "wall" else ""))
+		var pmn: float = float(g.build_prev.get("mana", 0.0))
+		if pmn > 0.0 and piece["kind"] != "remove" and piece["kind"] != "flatten":
+			var hls := hint.split("\n")
+			hls[0] += "  ·  %d mana" % int(ceil(pmn))
+			hint = "\n".join(hls)
 		var hl := _label(hint, 12, CREAM)
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		build_box.add_child(hl)
 
 func toast(txt: String, col: Color = Color.WHITE, secs: float = 2.2) -> void:
-	var p := _panel(Color(0.05, 0.04, 0.09, 0.88), TRIM_DIM, 3)
+	# (the same note again only freshens the one showing)
+	for it in _toast_items:
+		if is_instance_valid(it[0]) and String(it[2]) == txt:
+			it[1] = Time.get_ticks_msec() + int(secs * 1000.0)
+			(it[0] as Control).modulate.a = 1.0
+			return
+	var p := _panel(Color(0.045, 0.04, 0.1, 0.84), TRIM_DIM, 3)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var l := _label(txt, 13, col)
-	p.add_child(l)
+	var row := _box(false, 3)
+	p.add_child(row)
+	var dot := ColorRect.new()
+	dot.color = col
+	dot.custom_minimum_size = Vector2(2, 8)
+	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(dot)
+	var l := _label(txt, 13, col.lerp(CREAM, 0.35))
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size.x = minf(240.0, 7.0 + float(txt.length()) * 5.0)
+	row.add_child(l)
+	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	toasts.add_child(p)
-	toasts.move_child(p, 0)
-	_toast_items.append([p, Time.get_ticks_msec() + int(secs * 1000.0)])
-	while toasts.get_child_count() > 7:
-		var last := toasts.get_child(toasts.get_child_count() - 1)
-		toasts.remove_child(last)
-		last.queue_free()
+	_toast_items.append([p, Time.get_ticks_msec() + int(secs * 1000.0), txt])
+	while toasts.get_child_count() > 4:
+		var first := toasts.get_child(0)
+		toasts.remove_child(first)
+		first.queue_free()
 
 func update_toasts() -> void:
 	var now := Time.get_ticks_msec()
@@ -1291,7 +1372,7 @@ func update_hud(g) -> void:
 		var b: Dictionary = g._biome_at(a)
 		var wn := "Clear"
 		if depth > 14:
-			wn = "Underground"
+			wn = "Clear"                      # (no weather down here)
 		elif g.rain > 0.15 and b["weather"] != "clear":
 			wn = {"rain": "Rain", "snow": "Snowfall", "ash": "Ashfall"}[b["weather"]]
 		if g.sky_ev != "" and depth <= 14:
@@ -1312,36 +1393,28 @@ func update_hud(g) -> void:
 			wn = "Nebula" if g.space.neb > 0.3 else "Clear"
 			if g.space.sailing:
 				wn += " · Starsail"
-		var tiers := ["", "I · Stone", "II · Copper", "III · Obsidian", "IV · Core Siphon"]
-		var extra := ""
-		if g.heat_ward:
-			extra += " · Heat Ward"
-		if g.items.has("heart"):
-			extra += " · Ember Heart"
-		for rel in [["ring", "Warden's Ring"], ["circlet", "Sage's Circlet"], ["boots", "Featherstep Boots"]]:
-			if g.items.has(rel[0]):
-				extra += " · " + rel[1]
-		var nrel := 0
-		for rid in Defs.RELICS:
-			if g.items.has(rid):
-				nrel += 1
-		if nrel > 0:
-			extra += " · %d relic%s" % [nrel, "" if nrel == 1 else "s"]
-		info.text = "%s\n%s · %s · %s\nStaff %s%s\n%d coins · %d FPS" % [where, depth_txt, g.local_time_text(), wn, tiers[g.tier], extra, int(g.items.get("coins", 0)), Engine.get_frames_per_second()]
+		# (only what matters now: where you are, the time, the weather when there is any, how deep
+		# underground; the staff, relics and coins are in the satchel)
+		var lines := PackedStringArray([where, g.local_time_text() + ("" if wn == "Clear" else " · " + wn)])
+		if depth > 14 or depth < -60 or g.space.active:
+			lines[1] = depth_txt + " · " + lines[1]
+		info.text = "\n".join(lines)
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
-			info.text += " · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]
+			info.text += "\n%d FPS · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [Engine.get_frames_per_second(), g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]
 		# the villagers' requests you've taken (towns.gd)
 		var rqs: Array = g.towns.requests() if g.towns != null else []
 		for rq in rqs:
 			info.text += "\n· " + g.towns.short(rq)
 	# build mode replaces the spell bar with the building bar
-	hotbar.get_parent().visible = not g.build_on
+	hot_name.get_parent().visible = not g.build_on
 	build_bar.visible = g.build_on
 	if g.build_on:
 		_update_build_bar(g)
 	_update_hotbar(g)
 	_update_satchel(g)
+	if mp_glow != null:
+		mp_glow.queue_redraw()
 	# boss
 	var boss = null
 	for e in g.enemies:
@@ -1419,8 +1492,13 @@ func _draw_slot_over(c: Control, k: int, id: String) -> void:
 
 ## the satchel: a slot for each material held (click: Conjure places it), the draughts, and the furniture
 ## carried whole
+func toggle_satchel() -> void:
+	satchel_open = not satchel_open
+	_inv_key = ""
+	_sfx("ui_click")
+
 func _update_satchel(g) -> void:
-	var ik := str(g.mat) + "|"
+	var ik := str(g.mat) + "|" + str(satchel_open) + "|" + str(g.tier) + "|" + str(int(g.items.get("coins", 0))) + "|"
 	for m in Defs.NM:
 		if g.player.inv[m] > 0:
 			ik += "%d:%d," % [m, g.player.inv[m]]
@@ -1434,6 +1512,34 @@ func _update_satchel(g) -> void:
 	_inv_key = ik
 	for c in satchel.get_children():
 		c.queue_free()
+	for c2 in pouch.get_children():
+		pouch.remove_child(c2)
+		if c2 != pouch_hint:
+			c2.queue_free()
+	for part in _satchel_full:
+		part.visible = satchel_open
+	pouch.visible = not satchel_open
+	var tiers := ["", "Stone", "Copper", "Obsidian", "Core Siphon"]
+	var nrel := 0
+	for rid in Defs.RELICS:
+		if g.items.has(rid):
+			nrel += 1
+	(_satchel_full[0] as Label).text = "Satchel · %s staff%s" % [tiers[clampi(g.tier, 0, 4)], (" · %d relic%s" % [nrel, "" if nrel == 1 else "s"]) if nrel > 0 else ""]
+	if not satchel_open:
+		# the pouch: what Conjure places, the draughts, the coins
+		if g.mat > 0 and g.player.inv[g.mat] > 0:
+			pouch.add_child(_slot(Icons.mat(g.mat), _count(g.player.inv[g.mat]), true, "%s  ×%d: what Conjure places (I opens the satchel to choose)" % [Defs.NAMES[g.mat], g.player.inv[g.mat]]))
+		var np0 := int(g.items.get("potion", 0))
+		if np0 > 0:
+			pouch.add_child(_slot(Icons.item("potion"), str(np0), false, "Healing Draught  ×%d\nH to drink" % np0))
+		var coins := _box(false, 2)
+		coins.add_child(_tex(Icons.item("coin")))
+		coins.add_child(_label(_count(int(g.items.get("coins", 0))), 12, GOLD))
+		coins.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pouch.add_child(coins)
+		pouch_hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		pouch.add_child(pouch_hint)
+		return
 	var n := 0
 	for m in Defs.NM:
 		if g.player.inv[m] <= 0:
@@ -1550,7 +1656,7 @@ func _render_forge() -> void:
 ## a recipe not yet learned: its name, and where it's learned
 func _book_page(r: Dictionary) -> Control:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _frame(Color(0.06, 0.05, 0.1, 0.97), TRIM_DIM, 4))
+	p.add_theme_stylebox_override("panel", _frame(Color(0.06, 0.05, 0.1, 0.97), TRIM_DIM, 3))
 	p.custom_minimum_size = Vector2(148, 0)
 	var v := _box(true, 2)
 	p.add_child(v)
@@ -1575,9 +1681,9 @@ func _recipe_card(r: Dictionary) -> Control:
 	var aff: bool = game.recipe_affordable(r)
 	var trim := TRIM_DIM
 	if not done and unlocked and aff:
-		trim = Color(0.45, 0.8, 0.42)
+		trim = MANA
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _frame(Color(0.08, 0.065, 0.14, 0.97), trim, 4))
+	p.add_theme_stylebox_override("panel", _frame(Color(0.08, 0.065, 0.14, 0.97), trim, 3))
 	p.custom_minimum_size = Vector2(148, 0)
 	if done:
 		p.modulate.a = 0.55
