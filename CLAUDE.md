@@ -383,6 +383,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   bolts back past you (a leap if you're close) instead of turning back into the corner at each look round.
   `walk_to` jumps a wall only from the ground (jumping again at the top of each jump walked it up walls).
   Test: `_test_corner` (in "ecology": a course in open air with a 56-high wall).
+- A tongue shows only while a frog flicks at a fly or lashes at you (`Ecology.tick` clears it otherwise: one roused
+  mid-flick kept it standing up). Carcasses fall to the ground or rise to the top of water (`update_world`: "rest",
+  re-checked every 30 frames). Mire Leech rad 2.3, Sand Viper rad 2.4, Glow Worm 1.9 (user: the small worms were tiny).
 - Prey creatures: hare (forest, savanna, mountain), snowhare, deer (a herd of 3), skink, reedfrog. Test: `_test_ecology`
   ("ecology").
 - Sizes true to life (user, 21 Nov: "accurate to size compared to the player"): a cell is about 10 cm (the mage's
@@ -526,6 +529,15 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Spells with "single" in `Defs.SPELLS` cast once a click (user, 21 Nov: the start was too strong): `Mage.cast_latch`
   is set by `_cast` and cleared when the button is let go. Spark Bolt is single, 12 mana, 30 ticks, reaches 220
   cells (it was 4 mana every 9 ticks while held). Test: in `_test_vfx`.
+- A modest start (user, 21 Nov: "make the starting power of the player lower"): a new journey knows only the
+  Wisp Mote (`Defs.SPELLS` "mote": single, 8 mana, slow, short, 6 damage, never touches terrain) and Conjure;
+  Spark Bolt is forged (recipe "spark": stone, coal, a little copper). Levitation is forged too (recipe
+  "levitate", `items["levitate"]`; needs Wisp, so the Copper Focus first) or comes with the Roc Feather;
+  `_update_player`'s `floating` checks it. A save from before ("start" < 1 in progress.json) keeps levitation.
+  The test mode starts with spark and levitation (tests.gd sets them), and `_test_start` ("start") checks the gate.
+  Digging: the excavation brush's rate is scaled by the staff's tier (`tier_rate` 0.55, 0.8, 1.0, 1.2), so a plain
+  staff digs about half as fast. Ores are a little rarer (gen.comp `strata` thresholds +0.015, each planet
+  kind's own ore +0.012 in `gpu.build_surface`).
 - Health doesn't regenerate. Healing Draughts (`items["potion"]`, H to drink, `_drink`; forged or found in chests,
   two at the start) and the Mending spell (its scroll is a rare find) heal over a moment (`Mage.heal_left`).
 - Falling rock hurts only after falling `ROCK_HURT_FALL` cells and only through your upper half (grid.comp), so
@@ -627,7 +639,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "sky", "gear", "towns", "vfx", "ui", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

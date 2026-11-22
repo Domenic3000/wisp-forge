@@ -2128,7 +2128,8 @@ func _update_player(m: Mage) -> void:
 			m.ground_t = 99
 			m.air_time = 0
 	m.jump_held = jump
-	m.floating = jump and not p.on_ground and not p.in_liquid and m.air_time > 10 and m.mana > 0.5
+	# (levitation is forged: the Levitation recipe; a party member uses the host's items, as for every gear piece)
+	m.floating = jump and not p.on_ground and not p.in_liquid and m.air_time > 10 and m.mana > 0.5 and (items.has("levitate") or items.has("roc"))
 	if m.floating:
 		audio.play("levitate", p.pos, 0.35)
 		p.vy -= g + 0.28
@@ -2299,7 +2300,7 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		return
 	m.mana -= cost
 	m.cast_cd = s["cd"]
-	var snd := {"spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
+	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
 	audio.play(snd.get(id, "spark"), m.pos, 0.8)
 	var st := _staff(m, aim)
 	var pd: Dictionary = Defs.PROJ[id]
@@ -2349,7 +2350,9 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 		_dig_open_t = 30
 		_try_open_chest()
 	# (the Fire Opal Focus digs half again as fast: brush.comp's rate)
-	brushes.append([p, m.dig_r, 1, 0, m.tier, gear("dig_rate", m) - 1.0, 0, m.slot])
+	# (a plain staff digs slowly; each focus digs faster: tier 1 at 0.55, 2 at 0.8, 3 at 1, 4 at 1.2)
+	var tier_rate: float = [0.55, 0.55, 0.8, 1.0, 1.2][clampi(m.tier, 0, 4)]
+	brushes.append([p, m.dig_r, 1, 0, m.tier, gear("dig_rate", m) * tier_rate - 1.0, 0, m.slot])
 	lights.append([p, 10.0, Color(0.4, 0.8, 0.5)])
 
 ## Shift + right mouse: take background tiles (a building's back walls, furniture, plants). It is how
@@ -2725,6 +2728,10 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 	var pd: Dictionary = Defs.PROJ[type]
 	var kb := 1.2
 	match type:
+		"mote":
+			# (the first spell: it stings, and moves nothing; stone and earth shrug it off)
+			if e != null:
+				_hurt_enemy(e, float(pd["dmg"]), kb * 0.6, -0.4)
 		"spark":
 			if e != null:
 				_hurt_enemy(e, float(pd["dmg"]) * gear("spell_spark"), kb, -0.6)
@@ -4020,6 +4027,7 @@ func recipe_done(r: Dictionary) -> bool:
 		"skiff": return items.has("skiff")
 		"drive": return skiff_reach() > int(planet.get("index", 0))
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
+		"levitate": return items.has("levitate")
 	if r.has("gear") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam":
 		return items.has(String(r["id"]))
 	return false
@@ -4174,7 +4182,7 @@ func craft(r: Dictionary) -> bool:
 			mana_regen = 0.32
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
-		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam":
+		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate":
 			items[String(r["id"])] = true
 		"drive":
 			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
@@ -4885,7 +4893,8 @@ func start_game(use_save: bool) -> void:
 		# a new journey: a system of planets of its own (the test mode keeps the classic one)
 		Defs.world_seed = 0 if testing else 1 + randi() % 0xFFFFFE
 		player.inv.fill(0)
-		known = ["spark", "conjure"]
+		# (a modest start: a little Wisp Mote, no Spark Bolt and no levitation until they're forged)
+		known = ["mote", "conjure"]
 		tier = 1
 		dig_r = 7.5
 		max_hp = 100
@@ -4893,6 +4902,9 @@ func start_game(use_save: bool) -> void:
 		mana_regen = 0.22
 		heat_ward = false
 		items = {"potion": 2}       # two draughts to start with; health doesn't come back by itself
+		if testing:
+			known = ["mote", "spark", "conjure"]
+			items["levitate"] = true  # (the checks fly and cast sparks as they always have)
 		player.furn = []
 		played = 0.0
 	_enter_planet(int(s["planet"]) if s != null else 0)
@@ -5376,7 +5388,7 @@ func _save_path() -> String:
 
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
-		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2,
+		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1,
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
@@ -5409,6 +5421,8 @@ func _apply_save(s: Dictionary) -> void:
 	mana_regen = float(s.get("mana_regen", 0.22))
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
+	if int(s.get("start", 0)) < 1:
+		items["levitate"] = true    # (a journey from before levitation had to be forged keeps it)
 	_apply_gear()
 	if int(s.get("cnt", 0)) < 2:
 		# (before the GPU's counters moved, digging what the staff couldn't cut counted as star iron)

@@ -95,6 +95,10 @@ static func tick(g, e, tgt, dist: float, gacc: float, slow_f: float) -> int:
 	var go: String = c["go"]
 	var spd: float = float(c["speed"]) * slow_f
 	e.pose = ""
+	# a tongue is only out while it flicks at a fly or lashes at you (a frog roused mid-flick left it
+	# standing up in the air: user, 21 Nov)
+	if e.doing != "flick" and not (e.act == "go" and e.move == "tongue"):
+		e.tongue = 0.0
 	if e.bite_t > 0:
 		e.bite_t -= 1
 	if e.hunger_t > 0:
@@ -514,13 +518,37 @@ static func _carcass_near(g, p: Vector2, r: float) -> Dictionary:
 			return cc
 	return {}
 
-## The carcasses: they fade, and flies buzz over them.
+## The carcasses: they fall to the ground (or rise to the top of the water they died in), fade, and
+## flies buzz over them. (One killed mid-hop stayed in the air where it died: user, 21 Nov.)
 static func update_world(g) -> void:
 	for k in range(g.eco_carcasses.size() - 1, -1, -1):
 		var cc: Dictionary = g.eco_carcasses[k]
 		cc["t"] = int(cc["t"]) - 1
 		if int(cc["t"]) <= 0:
 			g.eco_carcasses.remove_at(k)
+			continue
+		if int(cc["t"]) % 30 == 0:
+			cc["rest"] = false                 # (ground dug out from under it: it falls again)
+		if not cc.get("rest", false) and g.in_grid(cc["pos"], 4.0):
+			var p: Vector2 = cc["pos"]
+			var up: Vector2 = p.normalized()
+			if Defs.KIND[g.type_at(p + up * 0.5)] == Defs.K_LIQUID:
+				cc["pos"] = p + up * 0.25      # (it floats up through the water)
+				cc["vy"] = 0.0
+				continue
+			var vy: float = minf(float(cc.get("vy", 0.0)) + 0.12, 3.0)
+			var moved := 0.0
+			while moved < vy:
+				var st := minf(0.5, vy - moved)
+				var kd: int = Defs.KIND[g.type_at(p - up * (st + 0.05))]
+				if kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID:
+					cc["rest"] = true
+					vy = 0.0
+					break
+				p -= up * st
+				moved += st
+			cc["pos"] = p
+			cc["vy"] = vy
 		elif g.frame % 25 == 0 and g.in_grid(cc["pos"], 4.0):
 			var up: Vector2 = (cc["pos"] as Vector2).normalized()
 			g._particle(cc["pos"] + up * (3.0 + randf() * 5.0) + g.basis_r(atan2(cc["pos"].y, cc["pos"].x)) * (randf() - 0.5) * 8.0,

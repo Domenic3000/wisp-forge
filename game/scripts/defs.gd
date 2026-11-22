@@ -1000,9 +1000,10 @@ func biome_index_at(pl: Dictionary, a: float) -> int:
 	return bi
 
 # ---------------------------------------------------------------- spells ----
-const SPELL_ORDER := ["spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend"]
+const SPELL_ORDER := ["mote", "spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend"]
 ## "single": one cast a click (let go and click again; holding the button doesn't repeat it: main `cast_latch`)
 const SPELLS := {
+	"mote": {"name": "Wisp Mote", "mana": 8.0, "cd": 34, "single": true, "color": Color(0.62, 0.9, 1.0), "desc": "A little drifting light a click. Stings foes; too weak to chip stone."},
 	"spark": {"name": "Spark Bolt", "mana": 12.0, "cd": 30, "single": true, "color": Color(1.0000, 0.9020, 0.5020), "desc": "One crackling bolt a click. Chips terrain, stings foes."},
 	"conjure": {"name": "Conjure", "mana": 0.0, "cd": 2, "color": Color(0.7451, 1.0000, 0.7451), "desc": "Place the selected material. Q/E to choose."},
 	"fireball": {"name": "Fireball", "mana": 18.0, "cd": 28, "color": Color(1.0000, 0.4706, 0.1569), "desc": "Explodes and ignites anything that burns."},
@@ -1018,6 +1019,7 @@ const SPELLS := {
 ## as it flies, and how it's drawn), "impact" (zap, shatter, splash, quake, nova; explosions add vfx `blast`),
 ## "cast" (flick, burst, rune: a circle of runes round the caster). A new spell needs only an entry here.
 const SPELL_FX := {
+	"mote": {"core": Color(0.9, 1.0, 1.0), "glow": Color(0.45, 0.8, 1.0), "glow_r": 4.0, "trail": "spark", "impact": "zap", "cast": "flick"},
 	"spark": {"core": Color(1.0, 1.0, 0.85), "glow": Color(1.0, 0.82, 0.3), "glow_r": 6.0, "trail": "spark", "impact": "zap", "cast": "flick"},
 	"fireball": {"core": Color(1.0, 0.95, 0.7), "glow": Color(1.0, 0.42, 0.1), "glow_r": 11.0, "trail": "flame", "impact": "", "cast": "burst"},
 	"frost": {"core": Color(0.92, 1.0, 1.0), "glow": Color(0.45, 0.8, 1.0), "glow_r": 8.0, "trail": "frost", "impact": "shatter", "cast": "flick"},
@@ -1038,6 +1040,7 @@ const POTION_CD := 600         # frames between draughts
 const MEND_HEAL := 30.0
 const HEAL_RATE := 0.5         # health per frame while healing
 const PROJ := {
+	"mote": {"speed": 3.6, "g": 0.0, "life": 34, "dmg": 6.0, "light": 12.0},
 	"spark": {"speed": 5.5, "g": 0.0, "life": 40, "dmg": 11.0, "light": 18.2},
 	"fireball": {"speed": 3.9, "g": 0.035, "life": 140, "dmg": 0.0, "light": 33.8},
 	"tide": {"speed": 3.5, "g": 0.07, "life": 120, "dmg": 6.0, "light": 15.6},
@@ -1070,6 +1073,8 @@ const RECIPES := [
 	{"id": "sandstone", "cat": "Materials", "name": "Sandstone x4", "cost": {SAND: 6}, "give": {SANDSTONE: 4}, "desc": "Pressed sand, for desert houses."},
 	{"id": "door", "cat": "Materials", "name": "Wooden Door", "cost": {PLANK: 8}, "give": {WOODDOOR: 1}, "desc": "Put it up in build mode (B)."},
 	{"id": "obsid", "cat": "Materials", "name": "Obsidian x4", "cost": {LAVA: 4, WATER: 4}, "give": {OBSIDIAN: 4}, "desc": "Quench lava in water."},
+	{"id": "spark", "cat": "Spells", "name": "Spark Bolt", "cost": {STONE: 24, COAL: 6, COPPER: 4}, "spell": "spark"},
+	{"id": "levitate", "cat": "Staff & Body", "name": "Levitation", "cost": {COPPER: 12, WISP: 4, LEAF: 10}, "desc": "Hold jump in the air to float on your mana. Wisp is cut with the Copper Focus."},
 	{"id": "fireball", "cat": "Spells", "name": "Fireball", "cost": {COAL: 12, COPPER: 6}, "spell": "fireball"},
 	{"id": "tide", "cat": "Spells", "name": "Tidecall", "cost": {WATER: 40, COPPER: 4}, "spell": "tide"},
 	{"id": "frost", "cat": "Spells", "name": "Frostbite", "cost": {FROST: 10, SNOW: 10}, "spell": "frost"},
@@ -2084,7 +2089,7 @@ const RELICS := {
 	"cinderheart": {"name": "Cinderheart", "desc": "Fire can't burn you, lava hurts far less, and a volcanic world's air can't scorch you."},
 	"tidefin": {"name": "Tidefin", "desc": "You swim as fast as you walk, and the deep sea can't crush you."},
 	"rimefang": {"name": "Rimefang's Tooth", "desc": "Your Spark Bolts chill what they hit, and a frozen world's cold can't touch you."},
-	"roc": {"name": "Roc Feather", "desc": "Levitating costs half the mana."},
+	"roc": {"name": "Roc Feather", "desc": "Lets you levitate, at half the mana."},
 	"lionheart": {"name": "Lionheart", "desc": "+40 max health."},
 	"sunidol": {"name": "Sun Idol", "desc": "Your spells hit a quarter harder, and a desert world's sun can't scorch you."},
 	"lantern": {"name": "Glowcap Lantern", "desc": "A soft light goes with you."},
@@ -2114,8 +2119,8 @@ const CREATURES := {
 	"bogtoad": {"name": "Bog Toad", "where": ["marsh"], "temper": "territorial", "habitat": "water", "eats": ["reedfrog"], "w": 7.0, "h": 5.0, "hp": 34.0, "dmg": 7.0, "go": "hop", "speed": 0.9,
 		"body": {"plan": "toad", "len": 7, "tall": 5, "base": "#5a6a34", "belly": "#b0a868", "accent": "#7a5a2a", "dark": "#26301a", "eye": "#ffb21a", "skin": "warts"},
 		"moves": {"tongue": {}, "slam": {}, "spit": {"proj": "mudball", "n": 2, "spread": 0.2}}, "drops": [[MUD, 4, 0.8], [SHROOM, 1, 0.3]]},
-	"leech": {"name": "Mire Leech", "where": ["marsh"], "temper": "predator", "habitat": "water", "eats": ["reedfrog"], "w": 4.0, "h": 4.0, "hp": 18.0, "dmg": 6.0, "go": "slither", "speed": 1.4,
-		"body": {"plan": "serpent", "segs": 6, "rad": 1.4, "base": "#3a3028", "belly": "#8a5a4a", "accent": "#c83a3a", "dark": "#1a1410", "eye": "#ff6a3a"},
+	"leech": {"name": "Mire Leech", "where": ["marsh"], "temper": "predator", "habitat": "water", "eats": ["reedfrog"], "w": 6.0, "h": 5.0, "hp": 18.0, "dmg": 6.0, "go": "slither", "speed": 1.4,
+		"body": {"plan": "serpent", "segs": 7, "rad": 2.3, "base": "#3a3028", "belly": "#8a5a4a", "accent": "#c83a3a", "dark": "#1a1410", "eye": "#ff6a3a"},
 		"moves": {"dive": {"v": 3.4}}, "drops": [[MUD, 3, 0.6], [WATER, 3, 0.6]]},
 	"frostwolf": {"name": "Frost Wolf", "where": ["tundra"], "temper": "predator", "eats": ["snowhare"], "pack": 3, "w": 12.0, "h": 9.0, "hp": 30.0, "dmg": 8.0, "go": "walk", "speed": 1.5,
 		"body": {"plan": "beast", "len": 11, "tall": 5, "leg": 5, "head": 4, "neck": 2, "base": "#c8d4de", "belly": "#eef4f8", "accent": "#8fe8ff",
@@ -2138,8 +2143,8 @@ const CREATURES := {
 	"vulture": {"name": "Vulture", "where": ["savanna", "desert"], "temper": "neutral", "active": "day", "scavenge": true, "idle": {"soar": 4, "circle": 1, "perch": 1}, "w": 9.0, "h": 7.0, "hp": 22.0, "dmg": 6.0, "go": "fly", "speed": 1.6,
 		"body": {"plan": "bird", "len": 9, "span": 11, "base": "#3a2e28", "belly": "#d8b8a0", "accent": "#e8a0a0", "dark": "#1a1410", "eye": "#ffd23a", "skin": "fur"},
 		"moves": {"dive": {"v": 3.6}}, "drops": [[DRYGRASS, 2, 0.5]]},
-	"sandviper": {"name": "Sand Viper", "where": ["desert"], "temper": "predator", "habitat": "soft", "eats": ["skink"], "w": 4.0, "h": 3.0, "hp": 30.0, "dmg": 9.0, "go": "burrow", "speed": 1.4,
-		"body": {"plan": "serpent", "segs": 12, "rad": 1.0, "base": "#c8985a", "belly": "#f0dca8", "accent": "#8a4a1a", "dark": "#5a3a1a", "eye": "#ff3a1a", "teeth": true},
+	"sandviper": {"name": "Sand Viper", "where": ["desert"], "temper": "predator", "habitat": "soft", "eats": ["skink"], "w": 6.0, "h": 5.0, "hp": 30.0, "dmg": 9.0, "go": "burrow", "speed": 1.4,
+		"body": {"plan": "serpent", "segs": 11, "rad": 2.4, "base": "#c8985a", "belly": "#f0dca8", "accent": "#8a4a1a", "dark": "#5a3a1a", "eye": "#ff3a1a", "teeth": true},
 		"moves": {"breach": {"proj": "sandball", "n": 2, "spread": 0.3}}, "drops": [[SAND, 4, 0.8], [CRYSTAL, 1, 0.15]]},
 	"jackal": {"name": "Desert Jackal", "where": ["desert"], "temper": "predator", "active": "night", "eats": ["skink", "hare"], "scavenge": true, "pack": 2, "w": 8.0, "h": 6.0, "hp": 24.0, "dmg": 7.0, "go": "walk", "speed": 1.5,
 		"body": {"plan": "beast", "len": 8, "tall": 4, "leg": 3, "head": 3, "neck": 1, "base": "#d0a868", "belly": "#f0dcb0", "accent": "#7a5a2a",

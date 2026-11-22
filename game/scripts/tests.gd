@@ -1279,6 +1279,7 @@ func run() -> void:
 	g._delete_worlds()
 	g.player.inv.fill(0)
 	g.known = ["spark", "conjure"]
+	g.items["levitate"] = true        # (forged in a real game: the checks fly as they always have)
 	var t0 := Time.get_ticks_msec()
 	g._enter_planet(0)
 	var gen_ms := Time.get_ticks_msec() - t0
@@ -1343,6 +1344,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_vfx()
+		elif only == "start":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_start()
 		elif only == "hazards":
 			# (where the full run tries it: the open ground beside the frozen basin)
 			var hzo_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) + 160, 80, 60, 4, 30)
@@ -3440,6 +3445,7 @@ func run() -> void:
 	await _test_gear()
 	await _test_towns()
 	await _test_vfx()
+	await _test_start()
 	await _test_ui()
 	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
 
@@ -4078,7 +4084,7 @@ func run() -> void:
 func _test_creatures() -> void:
 	var cr_god0: bool = g.test_god
 	g.test_god = true
-	var cr_w0 := [g.rain, g.rain_target, g.weather_timer]     # (clear weather: see _test_ecology)
+	var cr_w0 := [g.rain, g.rain_target, g.weather_timer, g.time]     # (clear weather at midday: see _test_ecology)
 	g.rain = 0.0
 	g.rain_target = 0.0
 	g.weather_timer = 999999
@@ -4106,6 +4112,7 @@ func _test_creatures() -> void:
 	_go(Vector2(cos(cr_a0), sin(cr_a0)) * (g.gpu.surf_at(cr_a0).x + 14.0))
 	await _frames(60)
 	var cr_home: Vector2 = g.player.pos
+	g.time = g.towns.time_for_hour(cr_home, 13.0)       # (midday, as the wild-life check: none asleep out of its hours)
 	var cr_ang := atan2(cr_home.y, cr_home.x)
 	var cr_side: Vector2 = g.basis_r(cr_ang)
 	var cr_up: Vector2 = cr_home.normalized()
@@ -4163,6 +4170,7 @@ func _test_creatures() -> void:
 	g.rain = float(cr_w0[0])
 	g.rain_target = float(cr_w0[1])
 	g.weather_timer = int(cr_w0[2])
+	g.time = float(cr_w0[3])
 	g.boss_clouds.clear()
 	_go(cr_orig)
 	await _frames(30)
@@ -4620,6 +4628,60 @@ func _test_fog() -> void:
 		fg_a0, fg_a1, fg_a2, ", ".join(fg_line), fg_mid, fg_jump, str(fg_any), fg_a3, fg_a4])
 	g.test_god = fg_god0
 	_go(fg_orig)
+	await _frames(20)
+
+## A modest start (user, 21 Nov): no levitation until it's forged (holding jump in the air you fall), then
+## you float; the first spell is the Wisp Mote, and Spark Bolt and Levitation are forged.
+func _test_start() -> void:
+	var st_god0: bool = g.test_god
+	g.test_god = true
+	var st_orig: Vector2 = g.player.pos
+	var st_up: Vector2 = st_orig.normalized()
+	# (high in open sky over the ground here: nothing to land on in the second or so it takes)
+	var st_sky: Vector2 = st_up * (g.gpu.surf_at(atan2(st_up.y, st_up.x)).x + 110.0)
+	var st_lev0: bool = g.items.has("levitate")
+	g.items.erase("levitate")
+	g.state = "play"
+	# (open air: the full run's earlier checks leave ledges and courses up in the sky round here)
+	for st_h in [110.0, 70.0, 150.0, 90.0, 130.0, 60.0]:
+		st_sky = st_up * (g.gpu.surf_at(atan2(st_up.y, st_up.x)).x + st_h)
+		_go(st_sky)
+		await _frames(3)
+		if not g.player.on_ground and g.player.pos.length() < st_sky.length() - 0.2:
+			break
+	_go(st_sky)
+	g.test_jump = true
+	var st_floated := 0
+	for st_f in 50:
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if g.player.floating:
+			st_floated += 1
+	var st_fell: float = (st_sky).length() - g.player.pos.length()
+	g.test_jump = false
+	g.items["levitate"] = true
+	_go(st_sky)
+	g.test_jump = true
+	var st_floated2 := 0
+	for st_f2 in 50:
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if g.player.floating:
+			st_floated2 += 1
+	var st_rose: float = g.player.pos.length() - (st_sky).length()
+	g.test_jump = false
+	if not st_lev0:
+		g.items.erase("levitate")
+	var st_recipes := {}
+	for st_r in g.recipes:
+		st_recipes[String(st_r["id"])] = st_r
+	var st_ok: bool = st_floated == 0 and st_fell > 8.0 and st_floated2 > 20 and st_rose > -8.0 and Defs.SPELLS.has("mote") \
+		and st_recipes.has("spark") and st_recipes.has("levitate") and Defs.SPELL_ORDER[0] == "mote"
+	_ok("a modest start: no levitating until it's forged, a Wisp Mote first, Spark Bolt and Levitation at the forge", st_ok,
+		"without it: floated %d frames, fell %.0f cells; with it: floated %d frames, rose %.0f; recipes spark %s, levitate %s" % [
+		st_floated, st_fell, st_floated2, st_rose, str(st_recipes.has("spark")), str(st_recipes.has("levitate"))])
+	g.test_god = st_god0
+	_go(st_orig)
 	await _frames(20)
 
 ## every game grows a system of its own: the rules for many seeds, and one random planet made for real

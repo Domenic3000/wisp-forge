@@ -323,7 +323,8 @@ func build_surface(planet: Dictionary) -> void:
 	else:
 		var hs: Array = ko["hosts"]
 		setp(126, Vector4(ko["mat"], hs[0], hs[1], hs[2]))
-		setp(127, Vector4(ko["depth"][0], ko["depth"][1], ko["thr"], float(hs[3]) + (1000.0 if ko.get("sea", false) else 0.0)))
+		# (+0.012: every ore a little rarer, user 21 Nov)
+		setp(127, Vector4(ko["depth"][0], ko["depth"][1], float(ko["thr"]) + 0.012, float(hs[3]) + (1000.0 if ko.get("sea", false) else 0.0)))
 	setp(120, Vector4(0, 0, 0, 0))
 	_upload_params()
 	var cl := rd.compute_list_begin()

@@ -798,7 +798,7 @@ func _build_settings() -> void:
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 1)
-	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold to levitate"],
+	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold to levitate (once forged)"],
 			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate (dig a chest open)"],
 			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
