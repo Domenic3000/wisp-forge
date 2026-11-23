@@ -17,7 +17,7 @@ extends RefCounted
 const KINDS := {
 	"skitter": {"name": "Skitter", "w": 10, "h": 6, "hp": 22.0, "dmg": 7.0, "speed": 1.35, "xen": [1, 2]},
 	"drifter": {"name": "Drifter", "w": 11, "h": 13, "hp": 30.0, "dmg": 5.0, "speed": 0.9, "xen": [2, 3]},
-	"brute": {"name": "Brute", "w": 14, "h": 20, "hp": 85.0, "dmg": 16.0, "speed": 0.75, "xen": [4, 6]},
+	"brute": {"name": "Brute", "w": 14, "h": 22, "hp": 85.0, "dmg": 16.0, "speed": 0.75, "xen": [4, 6]},
 	"brood": {"name": "the Broodmother", "w": 38, "h": 26, "hp": 420.0, "dmg": 14.0, "speed": 0.8, "xen": [18, 24]},
 }
 const G := 0.17            # a powered room's pull (as on a planet's surface)
@@ -297,6 +297,7 @@ const C_HI := Color(0.62, 0.42, 0.9)
 const C_GLOW := Color(0.68, 1.0, 0.42)
 const C_GLOW2 := Color(0.88, 1.0, 0.72)
 const C_LEG := Color(0.14, 0.06, 0.24)
+const C_BONE := Color(0.84, 0.8, 0.92)
 
 static func frames(kd: String) -> Array:
 	if _frames.has(kd):
@@ -427,45 +428,91 @@ static func _drifter_img(f: int) -> Image:
 	_px(im, 12, 5, OUT)
 	return im
 
-## 20 x 24: hunched, plated, on two thick legs, a great claw forward; walking (0/1), rearing up (2: its tell),
-## charging head down (3)
+## 22 x 26: hunched and plated on two digitigrade legs, a segmented tail with a glowing sac behind, a heavy
+## head on a short neck, a bone scythe for an arm; walking (0/1), rearing up (2: its tell, the scythe high,
+## the maw lit), charging head down with the scythe swept forward (3)
 static func _brute_img(f: int) -> Image:
-	var im := _blank(20, 24)
-	var lean := 0.0 if f < 2 else (-2.0 if f == 2 else 2.5)
-	var yb := 2.0 if f == 2 else 0.0
-	# legs
-	var stp := 1.5 if f == 0 else -1.5
-	if f >= 2:
-		stp = 0.0
-	_line(im, Vector2(8, 15), Vector2(7 - stp, 23), C_LEG)
-	_line(im, Vector2(9, 15), Vector2(8 - stp, 23), C_LEG)
-	_line(im, Vector2(11, 15), Vector2(12 + stp, 23), C_LEG)
-	_line(im, Vector2(12, 15), Vector2(13 + stp, 23), C_LEG)
-	_px(im, int(6 - stp), 23, C_DARK)
-	_px(im, int(14 + stp), 23, C_DARK)
-	# the body: a heavy hunched back of plates
-	_shell(im, 9.5 + lean * 0.5, 10.0 - yb, 7.4, 7.0)
-	for k in 4:
-		_line(im, Vector2(4.0 + lean * 0.5 + float(k) * 2.4, 5.0 - yb + float(k % 2)), Vector2(5.0 + lean * 0.5 + float(k) * 2.4, 3.0 - yb), C_HI)
-	# spikes along the spine
+	var im := _blank(22, 26)
+	var rear := f == 2
+	var ch := f == 3
+	var lift := 3.0 if rear else 0.0
+	var dip := 2.0 if ch else 0.0
+	var lean := -1.0 if rear else (2.0 if ch else 0.0)
+	var st: float = [2.0, -2.0, 0.0, 3.0][f]
+	_brute_leg(im, 9.0, -st, lift, C_LEG, C_LEG)
+	# the tail behind: segmented, a glowing sac
+	var ax := 4.0 + lean * 0.3
+	var ay := 14.0 - lift
+	_ell(im, ax, ay, 3.4, 3.0, C_DARK)
+	_ell(im, ax - 0.3, ay - 0.6, 2.4, 2.0, C_MID)
+	_px(im, int(ax) - 2, int(ay) + 1, C_GLOW)
+	_px(im, int(ax) - 1, int(ay) + 1, C_GLOW)
+	_px(im, int(ax) - 1, int(ay) + 2, C_GLOW.darkened(0.35))
+	# the hump of plates: dark seams, each plate's top lit, bone spikes along the spine
+	var tx := 9.0 + lean * 0.5
+	var ty := 10.0 - lift
+	_ell(im, tx, ty, 6.4, 5.8, C_DARK)
+	_ell(im, tx - 0.6, ty - 1.0, 5.4, 4.4, C_MID)
+	for k in 3:
+		var sx := tx - 4.0 + float(k) * 3.2
+		_line(im, Vector2(sx + 1.0, ty - 5.0), Vector2(sx - 0.5, ty + 3.0), C_DARK)
+		_line(im, Vector2(sx + 1.6, ty - 5.0), Vector2(sx + 2.6, ty - 5.4), C_HI)
+		_px(im, int(sx + 2.0), int(ty - 4.0), C_HI)
+		var spx := int(sx + 1.5)
+		var spy := int(ty - 6.5)
+		_px(im, spx, spy, C_HI)
+		_px(im, spx, spy - 1, C_BONE)
+		_px(im, spx + 1, spy, C_DARK)
+	# the belly: gill slits glowing
+	_line(im, Vector2(tx - 3.0, ty + 4.0), Vector2(tx + 3.0, ty + 5.0), C_DARK)
 	for k2 in 3:
-		_px(im, 5 + k2 * 3 + int(lean * 0.5), int(2.0 - yb), C_GLOW.darkened(0.4))
-	# head, low and forward, eyes
-	var hx := 16.0 + lean
-	var hy := 11.0 - yb * 1.5 + (2.0 if f == 3 else 0.0)
-	_ell(im, hx, hy, 2.6, 2.2, C_DARK)
-	_px(im, int(hx) + 1, int(hy) - 1, C_GLOW)
-	_px(im, int(hx), int(hy) - 1, C_GLOW2)
-	# the claw: forward at the chest, raised over the head when rearing
-	var ca := Vector2(14.0 + lean, 13.0 - yb)
-	var cb := Vector2(18.0 + lean, 15.0) if f != 2 else Vector2(17.0, 3.0)
-	_line(im, ca, cb, C_DARK)
-	_line(im, ca + Vector2(0, 1), cb + Vector2(0, 1), C_MID)
-	_px(im, int(cb.x) + 1, int(cb.y), C_HI)
-	_px(im, int(cb.x) + 1, int(cb.y) + 2, C_HI)
-	# a glowing gland on its side
-	_ell(im, 8.0 + lean * 0.5, 12.0 - yb, 1.4, 1.2, C_GLOW)
+		_px(im, int(tx - 2.0 + float(k2) * 2.0), int(ty + 3.0), C_GLOW2 if k2 == 1 else C_GLOW)
+	_brute_leg(im, 12.0, st, lift, C_DARK, C_MID)
+	# the head on its neck: low and forward, raised when it rears, down when it charges; tusks
+	var hx := tx + 8.5 + (1.0 if ch else 0.0)
+	var hy := ty + 2.0 - lift * 0.4 + dip - (3.0 if rear else 0.0)
+	_thick(im, Vector2(tx + 4.0, ty), Vector2(hx - 2.0, hy), C_DARK, C_MID)
+	_ell(im, hx, hy, 3.2, 2.6, C_DARK)
+	_ell(im, hx - 0.4, hy - 0.7, 2.3, 1.6, C_MID)
+	_px(im, int(hx) - 1, int(hy) - 2, C_HI)
+	_px(im, int(hx) + 1, int(hy) - 1, C_GLOW2)
+	_px(im, int(hx) + 2, int(hy) - 1, C_GLOW)
+	_line(im, Vector2(hx - 1.0, hy + 2.0), Vector2(hx + 3.0, hy + 2.0), C_DARK)
+	_px(im, int(hx) + 3, int(hy) + 3, C_BONE)
+	_px(im, int(hx) + 1, int(hy) + 3, C_BONE)
+	if rear:
+		_px(im, int(hx) + 2, int(hy) + 2, C_GLOW)
+	# the scythe arm
+	var sh := Vector2(tx + 2.0, ty + 2.0)
+	var el := Vector2(tx + 5.0, ty + 6.0 + (0.5 if f == 1 else 0.0))
+	var tip := Vector2(tx + 11.0, ty + 3.0)
+	if rear:
+		el = Vector2(tx + 6.0, ty - 3.0)
+		tip = Vector2(tx + 5.0, ty - 10.0)
+	elif ch:
+		el = Vector2(tx + 6.0, ty + 5.0)
+		tip = Vector2(tx + 12.0, ty + 6.0)
+	_thick(im, sh, el, C_DARK, C_MID)
+	_line(im, el, tip, C_BONE)
+	_line(im, el + Vector2(-1.0, 0.0), tip + Vector2(-1.0, 1.0), C_BONE.darkened(0.35))
+	_px(im, int(el.x), int(el.y), C_HI)
 	return im
+
+## a digitigrade leg from the hip: thigh forward to the knee, shin back to the ankle, a splayed foot
+static func _brute_leg(im: Image, hx: float, s: float, lift: float, c: Color, c2: Color) -> void:
+	var hip := Vector2(hx, 16.0 - lift * 0.5)
+	var knee := Vector2(hx + 3.0 + s * 0.3, 20.0 - lift * 0.3)
+	var ank := Vector2(hx - 1.0 + s, 23.0)
+	var toe := Vector2(hx + 2.0 + s, 25.0)
+	_thick(im, hip, knee, c, c2)
+	_thick(im, knee, ank, c, c2)
+	_line(im, ank, toe, c)
+	_line(im, ank + Vector2(-1.0, 2.0), toe, c)
+
+## a two-pixel line, its second pixel (to the right) in another colour
+static func _thick(im: Image, a: Vector2, z: Vector2, c: Color, c2: Color) -> void:
+	_line(im, a, z, c)
+	_line(im, a + Vector2(1.0, 0.0), z + Vector2(1.0, 0.0), c2)
 
 ## 44 x 32: the Broodmother: a bloated, glowing abdomen behind, a plated thorax on many legs, a crested head
 ## with a cluster of eyes and a maw (open while she spits, frame 2); 0/1 pulse

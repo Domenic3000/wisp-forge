@@ -31,6 +31,7 @@ const Pirate := preload("res://scripts/pirate.gd")
 const Outpost := preload("res://scripts/outpost.gd")
 const Station := preload("res://scripts/station.gd")
 const Alien := preload("res://scripts/alien.gd")
+const Spacer := preload("res://scripts/spacer.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 ## The galaxy (user, 22 Nov: infinite space). Space's origin follows you (`org`: the galaxy point that
@@ -178,12 +179,17 @@ var shield := 1.0               # the Wisp Shield's charge (1 = ready to take a 
 var shield_hit := 0             # (frames since it took one: drawn as a flash)
 var _rock_backs := []           # a wreck's back layer, a sprite under its hull's
 var _top: Node2D                # drawn over the rocks: prompts, cannon bolts, the shield
+var _mid: Node2D                # over the rocks but UNDER the mage (overlay): aliens, traders, spacers
 var near_cache = null           # the closed cache you could open now (a wreck's cache dict) and its wreck
 var foe_shots := []             # pirates' bolts: [pos, vel, ticks left, the ship that fired]
 var _pirate_t := 1800           # ticks to the pirates' next chance to find you
 var allow_pirates := false      # (the test mode: pirates come only when a check asks)
 var _hull_warn := 1.0           # (the hull warning given last, so it's said once per step down)
-var near_trader = null          # the outpost whose trader you're beside (F trades), or null
+var near_trader = null          # the outpost whose keeper you're beside (F trades), or null
+var near_keeper = null          # (that keeper: outpost.gd's Trader)
+var near_folk = null            # a spacer you're beside in an outpost (F talks), or null
+var folk := []                  # the spacers of the outposts streamed in (Spacer)
+var _cast_note := 0
 var docked = null               # the outpost whose hangar the skiff is in, or null
 var near_wreck = null
 # derelict stations (station.gd) and their aliens (alien.gd)
@@ -218,6 +224,9 @@ func _ready() -> void:
 	for k in 420:
 		stars.append([Vector2(rng.randf() * 1024.0, rng.randf() * 1024.0), rng.randf(), rng.randf() * TAU])
 	visible = false
+	_mid = Node2D.new()
+	add_child(_mid)
+	_mid.draw.connect(_draw_mid)
 	_top = Node2D.new()
 	_top.z_index = 1
 	add_child(_top)
@@ -322,6 +331,7 @@ func tick() -> void:
 	_stream(focus)
 	_update_rocks()
 	_update_aliens(focus)
+	_update_folk(focus)
 	_update_acid()
 	_update_sbolts()
 	if game.frame % 60 == 11:
@@ -373,6 +383,8 @@ func tick() -> void:
 	near_cache = null
 	near_wreck = null
 	near_trader = null
+	near_keeper = null
+	near_folk = null
 	beam_to = null
 	_dock_check(sk)
 	if m.aboard != null:
@@ -394,7 +406,14 @@ func tick() -> void:
 	if in_station != null and not m.dead:
 		_station_move(m, in_station)
 		if m.input.cast and not m.cast_latch:
-			_space_cast(m, in_station)
+			if in_station.kind == "outpost":
+				# (an outpost is a peaceful place: no spells in its halls)
+				m.cast_latch = true
+				if game.frame - _cast_note > 240:
+					_cast_note = game.frame
+					game.ui.toast("Spells stay sheathed in an outpost's halls", Color(0.8, 0.85, 1.0), 2.0)
+			else:
+				_space_cast(m, in_station)
 		_after_move(m, a)
 		return
 	vel -= up * pull(m.pos)
@@ -855,6 +874,12 @@ func _stream(focus: Vector2) -> void:
 			var tid := WorkerThreadPool.add_task(func() -> void: pl["made"] = Station.make_station(sdd))
 			_st_jobs.append([tid, pl])
 			return
+		if String(pl.get("kind", "")) == "outpost":
+			var osd := int(pl["seed"])
+			var osys := int(pl.get("sys", -1))
+			var tid2 := WorkerThreadPool.add_task(func() -> void: pl["made"] = Outpost.make_outpost(osd, osys))
+			_st_jobs.append([tid2, pl])
+			return
 		var a
 		if pl.has("save"):
 			a = _rock_from_save(pl["save"])
@@ -865,7 +890,6 @@ func _stream(focus: Vector2) -> void:
 			match String(pl["kind"]):
 				"wreck": a = Wreck.make_wreck(int(pl["seed"]), bool(pl.get("first", false)))
 				"scrap": a = Wreck.scrap(int(pl["seed"]), float(pl["r"]))
-				"outpost": a = Outpost.make_outpost(int(pl["seed"]))
 				_: a = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
 		_place_rock(a, pl)
 
@@ -877,6 +901,8 @@ func _place_rock(a, pl: Dictionary) -> void:
 	a.pos = local_of(pl["g"])
 	if a.kind == "station":
 		_station_in(a)
+	if a.kind == "outpost":
+		_outpost_in(a)
 	if a.kind == "outpost" or a.kind == "station":
 		# (an outpost stands level over the planet the view turns to: its floors are floors)
 		var oup: Vector2 = (a.pos - centre).normalized() if not near.is_empty() else Vector2.from_angle(view_ang)
@@ -910,7 +936,7 @@ func _load_sector(s: Vector2i, key: String) -> void:
 		return
 	for c in Galaxy.sector_content(s):
 		for r in c["rocks"]:
-			_sect_plan.append({"sect": key, "seed": r["seed"], "r": r["r"], "kind": r["kind"], "vel": r["vel"], "first": r.get("first", false),
+			_sect_plan.append({"sect": key, "seed": r["seed"], "r": r["r"], "kind": r["kind"], "vel": r["vel"], "first": r.get("first", false), "sys": r.get("sys", -1),
 				"g": _g_add(sg, (c["at"] as Vector2) + (r["off"] as Vector2)), "orbit": r.get("orbit", {}), "at": c["at"]})
 
 func _unload_sector(key: String) -> void:
@@ -1213,6 +1239,9 @@ func _draw() -> void:
 	if nwk != null:
 		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85))
 	_top.queue_redraw()
+	if _mid.get_index() != get_child_count() - 1:
+		move_child(_mid, -1)        # (after every rock sprite, still before the overlay's mage)
+	_mid.queue_redraw()
 	# the Starsail unfurled: a glow round the skiff
 	if sail > 0.02 and game.skiff != null and game.player.aboard != null:
 		var ssp: Vector2 = xf * game.skiff.pos
@@ -1855,7 +1884,10 @@ func _wreck_near(m) -> void:
 ## F out in space: open the cache within reach. True if it did.
 func wreck_interact(m) -> bool:
 	if active and m.aboard == null and near_trader != null:
-		open_trade(near_trader)
+		open_trade(near_trader, near_keeper)
+		return true
+	if active and m.aboard == null and near_folk != null:
+		_folk_talk(near_folk)
 		return true
 	if not active or m.aboard != null or near_cache == null:
 		return false
@@ -2124,25 +2156,32 @@ func _draw_top() -> void:
 		var bw := 30.0
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.04, 0.8))
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(pa.hp / pa.hp_max, 0.0, 1.0), 2.0)), Color(1.0, 0.35, 0.3))
-	_draw_aliens(xf)
-	# the outposts' traders behind their counters, and each outpost's name over it
-	var zs: float = minf(float(game.zoom), 4.0)
+	_draw_alien_marks(xf)
+	# each outpost's name over it
 	for oa in rocks:
 		if oa.kind != "outpost":
 			continue
 		var osp: Vector2 = xf * oa.pos
 		if osp.distance_to(Vector2(game.VW, game.VH) * 0.5) > Vector2(game.VW, game.VH).length() * 0.5 + oa.reach() / game.zoom:
 			continue
-		var kt: ImageTexture = oa.keeper_texture()
-		var kp: Vector2 = xf * oa.keeper_world()
-		var kang: float = xf.basis_xform(oa.axis_x()).angle()
-		_top.draw_set_transform(kp, kang, Vector2.ONE / zs)
-		_top.draw_texture(kt, Vector2(-float(kt.get_width()) * 0.5, -float(kt.get_height())))
-		_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		var up_o: Vector2 = xf.basis_xform(-oa.axis_y()).normalized()
 		_top_text(osp + up_o * (float(oa.h) * 0.55 / game.zoom + 8.0), oa.wname, Color(1.0, 0.85, 0.5))
-	if near_trader != null:
-		_top_text(xf * (near_trader.keeper_world() - near_trader.axis_y() * 30.0), "[F] trade with %s" % near_trader.trader().name, Color(1.0, 0.88, 0.5))
+	# an outpost's shop signs over its counters, the prompt by the one you're at, what spacers say
+	for sa in rocks:
+		if sa.kind != "outpost" or sa.pos.distance_to(game.player.pos) > 500.0:
+			continue
+		for skp in sa.keepers:
+			var sgn: Vector2 = sa.to_world(skp.b + Vector2(0.0, -34.0) - sa.com)
+			if near_keeper != skp:
+				_top_text(xf * sgn, String(Outpost.OP_ROOMS[skp.shop]).to_upper(), Outpost.SHOP_COL[skp.shop])
+	if near_trader != null and near_keeper != null:
+		var kw: Vector2 = near_trader.to_world(near_keeper.b + Vector2(0.0, -34.0) - near_trader.com)
+		_top_text(xf * kw, "[F] trade with %s, %s" % [near_keeper.name, String(Outpost.OP_ROOMS[near_keeper.shop]).to_lower()], Color(1.0, 0.88, 0.5))
+	for f2 in folk:
+		if f2.say_t > 0:
+			_top_text(xf * (f2.world() - f2.op.axis_y() * 16.0), f2.say, Color(0.92, 0.95, 1.0))
+		elif f2 == near_folk:
+			_top_text(xf * (f2.world() - f2.op.axis_y() * 16.0), "[F] talk to %s" % f2.name, Color(1.0, 0.88, 0.5))
 	if near_cache != null and near_wreck != null:
 		var cp: Vector2 = xf * (near_wreck.cache_pos(near_cache) as Vector2)
 		var f2: Font = PixelFont.make()
@@ -2568,30 +2607,47 @@ func nearest_outpost(p: Vector2, within: float) -> Variant:
 			best = a
 	return best
 
-## on foot by an outpost's counter: its trader is near_trader (F trades)
+## on foot by an outpost's counter: its keeper is near_keeper (near_trader the outpost; F trades); beside a
+## spacer, near_folk (F talks)
 func _trader_near(m) -> void:
-	var op = nearest_outpost(m.pos, 400.0)
+	var op = nearest_outpost(m.pos, 1200.0)
 	if op == null:
 		return
-	var chest: Vector2 = op.keeper_world() - op.axis_y() * 12.0
-	if chest.distance_to(m.pos) < TRADE_REACH:
-		near_trader = op
+	var best := TRADE_REACH
+	for kp in op.keepers:
+		var chest: Vector2 = op.to_world(kp.b - op.com) - op.axis_y() * 12.0
+		var d: float = chest.distance_to(m.pos)
+		if d < best:
+			best = d
+			near_trader = op
+			near_keeper = kp
+	if near_trader != null:
+		return
+	var fb := 16.0
+	for f in folk:
+		if f.op != op:
+			continue
+		var fd: float = f.world().distance_to(m.pos)
+		if fd < fb:
+			fb = fd
+			near_folk = f
 
 ## the skiff flown into an outpost's hangar: docked (a word the first time each visit)
 func _dock_check(sk) -> void:
 	if sk == null:
 		docked = null
 		return
-	var op = nearest_outpost(sk.pos, 400.0)
+	var op = nearest_outpost(sk.pos, 1200.0)
 	var now = op if op != null and op.in_hangar(sk.pos) else null
 	if now != null and now != docked:
-		game.ui.toast("Docked at %s. Step out (F) and see %s at the counter to trade" % [now.wname, now.trader().name], Color(1.0, 0.85, 0.5), 4.5)
+		game.ui.toast("Docked at %s. Step out (F): its shops are along the deck through the hangar's door" % now.wname, Color(1.0, 0.85, 0.5), 4.5)
 		game.audio.play("blink", sk.pos, 0.6)
 	docked = now
 
 ## F at the counter: the trader's shop (towns.gd's shop and ui.gd's panel, Defs.SHOPS["outpost"]); first,
 ## a bounty for every pirate you've beaten since you last traded at an outpost
-func open_trade(op) -> void:
+func open_trade(op, kp = null) -> void:
+	_settle_jobs(op)
 	var it: Dictionary = game.items
 	var owed := int(it.get("pirates_beaten", 0)) - int(it.get("bounty_paid", 0))
 	if owed > 0:
@@ -2600,7 +2656,8 @@ func open_trade(op) -> void:
 		stats["bounty"] += owed * BOUNTY
 		game.ui.toast("A bounty: %d coins for the %d pirate ship%s you beat" % [owed * BOUNTY, owed, "" if owed == 1 else "s"], Color(1.0, 0.85, 0.4), 4.0)
 		game.audio.play("coin", null, 0.9)
-	var tr = op.trader()
+	var tr = kp if kp != null else op.trader()
+	tr.pos = op.to_world(tr.b - op.com)
 	game.towns.shop_of = tr
 	game.state = "shop"
 	game.ui.show_shop(tr)
@@ -2616,6 +2673,190 @@ func _top_text(at: Vector2, txt: String, col: Color) -> void:
 	_top.draw_string(f2, Vector2(-wd * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
 	_top.draw_string(f2, Vector2(-wd * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, col)
 	_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+# ------------------------------------------------- an outpost's folk, its jobs ---
+# (user, 23 Nov: "much bigger more complex outposts": a living station with shops along its lowest deck,
+# spacers about its halls, and a job board in its cantina)
+
+const JOB_MAX := 3
+
+## an outpost streamed in: its spacers
+func _outpost_in(op) -> void:
+	for pl in op.folk_plan:
+		folk.append(Spacer.make(op, pl))
+
+## the spacers of the outposts near you, walking their decks
+func _update_folk(focus: Vector2) -> void:
+	if game.frame % 60 == 7:
+		for k in range(folk.size() - 1, -1, -1):
+			if not rocks.has(folk[k].op):
+				folk.remove_at(k)
+	for f in folk:
+		if f.op.pos.distance_to(focus) < float(maxi(f.op.w, f.op.h)) + 600.0:
+			f.tick()
+	# (two standing on one spot: one of them steps aside)
+	if game.frame % 20 == 3:
+		for i in folk.size():
+			var fa = folk[i]
+			if fa.wait <= 0:
+				continue
+			for k in range(i + 1, folk.size()):
+				var fb = folk[k]
+				if fb.op == fa.op and fb.wait > 0 and absf(fb.b.x - fa.b.x) < 8.0 and absf(fb.b.y - fa.b.y) < 4.0:
+					fb.step_aside(1 if fb.b.x >= fa.b.x else -1)
+					break
+
+## F beside a spacer: they stop and say something (what they say moves on each time)
+func _folk_talk(f) -> void:
+	var lines := _folk_lines(f)
+	f.say = String(lines[(f.talked + f.fseed) % lines.size()])
+	f.say_t = 240
+	f.talked += 1
+	var to: Vector2 = game.player.pos - f.world()
+	f.facing = 1 if to.dot(f.op.axis_x()) > 0.0 else -1
+	game.audio.play("blink", f.world(), 0.25, 1.6)
+	stats["folk_talks"] = int(stats.get("folk_talks", 0)) + 1
+
+## what a spacer might say: the derelict near this system, a trade tip from the next one over, pirates, the job
+## board, fuel, and a word about the outpost itself
+func _folk_lines(f) -> Array:
+	var op = f.op
+	var out := ["%s, they call me. Welcome to %s." % [f.name, op.wname],
+		"The board in the cantina has work, if you've a hold to fill.",
+		"Long hauls burn Wisp Cells. The shipwright sells them by the ten.",
+		"Pirates hunt the dark between the stars. They never come near our guns."]
+	if op.sys >= 0:
+		var sg: PackedFloat64Array = Galaxy.system_station(op.sys)
+		var dk: float = Defs.g_rel(sg, galaxy_of(op.pos)).length() / 1000.0
+		out.append("There's a dead station out there, the %s, %.0fk off. Something lives in its dark halls." % [Galaxy.station_name(op.sys), dk])
+		var nx: int = op.sys + 1
+		var tr: Dictionary = Defs.trade_of(Galaxy.outpost_seed(nx))
+		var wants: Array = (tr["wants"] as Dictionary).keys()
+		if not wants.is_empty():
+			var gd: String = wants[0]
+			out.append("%s pays well for %s, they say. It's in the %s system." % [Galaxy.outpost_name(nx), String(Defs.GOODS[gd]["name"]).to_lower(), Galaxy.star_name(nx)])
+	out.append(["The reactor hums all night. You stop hearing it.", "I came out here for a season. That was eleven years ago.",
+		"Mind the hatches: down and jump drops you through.", "The cartographer will sell you the stars, a few at a time."][f.fseed % 4])
+	return out
+
+## the job board's offers at an outpost (its seed, name and system): three, from its seed and how many jobs
+## you've done (so they change once you finish one). courier: sealed crates carried to another system's
+## outpost; salvage: matter brought back here; hunt: pirate ships beaten, then back here.
+func job_offers(oseed: int, oname: String, osys: int) -> Array:
+	var n := int(game.items.get("jobs_done", 0))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([oseed, n, 77])
+	var out := []
+	for k in 3:
+		var kind: String = ["courier", "courier", "salvage", "hunt"][rng.randi_range(0, 3)]
+		if kind == "courier" and osys < 0:
+			kind = "salvage"
+		var jb := {"id": "%d:%d:%d" % [oseed, n, k], "kind": kind, "from": oseed, "from_name": oname}
+		match kind:
+			"courier":
+				var to_sys: int = [osys + 1, osys + 2, osys + 3, osys - 1][rng.randi_range(0, 3)]
+				if to_sys < 0 or to_sys == osys:
+					to_sys = osys + 1
+				var crates := rng.randi_range(1, 3)
+				var dist: float = Defs.g_rel(Galaxy.system_outpost(to_sys), Galaxy.system_outpost(osys)).length()
+				jb["to"] = Galaxy.outpost_seed(to_sys)
+				jb["to_name"] = Galaxy.outpost_name(to_sys)
+				jb["n"] = crates
+				jb["pay"] = 60 + 45 * crates + int(dist / 6000.0)
+				jb["name"] = "Carry %d sealed crate%s to %s, in the %s system" % [crates, "" if crates == 1 else "s", jb["to_name"], Galaxy.star_name(to_sys)]
+			"salvage":
+				var opts := [[Defs.HULL, 20, 2.2], [Defs.XENITE, 8, 6.0], [Defs.STARIRON, 4, 18.0], [Defs.ICE, 30, 1.2], [Defs.CRYSTAL, 6, 7.0]]
+				var o: Array = opts[rng.randi_range(0, opts.size() - 1)]
+				var cnt := int(round(float(int(o[1])) * rng.randf_range(1.0, 1.5)))
+				jb["mat"] = int(o[0])
+				jb["n"] = cnt
+				jb["pay"] = int(round(float(cnt) * float(o[2]) * 1.6)) + 20
+				jb["name"] = "Bring %d %s back here" % [cnt, Defs.NAMES[int(o[0])]]
+			"hunt":
+				var np := rng.randi_range(1, 3)
+				jb["n"] = np
+				jb["pay"] = 70 * np
+				jb["name"] = "Beat %d pirate ship%s, then come back" % [np, "" if np == 1 else "s"]
+		out.append(jb)
+	return out
+
+func jobs() -> Array:
+	return game.items.get("jobs", [])
+
+func has_job(id: String) -> bool:
+	for jb in jobs():
+		if String(jb["id"]) == id:
+			return true
+	return false
+
+## take a job from the board: a courier run loads its sealed crates into your hold (room for them, or no)
+func take_job(jb: Dictionary) -> bool:
+	if has_job(String(jb["id"])):
+		return false
+	var js: Array = jobs()
+	if js.size() >= JOB_MAX:
+		game.ui.toast("You've %d jobs already: finish one first" % JOB_MAX, Color(1, 0.7, 0.5), 2.5)
+		return false
+	var j2: Dictionary = jb.duplicate()
+	match String(jb["kind"]):
+		"courier":
+			if game.hold_cap() - game.cargo_count() < int(jb["n"]):
+				game.ui.toast("No room in your hold for %d crates" % int(jb["n"]) if game.hold_cap() > 0 else "Crates ride in your ship's hold: you need a skiff", Color(1, 0.7, 0.5), 2.5)
+				return false
+			var cargo: Dictionary = game.items.get("cargo", {})
+			cargo["sealed"] = int(cargo.get("sealed", 0)) + int(jb["n"])
+			game.items["cargo"] = cargo
+		"hunt":
+			j2["base"] = int(game.items.get("pirates_beaten", 0))
+	js.append(j2)
+	game.items["jobs"] = js
+	game.ui.toast("Job taken: %s (%d coins)" % [String(jb["name"]), int(jb["pay"])], Color(1.0, 0.88, 0.5), 3.5)
+	game.audio.play("blink", null, 0.5)
+	stats["jobs_taken"] = int(stats.get("jobs_taken", 0)) + 1
+	return true
+
+## at an outpost: every job that ends here and is done is paid
+func _settle_jobs(op) -> void:
+	var js: Array = jobs()
+	var keep := []
+	for jb in js:
+		var done := false
+		match String(jb["kind"]):
+			"courier":
+				var cargo: Dictionary = game.items.get("cargo", {})
+				if int(jb["to"]) == op.seed_ and int(cargo.get("sealed", 0)) >= int(jb["n"]):
+					cargo["sealed"] = int(cargo["sealed"]) - int(jb["n"])
+					if int(cargo["sealed"]) <= 0:
+						cargo.erase("sealed")
+					game.items["cargo"] = cargo
+					done = true
+			"salvage":
+				if int(jb["from"]) == op.seed_ and game.player.inv[int(jb["mat"])] >= int(jb["n"]):
+					game.player.inv[int(jb["mat"])] -= int(jb["n"])
+					done = true
+			"hunt":
+				if int(jb["from"]) == op.seed_ and int(game.items.get("pirates_beaten", 0)) - int(jb.get("base", 0)) >= int(jb["n"]):
+					done = true
+		if done:
+			game.items["coins"] = int(game.items.get("coins", 0)) + int(jb["pay"])
+			game.items["jobs_done"] = int(game.items.get("jobs_done", 0)) + 1
+			stats["jobs_done"] = int(stats.get("jobs_done", 0)) + 1
+			game.ui.toast("Job done: %s. Paid %d coins" % [String(jb["name"]), int(jb["pay"])], Color(1.0, 0.85, 0.4), 4.0)
+			game.audio.play("coin", null, 1.0)
+		else:
+			keep.append(jb)
+	game.items["jobs"] = keep
+
+## a job in a few words (the HUD)
+func job_short(jb: Dictionary) -> String:
+	match String(jb["kind"]):
+		"courier":
+			return "Courier: %d crate%s to %s" % [int(jb["n"]), "" if int(jb["n"]) == 1 else "s", String(jb["to_name"])]
+		"salvage":
+			return "Salvage: %d/%d %s to %s" % [mini(game.player.inv[int(jb["mat"])], int(jb["n"])), int(jb["n"]), Defs.NAMES[int(jb["mat"])], String(jb["from_name"])]
+		"hunt":
+			return "Hunt: %d/%d pirates, then %s" % [mini(int(game.items.get("pirates_beaten", 0)) - int(jb.get("base", 0)), int(jb["n"])), int(jb["n"]), String(jb["from_name"])]
+	return ""
 
 # ------------------------------------------------------- derelict stations ---
 # (user, 23 Nov: "much bigger more complex outposts ... Derelict space stations and everything with aliens
@@ -2633,8 +2874,11 @@ func _station_in(st) -> void:
 			continue
 		aliens.append(Alien.make(String(sp["kind"]), st, sp["b"], int(sp["id"]), int(sp["mod"])))
 
-## a station streamed out: its aliens go with it (they're grown again with it)
+## a station streamed out: its aliens go with it (they're grown again with it); an outpost's spacers too
 func _station_out(st) -> void:
+	for kf in range(folk.size() - 1, -1, -1):
+		if folk[kf].op == st:
+			folk.remove_at(kf)
 	for k in range(aliens.size() - 1, -1, -1):
 		if aliens[k].st == st:
 			aliens.remove_at(k)
@@ -2660,7 +2904,7 @@ func _station_frame(focus: Vector2) -> void:
 	in_station = null
 	var m = game.player
 	for a in _rocks_near(focus, 40.0):
-		if a.kind != "station":
+		if a.kind != "station" and a.kind != "outpost":
 			continue
 		var b: Vector2 = a.to_body(focus) + a.com
 		if b.x < -30.0 or b.y < -30.0 or b.x > float(a.w) + 30.0 or b.y > float(a.h) + 30.0:
@@ -2668,16 +2912,31 @@ func _station_frame(focus: Vector2) -> void:
 		frame_st = a
 		if m.aboard == null and not m.dead and a.inside(b):
 			in_station = a
+			var op: bool = a.kind == "outpost"
 			if not a.visited:
 				a.visited = true
-				game.ui.toast("Aboard %s, a derelict. %s" % [a.wname, a.fate], Color(0.8, 0.7, 1.0), 5.0)
-				game.audio.play("creak", m.pos, 0.8)
+				if op:
+					var shops := []
+					for kp in a.keepers:
+						shops.append(String(Outpost.OP_ROOMS[kp.shop]).to_lower())
+					game.ui.toast("Welcome aboard %s. Along this deck: the %s" % [a.wname, ", the ".join(shops)], Color(1.0, 0.88, 0.55), 5.0)
+					game.audio.play("blink", m.pos, 0.5)
+				else:
+					game.ui.toast("Aboard %s, a derelict. %s" % [a.wname, a.fate], Color(0.8, 0.7, 1.0), 5.0)
+					game.audio.play("creak", m.pos, 0.8)
 			var rk: int = a.module_at(b)
 			if rk >= 0 and rk != st_room:
 				st_room = rk
-				var pw: bool = a.mods[rk]["powered"]
-				game.ui.toast("%s · %s" % [a.role_name(rk), "its gravity holds" if pw else "no gravity: the movement keys push you"],
-					Color(0.85, 0.8, 1.0) if pw else Color(0.6, 0.75, 0.9), 2.0)
+				if op:
+					var who := ""
+					for kp2 in a.keepers:
+						if kp2.room == rk:
+							who = " · %s keeps it" % kp2.name
+					game.ui.toast(a.role_name(rk) + who, Color(1.0, 0.9, 0.65), 2.0)
+				else:
+					var pw: bool = a.mods[rk]["powered"]
+					game.ui.toast("%s · %s" % [a.role_name(rk), "its gravity holds" if pw else "no gravity: the movement keys push you"],
+						Color(0.85, 0.8, 1.0) if pw else Color(0.6, 0.75, 0.9), 2.0)
 		break
 	if in_station == null:
 		st_room = -1
@@ -3093,7 +3352,42 @@ func _update_acid() -> void:
 		elif game.frame % 3 == 0:
 			game.vfx.spawn(Vfx.DOT, p, -v * 0.15, 12, Alien.C_GLOW.darkened(0.2), Color(0.3, 0.5, 0.1, 0.0), 1.0, 0.5, true, 0.0, 0.9)
 
-## the aliens and their acid, over the stations
+## figures among the rooms, under the mage: the aliens' bodies, the outposts' traders
+func _draw_mid() -> void:
+	if not active:
+		return
+	var xf := _world_xf()
+	_draw_aliens(xf)
+	var zs: float = minf(float(game.zoom), 4.0)
+	for oa in rocks:
+		if oa.kind != "outpost":
+			continue
+		var osp: Vector2 = xf * oa.pos
+		if osp.distance_to(Vector2(game.VW, game.VH) * 0.5) > Vector2(game.VW, game.VH).length() * 0.5 + oa.reach() / game.zoom:
+			continue
+		var kang: float = xf.basis_xform(oa.axis_x()).angle()
+		# the keepers, each behind a counter drawn in front of them
+		for kpr in oa.keepers:
+			var kt: ImageTexture = oa.keeper_texture(kpr)
+			var kps: Vector2 = xf * oa.to_world(kpr.b - oa.com)
+			_mid.draw_set_transform(kps.floor(), kang, Vector2(float(kpr.facing), 1.0) / zs)
+			_mid.draw_texture(kt, Vector2(-float(kt.get_width()) * 0.5, -float(kt.get_height()) + 1.0))
+			var ct: ImageTexture = oa.counter_texture(kpr)
+			_mid.draw_texture(ct, Vector2(-6.0, -float(ct.get_height())))
+			_mid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# the spacers
+	var scr := Vector2(game.VW, game.VH)
+	for f in folk:
+		var fs: Vector2 = xf * f.world()
+		if fs.x < -40.0 or fs.y < -40.0 or fs.x > scr.x + 40.0 or fs.y > scr.y + 40.0:
+			continue
+		var ft: ImageTexture = f.texture()
+		var fang: float = xf.basis_xform(f.op.axis_x()).angle()
+		_mid.draw_set_transform(fs.floor(), fang, Vector2(float(f.facing), 1.0) / zs)
+		_mid.draw_texture(ft, Vector2(-float(ft.get_width()) * 0.5, 9.5 + 1.0 - float(ft.get_height())))
+		_mid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## the aliens' bodies (on `_mid`, under the mage)
 func _draw_aliens(xf: Transform2D) -> void:
 	var zs: float = minf(float(game.zoom), 4.0)
 	var scr := Vector2(game.VW, game.VH)
@@ -3107,7 +3401,7 @@ func _draw_aliens(xf: Transform2D) -> void:
 		var tw := float(t.get_width())
 		var th := float(t.get_height())
 		var ang: float = xf.basis_xform(al.st.axis_x()).angle()
-		_top.draw_set_transform(sp.floor(), ang, Vector2(float(al.facing), 1.0) / zs)
+		_mid.draw_set_transform(sp.floor(), ang, Vector2(float(al.facing), 1.0) / zs)
 		var mod := Color.WHITE
 		if al.hit_t > 0:
 			mod = Color(2.0, 2.0, 2.0)
@@ -3116,8 +3410,19 @@ func _draw_aliens(xf: Transform2D) -> void:
 		elif al.slow > 0:
 			mod = Color(0.75, 0.9, 1.3)
 		var top: float = -th * 0.5 if al.flies() else al.hh + 1.0 - th
-		_top.draw_texture(t, Vector2(-tw * 0.5, top), mod)
-		_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_mid.draw_texture(t, Vector2(-tw * 0.5, top), mod)
+		_mid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## the aliens' health bars and their acid, over everything (`_top`)
+func _draw_alien_marks(xf: Transform2D) -> void:
+	var zs: float = minf(float(game.zoom), 4.0)
+	var scr := Vector2(game.VW, game.VH)
+	for al in aliens:
+		if al.dead:
+			continue
+		var sp: Vector2 = xf * al.world()
+		if sp.x < -60.0 or sp.y < -60.0 or sp.x > scr.x + 60.0 or sp.y > scr.y + 60.0:
+			continue
 		if al.hp < al.hp_max or (al.kind == "brood" and al.awake):
 			var up_s: Vector2 = xf.basis_xform(-al.st.axis_y()).normalized()
 			var bw: float = 50.0 if al.kind == "brood" else 16.0

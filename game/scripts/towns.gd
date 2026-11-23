@@ -917,6 +917,10 @@ func shop_def(v) -> Dictionary:
 		var tr := Defs.trade_of(int(v.town.get("seed", 0)))
 		for gd in tr["sells"]:
 			(sd["sell"] as Array).append({"name": "%s (a crate)" % Defs.GOODS[gd]["name"], "price": int(tr["sells"][gd]), "good": String(gd)})
+	if String(v.role) == "cantina":
+		# (the job board: space.gd's offers, taken for nothing, paid when done)
+		for jb in game.space.job_offers(int(v.town.get("seed", 0)), String(v.town.get("name", "")), int(v.town.get("sys", -1))):
+			(sd["sell"] as Array).append({"name": "Job: %s" % jb["name"], "price": 0, "job": jb})
 	return sd
 
 ## what this keeper pays for a crate of each good (only an outpost trades in them): {good: price}
@@ -997,11 +1001,18 @@ func owned(it: Dictionary) -> bool:
 		return game.items.has("part_" + pid) or game.items.has(pid)
 	if it.has("repair"):
 		return game.skiff == null or game.skiff.missing() == 0 or game.skiff.pos.distance_to(game.player.pos) > 600.0
+	if it.has("job"):
+		return game.space.has_job(String(it["job"]["id"]))
 	return false
 
 ## buy the i-th thing the keeper sells
 func buy(v, i: int) -> bool:
 	var it: Dictionary = shop_def(v)["sell"][i]
+	if it.has("job"):
+		var took: bool = game.space.take_job(it["job"])
+		if took:
+			game.save_game()
+		return took
 	var price := price_of(v, it)
 	if coins() < price or owned(it):
 		return false

@@ -125,7 +125,7 @@ static func sector_content(s: Vector2i) -> Array:
 		if sector_of(og[0], og[1]) == s:
 			op_here = true
 			out.append({"type": "outpost", "at": Vector2(og[0] - sg[0], og[1] - sg[1]), "sys": r,
-				"name": outpost_name(r), "rocks": [{"seed": outpost_seed(r), "r": 0.0, "kind": "outpost", "off": Vector2.ZERO, "vel": Vector2.ZERO}]})
+				"name": outpost_name(r), "rocks": [{"seed": outpost_seed(r), "r": 0.0, "kind": "outpost", "off": Vector2.ZERO, "vel": Vector2.ZERO, "sys": r}]})
 	# (and its derelict station: nothing else is grown there either)
 	for r2 in systems_near(sg[0] + SECTOR * 0.5, sg[1] + SECTOR * 0.5, STATION_D + SECTOR * 2.0):
 		var stg := system_station(r2)

@@ -305,29 +305,43 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Test: `_test_pirates` ("pirates"; in the full run right after `_test_wrecks`): 10 grown ships, a cutter's
   attack holes the hull, the cannon beats it, its strongbox, mending, the shield, a crash, death out there;
   pictures `pirate_ships/attack/beaten.png`, `skiff_damaged/mended.png`. The storm-belt check mends the skiff.
-- TRADING OUTPOSTS (scripts/outpost.gd; user, 23 Nov: outposts with traders): `Outpost` extends wreck.gd, kind
-  "outpost": streamed with its sector, drawn and collided like a wreck, but `guarded` is always true (nothing dug,
-  blasted or chipped; a blast doesn't push it) and never saved (it's grown again). `make_outpost(seed)`
-  (`outpost_name`; `W` x `H` 232 x 132): a HANGAR (`HANGAR` rect, 88 x 52 inside, open on the left, coal back wall
-  with ribs, landing lights, hazard stripes, clamps) the skiff flies into, a HALL (`HALL`) through a 26-high doorway
-  with the COUNTER, shelves of crates and roof windows, the trader standing at `KEEPER`; a domed hub with a band of
-  wisp-lit windows, an antenna and beacon, solar wings of WISPBAR panels, a keel spire. `trader()` is a `Trader`
-  (role "outpost", a folk_art name and figure, `keeper_texture`), enough of a keeper for towns.gd's shop.
-  Galaxy: every system r has one, `Galaxy.system_outpost(r)` (`OUTPOST_D` 27000 +- 2000 from its first planet, a
-  bearing clear of every planet by NEAR_PLANET + 6000 and 12000 from the first wreck), `outpost_seed`,
-  `outpost_name`; `sector_content` puts it in its sector (type "outpost", nothing else grown there). space.gd: its
-  `ang` is set level over `centre` as it streams in; `nearest_outpost`, `_trader_near` (on foot within
-  `TRADE_REACH` of the trader's chest: `near_trader`, "[F] trade with ..." on `_top`, which also draws the trader
-  and the outpost's name), `_dock_check` (the skiff in `in_hangar`: `docked`, a toast), `open_trade` (main
-  `_interact` -> `wreck_interact`: a BOUNTY of 35 coins a pirate beaten since `items["bounty_paid"]`, then
-  `towns.shop_of` + state "shop" + `ui.show_shop`). `Defs.SHOPS["outpost"]`: mend the hull at the dock ("repair"),
-  plating, ingots, star iron, a draught, star charts ("star_chart": n, via `_star_chart`), the Shield Emitter and
-  Cannon Coil ("part"); it buys salvage, ice, ores. towns.gd `owned`/`grant` know "part", "repair",
-  "star_chart"; ui.gd's sale icons too, and its sell list hides only far worlds' ores (FIREOPAL..SILVER).
-  Pirates never come out of the dark within `OUTPOST_SAFE` of one and are driven off within `OUTPOST_GUNS`.
-  Markers: this system's outpost (gold) from the galaxy, so it can be found before its sector comes in; the map
-  draws a little station at every charted system's outpost. Test: `_test_outposts` ("outposts"; pictures
-  `outpost.png`, `outpost_hangar.png`, `outpost_trader.png`, `outpost_shop.png`, `outpost_map.png`).
+- TRADING OUTPOSTS (scripts/outpost.gd, spacer.gd; user, 23 Nov: outposts with traders, then "much bigger more
+  complex outposts"): `Outpost` extends station.gd, kind "outpost": laid out like a derelict (`mods`, `grid`, doorways,
+  hatches, `ways`; every room powered, so `_station_frame` / `_station_move` give it gravity and you walk it), but
+  `guarded` and never saved (`state()` is {}: grown again by seed, on a WorkerThreadPool task like stations, with its
+  system `sys` passed through the sector plan from galaxy.gd). `make_outpost(seed, sys)`: `cols` 6-7 x `rows` 3; the
+  HANGAR is mod 0, 2 x 2 grid cells (`cells` per mod; `_op_nb` handles it) at one end of the lowest deck
+  (`hangar_side`), its outer wall open `MOUTH_H` (80) onto a landing apron; the lowest deck's other rooms (`meta["deck"]`,
+  from the hangar outward, one run of forced doorways: no hatch to climb) are the shops: MARKET first (role "outpost",
+  towns.gd's old trading-post shop with the goods), then shipwright, cantina, charts in the seed's order; a reactor up
+  top farthest from the hangar, an observatory, then quarters/hydro/stores/promenade/hall. `_dress` (the station's,
+  powered) then `_dress_op` (bay, awning and goods, hull frame and plate racks, bar shelves and the job board, a star
+  map and orrery, windows); `_outside_op` (roof windows, masts, comms dishes, trusses, solar wings, beacons at the
+  mouth). `keepers` (`Trader`: role = towns.gd shop role via `KEEP_ROLE`, shop = room role, `b` feet in cells, a
+  `counter_texture` drawn on `_mid` in front of them, `facing` toward the hangar), `keeper(shop)`, `trader()` (the
+  market's), `in_hangar`, `hangar_rect`, `walk_links` (same-deck doorways), `role_name` (`OP_ROOMS`), `SHOP_COL`.
+  Defs.SHOPS "outpost" (market: plating, ingots, star iron, a draught; buys salvage), "shipwright" (mending at the
+  dock, plating, Wisp Cells, wisp ore, glass, the Shield Emitter and Cannon Coil), "cantina" (stew, a draught; the job
+  board), "cartographer" (star charts 2 / 5, the Scanner Lens). SPACERS (spacer.gd, space.gd `folk`, made by
+  `_outpost_in`, dropped with their outpost): walk their deck under its pull (`move_box`), wait, cross doorways to
+  same-deck rooms, step apart when two stand on one spot; F beside one (`near_folk`, `_folk_talk`): a line from
+  `_folk_lines` (the system's derelict, a trade tip from the next system, fuel, pirates, the job board). space.gd:
+  `_trader_near` sets `near_trader` (the outpost) and `near_keeper` (within `TRADE_REACH` of a keeper's chest);
+  `open_trade(op, kp)` settles jobs, pays the pirate BOUNTY (35 a ship since `items["bounty_paid"]`), opens that
+  keeper's shop. No spells in an outpost's halls (a toast). JOBS (the cantina's board; `job_offers(seed, name, sys)`:
+  three from the seed and `items["jobs_done"]`; taken for nothing through the shop (towns.gd "job" sale items, ui.gd
+  "Take", "+pay"), at most `JOB_MAX` 3 in `items["jobs"]`; `_settle_jobs(op)` pays at the outpost where one ends):
+  courier (sealed crates, cargo "sealed", to another system's outpost), salvage (matter brought back), hunt (pirates
+  beaten since taking it, then back); `job_short` lists them on the HUD. HUD in an outpost: its name and the room.
+  Overlay draws a docked skiff's hold crates. Galaxy: every system r has one, `Galaxy.system_outpost(r)` (`OUTPOST_D`
+  27000 +- 2000 from its first planet, clear of every planet by NEAR_PLANET + 6000 and 12000 from the first wreck).
+  Pirates never come out of the dark within `OUTPOST_SAFE` of one and are driven off within `OUTPOST_GUNS`. Markers:
+  this system's outpost (gold); the map draws a little station at every charted system's outpost. Test:
+  `_test_outposts` ("outposts"; pictures `outpost_layout_0/1.png`, `outpost.png`, `outpost_hangar.png`,
+  `outpost_trader.png`, `outpost_shop.png`, `outpost_jobs.png`, `outpost_folk.png`, `outpost_map.png`).
+- Figures among a station's or outpost's rooms (aliens' bodies, keepers and their counters, spacers) are drawn on
+  space.gd `_mid` (a child kept last among space's children, z 0: over the rock sprites, under the overlay's mage);
+  health bars, prompts, signs and speech on `_top` (z 1).
 - space.gd `_world_xf()` is `main.screen_xf()` (built from the view's angle and zoom). It used to difference
   `world_to_screen` at the origin, and far from home float precision put rocks, wrecks and outposts dozens of
   pixels from where they were (the overlay's mage and skiff looked outside a station they were inside).
@@ -423,7 +437,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   it, stand, walk, jump, sit, the helm, a climb, it holds with you on deck, walk off its end, save/load; pictures
   `hull_built.png`, `hull_deck.png`; the skiff as forged is put back after).
 - THE CARGO HOLD (user, 23 Nov: "Hold for big things only"): `Defs.GOODS` (8 trade goods with a base price) ride
-  as crates in `items["cargo"]` (good -> crates), never the satchel; `Defs.trade_of(outpost seed)`: three goods an
+  as crates in `items["cargo"]` (good -> crates; "sealed" is a courier job's), never the satchel; drawn where they
+  stand (skiff `crate_slots`: in its room away from the helm, else lashed on its open deck; overlay `_crate_tex`); `Defs.trade_of(outpost seed)`: three goods an
   outpost sells cheap (0.55-0.72 x base), three it wants (1.5-1.9 x), what it pays for each. towns.gd: an outpost's
   `shop_def` adds its goods ("good"), `buy` refuses past `main.hold_cap()` (the skiff's `hold_cap`: a crate for every
   `HOLD_ROOM` (120) room cells its hull closes in, at least 2), `sell_good`, `good_pays`, `good_wants`; ui.gd's shop

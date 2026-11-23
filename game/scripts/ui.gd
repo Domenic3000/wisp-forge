@@ -704,7 +704,7 @@ func _sale_icon(it: Dictionary) -> Texture2D:
 		return Icons.item("potion")
 	if it.has("spell"):
 		return Icons.spell(String(it["spell"]))
-	if it.has("chart") or it.has("star_chart"):
+	if it.has("chart") or it.has("star_chart") or it.has("job"):
 		return Icons.item("letter")
 	if it.has("repair"):
 		return Icons.item("hull")
@@ -731,7 +731,7 @@ func _render_shop() -> void:
 	var tw = game.towns
 	var sd: Dictionary = tw.shop_def(_shop_v)
 	shop_title.text = "%s's %s · %s" % [_shop_v.name, sd.get("title", "Shop"), _shop_v.town["name"]]
-	if String(_shop_v.role) == "outpost":
+	if String(_shop_v.role) == "outpost" or String(_shop_v.role) == "cantina":
 		shop_title.text += " · hold %d/%d crates" % [game.cargo_count(), game.hold_cap()]
 	shop_coins.text = "%d" % tw.coins()
 	for c in shop_list.get_children():
@@ -755,9 +755,12 @@ func _render_shop() -> void:
 		var own_txt := "yours"
 		if it.has("repair"):
 			own_txt = "whole" if game.skiff != null and game.skiff.missing() == 0 else "not here"
+		if it.has("job"):
+			ptxt = "+%d" % int(it["job"]["pay"])
+			own_txt = "taken"
 		row.add_child(_label(own_txt if have_it else ptxt, 12, DIM if have_it else GOLD))
-		var b := _button("Buy")
-		b.disabled = have_it or tw.coins() < price or (it.has("good") and game.cargo_count() >= game.hold_cap())
+		var b := _button("Take" if it.has("job") else "Buy")
+		b.disabled = have_it or (tw.coins() < price and not it.has("job")) or (it.has("good") and game.cargo_count() >= game.hold_cap())
 		b.pressed.connect(func():
 			tw.buy(_shop_v, i)
 			_render_shop())
@@ -1456,11 +1459,16 @@ func update_hud(g) -> void:
 		if g.space.active and g.space.pirate_count() > 0:
 			wn = ("" if wn == "Clear" else wn + " · ") + "Pirates!"
 		if g.space.active and g.space.in_station != null:
-			# (aboard a derelict station: its name, the room, and whether its gravity holds)
+			# (aboard a derelict station: its name, the room, and whether its gravity holds; an outpost: its
+			# name and the room)
 			var dst = g.space.in_station
 			var rk: int = dst.module_at(dst.to_body(g.player.pos) + dst.com)
-			where = "Derelict %s" % dst.wname
-			depth_txt = "%s · %s" % [dst.role_name(rk), "gravity" if rk >= 0 and dst.mods[rk]["powered"] else "no gravity"]
+			if dst.kind == "outpost":
+				where = String(dst.wname)
+				depth_txt = dst.role_name(rk)
+			else:
+				where = "Derelict %s" % dst.wname
+				depth_txt = "%s · %s" % [dst.role_name(rk), "gravity" if rk >= 0 and dst.mods[rk]["powered"] else "no gravity"]
 		# (only what matters now: where you are, the time, the weather when there is any, how deep
 		# underground; the staff, relics and coins are in the satchel)
 		var lines := PackedStringArray([where, g.local_time_text() + ("" if wn == "Clear" else " · " + wn)])
@@ -1478,6 +1486,9 @@ func update_hud(g) -> void:
 		var rqs: Array = g.towns.requests() if g.towns != null else []
 		for rq in rqs:
 			info.text += "\n· " + g.towns.short(rq)
+		# (and the outposts' jobs you've taken: space.gd)
+		for jb in g.space.jobs():
+			info.text += "\n· " + g.space.job_short(jb)
 	# build mode replaces the spell bar with the building bar
 	hot_name.get_parent().visible = not g.build_on
 	build_bar.visible = g.build_on

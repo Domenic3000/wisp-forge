@@ -509,6 +509,31 @@ func _skiff_xf(sk) -> Transform2D:
 
 ## The skiff, with its riders seated in it (drawn first: the hull hides their legs, the canopy
 ## is glass), turning and mirroring with it.
+## a crate of trade goods (7 x 6 cells): planks, iron corners, a band of the good's colour, stencilled
+var _crates := {}
+func _crate_tex(gd: String) -> ImageTexture:
+	if _crates.has(gd):
+		return _crates[gd]
+	var im := Image.create(7, 6, false, Image.FORMAT_RGBA8)
+	var wood := Color(0.55, 0.38, 0.22)
+	var dark := Color(0.3, 0.19, 0.1)
+	# (a courier job's sealed crate: gold bands)
+	var col: Color = Defs.GOODS[gd]["col"] if Defs.GOODS.has(gd) else Color(0.95, 0.78, 0.3)
+	for y in 6:
+		for x in 7:
+			var c := wood.darkened(0.12) if y % 2 == 1 else wood
+			if x == 0 or y == 0 or x == 6 or y == 5:
+				c = dark
+			if y == 2 or y == 3:
+				c = col if (x > 0 and x < 6) else dark
+			im.set_pixel(x, y, c)
+	for q in [Vector2i(0, 0), Vector2i(6, 0), Vector2i(0, 5), Vector2i(6, 5)]:
+		im.set_pixel(q.x, q.y, Color(0.42, 0.44, 0.5))
+	im.set_pixel(3, 2, col.lightened(0.45))
+	var t := ImageTexture.create_from_image(im)
+	_crates[gd] = t
+	return t
+
 func _draw_skiff() -> void:
 	var sk = game.skiff
 	if sk == null:
@@ -523,6 +548,19 @@ func _draw_skiff() -> void:
 	# the cabin's back (glass, and whatever is built there), then whoever sits in it, then the hull
 	draw_set_transform_matrix(xf)
 	draw_texture(sk.back_texture(), -sk.com, Color(_lit(p), 1.0))
+	# the hold's crates (trade goods), stacked away from the helm
+	var cargo_ids := []
+	var cargo: Dictionary = game.items.get("cargo", {})
+	var gkeys: Array = cargo.keys()
+	gkeys.sort()
+	for gd in gkeys:
+		for cn in int(cargo.get(gd, 0)):
+			cargo_ids.append(gd)
+	if not cargo_ids.is_empty():
+		var slots: Array = sk.crate_slots(cargo_ids.size())
+		for ck in slots.size():
+			var at: Vector2i = slots[ck]
+			draw_texture(_crate_tex(String(cargo_ids[ck])), Vector2(at) - sk.com, Color(_lit(p), 1.0))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 	for k in sk.riders.size():
 		var m = sk.riders[k]

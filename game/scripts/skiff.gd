@@ -337,8 +337,15 @@ func collide(solid: Callable) -> void:
 # --------------------------------------------------------------- damage ---
 
 ## Mass and the rest from the cells, and then how much of the hull and engine is left.
+## (anything changed in its cells: the crates are placed again)
+func texture() -> ImageTexture:
+	if dirty:
+		_crates_key = ""
+	return super()
+
 func rebuild() -> void:
 	super()
+	_crates_key = ""
 	room_cells = 0
 	for r in room:
 		room_cells += r
@@ -349,6 +356,63 @@ const HOLD_ROOM := 120
 var room_cells := 0
 func hold_cap() -> int:
 	return clampi(room_cells / HOLD_ROOM, 2, 60)
+
+## where n crates (CRATE_W x CRATE_H cells, top-left corners) stand: in its room first (on the floor or on each
+## other, as far from the helm as they go, never in a seat's space or over furniture), then lashed on its open
+## deck (outside, on the hull's top: the skiff as forged has little room in its cabin but seats). A crate that
+## finds no place is left out: still carried, just not drawn. Kept until the hull or n changes.
+const CRATE_W := 7
+const CRATE_H := 6
+var _crates := []
+var _crates_key := ""
+func crate_slots(n: int) -> Array:
+	var key := "%d:%d:%d" % [n, w, h]
+	if key == _crates_key:
+		return _crates
+	_crates_key = key
+	_crates = []
+	if n <= 0 or room.size() != w * h:
+		return _crates
+	var taken := PackedByteArray()
+	taken.resize(w * h)
+	var helm_x: float = float((seat_cells[0] as Vector2i).x) if not seat_cells.is_empty() else float(w) * 0.5
+	for c in n:
+		var best := Vector2i(-1, -1)
+		var best_s := -1e9
+		for pass_k in 2:
+			if best.x >= 0:
+				break
+			for j in range(1, h - CRATE_H):
+				for i in range(0, w - CRATE_W + 1):
+					if not _crate_fits(i, j, taken, pass_k == 1):
+						continue
+					# (far from the helm first, then low down)
+					var sc := absf(float(i) + float(CRATE_W) * 0.5 - helm_x) * 4.0 + float(j)
+					if sc > best_s:
+						best_s = sc
+						best = Vector2i(i, j)
+		if best.x < 0:
+			break
+		_crates.append(best)
+		for jj in CRATE_H:
+			for ii in CRATE_W:
+				taken[(best.y + jj) * w + best.x + ii] = 1
+	return _crates
+
+func _crate_fits(i: int, j: int, taken: PackedByteArray, on_deck := false) -> bool:
+	for jj in CRATE_H:
+		for ii in CRATE_W:
+			var k := (j + jj) * w + i + ii
+			var place_ok: bool = (outside[k] != 0) if on_deck else (room[k] != 0)
+			if not place_ok or cells[k] != 0 or taken[k] != 0 or (deco.size() == w * h and deco[k] != 0) or in_seat(i + ii, j + jj):
+				return false
+	# (resting on the hull, a deck or another crate all the way across)
+	var below := (j + CRATE_H) * w
+	for ii2 in CRATE_W:
+		var kb := below + i + ii2
+		if cells[kb] == 0 and taken[kb] == 0:
+			return false
+	return true
 
 func _recount() -> void:
 	if design.size() != cells.size():

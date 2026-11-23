@@ -768,22 +768,38 @@ const SHOPS := {
 			{"name": "A night's rest (full health, till morning)", "price": 15, "rest": true},
 			{"name": "Hearty Meal (30 health)", "price": 12, "meal": 30.0}],
 		"buy": {PLANK: [10, 3], WOOD: [8, 2]}},
-	# a trading outpost in space (outpost.gd; space.gd open_trade): salvage bought, ship stock sold, the skiff
-	# mended at its dock ("repair"), charts of the stars ("star_chart": that many uncharted systems), ship parts
-	# for those who never found them in a wreck ("part": the part's id)
-	"outpost": {"title": "Trading Post", "sell": [
-			{"name": "Mend the skiff's hull at the dock", "price": 35, "repair": true},
+	# a trading outpost in space (outpost.gd; space.gd open_trade), a keeper behind each counter of its lowest
+	# deck. The MARKET (role "outpost"): salvage bought, ingots and stock sold, and its trade goods (crates for
+	# the hold: towns.gd adds them). The SHIPWRIGHT: the skiff mended at the dock ("repair"), plating, fuel,
+	# ship's parts for those who never found them in a wreck ("part": the part's id). The CANTINA: meals and
+	# draughts, and the job board (space.gd `job_offers`: towns.gd adds them). The CARTOGRAPHER: charts of the
+	# stars ("star_chart": that many uncharted systems) and the Scanner Lens.
+	"outpost": {"title": "Market", "sell": [
 			{"name": "Hull Plating x12", "price": 30, "give": {HULL: 12}},
 			{"name": "Wisp Ingots x4", "price": 32, "give": {WISPBAR: 4}},
 			{"name": "Copper Ingots x6", "price": 20, "give": {COPPERBAR: 6}},
 			{"name": "Star Iron x3", "price": 60, "give": {STARIRON: 3}},
-			{"name": "Healing Draught", "price": 45, "potion": 1},
-			{"name": "Wisp Cells x10 (fuel for the long hauls)", "price": 28, "give": {WISPCELL: 10}},
-			{"name": "Star charts: the two nearest uncharted systems", "price": 50, "star_chart": 2},
-			{"name": "Shield Emitter (a ship's part)", "price": 160, "part": "shield"},
-			{"name": "Cannon Coil (a ship's part)", "price": 200, "part": "cannon"}],
+			{"name": "Healing Draught", "price": 45, "potion": 1}],
 		"buy": {HULL: [10, 12], XENITE: [4, 14], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
 			FROST: [3, 4], COPPER: [8, 3], COAL: [8, 2]}, "ores": [2, 7]},
+	"shipwright": {"title": "Shipwright", "sell": [
+			{"name": "Mend the skiff's hull at the dock", "price": 35, "repair": true},
+			{"name": "Hull Plating x12", "price": 30, "give": {HULL: 12}},
+			{"name": "Wisp Cells x10 (fuel for the long hauls)", "price": 28, "give": {WISPCELL: 10}},
+			{"name": "Wisp Ore x12 (engine cells)", "price": 30, "give": {WISP: 12}},
+			{"name": "Glass x12 (canopies)", "price": 14, "give": {GLASS: 12}},
+			{"name": "Shield Emitter (a ship's part)", "price": 160, "part": "shield"},
+			{"name": "Cannon Coil (a ship's part)", "price": 200, "part": "cannon"}],
+		"buy": {HULL: [10, 13], STARIRON: [2, 24], WISPCELL: [10, 20]}},
+	"cantina": {"title": "Cantina", "sell": [
+			{"name": "Nebula Stew (30 health)", "price": 12, "meal": 30.0},
+			{"name": "Healing Draught", "price": 45, "potion": 1}],
+		"buy": {ICE: [10, 4], SHROOM: [4, 3], LEAF: [10, 2]}},
+	"cartographer": {"title": "Cartographer", "sell": [
+			{"name": "Star charts: the two nearest uncharted systems", "price": 50, "star_chart": 2},
+			{"name": "Star charts: the five nearest uncharted systems", "price": 110, "star_chart": 5},
+			{"name": "Scanner Lens (a ship's part)", "price": 260, "part": "scanner"}],
+		"buy": {CRYSTAL: [3, 10], XENITE: [4, 15]}},
 }
 ## Trade goods (user, 23 Nov: a cargo hold "for big things only": crates that ride in your ship's hold, never
 ## the satchel). Every outpost sells a few cheaply and pays well for a few others (`trade_of`), so carrying them

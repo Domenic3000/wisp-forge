@@ -7418,11 +7418,13 @@ func _test_pirates() -> void:
 	_ok("pirates: ships grown from parts hunt the skiff and hole its hull; the cannon beats them into wrecks to loot; the hull is mended", pi_ok, "; ".join(pi_rows))
 
 ## Trading outposts (outpost.gd, galaxy.gd, space.gd; user, 23 Nov): every system's outpost where it
-## should be (clear of planets and the first wreck), grown with a hangar the skiff fits in and a hall you can
-## drift to the counter of; out there it streams in, the skiff flies into its hangar and docks, you step out
-## and trade: a bounty for pirates beaten, salvage sold, the hull mended at the dock, star charts, a part;
-## pirates that come near are driven off by its guns; the map shows it. Pictures: outpost.png,
-## outpost_hangar.png, outpost_trader.png, outpost_shop.png, outpost_map.png.
+## should be (clear of planets and the first wreck), grown as a great station of rooms (a hangar the skiff fits
+## in, the four shops along one deck of doorways, spacers); out there it streams in, the skiff flies into its
+## hangar and docks, you step out onto its floor and walk to the market: a bounty for pirates beaten, salvage
+## sold; the shipwright mends the hull and sells a part, the cartographer charts; the cantina's job board (a
+## courier run carried and paid, a salvage job); the spacers walk and talk; no spells in its halls; pirates that
+## come near are driven off by its guns; the map shows it. Pictures: outpost_layout_0/1.png, outpost.png,
+## outpost_hangar.png, outpost_trader.png, outpost_shop.png, outpost_jobs.png, outpost_folk.png, outpost_map.png.
 func _test_outposts() -> void:
 	var op_rows := []
 	var op_ok := true
@@ -7442,29 +7444,41 @@ func _test_outposts() -> void:
 	var op_ok1: bool = od > 24000.0 and od < 30000.0 and oclear and ofw > 12000.0 and osect
 	op_rows.append("%s%s: %.0fk from home, %.0fk from the first wreck, clear of the planets %s, in its sector's content %s" % ["" if op_ok1 else "(!) ", G.outpost_name(0), od / 1000.0, ofw / 1000.0, oclear, osect])
 	op_ok = op_ok and op_ok1
-	# ---- grown: the hangar holds the skiff, the counter can be drifted to
+	# ---- grown: a big station of rooms; the hangar holds the skiff; the four shops along the lowest deck, one
+	# run of doorways from the hangar (no hatch to climb); folk to live there
 	var op_fit := 0
-	var op_reach := 0
+	var op_deck := 0
+	var op_big := 0
+	var op_folk := 0
 	for q in 6:
-		var oq = O.make_outpost(5003 + q * 977)
+		var oq = O.make_outpost(5003 + q * 977, q)
+		var hr: Rect2i = oq.hangar_rect()
 		var free := true
-		for j in range(O.HANGAR.position.y + 1, O.HANGAR.position.y + 47):
-			for i in range(O.HANGAR.position.x, O.HANGAR.position.x + 66):
-				if oq.cells[j * oq.w + i] != 0:
+		for j in range(hr.end.y - 47, hr.end.y):
+			for i in range(66):
+				var ii: int = hr.position.x + 4 + i if oq.hangar_side < 0 else hr.end.x - 5 - i
+				if oq.cells[j * oq.w + ii] != 0:
 					free = false
 		if free:
 			op_fit += 1
-		var got := _wreck_reach(oq, 8.0)
-		var kc: Vector2 = O.KEEPER - Vector2(18.0, 10.0)
-		var reached := false
-		for j2 in range(int(kc.y) - 12, int(kc.y) + 12):
-			for i2 in range(int(kc.x) - 12, int(kc.x) + 12):
-				if i2 >= 0 and j2 >= 0 and i2 < oq.w and j2 < oq.h and got[j2 * oq.w + i2] == 1:
-					reached = true
-		if reached:
-			op_reach += 1
-	var op_ok2: bool = op_fit == 6 and op_reach == 6
-	op_rows.append("%s6 outposts grown (%dx%d): the hangar holds the skiff in %d, the counter reached by drifting in %d" % ["" if op_ok2 else "(!) ", O.W, O.H, op_fit, op_reach])
+		var deck: Array = oq.meta["deck"]
+		var chain: bool = (oq.mods[oq.hangar]["links"] as Array).has(deck[0])
+		for d in range(deck.size() - 1):
+			chain = chain and (oq.mods[deck[d]]["links"] as Array).has(deck[d + 1])
+		var shops := {}
+		for kp in oq.keepers:
+			shops[kp.shop] = deck.has(kp.room)
+		var shops_ok: bool = shops.size() == 4 and not shops.values().has(false) and String(oq.mods[deck[0]]["role"]) == "market"
+		if chain and shops_ok:
+			op_deck += 1
+		if oq.mods.size() >= 12 and oq.w > 560:
+			op_big += 1
+		if oq.folk_plan.size() >= 7:
+			op_folk += 1
+		if q < 2:
+			_station_picture(oq, "outpost_layout_%d.png" % q)
+	var op_ok2: bool = op_fit == 6 and op_deck == 6 and op_big == 6 and op_folk == 6
+	op_rows.append("%s6 outposts grown (%d rooms, %dx%d the first): 12+ rooms %d; the hangar holds the skiff in %d; the market by the hangar and the shipwright, cantina and cartographer along one deck of doorways in %d; 7+ spacers in %d" % ["" if op_ok2 else "(!) ", O.make_outpost(5003, 0).mods.size(), O.make_outpost(5003, 0).w, O.make_outpost(5003, 0).h, op_big, op_fit, op_deck, op_folk])
 	op_ok = op_ok and op_ok2
 	# ---- up into space in the skiff, out to the outpost
 	g.player.dead = false
@@ -7496,10 +7510,10 @@ func _test_outposts() -> void:
 			break
 	g.test_cast = false
 	var ol: Vector2 = g.space.local_of(og)
-	sk.pos = ol + Vector2(-900.0, 0.0)
+	sk.pos = ol + Vector2(-1400.0, 0.0)
 	sk.vel = Vector2.ZERO
 	var op = null
-	for k1 in 300:
+	for k1 in 400:
 		sk.vel = Vector2.ZERO
 		await _frames(1)
 		op = g.space.nearest_outpost(sk.pos, 5000.0)
@@ -7509,15 +7523,22 @@ func _test_outposts() -> void:
 		_ok("trading outposts: found, docked at, traded with", false, "; ".join(op_rows) + "; (!) no outpost came in with its sector")
 		return
 	# beside it, then in its hangar
-	var mouth: Vector2 = op.to_world(Vector2(float(O.HANGAR.position.x) - 60.0, float(O.HANGAR.position.y) + 26.0) - op.com)
+	var hr0: Rect2i = op.hangar_rect()
+	var side: float = float(op.hangar_side)
+	var mouth_x: float = float(hr0.position.x) - 70.0 if side < 0.0 else float(hr0.end.x) + 70.0
+	var mouth: Vector2 = op.to_world(Vector2(mouth_x, float(hr0.end.y) - 30.0) - op.com)
 	sk.pos = mouth
 	sk.vel = Vector2.ZERO
 	sk.ang = op.axis_x().angle()
-	await _frames(20)
+	g.space.zoom_i = 3
+	await _frames(70)
 	_shot("outpost.png")
-	var bay: Vector2 = op.to_world(Vector2(float(O.HANGAR.position.x) + 40.0, float(O.HANGAR.end.y) - 24.0) - op.com)
+	g.space.zoom_i = 0
+	await _frames(30)
+	var bay_x: float = float(hr0.position.x) + 50.0 if side < 0.0 else float(hr0.end.x) - 50.0
+	var bay: Vector2 = op.to_world(Vector2(bay_x, float(hr0.end.y) - 26.0) - op.com)
 	var bumps0: int = int(g.space.stats["crashes"])
-	for k2 in 90:
+	for k2 in 110:
 		sk.vel = (bay - sk.pos) * 0.08
 		await _frames(1)
 	sk.vel = Vector2.ZERO
@@ -7527,16 +7548,36 @@ func _test_outposts() -> void:
 	var op_ok3: bool = op_docked and int(g.space.stats["crashes"]) == bumps0
 	op_rows.append("%s%s came in with its sector; the skiff flew into its hangar and docked %s (no crash %s)" % ["" if op_ok3 else "(!) ", op.wname, op_docked, int(g.space.stats["crashes"]) == bumps0])
 	op_ok = op_ok and op_ok3
-	# ---- out of the skiff, to the counter
+	# ---- out of the skiff onto the hangar's floor (its gravity), then on foot through its door to the market
 	g._skiff_interact(g.player)
-	await _frames(4)
-	g.player.pos = op.to_world(O.KEEPER - Vector2(26.0, 9.0) - op.com)
-	g.space.vel = Vector2.ZERO
-	await _frames(15)
-	var op_near: bool = g.space.near_trader == op
+	await _frames(60)
+	var in_op: bool = g.space.in_station == op
+	var landed: bool = g.player.on_ground
+	var mk = op.keeper("market")
+	var walked := -1
+	for k3 in 1200:
+		var mb: Vector2 = op.to_body(g.player.pos) + op.com
+		g.test_move = 1 if mk.b.x > mb.x else -1
+		await _frames(1)
+		if g.space.near_keeper == mk:
+			walked = k3
+			break
+	g.test_move = 0
+	await _frames(10)
 	_shot("outpost_trader.png")
-	# bounty, then the shop
-	var tr = op.trader()
+	var op_ok3b: bool = in_op and landed and walked >= 0
+	op_rows.append("%sstepped out into the hangar: in its rooms %s, standing on its floor %s; walked through its door to the market's counter in %d ticks" % ["" if op_ok3b else "(!) ", in_op, landed, walked])
+	op_ok = op_ok and op_ok3b
+	# ---- no spells in its halls
+	var sb0: int = g.space.sbolts.size()
+	g.test_aim = g.player.pos + op.axis_x() * 40.0
+	g.test_cast = true
+	await _frames(6)
+	g.test_cast = false
+	await _frames(4)
+	var no_spell: bool = g.space.sbolts.size() == sb0
+	# ---- the market: a bounty, then its shop; salvage sold
+	var tr = mk
 	g.items["bounty_paid"] = int(g.items.get("pirates_beaten", 0))
 	g.items["pirates_beaten"] = int(g.items.get("pirates_beaten", 0)) + 2
 	var coins0 := int(g.items.get("coins", 0))
@@ -7545,37 +7586,140 @@ func _test_outposts() -> void:
 	var op_shop: bool = g.state == "shop" and g.towns.shop_of == tr
 	var coins1 := int(g.items.get("coins", 0))
 	_shot("outpost_shop.png")
-	var op_ok4: bool = op_near and op_shop and coins1 - coins0 == 70
-	op_rows.append("%sat the counter, %s's prompt %s; trading %s; a bounty of %d coins for 2 pirates" % ["" if op_ok4 else "(!) ", tr.name, op_near, op_shop, coins1 - coins0])
-	op_ok = op_ok and op_ok4
-	# sell salvage, mend the hull at the dock, buy charts and a part
 	g.player.inv[Defs.HULL] += 20
 	var hull0: int = g.player.inv[Defs.HULL]
 	var op_sold: bool = g.towns.sell(tr, Defs.HULL) and g.player.inv[Defs.HULL] == hull0 - 10 and int(g.items.get("coins", 0)) == coins1 + 12
-	g.items["coins"] = int(g.items.get("coins", 0)) + 600
+	g.towns.close_shop()
+	await _frames(5)
+	var op_ok4: bool = op_shop and coins1 - coins0 == 70 and op_sold and no_spell
+	op_rows.append("%s%s's market %s: a bounty of %d coins for 2 pirates; sold 10 Hull Plating %s; no spells in its halls %s" % ["" if op_ok4 else "(!) ", tr.name, op_shop, coins1 - coins0, op_sold, no_spell])
+	op_ok = op_ok and op_ok4
+	# ---- along the deck: the shipwright mends the hull at the dock and sells a part; the cartographer charts
+	var go_to := func(kp) -> void:
+		g.player.pos = op.to_world(kp.b + Vector2(float(kp.facing) * 18.0, -9.0) - op.com)
+		g.space.vel = Vector2.ZERO
+	g.items["coins"] = int(g.items.get("coins", 0)) + 1200
+	var sw = op.keeper("shipwright")
+	go_to.call(sw)
+	await _frames(20)
+	var at_sw: bool = g.space.near_keeper == sw
 	sk.carve(sk.cell_world(6, sk.h - 4), 4.0)
 	var miss0: int = sk.missing()
-	var sd: Dictionary = g.towns.shop_def(tr)
+	var sd: Dictionary = g.towns.shop_def(sw)
 	var i_rep := -1
-	var i_chart := -1
 	var i_part := -1
 	for i3 in (sd["sell"] as Array).size():
 		var it: Dictionary = sd["sell"][i3]
 		if it.has("repair"):
 			i_rep = i3
-		if it.has("star_chart"):
-			i_chart = i3
 		if it.has("part") and i_part < 0 and not g.towns.owned(it):
 			i_part = i3
-	var op_mended: bool = i_rep >= 0 and miss0 > 0 and g.towns.buy(tr, i_rep) and sk.missing() == 0
+	var op_mended: bool = i_rep >= 0 and miss0 > 0 and g.towns.buy(sw, i_rep) and sk.missing() == 0
+	var op_part: bool = i_part < 0 or (g.towns.buy(sw, i_part) and g.towns.owned(sd["sell"][i_part]))
+	var ct = op.keeper("charts")
+	go_to.call(ct)
+	await _frames(20)
+	var at_ct: bool = g.space.near_keeper == ct
+	var sd2: Dictionary = g.towns.shop_def(ct)
+	var i_chart := -1
+	for i4 in (sd2["sell"] as Array).size():
+		if (sd2["sell"][i4] as Dictionary).has("star_chart") and i_chart < 0:
+			i_chart = i4
 	var ch0: int = g.space.charted.size()
-	var op_charts: bool = i_chart >= 0 and g.towns.buy(tr, i_chart) and g.space.charted.size() >= ch0 + 1
-	var op_part: bool = i_part < 0 or (g.towns.buy(tr, i_part) and g.towns.owned(sd["sell"][i_part]))
+	var op_charts: bool = i_chart >= 0 and g.towns.buy(ct, i_chart) and g.space.charted.size() >= ch0 + 1
+	var op_ok5: bool = at_sw and op_mended and op_part and at_ct and op_charts
+	op_rows.append("%sat the shipwright's %s: the hull mended at the dock %s (%d cells were missing), a ship's part %s; at the cartographer's %s: star charts %s (%d -> %d systems)" % ["" if op_ok5 else "(!) ", at_sw, op_mended, miss0, op_part, at_ct, op_charts, ch0, g.space.charted.size()])
+	op_ok = op_ok and op_ok5
+	# ---- the cantina's job board: a courier run taken (its sealed crates into the hold), carried to the other
+	# outpost and paid; a salvage job taken and done here
+	var cn = op.keeper("cantina")
+	go_to.call(cn)
+	await _frames(20)
+	var at_cn: bool = g.space.near_keeper == cn
+	var cargo_keep = g.items.get("cargo", {})
+	var jobs_keep = g.items.get("jobs", [])
+	var done_keep := int(g.items.get("jobs_done", 0))
+	g.items["cargo"] = {}
+	g.items["jobs"] = []
+	var courier := {}
+	var salvage := {}
+	for jn in 30:
+		g.items["jobs_done"] = jn
+		for jb in g.space.job_offers(op.seed_, op.wname, op.sys):
+			if jb["kind"] == "courier" and courier.is_empty() and int(jb["n"]) <= g.hold_cap():
+				courier = jb
+			if jb["kind"] == "salvage" and salvage.is_empty():
+				salvage = jb
+	g.items["jobs_done"] = 0
+	g._interact()
+	await _frames(10)
+	var board_open: bool = g.state == "shop" and g.towns.shop_of == cn
+	var n_jobs := 0
+	for it2 in g.towns.shop_def(cn)["sell"]:
+		if (it2 as Dictionary).has("job"):
+			n_jobs += 1
+	_shot("outpost_jobs.png")
 	g.towns.close_shop()
 	await _frames(5)
-	var op_ok5: bool = op_sold and op_mended and op_charts and op_part and g.state == "play"
-	op_rows.append("%ssold 10 Hull Plating %s; the hull mended at the dock %s (%d cells were missing); star charts %s (%d -> %d systems); a ship's part %s; the shop closed %s" % ["" if op_ok5 else "(!) ", op_sold, op_mended, miss0, op_charts, ch0, g.space.charted.size(), op_part, g.state == "play"])
-	op_ok = op_ok and op_ok5
+	var c_took: bool = not courier.is_empty() and g.space.take_job(courier)
+	var sealed0 := int((g.items.get("cargo", {}) as Dictionary).get("sealed", 0))
+	var hud_txt: String = g.space.job_short(courier) if c_took else ""
+	var coins2 := int(g.items.get("coins", 0))
+	var dest = O.make_outpost(int(courier.get("to", 0)), -1)
+	g.space._settle_jobs(dest)
+	var c_paid: bool = c_took and int(g.items.get("coins", 0)) - coins2 == int(courier.get("pay", -1)) and not (g.items.get("cargo", {}) as Dictionary).has("sealed")
+	var s_ok := false
+	if not salvage.is_empty() and g.space.take_job(salvage):
+		g.player.inv[int(salvage["mat"])] += int(salvage["n"])
+		var coins3 := int(g.items.get("coins", 0))
+		g.space._settle_jobs(op)
+		s_ok = int(g.items.get("coins", 0)) - coins3 == int(salvage["pay"]) and g.space.jobs().is_empty()
+	var op_ok6j: bool = at_cn and board_open and n_jobs == 3 and c_took and sealed0 == int(courier.get("n", -1)) and c_paid and s_ok and hud_txt != ""
+	op_rows.append("%sthe cantina's job board %s (%d jobs): a courier run taken %s (%d sealed crates into the hold; the HUD: %s), paid at %s %s (%d coins); a salvage job done %s" % ["" if op_ok6j else "(!) ", board_open, n_jobs, c_took, sealed0, hud_txt, String(courier.get("to_name", "?")), c_paid, int(courier.get("pay", 0)), s_ok])
+	op_ok = op_ok and op_ok6j
+	g.items["cargo"] = cargo_keep
+	g.items["jobs"] = jobs_keep
+	g.items["jobs_done"] = done_keep
+	# ---- its spacers walk their decks and talk
+	var mine := []
+	for f in g.space.folk:
+		if f.op == op:
+			mine.append(f)
+	var at0 := []
+	for f2 in mine:
+		at0.append(f2.b)
+	await _frames(360)
+	var moved := 0
+	var grounded := 0
+	for fk in mine.size():
+		if (mine[fk].b as Vector2).distance_to(at0[fk]) > 6.0:
+			moved += 1
+		if mine[fk].on_ground:
+			grounded += 1
+	var talk_ok := false
+	var said := ""
+	var f0 = null
+	var f0_d := -1.0
+	for fc in mine:
+		var dmin := 1e9
+		for kq in op.keepers:
+			dmin = minf(dmin, (fc.b as Vector2).distance_to(kq.b - Vector2(0.0, 12.0)))
+		if dmin > f0_d:
+			f0_d = dmin
+			f0 = fc
+	if f0 != null:
+		g.player.pos = op.to_world(f0.b + Vector2(8.0, 0.0) - op.com)
+		g.space.vel = Vector2.ZERO
+		await _frames(3)
+		g._interact()
+		await _frames(5)
+		talk_ok = f0.say_t > 0 and f0.say != ""
+		said = f0.say
+		await _frames(20)
+		_shot("outpost_folk.png")
+	var op_ok7: bool = mine.size() >= 7 and moved >= 3 and grounded >= mine.size() - 1 and talk_ok
+	op_rows.append("%s%d spacers aboard: %d walked about in 6 s, %d standing on a floor; talked to one %s (\"%s\"; %.0f from a counter)" % ["" if op_ok7 else "(!) ", mine.size(), moved, grounded, talk_ok, said, f0_d])
+	op_ok = op_ok and op_ok7
 	# ---- pirates that come near are driven off by its guns
 	var made: Array = g.space.spawn_pirates(op.pos, Vector2.RIGHT, "cutter")
 	if not made.is_empty():
@@ -7617,7 +7761,7 @@ func _test_outposts() -> void:
 		g._skiff_interact(g.player)
 		await _frames(10)
 	print("[outposts] " + "\n[outposts] ".join(op_rows))
-	_ok("trading outposts: found, docked at, traded with (bounties, salvage, mending, charts, parts), pirates kept off", op_ok, "; ".join(op_rows))
+	_ok("trading outposts: great stations of rooms, docked at, walked through, traded with (market, shipwright, cantina's jobs, cartographer), spacers, pirates kept off", op_ok, "; ".join(op_rows))
 
 func _test_galaxy() -> void:
 	var gx_rows := []
@@ -8560,7 +8704,7 @@ func _test_fuel() -> void:
 		if pr["at"] == "smelter" and (pr.get("give", {}) as Dictionary).has(Defs.WISPCELL):
 			smelt = true
 	var sold := false
-	for it in Defs.SHOPS["outpost"]["sell"]:
+	for it in Defs.SHOPS["shipwright"]["sell"]:
 		if (it.get("give", {}) as Dictionary).has(Defs.WISPCELL):
 			sold = true
 	var c_near: int = g.space.journey_cost(1)
@@ -8933,6 +9077,26 @@ func _test_cargo() -> void:
 	var ok2: bool = gi >= 0 and cap >= 2 and full_refused
 	rows.append("%sthe skiff's hold takes %d crates (%d room cells): %d bought, then it was full %s" % ["" if ok2 else "(!) ", cap, g.skiff.room_cells, bought, full_refused])
 	ok = ok and ok2
+	# ---- the crates stand in the hold (drawn there), away from the helm (a picture)
+	var cx_sk = g.skiff
+	var slots: Array = cx_sk.crate_slots(g.cargo_count())
+	var off_seat := true
+	for sl in slots:
+		var slv: Vector2i = sl
+		for jj in cx_sk.CRATE_H:
+			for ii in cx_sk.CRATE_W:
+				if cx_sk.in_seat(slv.x + ii, slv.y + jj):
+					off_seat = false
+	var ok2b: bool = slots.size() >= mini(cap, 2) and off_seat
+	rows.append("%s%d of %d crates stand in the hold, none in a seat %s" % ["" if ok2b else "(!) ", slots.size(), g.cargo_count(), off_seat])
+	ok = ok and ok2b
+	if not g.space.active:
+		var cpos: Vector2 = g.player.pos
+		g.player.pos = cx_sk.pos + (cx_sk.pos.normalized() * 2.0)
+		g.cam_c = cx_sk.pos
+		await _frames(20)
+		_shot("cargo_hold.png")
+		g.player.pos = cpos
 	# ---- sold at another system's outpost, for what it pays
 	var rb := 1
 	var bp := -1
