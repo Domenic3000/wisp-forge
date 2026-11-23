@@ -533,6 +533,14 @@ func _draw_skiff() -> void:
 		var gem: Color = Defs.SPELLS[game.known[game.sel]]["color"] if m == game.player else Color("#46e6f0")
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px) if m == game.player else m.input.aim
 		_draw_mage(m, aim, gem, true, [feet, rot, xf.y.length()])
+	# whoever's up and about on its deck (behind the hull too: it's their floor and walls)
+	for m2 in game.players:
+		if m2.aboard != sk or not m2.deck or m2.dead:
+			continue
+		var feet2: Vector2 = xf * (m2.deck_b + Vector2(0.0, float(m2.h) * 0.5) - sk.com)
+		var gem2: Color = Defs.SPELLS[game.known[game.sel]]["color"] if m2 == game.player else Color("#46e6f0")
+		var aim2: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px) if m2 == game.player else m2.input.aim
+		_draw_mage(m2, aim2, gem2, true, [feet2, rot, xf.y.length()])
 	draw_set_transform_matrix(xf)
 	draw_texture(sk.texture(), -sk.com, Color(_lit(p), 1.0))
 	draw_set_transform_matrix(Transform2D.IDENTITY)

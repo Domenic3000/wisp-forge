@@ -1357,6 +1357,7 @@ func run() -> void:
 	g.player.inv.fill(0)
 	g.known = ["spark", "conjure"]
 	g.items["levitate"] = true        # (forged in a real game: the checks fly as they always have)
+	g.free_fuel = true                # (the Starsail and journeys burn no Wisp Cells, but in _test_fuel)
 	g.learn_all()                     # (every recipe known: learning them is _test_recipes's)
 	var t0 := Time.get_ticks_msec()
 	g._enter_planet(0)
@@ -1427,6 +1428,16 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_stations()
+		elif only == "fuel":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_fuel()
+		elif only == "hull":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_hull()
+		elif only == "cargo":
+			await _test_cargo()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4093,6 +4104,9 @@ func run() -> void:
 	await _test_outposts()
 	await _test_cabin()
 	await _test_stations()
+	await _test_fuel()
+	await _test_hull()
+	await _test_cargo()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
 	g.player.pos = sf_sk.pos
@@ -8535,3 +8549,417 @@ func _station_picture(st, file: String) -> void:
 					bgc.set_pixel(x, y, col)
 	bgc.resize(st.w * 2, st.h * 2, Image.INTERPOLATE_NEAREST)
 	bgc.save_png(g._real_save_dir().path_join("shots").path_join(file))
+
+## (user, 23 Nov: wisp fuel "Only the long hauls": the Starsail and journeys between planets burn Wisp Cells)
+func _test_fuel() -> void:
+	var rows := []
+	var ok := true
+	# ---- where it comes from: the smelter (wisp ore and coal), the outposts
+	var smelt := false
+	for pr in Defs.PROCESS:
+		if pr["at"] == "smelter" and (pr.get("give", {}) as Dictionary).has(Defs.WISPCELL):
+			smelt = true
+	var sold := false
+	for it in Defs.SHOPS["outpost"]["sell"]:
+		if (it.get("give", {}) as Dictionary).has(Defs.WISPCELL):
+			sold = true
+	var c_near: int = g.space.journey_cost(1)
+	var c_far: int = g.space.journey_cost(Defs.SYSTEM.size() + 1)
+	var ok1: bool = smelt and sold and c_near == 3 and c_far == 6
+	rows.append("%sWisp Cells smelted %s, sold at outposts %s; a journey costs %d in the home system, %d into another" % ["" if ok1 else "(!) ", smelt, sold, c_near, c_far])
+	ok = ok and ok1
+	# ---- up in the skiff
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var up0: Vector2 = sk.pos.normalized()
+	sk.pos = up0 * (Defs.R_SPACE - 11.0)
+	sk.vel = up0 * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	var had_sail: bool = g.items.has("sail")
+	g.items["sail"] = true
+	g.free_fuel = false
+	var cells0: int = g.player.inv[Defs.WISPCELL]
+	# ---- out in the dark, away from home: no cells, no Starsail
+	sk.pos = g.space.home_at() + up0 * (Defs.R_SPACE + 9000.0)
+	sk.vel = Vector2.ZERO
+	g.player.inv[Defs.WISPCELL] = 0
+	g.space._burn = 0.0
+	g.test_sail = true
+	g.test_move = 1
+	for k2 in 60:
+		g.test_aim = sk.pos + up0 * 400.0
+		await _frames(1)
+	var dry_sail: float = g.space.sail
+	var dry_speed: float = sk.vel.length()
+	g.test_sail = false
+	g.test_move = 0
+	await _frames(20)
+	# ---- three cells: it runs, burning one every few seconds
+	sk.vel = Vector2.ZERO
+	g.player.inv[Defs.WISPCELL] = 3
+	var burned0: int = int(g.space.stats.get("cells_burned", 0))
+	var top := 0.0
+	g.test_sail = true
+	g.test_move = 1
+	for k3 in 400:
+		g.test_aim = sk.pos + up0 * 400.0
+		await _frames(1)
+		top = maxf(top, sk.vel.length())
+	g.test_sail = false
+	g.test_move = 0
+	var burned: int = int(g.space.stats.get("cells_burned", 0)) - burned0
+	var left: int = g.player.inv[Defs.WISPCELL]
+	# (with the last one gone it stops)
+	g.player.inv[Defs.WISPCELL] = 0
+	g.space._burn = 0.0
+	g.test_sail = true
+	g.test_move = 1
+	for k3b in 40:
+		g.test_aim = sk.pos + up0 * 400.0
+		await _frames(1)
+	var stopped: bool = not g.space.sailing
+	g.test_sail = false
+	g.test_move = 0
+	var ok2: bool = dry_sail < 0.05 and dry_speed < 45.0 and top > 150.0 and burned >= 2 and left <= 1 and stopped
+	rows.append("%swith no cells the Starsail stayed furled (%.2f, %.0f a tick); with 3 it ran up to %.0f a tick and burned %d in 400 ticks (%d left); none left, it stopped %s" % ["" if ok2 else "(!) ", dry_sail, dry_speed, top, burned, left, stopped])
+	ok = ok and ok2
+	sk.vel = Vector2.ZERO
+	await _frames(30)
+	# ---- a journey with no cells: held off at the planet's edge, no journey begun
+	var reach0: int = g.skiff_reach()
+	g.items["reach"] = maxi(reach0, 1)
+	g.player.inv[Defs.WISPCELL] = 0
+	var p1: Vector2 = g.space.local_of(Defs.planet_g(1))
+	var pl1: Dictionary = Defs.make_planet(1)
+	var top1: float = float(pl1["radius"]) + float(Defs.ATMO) + 256.0
+	var dir1: Vector2 = (g.space.home_at() - p1).normalized()
+	sk.pos = p1 + dir1 * (top1 + 9000.0)
+	sk.vel = Vector2.ZERO
+	var closest := 1e9
+	var began := false
+	for k4 in 240:
+		sk.vel = -dir1 * 20.0
+		await _frames(1)
+		closest = minf(closest, (sk.pos - p1).length())
+		if g.space.target >= 0 or g.travelling:
+			began = true
+			break
+	sk.vel = Vector2.ZERO
+	var ok3: bool = not began and closest > top1 + 3000.0 - 300.0
+	rows.append("%swith no cells, flown at %s: no journey begun %s, held off %.0f from its middle (its band's top %.0f)" % ["" if ok3 else "(!) ", pl1["name"], not began, closest, top1])
+	ok = ok and ok3
+	g.items["reach"] = reach0
+	g.player.inv[Defs.WISPCELL] = cells0
+	g.free_fuel = true
+	if not had_sail:
+		g.items.erase("sail")
+	# home again, and down
+	sk.pos = g.space.home_at() + up0 * (Defs.R_SPACE + 150.0)
+	sk.vel = -up0 * 6.0
+	g.test_cast = true
+	for k5 in 600:
+		g.test_aim = g.space.home_at() + (sk.pos - g.space.home_at()) * 0.3
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	for k6 in 1200:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+		await _frames(10)
+	print("[fuel] " + "\n[fuel] ".join(rows))
+	_ok("wisp fuel: the Starsail and journeys burn Wisp Cells, none means furled and held off", ok, "; ".join(rows))
+
+## (user, 23 Nov: "Design your own hull": the skiff grown into a ship laid out cell by cell from the Ship tab,
+## walked about inside)
+func _test_hull() -> void:
+	var rows := []
+	var ok := true
+	var Bd = load("res://scripts/build.gd")
+	g.player.dead = false
+	g.test_god = true
+	# ---- a skiff on clear ground beside you, aboard it
+	if not g.items.has("skiff"):
+		g.items["skiff"] = 4242
+	var keep_ship = g.items.get("ship", null)
+	var keep_sk = g.skiff
+	g.items.erase("ship")
+	var hs := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 240, 120, 6)
+	var ha: float = (float(hs.x) + 160.0) / float(Defs.NS) * TAU
+	_go(Vector2(cos(ha), sin(ha)) * (g.gpu.surf_at(ha).x + 12.0))
+	await _frames(60)
+	g.skiff = null
+	g.call_skiff()
+	await _frames(90)
+	var sk = g.skiff
+	g.player.pos = sk.pos
+	g._skiff_interact(g.player)
+	await _frames(10)
+	var w0: int = sk.w
+	var mass0: float = sk.mass
+	var seats0: int = sk.seat_cells.size()
+	for mt in [Defs.HULL, Defs.PLANK, Defs.WOOD, Defs.GLASS, Defs.COPPERBAR, Defs.MASONRY, Defs.WISP]:
+		g.player.inv[mt] += 600
+	g.player.inv[Defs.CRYSTAL] += 10
+	# the cabin's measures: the deck row (the seats' floor), the cockpit's middle
+	var sc0: Vector2i = sk.seat_cells[0]
+	var deck: int = sc0.y + 1
+	var cx: int = sc0.x - 4
+	# (where an original cell is now: the grid grows to the left as the deck goes aft, moving every cell over)
+	var at := func(x: float, y: float) -> Vector2:
+		var o: Vector2i = sk.seat_cells[0] - sc0
+		return Vector2(x + float(o.x), y + float(o.y))
+	# ---- build mode, the Ship tab
+	g.build_on = true
+	g.build_cat = Bd.CAT_SHIP
+	g.build_thick = 3
+	# (1) a long open deck aft, level with the cabin's floor: planking, cell by cell from the stern outward
+	_pick_piece("Planking")
+	await _hull_paint(sk, at, Vector2(-1.0, float(deck) + 1.5), Vector2(-64.0, float(deck) + 1.5))
+	var grew: int = sk.w - w0
+	# (2) the cabin's back wall and the fin cut away, a way through from the cabin to the deck
+	_pick_piece("Cut Away")
+	g.build_thick = 4
+	for jj in range(deck - 20, deck, 3):
+		await _hull_paint(sk, at, Vector2(4.0, float(jj)), Vector2(float(cx - 3), float(jj)))
+	# (3) a rail of copper trim at the deck's end, and a seat on the new deck
+	_pick_piece("Seat")
+	var seat_at: Vector2 = at.call(-30.0, float(deck) - 5.0)
+	g.test_aim = sk.cell_world(int(seat_at.x), int(seat_at.y))
+	g.test_cast = true
+	await _frames(3)
+	g.test_cast = false
+	await _frames(3)
+	var seats1: int = sk.seat_cells.size()
+	g.build_on = false
+	await _frames(10)
+	_shot("hull_built.png")
+	var ok1: bool = grew >= 60 and int(g.hull_stats["added"]) > 150 and int(g.hull_stats["cut"]) > 40 and sk.missing() == 0 and sk.mass > mass0 and seats1 == seats0 + 1 and g.items.get("ship") is Dictionary
+	rows.append("%sthe hull grew %d cells longer (%d cells laid, %d cut away for a way aft), nothing counted missing %s, mass %.0f -> %.0f, seats %d -> %d, kept in items %s" % ["" if ok1 else "(!) ", grew, g.hull_stats["added"], g.hull_stats["cut"], sk.missing() == 0, mass0, sk.mass, seats0, seats1, g.items.get("ship") is Dictionary])
+	ok = ok and ok1
+	# ---- X: up out of the seat onto the deck; walk aft through the way cut, along the deck
+	g.deck_toggle(g.player)
+	await _frames(20)
+	var on_deck: bool = g.player.deck and g.player.aboard == sk
+	var b0: Vector2 = g.player.deck_b
+	g.test_move = -1 if sk.facing > 0 else 1
+	var walked := 0.0
+	for k in 38:
+		await _frames(1)
+		if not g.player.deck:
+			break
+		walked = maxf(walked, absf(b0.x - g.player.deck_b.x))
+	g.test_move = 0
+	await _frames(10)
+	_shot("hull_deck.png")
+	var still_on: bool = g.player.deck
+	var grounded_deck: bool = g.player.on_ground
+	# a jump on the deck
+	var by0: float = g.player.deck_b.y
+	g.test_jump = true
+	var rise := 0.0
+	for k2 in 30:
+		await _frames(1)
+		rise = maxf(rise, by0 - g.player.deck_b.y)
+	g.test_jump = false
+	await _frames(40)
+	var ok2: bool = on_deck and walked > 40.0 and still_on and grounded_deck and rise > 20.0 and g.player.on_ground
+	rows.append("%sstood up onto the deck %s, walked %.0f cells aft and stood on the new deck %s, jumped %.0f and landed %s" % ["" if ok2 else "(!) ", on_deck, walked, still_on and grounded_deck, rise, g.player.on_ground])
+	ok = ok and ok2
+	# ---- X by the new seat: sit in it
+	var ns: Vector2i = sk.seat_cells[sk.seat_cells.size() - 1]
+	g.player.deck_b = Vector2(float(ns.x) + 2.5, float(ns.y) + 1.0 - 8.5)
+	await _frames(5)
+	g.deck_toggle(g.player)
+	await _frames(5)
+	var sat: bool = not g.player.deck and sk.seat_of(g.player) == sk.seat_cells.size() - 1
+	# up again, to the helm, and fly it
+	g.deck_toggle(g.player)
+	await _frames(5)
+	g.player.deck_b = Vector2(float(sk.seat_cells[0].x) + 0.5, float(sk.seat_cells[0].y) + 1.0 - 8.5)
+	await _frames(3)
+	g.deck_toggle(g.player)
+	await _frames(5)
+	var at_helm: bool = sk.pilot() == g.player
+	var y0: float = sk.pos.length()
+	g.test_jump = true
+	await _frames(40)
+	g.test_jump = false
+	var rose: float = sk.pos.length() - y0
+	# (hands off with someone on deck: it holds)
+	g.deck_toggle(g.player)
+	await _frames(70)
+	var h0: float = sk.pos.length()
+	await _frames(90)
+	var drop: float = h0 - sk.pos.length()
+	var held: bool = g.player.deck and absf(drop) < 8.0
+	var drv: float = sk.drive()
+	var ok3: bool = sat and at_helm and rose > 30.0 and held and drv > 0.34 and drv < 1.51
+	rows.append("%ssat in the new seat %s; at the helm %s, it climbed %.0f cells (its drive %.2f for its mass); left at the helm with you on deck it held (moved %.1f) %s" % ["" if ok3 else "(!) ", sat, at_helm, rose, drv, drop, held])
+	ok = ok and ok3
+	# ---- walk off its end: off the ship, onto the world
+	g.player.deck_b = at.call(6.0, float(deck) - 9.0)
+	g.test_move = -1 if sk.facing > 0 else 1
+	var off := false
+	for k3 in 120:
+		await _frames(1)
+		if g.player.aboard == null:
+			off = true
+			break
+	g.test_move = 0
+	await _frames(60)
+	var ok4: bool = off and not g.player.deck
+	rows.append("%swalked off the deck's end onto the world %s" % ["" if ok4 else "(!) ", off])
+	ok = ok and ok4
+	# ---- kept: saved and back as built
+	var d: Dictionary = sk.save_cells()
+	var Sk = load("res://scripts/skiff.gd")
+	var s2 = Sk.make(sk.design_seed)
+	var took: bool = s2.load_cells(d)
+	var same: bool = took and s2.w == sk.w and s2.h == sk.h and s2.seat_cells.size() == sk.seat_cells.size() and s2.designed and s2.engine0 == sk.engine0
+	rows.append("%ssaved and loaded: %dx%d, %d seats, the same %s" % ["" if same else "(!) ", s2.w, s2.h, s2.seat_cells.size(), same])
+	ok = ok and same
+	# (put things back: later checks fly the skiff as forged)
+	if keep_ship == null:
+		g.items.erase("ship")
+	else:
+		g.items["ship"] = keep_ship
+	g.build_cat = 0
+	g.build_thick = 1
+	g.player.deck = false
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+	if keep_sk != null:
+		# (the very skiff later checks hold on to, not a new one)
+		for hr in keep_sk.riders.size():
+			keep_sk.riders[hr] = null
+		g.skiff = keep_sk
+		g.call_skiff()
+	else:
+		g.skiff = null
+		g.call_skiff()
+	await _frames(30)
+	print("[hull] " + "\n[hull] ".join(rows))
+	_ok("your own hull: grown cell by cell from the Ship tab, a seat added, walked about on deck, flown, kept", ok, "; ".join(rows))
+
+## paints (or cuts) from cell a to b of the ship as it was (`at` says where such a cell is now), a little at a
+## time as you would by hand
+func _hull_paint(sk, at: Callable, a: Vector2, b: Vector2) -> void:
+	var n := int(a.distance_to(b) / 1.5) + 1
+	for k in n + 1:
+		var p := a.lerp(b, float(k) / float(n))
+		var q: Vector2 = at.call(p.x, p.y)
+		g.test_aim = sk.cell_world(int(floor(q.x)), int(floor(q.y)))
+		g.test_cast = true
+		await _frames(3)
+	g.test_cast = false
+	await _frames(2)
+
+
+## (user, 23 Nov: a cargo hold "for big things only": trade goods bought and sold at outposts, in the hold)
+func _test_cargo() -> void:
+	var rows := []
+	var ok := true
+	var G = load("res://scripts/galaxy.gd")
+	var O = load("res://scripts/outpost.gd")
+	# ---- every outpost sells three goods and wants three others; somewhere a run pays
+	var op0 = O.make_outpost(G.outpost_seed(0))
+	var tr0 = op0.trader()
+	var t0: Dictionary = Defs.trade_of(G.outpost_seed(0))
+	var best := 0
+	var best_txt := ""
+	for r in range(1, 12):
+		var tr := Defs.trade_of(G.outpost_seed(r))
+		for gd in t0["sells"]:
+			var gain: int = int(tr["pays"][gd]) - int(t0["sells"][gd])
+			if gain > best:
+				best = gain
+				best_txt = "%s bought at %s for %d sells at %s for %d" % [Defs.GOODS[gd]["name"], G.outpost_name(0), t0["sells"][gd], G.outpost_name(r), tr["pays"][gd]]
+	var ok1: bool = (t0["sells"] as Dictionary).size() == 3 and (t0["wants"] as Dictionary).size() == 3 and best > 10
+	rows.append("%s%s sells %s, wants %s; the best run from it: %s (%d a crate)" % ["" if ok1 else "(!) ", G.outpost_name(0), (t0["sells"] as Dictionary).keys(), (t0["wants"] as Dictionary).keys(), best_txt, best])
+	ok = ok and ok1
+	# ---- the hold: as many crates as the room the hull closes in (the skiff as forged: a few)
+	if not g.items.has("skiff"):
+		g.items["skiff"] = 4242
+	if g.skiff == null:
+		g.call_skiff()
+		await _frames(30)
+	var cap: int = g.hold_cap()
+	var cargo0 = g.items.get("cargo", {})
+	g.items["cargo"] = {}
+	var coins0 := int(g.items.get("coins", 0))
+	g.items["coins"] = 5000
+	var sd: Dictionary = g.towns.shop_def(tr0)
+	var gi := -1
+	for i in (sd["sell"] as Array).size():
+		if (sd["sell"][i] as Dictionary).has("good"):
+			gi = i
+			break
+	var bought := 0
+	for k in cap + 3:
+		if g.towns.buy(tr0, gi):
+			bought += 1
+	var full_refused: bool = bought == cap and g.cargo_count() == cap
+	var gd0: String = sd["sell"][gi]["good"]
+	var ok2: bool = gi >= 0 and cap >= 2 and full_refused
+	rows.append("%sthe skiff's hold takes %d crates (%d room cells): %d bought, then it was full %s" % ["" if ok2 else "(!) ", cap, g.skiff.room_cells, bought, full_refused])
+	ok = ok and ok2
+	# ---- sold at another system's outpost, for what it pays
+	var rb := 1
+	var bp := -1
+	for r2 in range(1, 12):
+		var p2: int = int(Defs.trade_of(G.outpost_seed(r2))["pays"][gd0])
+		if p2 > bp:
+			bp = p2
+			rb = r2
+	var tr1 = O.make_outpost(G.outpost_seed(rb)).trader()
+	var c1 := int(g.items.get("coins", 0))
+	var sold := 0
+	while g.towns.sell_good(tr1, gd0):
+		sold += 1
+	var earned: int = int(g.items.get("coins", 0)) - c1
+	var ok3: bool = sold == cap and g.cargo_count() == 0 and earned == sold * bp
+	rows.append("%ssold %d crates of %s at %s for %d coins (%d each)" % ["" if ok3 else "(!) ", sold, Defs.GOODS[gd0]["name"], G.outpost_name(rb), earned, bp])
+	ok = ok and ok3
+	# ---- the shop panel lists them (a picture)
+	g.items["cargo"] = {gd0: 2}
+	g.towns.shop_of = tr1
+	g.state = "shop"
+	g.ui.show_shop(tr1)
+	await _frames(15)
+	_shot("cargo_shop.png")
+	g.towns.close_shop()
+	await _frames(5)
+	g.items["cargo"] = cargo0
+	g.items["coins"] = coins0
+	print("[cargo] " + "\n[cargo] ".join(rows))
+	_ok("the cargo hold: trade goods bought and sold at outposts, as many as the hull's room holds", ok, "; ".join(rows))

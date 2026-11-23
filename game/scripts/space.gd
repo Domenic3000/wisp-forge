@@ -45,6 +45,8 @@ const LOAD_R := 1                 # sectors loaded round yours (a 3 x 3 block); 
 const SAIL_SPEED := 320.0         # the Starsail: top speed in open space (cells a tick)
 const SAIL_ACCEL := 2.5
 const SAIL_CLEAR := 22.0
+const SAIL_BURN := 150.0        # wisp fuel (user, 23 Nov: "Only the long hauls"): the Starsail burns a Wisp Cell this
+const JOURNEY_CELLS := 3        # many ticks; a journey to another planet costs this many (twice into another system)
 const SKIFF_MAX := 40.0              # (skiff.gd MAX_SPEED)          # it slows to keep this many ticks from anything ahead
 const ROCK_SCRAP := 10          # a piece smaller than this (cells) crumbles to dust
 const ROCK_DRAG := 0.9995
@@ -201,6 +203,8 @@ var _st_jump := false
 var _st_b := Vector2.ZERO       # (the mage's place in the station's cells last tick, and the world point it was put at:
 var _st_w := Vector2.INF        # kept, so a single float's rounding far out never moves you a hair a tick)
 var _drop_t := 0
+var _burn := 0.0               # (ticks of sailing since the last Wisp Cell burned)
+var _fuel_warn := 0
 var _st_jobs := []              # stations being grown on a worker thread: [task id, its plan]
 var scan_marks := []            # the Wisp Scanner: [galaxy point, name, colour] of wrecks and stations near you
 
@@ -342,7 +346,7 @@ func tick() -> void:
 			_fire_cannon(pl, sk)
 		sk.power = 1.5 if game.items.has("engine") else 1.0
 		var v0: Vector2 = sk.vel
-		sk.fly(want, pl != null, pull(sk.pos), true, 0.0, 0.9995)
+		sk.fly(want, pl != null or game.crew_on_deck(), pull(sk.pos), true, 0.0, 0.9995)
 		_sail(sk, pl, want, v0)
 		sk.vel = _storm(sk.pos, sk.vel)
 		sk.pos = _hold(sk.pos, sk)
@@ -353,6 +357,9 @@ func tick() -> void:
 		for rider in sk.riders:
 			if rider != null:
 				game._ride(rider)
+		for pm in game.players:
+			if pm.aboard == sk and pm.deck:
+				game._ride(pm)                     # (up and about on its deck)
 		if sk.thrusting:
 			game._skiff_exhaust()
 	_age_bolts()
@@ -585,7 +592,30 @@ func _maybe_travel(p: Vector2) -> void:
 	# (and close to it: far out in the dark, which planet is "nearer" means nothing, and making one is work)
 	var dn := (p - (near["pos"] as Vector2)).length()
 	if dn < NEARER * (p - home_at()).length() and dn < TRAVEL_R:
+		# (a journey to another planet burns Wisp Cells: without them it holds you off at its edge, `_hold`)
+		var cost := journey_cost(int(near["index"]))
+		if not game.free_fuel:
+			if fuel() < cost:
+				_fuel_note("Not enough Wisp Cells to make landfall on %s: %d needed, you have %d" % [near["name"], cost, fuel()])
+				return
+			game.player.inv[Defs.WISPCELL] -= cost
+			stats["cells_burned"] = int(stats.get("cells_burned", 0)) + cost
+			game.ui.toast("%d Wisp Cells burned for the landfall on %s" % [cost, near["name"]], Color(0.6, 0.85, 1.0), 3.0)
 		travel(int(near["index"]))
+
+## the skiff's fuel for the long hauls: the Wisp Cells you carry
+func fuel() -> int:
+	return int(game.player.inv[Defs.WISPCELL])
+
+## what a journey to planet i burns: JOURNEY_CELLS in home's system, twice that into another
+func journey_cost(i: int) -> int:
+	var same: bool = i / Defs.SYSTEM.size() == home / Defs.SYSTEM.size()
+	return JOURNEY_CELLS if same else JOURNEY_CELLS * 2
+
+func _fuel_note(txt: String) -> void:
+	if game.frame >= _fuel_warn:
+		_fuel_warn = game.frame + 300
+		game.ui.toast(txt, Color(0.6, 0.85, 1.0), 4.0)
 
 ## Saves the planet you're leaving, makes `index` while you fly, then puts it at the origin.
 ## (A coroutine; space.gd starts it itself, tests may await it.)
@@ -745,6 +775,19 @@ func _scan(g: PackedFloat64Array) -> void:
 func _sail(sk, pl, want: Vector2, v0: Vector2) -> void:
 	var cap: float = SKIFF_MAX * sk.power
 	sailing = pl != null and pl.input.sail and game.items.has("sail") and not pl.dead
+	var sdir: Vector2 = want if want.length() > 0.05 else (v0.normalized() if v0.length() > 1.0 else Vector2.ZERO)
+	if sailing and sdir != Vector2.ZERO and not game.free_fuel:
+		# (the Starsail burns Wisp Cells: one now and then while it's out; none left, it won't unfurl)
+		if _burn <= 0.0:
+			if fuel() <= 0:
+				sailing = false
+				_fuel_note("The Starsail needs Wisp Cells to burn: refine them at a smelter (wisp ore and coal) or buy them at an outpost")
+			else:
+				game.player.inv[Defs.WISPCELL] -= 1
+				_burn = SAIL_BURN
+				stats["cells_burned"] = int(stats.get("cells_burned", 0)) + 1
+		if sailing:
+			_burn -= 1.0
 	sail = move_toward(sail, 1.0 if sailing else 0.0, 0.03)
 	if sailing:
 		var dir: Vector2 = want if want.length() > 0.05 else (v0.normalized() if v0.length() > 1.0 else Vector2.ZERO)
@@ -2487,6 +2530,10 @@ func reset_after_death() -> void:
 			if sk.riders[k] != null:
 				sk.riders[k].aboard = null
 				sk.riders[k] = null
+		for pm in game.players:
+			if pm.aboard == sk:
+				pm.aboard = null
+				pm.deck = false
 		sk.vel = Vector2.ZERO
 		sk.centre = Vector2.ZERO
 		sk.pos = sk.pos.normalized() * (Defs.R_SPACE - 30.0)

@@ -394,6 +394,42 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   it, a drifter spits, the Broodmother lays and falls, the seal breaks, the vault's Scanner Lens, kept after streaming
   out and in; pictures `station_layout_0..2.png` (whole layouts, aliens marked), `station_outside/dock/powered/
   dead_room/fight/drifter/brood/vault/map.png`.
+- WISP FUEL (user, 23 Nov: "Only the long hauls"): WISPCELL (material 62, NM 63, "Wisp Cell"): smelter `s_cell`
+  (2 wisp ore + 1 coal -> 2), outposts sell 10 for 28. space.gd: the Starsail burns one every `SAIL_BURN` (150) ticks
+  under sail with a heading (`_burn`; none left, it won't unfurl), a journey (`_maybe_travel`) costs `journey_cost(i)`
+  (`JOURNEY_CELLS` 3 in home's system, 6 into another), paid as it begins; without them it doesn't begin and `_hold`
+  keeps you off the planet's edge (`_fuel_note` says why). Home and ordinary flying are free: never stranded. HUD
+  in space: "N wisp cells". main `free_fuel` (the test mode; tests.gd sets it). Test: `_test_fuel` ("fuel").
+- YOUR OWN HULL (user, 23 Nov: "Design your own hull"): build mode's Ship tab (`Build.CAT_SHIP` 9, `HULL_KINDS`
+  hull/cut/helm/seat), used aboard (main `_update_cabin` -> `_update_hull`; on foot it says to board): paint hull
+  cells (Hull Plating, Planking, Log Frame, Glass Hull, Copper Trim, Rune Deck (RUNESTONE, paid in masonry), One-way
+  Deck (SCAFFOLD), Wisp Engine (WISP)) where they touch the ship (`can_hull`, a stroke's cells joining through each
+  other), up to `MAX_W` 200 x `MAX_H` 110: `grow_for` grows the grid with a margin (every layer, the design layers,
+  seats, `seat_marks`, `com`, and crew on deck move over), `add_hull` writes it into `design` (what mending puts
+  back), `finish_edit(old_com)` rebuilds and keeps the ship where it was in the world. Cut Away (`cut`, any cell,
+  seats' space too: the canopy over the second seat once shut the way aft) gives the material back. Helm
+  (`set_helm`: seat 0) and Seat (`add_seat`, up to `MAX_SEATS` 8; a Seat click on one takes it out), placed where
+  `seat_ok` (a floor, a 7 x 17 room over it); drawn on the back layer (`_seat_marks`: a chair, the helm's console).
+  `riders` is as long as `seat_cells`. `designed`: `drive()` = sqrt(engine cells / mass against a skiff as forged,
+  `_ratio0`), 0.35..1.5, in `thrust()`. `save_cells`/`load_cells` carry size, design layers, seats, marks;
+  `items["ship"]` keeps the hull you built, so `call_skiff` makes it again on any planet.
+  WALKING THE DECK: X (`deck_toggle`): up out of your seat onto the deck (`Mage.deck`, still `aboard`), or into the
+  free seat you're by; F still steps off the ship. `_deck_move` (from `_ride`, and space.gd's tick for crew): in the
+  ship's own cells (`deck_b`, `deck_v`), its pull 0.17 down through the keel always, walk, jump, step up, land on
+  and (down + jump) drop through one-way decks (pixel_body's `move_box` / `box_free` / `platform_under`, moved
+  there from station.gd); past its ends or below it you're off (`_off_deck`, with its speed). With anyone on deck
+  and nobody at the helm it holds (`crew_on_deck`: fly's "piloted", hands off). Overlay `_draw_skiff` draws crew on
+  deck with the riders. Test: `_test_hull` ("hull": a deck grown 64 aft, the cabin's back cut through, a seat on
+  it, stand, walk, jump, sit, the helm, a climb, it holds with you on deck, walk off its end, save/load; pictures
+  `hull_built.png`, `hull_deck.png`; the skiff as forged is put back after).
+- THE CARGO HOLD (user, 23 Nov: "Hold for big things only"): `Defs.GOODS` (8 trade goods with a base price) ride
+  as crates in `items["cargo"]` (good -> crates), never the satchel; `Defs.trade_of(outpost seed)`: three goods an
+  outpost sells cheap (0.55-0.72 x base), three it wants (1.5-1.9 x), what it pays for each. towns.gd: an outpost's
+  `shop_def` adds its goods ("good"), `buy` refuses past `main.hold_cap()` (the skiff's `hold_cap`: a crate for every
+  `HOLD_ROOM` (120) room cells its hull closes in, at least 2), `sell_good`, `good_pays`, `good_wants`; ui.gd's shop
+  shows "hold n/cap" and a Sell row per crate held or good wanted; the HUD in space "hold n/cap". Icon "crate".
+  Test: `_test_cargo` ("cargo": a profitable run between systems, the hold fills and refuses, sold for what the
+  other outpost pays; picture `cargo_shop.png`).
 - Test: `_test_galaxy` ("galaxy"; in the full run right after the skiff's journey to Cindrel): the spiral, the
   Starsail (sailing the way farthest from every planet, home too), recentring, a field streamed in and kept as
   mined, a comet on its loop, a nebula (both chosen 80000+ from any planet, or a journey begins), the chart,
@@ -1062,7 +1098,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

@@ -14,7 +14,7 @@ extends RefCounted
 const Props := preload("res://scripts/props.gd")
 const Buildings := preload("res://scripts/buildings.gd")
 
-const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks", "Workshops", "Remove"]
+const CATS := ["Back Walls", "Doors & Stairs", "Furniture", "Outdoors", "Structures", "Satchel", "Blocks", "Workshops", "Remove", "Ship"]
 const CAT_SATCHEL := 5        # furniture you carry (picked up whole, or forged): set down for free
 const CAT_BLOCKS := 6         # solid blocks, laid in straight lines and rectangles
 const CAT_WORKSHOPS := 7      # workshop stations (Defs.STATIONS, workshops.gd): objects, not cells
@@ -22,8 +22,11 @@ const CAT_WORKSHOPS := 7      # workshop stations (Defs.STATIONS, workshops.gd):
 ## the ground, remove background decorations without removing the entire background"): a layer at a
 ## time, in the same shapes as blocks, and levelling the ground. What's taken goes into the satchel.
 const CAT_REMOVE := 8
+## your skiff's own hull, from aboard (user, 23 Nov: "Design your own hull"; main `_update_hull`)
+const CAT_SHIP := 9
+const HULL_KINDS := ["hull", "cut", "helm", "seat"]
 ## the order the tabs are shown in (and Q/E steps through)
-const CAT_ORDER := [0, 6, 8, 1, 7, 2, 3, 4, 5]
+const CAT_ORDER := [0, 6, 8, 1, 7, 2, 3, 4, 5, 9]
 ## Flatten: everything solid up to FLAT_CUT rows over the line you drag is cut away, and dips under it
 ## filled from the satchel down to ground no more than FLAT_FILL rows below (deeper, it's left alone)
 const FLAT_CUT := 40
@@ -86,6 +89,17 @@ static func pieces() -> Array:
 		{"cat": 6, "name": "Mossy Blocks", "kind": "block", "mat": Defs.MOSSBLOCK, "cost": {Defs.MOSSBLOCK: 1}},
 		{"cat": 6, "name": "Roof Tiles", "kind": "block", "mat": Defs.TILE, "cost": {Defs.TILE: 1}},
 		{"cat": 6, "name": "Glass Window", "kind": "block", "mat": Defs.GLASS, "cost": {Defs.GLASS: 1}},
+		{"cat": 9, "name": "Hull Plating", "kind": "hull", "mat": Defs.HULL, "cost": {Defs.HULL: 1}},
+		{"cat": 9, "name": "Planking", "kind": "hull", "mat": Defs.PLANK, "cost": {Defs.PLANK: 1}},
+		{"cat": 9, "name": "Log Frame", "kind": "hull", "mat": Defs.WOOD, "cost": {Defs.WOOD: 1}},
+		{"cat": 9, "name": "Glass Hull", "kind": "hull", "mat": Defs.GLASS, "cost": {Defs.GLASS: 1}},
+		{"cat": 9, "name": "Copper Trim", "kind": "hull", "mat": Defs.COPPERBAR, "cost": {Defs.COPPERBAR: 1}},
+		{"cat": 9, "name": "Rune Deck", "kind": "hull", "mat": Defs.RUNESTONE, "cost": {Defs.MASONRY: 1}},
+		{"cat": 9, "name": "One-way Deck", "kind": "hull", "mat": Defs.SCAFFOLD, "cost": {Defs.PLANK: 1}},
+		{"cat": 9, "name": "Wisp Engine", "kind": "hull", "mat": Defs.WISP, "cost": {Defs.WISP: 1}},
+		{"cat": 9, "name": "Helm", "kind": "helm", "cost": {Defs.COPPERBAR: 4, Defs.CRYSTAL: 1}},
+		{"cat": 9, "name": "Seat", "kind": "seat", "cost": {Defs.PLANK: 4}},
+		{"cat": 9, "name": "Cut Away", "kind": "cut", "cost": {}},
 		{"cat": 1, "name": "Wooden Door", "kind": "door", "cost": {Defs.WOODDOOR: 1}, "alt": {Defs.PLANK: 8}},
 		{"cat": 1, "name": "Platform", "kind": "platform", "cost": {Defs.PLANK: 4}},
 		{"cat": 1, "name": "Wooden Stairs", "kind": "stairs", "mat": Defs.PLANK, "post": Defs.WOOD, "rail": Defs.WOOD, "cost": {}},

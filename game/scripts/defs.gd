@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 62
+const NM := 63
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -77,6 +77,7 @@ const COPPERBAR := 58     # Copper Ingot
 const WISPBAR := 59       # Wisp Ingot
 const HULL := 60          # Hull Plating: salvaged from derelict wrecks in deep space (wreck.gd)
 const XENITE := 61        # Xenite: the glowing chitin of the aliens in derelict stations (alien.gd)
+const WISPCELL := 62      # Wisp Cell: the skiff's fuel for the long hauls (the Starsail, journeys between planets)
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -103,7 +104,7 @@ const MAT_NAMES := {
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
-	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE",
+	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE", 62: "WISPCELL",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -255,6 +256,8 @@ func _init() -> void:
 	_def(HULL, "Hull Plating", K_SOLID, ["#5c6470", "#76808c", "#3e444e", "#9aa4ae"], {"hard": 2})
 	_def(XENITE, "Xenite", K_SOLID, ["#7a3cc8", "#9cf05a", "#4a1e88", "#d8ffa0"], {"hard": 2, "self": 1, "glow": Vector3(0.45, 0.8, 0.3)})
 	PLACE[XENITE] = 0
+	_def(WISPCELL, "Wisp Cell", K_SOLID, ["#3c7ad8", "#7ec8ff", "#2a4ea8", "#e0f6ff"], {"hard": 1, "self": 1, "glow": Vector3(0.3, 0.6, 1.0)})
+	PLACE[WISPCELL] = 0
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -775,12 +778,55 @@ const SHOPS := {
 			{"name": "Copper Ingots x6", "price": 20, "give": {COPPERBAR: 6}},
 			{"name": "Star Iron x3", "price": 60, "give": {STARIRON: 3}},
 			{"name": "Healing Draught", "price": 45, "potion": 1},
+			{"name": "Wisp Cells x10 (fuel for the long hauls)", "price": 28, "give": {WISPCELL: 10}},
 			{"name": "Star charts: the two nearest uncharted systems", "price": 50, "star_chart": 2},
 			{"name": "Shield Emitter (a ship's part)", "price": 160, "part": "shield"},
 			{"name": "Cannon Coil (a ship's part)", "price": 200, "part": "cannon"}],
 		"buy": {HULL: [10, 12], XENITE: [4, 14], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
 			FROST: [3, 4], COPPER: [8, 3], COAL: [8, 2]}, "ores": [2, 7]},
 }
+## Trade goods (user, 23 Nov: a cargo hold "for big things only": crates that ride in your ship's hold, never
+## the satchel). Every outpost sells a few cheaply and pays well for a few others (`trade_of`), so carrying them
+## between systems pays. base: the middle price of a crate.
+const GOODS := {
+	"ore": {"name": "Smelted Ore", "base": 20, "col": Color(0.72, 0.52, 0.36)},
+	"silk": {"name": "Nebula Silk", "base": 45, "col": Color(0.8, 0.5, 0.95)},
+	"preserves": {"name": "Starfruit Preserves", "base": 25, "col": Color(1.0, 0.7, 0.3)},
+	"parts": {"name": "Machine Parts", "base": 35, "col": Color(0.6, 0.66, 0.74)},
+	"tonics": {"name": "Healing Tonics", "base": 40, "col": Color(0.9, 0.3, 0.4)},
+	"curios": {"name": "Xeno Curios", "base": 60, "col": Color(0.6, 1.0, 0.45)},
+	"timber": {"name": "Fine Timber", "base": 18, "col": Color(0.62, 0.42, 0.24)},
+	"lanterns": {"name": "Wisp Lanterns", "base": 30, "col": Color(0.55, 0.8, 1.0)},
+}
+
+## an outpost's trade (from its seed): {"sells": {good: price} (three, cheap), "wants": {good: price} (three
+## others, dear), "pays": {good: price} (what it gives for any crate: dear for what it wants, little for what it
+## sells, a fair price for the rest)}
+static func trade_of(sd: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = sd ^ 0x7A4D
+	var ids: Array = GOODS.keys()
+	for k in range(ids.size() - 1, 0, -1):
+		var j := rng.randi_range(0, k)
+		var t = ids[k]
+		ids[k] = ids[j]
+		ids[j] = t
+	var sells := {}
+	var wants := {}
+	var pays := {}
+	for k2 in ids.size():
+		var g: String = ids[k2]
+		var base := float(int(GOODS[g]["base"]))
+		if k2 < 3:
+			sells[g] = int(round(base * rng.randf_range(0.55, 0.72)))
+			pays[g] = int(round(float(sells[g]) * 0.8))
+		elif k2 < 6:
+			wants[g] = int(round(base * rng.randf_range(1.5, 1.9)))
+			pays[g] = wants[g]
+		else:
+			pays[g] = int(round(base * 0.85))
+	return {"sells": sells, "wants": wants, "pays": pays}
+
 ## What a village's shops add on each kind of planet (towns.gd `shop_def` merges it into SHOPS): the ward its
 ## danger calls for, its own fare, building stock it's known for. Entries as in SHOPS, plus "item": an
 ## `items` key you then own (a ward), "heat_ward": the Heat Ward, "spell": a spell you then know. On every
@@ -1271,7 +1317,7 @@ const RECIPES := [
 	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},
 	{"id": "scanner", "cat": "Travel", "name": "Wisp Scanner", "part": "part_scanner", "cost": {XENITE: 12, CRYSTAL: 10, WISPBAR: 6, HULL: 10}, "desc": "A lens of alien glass fitted to your skiff, built round a Scanner Lens from a derelict station's vault: what you see round you reaches three times as far, systems are charted from farther off, and the nearest wreck and derelict station within reach are marked at the edge of the screen."},
-	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars. Needs the skiff."},
+	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars; it burns a Wisp Cell every few seconds (refined at a smelter from wisp ore and coal, or bought at an outpost). Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 ]
 
@@ -1343,6 +1389,7 @@ const PROCESS := [
 		"name": "Grown Prism", "hint": "Glass fired round a glowing cap grows a prism of its own."},
 	{"id": "s_copper", "at": "smelter", "in": {COPPER: 3}, "give": {COPPERBAR: 1}, "ticks": 200},
 	{"id": "s_wisp", "at": "smelter", "in": {WISP: 3}, "give": {WISPBAR: 1}, "ticks": 260},
+	{"id": "s_cell", "at": "smelter", "in": {WISP: 2, COAL: 1}, "give": {WISPCELL: 2}, "ticks": 240},
 	{"id": "s_band", "at": "smelter", "in": {COPPERBAR: 2, WISPBAR: 2, CRYSTAL: 1}, "item": "gear:wispband", "ticks": 480,
 		"secret": true, "once": true, "name": "Wispsteel Band", "hint": "Copper and wisp melted into one ring with a prism set between them: spells come cheaper."},
 	{"id": "s_edge", "at": "smelter", "in": {STARIRON: 2, COAL: 2, MAGMAROCK: 2}, "item": "gear:staredge", "ticks": 600,

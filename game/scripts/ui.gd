@@ -714,6 +714,8 @@ func _sale_icon(it: Dictionary) -> Texture2D:
 			return pt
 	if it.has("recipe"):
 		return Icons.thing("recipe")
+	if it.has("good"):
+		return Icons.item("crate")
 	if it.has("heat_ward"):
 		return Icons.thing("heat_ward")
 	if it.has("item"):
@@ -729,6 +731,8 @@ func _render_shop() -> void:
 	var tw = game.towns
 	var sd: Dictionary = tw.shop_def(_shop_v)
 	shop_title.text = "%s's %s · %s" % [_shop_v.name, sd.get("title", "Shop"), _shop_v.town["name"]]
+	if String(_shop_v.role) == "outpost":
+		shop_title.text += " · hold %d/%d crates" % [game.cargo_count(), game.hold_cap()]
 	shop_coins.text = "%d" % tw.coins()
 	for c in shop_list.get_children():
 		c.queue_free()
@@ -753,7 +757,7 @@ func _render_shop() -> void:
 			own_txt = "whole" if game.skiff != null and game.skiff.missing() == 0 else "not here"
 		row.add_child(_label(own_txt if have_it else ptxt, 12, DIM if have_it else GOLD))
 		var b := _button("Buy")
-		b.disabled = have_it or tw.coins() < price
+		b.disabled = have_it or tw.coins() < price or (it.has("good") and game.cargo_count() >= game.hold_cap())
 		b.pressed.connect(func():
 			tw.buy(_shop_v, i)
 			_render_shop())
@@ -780,6 +784,29 @@ func _render_shop() -> void:
 			_render_shop())
 		row2.add_child(b2)
 		shop_buys.add_child(row2)
+	# crates in your hold, and what this outpost pays for each (gold: what it wants most)
+	var pays: Dictionary = tw.good_pays(_shop_v)
+	var wants: Dictionary = tw.good_wants(_shop_v)
+	var cargo: Dictionary = game.items.get("cargo", {})
+	for gd in pays:
+		var nc := int(cargo.get(gd, 0))
+		if nc <= 0 and not wants.has(gd):
+			continue
+		var row3 := _box(false, 3)
+		row3.mouse_filter = Control.MOUSE_FILTER_PASS
+		row3.add_child(_tex(Icons.item("crate")))
+		var l3 := _label("%s%s (%d in the hold)" % [Defs.GOODS[gd]["name"], " · wanted" if wants.has(gd) else "", nc], 12, CREAM if nc > 0 else DIM)
+		l3.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row3.add_child(l3)
+		row3.add_child(_label("%d" % int(pays[gd]), 12, GOLD))
+		var b3 := _button("Sell")
+		b3.disabled = nc <= 0
+		var gsel: String = gd
+		b3.pressed.connect(func():
+			tw.sell_good(_shop_v, gsel)
+			_render_shop())
+		row3.add_child(b3)
+		shop_buys.add_child(row3)
 
 ## A workshop station's panel (workshops.gd): your satchel to load it from (left click one, right click
 ## ten), its fire to feed, what's in it (click to take it back out), what it made, and what it knows how to
@@ -1439,6 +1466,10 @@ func update_hud(g) -> void:
 		var lines := PackedStringArray([where, g.local_time_text() + ("" if wn == "Clear" else " · " + wn)])
 		if depth > 14 or depth < -60 or g.space.active:
 			lines[1] = depth_txt + " · " + lines[1]
+		if g.space.active and g.items.has("skiff"):
+			lines[1] += " · %d wisp cells" % g.player.inv[Defs.WISPCELL]
+			if g.cargo_count() > 0:
+				lines[1] += " · hold %d/%d" % [g.cargo_count(), g.hold_cap()]
 		info.text = "\n".join(lines)
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)

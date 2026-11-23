@@ -14,7 +14,7 @@ const MAT_STYLE := {
 	18: "orb", 20: "glassy", 21: "speckle", 22: "orb", 23: "shroom", 25: "brick", 26: "pane", 28: "gem", 30: "plank",
 	31: "cactus", 32: "plank", 34: "masonry", 35: "masonry", 36: "masonry", 37: "grass", 39: "torch", 42: "rune",
 	44: "door", 7: "log", 8: "leaf", 49: "log", 50: "ingot", 51: "gem", 52: "pearl", 53: "gem", 54: "ore",
-	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 61: "gem", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
+	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 61: "gem", 62: "orb", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
 }
 
 ## spell glyphs, 11 x 11: "#" the spell's colour, "o" its light, "w" white-hot
@@ -35,6 +35,7 @@ const SPELL_ART := {
 const ITEM_ART := {
 	"potion": ["...ww...", "...cc...", "...cc...", "..#rr#..", ".#rrrr#.", "#rwrrrr#", "#rrrrrr#", "#rrrrrr#", ".#rrrr#.", "..####.."],
 	"coin": ["..####..", ".#yyyy#.", "#yywyyy#", "#ywy#yy#", "#yyy#yy#", "#yyy#yy#", "#yyy#yy#", ".#yyyy#.", "..####.."],
+	"crate": ["#########", "#bbbbbbb#", "#b#####b#", "#b#bbb#b#", "#bb#b#bb#", "#b#bbb#b#", "#b#####b#", "#bbbbbbb#", "#########"],
 	"letter": ["##########", "#wwwwwwww#", "#ww#ww#ww#", "#w#wwww#w#", "##wwrrww##", "#wwwrrwww#", "#wwwwwwww#", "##########"],
 	"chair": ["#.......", "#.......", "#.......", "#.......", "######..", "#....#..", "#....#..", "#....#.."],
 	"heart": [".##.##.", "#ww####", "#######", ".#####.", "..###..", "...#..."],
@@ -100,6 +101,7 @@ const THINGS := {
 const ITEM_COL := {
 	"potion": {"#": Color(0.45, 0.08, 0.14), "r": Color(0.9, 0.2, 0.3), "w": Color(1, 0.85, 0.85), "c": Color(0.7, 0.52, 0.3)},
 	"coin": {"#": Color(0.6, 0.38, 0.06), "y": Color(1.0, 0.8, 0.25), "w": Color(1, 0.97, 0.75)},
+	"crate": {"#": Color(0.35, 0.22, 0.12), "b": Color(0.72, 0.5, 0.28)},
 	"letter": {"#": Color(0.55, 0.45, 0.32), "w": Color(0.95, 0.9, 0.78), "r": Color(0.8, 0.15, 0.15)},
 	"chair": {"#": Color(0.6, 0.4, 0.22)},
 	"heart": {"#": Color(0.95, 0.3, 0.35), "w": Color(1, 0.8, 0.8)},

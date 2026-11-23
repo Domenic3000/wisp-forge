@@ -30,7 +30,10 @@ const BRAKE := 0.2              # hands off: how quickly it slows to a hover
 const SPACE_THRUST := 0.3
 const MAX_SPEED := 40.0
 const TILT := 0.42              # the most it tilts into a climb or a dive (radians)
-const SEATS := 2
+const SEATS := 2                # (as forged: a pilot and one more; a hull you design holds up to MAX_SEATS)
+const MAX_SEATS := 8
+const MAX_W := 200              # the biggest hull you can grow it to (cells)
+const MAX_H := 110
 
 var design_seed := 0       # (the shape of this skiff)
 var seat_cells: Array = []      # [Vector2i] the cell each seat's feet rest on, pilot first
@@ -52,6 +55,8 @@ var hull_f := 1.0               # how much of the hull is left (0..1)
 var engine_f := 1.0             # how much of its engine (thrust goes with it)
 var bump := 0.0                 # the hardest knock into something since `advance` began (speed into it)
 var bump_at := Vector2.ZERO     # (where: the middle of what touched)
+var designed := false           # its hull has been built on (user, 23 Nov: "Design your own hull"): thrust from its engines
+static var _ratio0 := -1.0      # (a skiff as forged: its engine cells to its mass, what `drive` measures against)
 
 static func make(sd: int):
 	var s = load("res://scripts/skiff.gd").new()
@@ -169,7 +174,7 @@ func seat_world(k: int, body_h: float) -> Vector2:
 	return to_world(feet - Vector2(0, body_h * 0.5))
 
 func board(m) -> bool:
-	for k in SEATS:
+	for k in riders.size():
 		if riders[k] == null:
 			riders[k] = m
 			return true
@@ -181,7 +186,7 @@ func leave(m) -> void:
 		riders[k] = null
 		# (with no pilot, the next rider takes the controls)
 		if k == 0:
-			for k2 in range(1, SEATS):
+			for k2 in range(1, riders.size()):
 				if riders[k2] != null:
 					riders[0] = riders[k2]
 					riders[k2] = null
@@ -334,7 +339,16 @@ func collide(solid: Callable) -> void:
 ## Mass and the rest from the cells, and then how much of the hull and engine is left.
 func rebuild() -> void:
 	super()
+	room_cells = 0
+	for r in room:
+		room_cells += r
 	_recount()
+
+## the crates its hold carries (trade goods): one for every HOLD_ROOM cells its hull closes in, at least 2
+const HOLD_ROOM := 120
+var room_cells := 0
+func hold_cap() -> int:
+	return clampi(room_cells / HOLD_ROOM, 2, 60)
 
 func _recount() -> void:
 	if design.size() != cells.size():
@@ -352,9 +366,21 @@ func _recount() -> void:
 	hull_f = float(nh) / float(hull0)
 	engine_f = float(ne) / float(engine0)
 
-## its thrust (and cruise) as its engine is: a hit to it tells, but a wounded skiff still limps home
+## its thrust (and cruise) as its engine is: a hit to it tells, but a wounded skiff still limps home; a hull you
+## designed flies by how much engine it has for its mass (`drive`)
 func thrust() -> float:
-	return 0.4 + 0.6 * sqrt(engine_f)
+	return (0.4 + 0.6 * sqrt(engine_f)) * drive()
+
+## a designed hull's engines against its mass, measured against a skiff as forged (1 for that): a big hull with
+## a little engine is sluggish, more engine makes it lively (0.35 .. 1.5)
+func drive() -> float:
+	if not designed:
+		return 1.0
+	if _ratio0 < 0.0:
+		var ref = load("res://scripts/skiff.gd").make(1)
+		_ratio0 = float(ref.engine0) / maxf(ref.mass, 1.0)
+	var r := float(engine0) * engine_f / maxf(mass, 1.0)
+	return clampf(sqrt(r / maxf(_ratio0, 0.0001)), 0.35, 1.5)
 
 ## A hit at world point p: the hull's cells within r are carved out. Returns how many went (0 once
 ## the hull is down to HULL_FLOOR: it holds, and the hit goes through to whoever is aboard).
@@ -419,3 +445,218 @@ func in_seat(i: int, j: int) -> bool:
 		if i >= c.x - 4 and i <= c.x + 4 and j >= c.y - 17 and j <= c.y:
 			return true
 	return false
+
+# --------------------------------------------------------- your own hull ---
+# (user, 23 Nov: "Design your own hull": the skiff grows into a ship you lay out yourself, cell by cell, from
+# build mode's Ship tab while aboard: main `_update_hull`)
+
+## is cell (i, j) (it may lie outside the grid) a place to add hull? empty, touching the ship, clear of every
+## seat, and the ship no bigger than MAX_W x MAX_H with it
+func can_hull(i: int, j: int) -> bool:
+	if at(i, j) != 0 or in_seat(i, j):
+		return false
+	var nw := maxi(w, i + 1) - mini(0, i)
+	var nh := maxi(h, j + 1) - mini(0, j)
+	if nw > MAX_W or nh > MAX_H:
+		return false
+	return at(i - 1, j) != 0 or at(i + 1, j) != 0 or at(i, j - 1) != 0 or at(i, j + 1) != 0
+
+## Makes room in the grid for cell (i, j) (outside it, the grid grows with a margin, and every layer, seat and
+## the centre of mass move over with it). Returns the offset added to every cell's place.
+func grow_for(i: int, j: int) -> Vector2i:
+	if i >= 0 and j >= 0 and i < w and j < h:
+		return Vector2i.ZERO
+	var pl := maxi(0, -i) + (8 if i < 0 else 0)
+	var pt := maxi(0, -j) + (8 if j < 0 else 0)
+	var pr := maxi(0, i - w + 1) + (8 if i >= w else 0)
+	var pb := maxi(0, j - h + 1) + (8 if j >= h else 0)
+	var nw := w + pl + pr
+	var nh := h + pt + pb
+	for ln in ["cells", "vars", "made", "bg", "bgv", "deco", "design", "design_v", "design_bg"]:
+		var old: PackedByteArray = get(ln)
+		var nu := PackedByteArray()
+		nu.resize(nw * nh)
+		if old.size() == w * h:
+			for jj in h:
+				for ii in w:
+					nu[(jj + pt) * nw + ii + pl] = old[jj * w + ii]
+		set(ln, nu)
+	room.resize(nw * nh)
+	outside.resize(nw * nh)
+	var nm := PackedInt32Array()
+	for k0 in seat_marks:
+		nm.append((k0 / w + pt) * nw + k0 % w + pl)
+	seat_marks = nm
+	w = nw
+	h = nh
+	var off := Vector2i(pl, pt)
+	for k in seat_cells.size():
+		seat_cells[k] = (seat_cells[k] as Vector2i) + off
+	com += Vector2(off)
+	return off
+
+## lays a hull cell (part of the ship as built: what mending puts back)
+func add_hull(i: int, j: int, m: int, v: int) -> void:
+	var k := j * w + i
+	cells[k] = m
+	vars[k] = v
+	made[k] = 0
+	design[k] = m
+	design_v[k] = v
+
+## takes a cell of the hull (or what was built there) away: its material, or 0
+func cut(i: int, j: int) -> int:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return 0
+	var k := j * w + i
+	var m := cells[k]
+	if m == 0:
+		return 0
+	cells[k] = 0
+	made[k] = 0
+	design[k] = 0
+	return m
+
+## can someone sit at cell (i, j): their feet on something there, room for them over it, clear of the other
+## seats (`skip`: a seat that's moving, not counted)
+func seat_ok(i: int, j: int, skip := -1) -> bool:
+	if at(i, j + 1) == 0 or at(i, j + 1) == Defs.SCAFFOLD:
+		return false
+	for dj in range(-16, 1):
+		for di in range(-3, 4):
+			if at(i + di, j + dj) != 0:
+				return false
+	for k in seat_cells.size():
+		if k == skip:
+			continue
+		var c: Vector2i = seat_cells[k]
+		if absi(c.x - i) < 7 and absi(c.y - j) < 17:
+			return false
+	return true
+
+## the helm (the pilot's seat) moved to cell (i, j)
+func set_helm(i: int, j: int) -> void:
+	seat_cells[0] = Vector2i(i, j)
+	_seat_marks()
+
+## another seat at (i, j)
+func add_seat(i: int, j: int) -> bool:
+	if seat_cells.size() >= MAX_SEATS:
+		return false
+	seat_cells.append(Vector2i(i, j))
+	riders.append(null)
+	_seat_marks()
+	return true
+
+## the seat (not the helm) whose place is near (i, j), or -1
+func seat_near(i: int, j: int) -> int:
+	for k in range(1, seat_cells.size()):
+		var c: Vector2i = seat_cells[k]
+		if absi(c.x - i) <= 3 and j <= c.y and j >= c.y - 16:
+			return k
+	return -1
+
+func remove_seat(k: int) -> void:
+	if k <= 0 or k >= seat_cells.size() or riders[k] != null:
+		return
+	seat_cells.remove_at(k)
+	riders.remove_at(k)
+	_seat_marks()
+
+## the seats drawn on the back layer: a chair's back and seat at each, the helm's console with a glowing pane
+## in front of the pilot (only over back wall that's as forged, or bare)
+var seat_marks := PackedInt32Array()
+func _seat_marks() -> void:
+	for k in seat_marks:
+		if k < bg.size():
+			bg[k] = design_bg[k] if design_bg.size() == bg.size() else 0
+	seat_marks = PackedInt32Array()
+	for s in seat_cells.size():
+		var c: Vector2i = seat_cells[s]
+		for dj in range(0, 7):
+			_mark(c.x - 3, c.y - dj, Defs.TIMBER, 0)
+		for di in range(-3, 2):
+			_mark(c.x + di, c.y - 3, Defs.TIMBER, 1)
+		if s == 0:
+			for dj2 in range(0, 6):
+				_mark(c.x + 5, c.y - dj2, Defs.COPPERBAR, 2)
+			_mark(c.x + 4, c.y - 6, Defs.CRYSTAL, 0)
+			_mark(c.x + 5, c.y - 6, Defs.CRYSTAL, 0)
+	dirty = true
+
+func _mark(i: int, j: int, m: int, v: int) -> void:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return
+	var k := j * w + i
+	if bg[k] != 0 and bg[k] != (design_bg[k] if design_bg.size() == bg.size() else 0):
+		return
+	bg[k] = m
+	bgv[k] = v
+	seat_marks.append(k)
+
+## after building on the hull: mass, room and outline again, and it stays where it was in the world (its
+## centre of mass moved); what's built is counted again (engine cells: the wisp ore in it)
+func finish_edit(old_com: Vector2) -> void:
+	rebuild()
+	pos += axis_x() * (com.x - old_com.x) + axis_y() * (com.y - old_com.y)
+	designed = true
+	_count_design()
+	_recount()
+
+func _count_design() -> void:
+	hull0 = 0
+	engine0 = 0
+	for k in design.size():
+		if design[k] != 0:
+			hull0 += 1
+			if design[k] == Defs.WISP:
+				engine0 += 1
+	hull0 = maxi(hull0, 1)
+	engine0 = maxi(engine0, 1)
+
+# --------------------------------------------------------------- saving ---
+# (a hull you designed: its size, seats and its layers as built go with its cells)
+
+func save_cells() -> Dictionary:
+	var d := super.save_cells()
+	var raw := PackedByteArray()
+	for a in [design, design_v, design_bg]:
+		raw.append_array(a)
+	d["design"] = Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))
+	var seats := []
+	for c in seat_cells:
+		seats.append([(c as Vector2i).x, (c as Vector2i).y])
+	d["seats"] = seats
+	d["designed"] = designed
+	d["marks"] = Array(seat_marks)
+	return d
+
+func load_cells(d: Dictionary) -> bool:
+	var nw := int(d.get("w", w))
+	var nh := int(d.get("h", h))
+	if bool(d.get("designed", false)) and (nw != w or nh != h):
+		setup(nw, nh)
+		design.resize(nw * nh)
+		design_v.resize(nw * nh)
+		design_bg.resize(nw * nh)
+	if not super.load_cells(d):
+		return false
+	if d.has("design"):
+		var n := w * h
+		var raw := Marshalls.base64_to_raw(String(d["design"])).decompress(n * 3, FileAccess.COMPRESSION_DEFLATE)
+		if raw.size() == n * 3:
+			design = raw.slice(0, n)
+			design_v = raw.slice(n, n * 2)
+			design_bg = raw.slice(n * 2, n * 3)
+	if d.has("seats"):
+		seat_cells = []
+		for c in d["seats"]:
+			seat_cells.append(Vector2i(int(c[0]), int(c[1])))
+		riders = []
+		riders.resize(seat_cells.size())
+	seat_marks = PackedInt32Array(d.get("marks", []))
+	designed = bool(d.get("designed", false))
+	if designed:
+		_count_design()
+	_recount()
+	return true

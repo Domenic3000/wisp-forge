@@ -343,3 +343,97 @@ func pieces() -> Array:
 		out.append(comp)
 	out.sort_custom(func(a, b): return a.size() > b.size())
 	return out
+
+# ------------------------------------------------- moving about inside it ---
+# (a derelict station's rooms, a ship's decks: a body the mage's size moves through its cells)
+
+## is a cell solid to someone in it? (a scaffold only to someone falling onto it in a powered room)
+func solid_cell(i: int, j: int) -> bool:
+	if i < 0 or j < 0 or i >= w or j >= h:
+		return false
+	var t := cells[j * w + i]
+	return t != 0 and t != Defs.SCAFFOLD
+
+func scaffold_cell(i: int, j: int) -> bool:
+	return i >= 0 and j >= 0 and i < w and j < h and cells[j * w + i] == Defs.SCAFFOLD
+
+## a box (body cell coords of its middle, half sizes) clear of solid cells?
+## (a little give at the edges: a body resting on a floor sits on a cell boundary exactly, and world positions
+## are single floats, good to about 0.005 of a cell this far out, so the trip there and back can move it a hair
+## into the next cell)
+const EPS := 0.04
+
+func box_free(b: Vector2, hw: float, hh: float) -> bool:
+	var i0 := int(floor(b.x - hw + EPS))
+	var i1 := int(ceil(b.x + hw - EPS))
+	var j0 := int(floor(b.y - hh + EPS))
+	var j1 := int(ceil(b.y + hh - EPS))
+	for j in range(j0, j1):
+		if j < 0 or j >= h:
+			continue
+		var row := j * w
+		for i in range(i0, i1):
+			if i < 0 or i >= w:
+				continue
+			var t := cells[row + i]
+			if t != 0 and t != Defs.SCAFFOLD:
+				return false
+	return true
+
+## a one-way floor under a box's feet, crossing from `fy0` down to `fy1` (rows)?
+func platform_under(b: Vector2, hw: float, fy0: float, fy1: float) -> bool:
+	var j0 := int(ceil(fy0 - EPS))
+	var j1 := int(floor(fy1))
+	for j in range(j0, j1 + 1):
+		for i in range(int(floor(b.x - hw + EPS)), int(ceil(b.x + hw - EPS))):
+			if scaffold_cell(i, j):
+				return true
+	return false
+
+## Moves a box (middle `b`, half sizes, velocity `v`, body cells) through the body a cell at a time:
+## across, stepping up to `step` cells onto a ledge; then along +y, landing on solid cells and, falling
+## (`grav`) and not dropping through (`drop`), on a scaffold's top. Returns [b, v, on_ground, hit a wall].
+func move_box(b: Vector2, v: Vector2, hw: float, hh: float, grav: bool, step: int, drop: bool) -> Array:
+	var ground := false
+	var wall := false
+	var n := int(ceil(absf(v.x)))
+	if n > 0:
+		var sx := v.x / float(n)
+		for k in n:
+			var nb := Vector2(b.x + sx, b.y)
+			if box_free(nb, hw, hh):
+				b = nb
+				continue
+			var up := false
+			for s in range(1, step + 1):
+				var ub := Vector2(nb.x, nb.y - float(s))
+				if box_free(ub, hw, hh):
+					b = ub
+					up = true
+					break
+			if not up:
+				v.x = 0.0
+				wall = true
+				break
+	n = int(ceil(absf(v.y)))
+	if n > 0:
+		var sy := v.y / float(n)
+		for k2 in n:
+			var nb2 := Vector2(b.x, b.y + sy)
+			var blocked := not box_free(nb2, hw, hh)
+			if not blocked and grav and sy > 0.0 and not drop and platform_under(b, hw, b.y + hh, nb2.y + hh):
+				blocked = true
+				var pb := Vector2(b.x, floor(nb2.y + hh) - hh)
+				if pb.y >= b.y:
+					b = pb
+			if blocked:
+				if sy > 0.0:
+					ground = true
+					var sb := Vector2(b.x, floor(nb2.y + hh) - hh)
+					if sb.y > b.y and box_free(sb, hw, hh):
+						b = sb
+				v.y = 0.0
+				break
+			b = nb2
+	return [b, v, ground, wall]
+

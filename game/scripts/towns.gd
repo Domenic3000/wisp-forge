@@ -912,7 +912,39 @@ func shop_def(v) -> Dictionary:
 	# recipes of the keeper's trade (Defs.LEARN "shop"): always listed (a known one shows "yours")
 	for r in game.shop_recipes(String(v.role)):
 		(sd["sell"] as Array).append({"name": "Recipe: %s" % r["name"], "price": int(Defs.learn_of(r).get("price", 50)), "recipe": String(r["id"])})
+	if String(v.role) == "outpost":
+		# (an outpost's own goods, crate by crate, into your ship's hold)
+		var tr := Defs.trade_of(int(v.town.get("seed", 0)))
+		for gd in tr["sells"]:
+			(sd["sell"] as Array).append({"name": "%s (a crate)" % Defs.GOODS[gd]["name"], "price": int(tr["sells"][gd]), "good": String(gd)})
 	return sd
+
+## what this keeper pays for a crate of each good (only an outpost trades in them): {good: price}
+func good_pays(v) -> Dictionary:
+	if String(v.role) != "outpost":
+		return {}
+	return Defs.trade_of(int(v.town.get("seed", 0)))["pays"]
+
+## the goods this keeper wants most: {good: price}
+func good_wants(v) -> Dictionary:
+	if String(v.role) != "outpost":
+		return {}
+	return Defs.trade_of(int(v.town.get("seed", 0)))["wants"]
+
+## sell a crate of a good from the hold
+func sell_good(v, gd: String) -> bool:
+	var cargo: Dictionary = game.items.get("cargo", {})
+	var pays := good_pays(v)
+	if int(cargo.get(gd, 0)) <= 0 or not pays.has(gd):
+		return false
+	cargo[gd] = int(cargo[gd]) - 1
+	if int(cargo[gd]) <= 0:
+		cargo.erase(gd)
+	game.items["cargo"] = cargo
+	game.items["coins"] = coins() + int(pays[gd])
+	game.audio.play("coin")
+	stats["goods_sold"] = int(stats.get("goods_sold", 0)) + 1
+	return true
 
 ## a shop's stock on a kind of planet: Defs.SHOPS[role], plus KIND_TRADE's, plus (the smithy, on a world
 ## with its own ore) an imported ore and a better price for the world's own
@@ -973,6 +1005,9 @@ func buy(v, i: int) -> bool:
 	var price := price_of(v, it)
 	if coins() < price or owned(it):
 		return false
+	if it.has("good") and game.cargo_count() >= game.hold_cap():
+		game.ui.toast("Your ship's hold is full (%d crates): a bigger hull, with more room closed in, carries more" % game.hold_cap() if game.hold_cap() > 0 else "Crates ride in your ship's hold: you need a skiff", Color(1, 0.7, 0.5), 2.5)
+		return false
 	game.items["coins"] = coins() - price
 	grant(it)
 	game.audio.play("coin")
@@ -1013,6 +1048,10 @@ func grant(it: Dictionary) -> void:
 			game.space._star_chart()
 	if it.has("repair") and game.skiff != null:
 		game.skiff.mend(100000)
+	if it.has("good"):
+		var cargo: Dictionary = game.items.get("cargo", {})
+		cargo[String(it["good"])] = int(cargo.get(String(it["good"]), 0)) + 1
+		game.items["cargo"] = cargo
 
 ## sell what the keeper pays for, one lot
 func sell(v, mat: int) -> bool:

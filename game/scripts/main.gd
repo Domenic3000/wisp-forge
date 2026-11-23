@@ -336,6 +336,7 @@ var spawn_angle := 0.0
 var builds = null          # the planet's planned structures (ruins, castles, towns...)
 var testing := false       # started by "Run tests.bat" (--test): uses saves/test, reports, quits
 var test_god := false      # the test mode keeps the mage alive except when it checks damage
+var free_fuel := false     # the test mode flies the long hauls without Wisp Cells, except in the check about it
 var free_magic := false    # the test mode digs and builds without mana, except in the check about it
 var perf_us := 0           # time spent in the GPU step (for the test report)
 var perf_n := 0
@@ -478,6 +479,9 @@ class Mage extends Body:
 	var cast_frame := -100     # when the last spell was cast (for the cast pose)
 	var floating := false      # levitating (for the float pose)
 	var aboard = null          # the skiff this mage rides in (null: on foot)
+	var deck := false          # aboard, but up out of a seat, walking the ship's deck (`_deck_move`; X stands, X sits)
+	var deck_b := Vector2.ZERO # (on deck: the middle of the body in the ship's own cells, and its speed there)
+	var deck_v := Vector2.ZERO
 	var buffs := {}            # a draught working now (Defs.DRAUGHTS id -> ticks left), read through gear()
 	func _init() -> void:
 		h = 17.0
@@ -4846,6 +4850,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_drink(player)
 		elif k == KEY_F:
 			_interact()
+		elif k == KEY_X:
+			deck_toggle(player)
 		elif k == KEY_K:
 			call_skiff()
 		elif k == KEY_I or k == KEY_TAB:
@@ -5125,6 +5131,14 @@ func _update_build(m: Mage) -> void:
 	var piece := build_piece()
 	build_prev = {}
 	if piece.is_empty():
+		return
+	if Build.HULL_KINDS.has(String(piece["kind"])):
+		# (the Ship tab builds the skiff's own hull: from aboard it)
+		if m.input.cast and not _cabin_latch:
+			_cabin_latch = true
+			ui.toast("The Ship tab builds your skiff's hull: board it first (F), then build from inside", Color(1, 0.7, 0.5), 2.5)
+		elif not m.input.cast:
+			_cabin_latch = false
 		return
 	var p := _reach(m, m.input.aim)
 	var cell := Build.cell_of(p)
@@ -6575,7 +6589,7 @@ func _update_skiff() -> void:
 	skiff.centre = Vector2.ZERO
 	# faster above the air; with nobody at the controls the air drags at it as it falls
 	skiff.power = 1.5 if items.has("engine") else 1.0              # (the Star-Iron Engine)
-	skiff.fly(want, pl != null, g, false, (Skiff.CRUISE_HIGH if high else Skiff.CRUISE) * skiff.power, 0.999 if high else 0.97)
+	skiff.fly(want, pl != null or crew_on_deck(), g, false, (Skiff.CRUISE_HIGH if high else Skiff.CRUISE) * skiff.power, 0.999 if high else 0.97)
 	skiff.advance(_skiff_solid if in_grid(skiff.pos, 40.0) else Callable())
 	if skiff.bump > CRASH_PLANET:
 		space.skiff_crash(skiff)
@@ -6667,6 +6681,9 @@ func _update_cabin(m: Mage) -> void:
 		_cabin_latch = false
 	var piece := build_piece()
 	if piece.is_empty():
+		return
+	if Build.HULL_KINDS.has(String(piece["kind"])):
+		_update_hull(m, sk, piece)
 		return
 	var kind: String = piece["kind"]
 	var b: Vector2 = sk.to_body(m.input.aim) + sk.com
@@ -6830,6 +6847,9 @@ func _skiff_exhaust() -> void:
 
 ## a rider sits in their seat: they go where the skiff goes, breathe its air, and don't fall
 func _ride(m: Mage) -> void:
+	if m.deck:
+		_deck_move(m)
+		return
 	var k: int = skiff.seat_of(m) if skiff != null else -1
 	if k < 0:
 		m.aboard = null
@@ -6866,10 +6886,16 @@ func call_skiff() -> bool:
 		return false
 	if skiff == null:
 		skiff = Skiff.make(int(items["skiff"]))
-	for k in Skiff.SEATS:
+		if items.get("ship") is Dictionary:
+			skiff.load_cells(items["ship"])       # (the hull you built: it answers as you left it)
+	for k in skiff.riders.size():
 		if skiff.riders[k] != null:
 			skiff.riders[k].aboard = null
 			skiff.riders[k] = null
+	for pm in players:
+		if pm.aboard == skiff:
+			pm.aboard = null
+			pm.deck = false
 	_use_grid(player)
 	var a := atan2(player.pos.y, player.pos.x)
 	var right := basis_r(a)
@@ -6905,6 +6931,7 @@ func _skiff_interact(m: Mage) -> bool:
 			return true
 		skiff.leave(m)
 		m.aboard = null
+		m.deck = false
 		# out beside it, behind the cockpit (on top of it if that's blocked)
 		var out: Vector2 = skiff.to_world(Vector2(-skiff.com.x - 6.0, float(skiff.h) - skiff.com.y - m.h * 0.5 - 1.0))
 		_use_grid(m)
@@ -7359,3 +7386,334 @@ func prof_text(n := 8, sep := " · ") -> String:
 
 func prof_reset() -> void:
 	prof.clear()
+
+# ======================================================== the ship's deck ===
+# (user, 23 Nov: "Design your own hull": a ship you lay out yourself and walk about inside. X stands up out of
+# a seat onto the deck, and sits down again by a free seat; F still steps off the ship. On deck you walk, jump
+# and drop through one-way decks in the ship's own cells, its pull always "down" through its keel; while
+# nobody's at the helm it holds where it is.)
+
+## anyone up and about on the skiff's deck?
+func crew_on_deck() -> bool:
+	if skiff == null:
+		return false
+	for pm in players:
+		if pm.aboard == skiff and pm.deck and not pm.dead:
+			return true
+	return false
+
+## X aboard: stand up out of your seat onto the deck, or sit down in the free seat you're by
+func deck_toggle(m: Mage) -> bool:
+	var sk = skiff
+	if sk == null or m.aboard != sk or m.dead or state != "play":
+		return false
+	var hw := float(m.w) * 0.5
+	var hh := float(m.h) * 0.5
+	if not m.deck:
+		var k: int = sk.seat_of(m)
+		if k < 0:
+			return false
+		var sc: Vector2i = sk.seat_cells[k]
+		var b := Vector2(float(sc.x) + 0.5, float(sc.y) + 1.0 - hh)
+		if not sk.box_free(b, hw - 0.5, hh - 0.5):
+			ui.toast("No room to stand up here", Color(1, 0.7, 0.5), 1.5)
+			return true
+		sk.leave(m)
+		m.deck = true
+		m.deck_b = b
+		m.deck_v = Vector2.ZERO
+		m.on_ground = true
+		ui.toast("On deck: walk about (WASD, jump); X by a free seat sits down, F steps off the ship", Color(0.7, 0.85, 1.0), 3.0)
+		return true
+	var best := -1
+	var bd := 14.0
+	for k2 in sk.seat_cells.size():
+		if sk.riders[k2] != null:
+			continue
+		var c: Vector2i = sk.seat_cells[k2]
+		var d := Vector2(float(c.x) + 0.5, float(c.y) + 1.0 - hh).distance_to(m.deck_b)
+		if d < bd:
+			bd = d
+			best = k2
+	if best < 0:
+		ui.toast("No free seat here: walk to one (X), or F to step off the ship", Color(1, 0.7, 0.5), 2.0)
+		return true
+	sk.riders[best] = m
+	m.deck = false
+	m.deck_v = Vector2.ZERO
+	if best == 0:
+		ui.toast("At the helm", Color(0.7, 0.85, 1.0), 1.5)
+	return true
+
+## on deck: moved in the ship's own cells (they go with it as it flies and turns)
+func _deck_move(m: Mage) -> void:
+	var sk = skiff
+	if sk == null:
+		m.aboard = null
+		m.deck = false
+		return
+	var hw := float(m.w) * 0.5
+	var hh := float(m.h) * 0.5
+	var b: Vector2 = m.deck_b
+	var bv: Vector2 = m.deck_v
+	var fwd := float(sk.facing)                      # (the ship's cells run the other way when it faces left)
+	var right_w := Vector2(cos(sk.ang), sin(sk.ang))
+	var face: float = (m.input.aim - m.pos).dot(right_w)
+	if absf(face) > 1.0:
+		m.facing = 1 if face > 0.0 else -1
+	var speed: float = 1.5 * gear("speed", m) * (1.2 if m.items.has("coil") else 1.0)
+	bv.x += (float(m.input.move) * fwd * speed - bv.x) * (0.35 if m.on_ground else 0.12)
+	if m.on_ground:
+		m.ground_t = 0
+	else:
+		m.ground_t += 1
+	var jump: bool = m.input.jump and state == "play" and not build_on
+	if jump and not m.jump_held:
+		var on_plat := false
+		var fy := int(round(b.y + hh))
+		for i in range(int(floor(b.x - hw)), int(ceil(b.x + hw))):
+			if sk.scaffold_cell(i, fy):
+				on_plat = true
+		if m.input.down and on_plat:
+			m.drop_t = 12
+			bv.y = maxf(bv.y, 1.0)
+		elif m.ground_t <= 6:
+			bv.y = (-4.6 if m.items.has("boots") else -3.9) * sqrt(gear("jump", m))
+			audio.play("jump", m.pos, 0.6)
+			m.ground_t = 99
+	m.jump_held = jump
+	bv.y = minf(bv.y + 0.17, 6.0)
+	var was_ground: bool = m.on_ground
+	var r: Array = sk.move_box(b, bv, hw, hh, true, 5 if m.on_ground else 0, m.drop_t > 0)
+	if m.drop_t > 0:
+		m.drop_t -= 1
+	b = r[0]
+	bv = r[1]
+	m.on_ground = bool(r[2])
+	if m.on_ground and not was_ground and m.air_time > 18:
+		audio.play("land", m.pos, 0.5)
+	m.air_time = 0 if m.on_ground else m.air_time + 1
+	if m.on_ground:
+		var a0: float = m.anim
+		m.anim += absf(bv.x) * 0.13
+		if int(m.anim * 0.5) != int(a0 * 0.5):
+			audio.play("step", m.pos, 0.3)
+	m.deck_b = b
+	m.deck_v = bv
+	m.pos = sk.to_world(b - sk.com)
+	m.vx = bv.x * fwd
+	m.vy = bv.y
+	m.floating = false
+	m.in_liquid = false
+	m.breath = minf(m.max_breath, m.breath + 4.0)
+	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	if m.iframes > 0:
+		m.iframes -= 1
+	# walked out of an opening in the hull, or off an open deck: off the ship, with its speed
+	# (a jump high over an open deck isn't leaving it: only past its ends, or falling out under it)
+	if b.x < -2.0 or b.x > float(sk.w) + 2.0 or b.y > float(sk.h) + 6.0 or b.y < -80.0:
+		_off_deck(m)
+
+func _off_deck(m: Mage) -> void:
+	var sk = skiff
+	var wv: Vector2 = sk.vel + sk.axis_x() * m.deck_v.x + sk.axis_y() * m.deck_v.y
+	m.deck = false
+	m.aboard = null
+	if space.active:
+		space.vel = wv
+	else:
+		var a := atan2(m.pos.y, m.pos.x)
+		m.vx = wv.dot(basis_r(a))
+		m.vy = wv.dot(basis_d(a))
+		m.grid_g = m.pos
+
+# ===================================================== building the hull ===
+## The Ship tab, aboard (user, 23 Nov: "Design your own hull"): paint hull cells (plating, planking, frame,
+## glass, trim, a rune deck, a one-way deck, wisp engine) onto the ship where they touch it, growing it up to
+## Skiff.MAX_W x MAX_H; set the helm where the pilot sits; add or take away seats; cut cells away. Paid from
+## the satchel a cell a material (and a little mana); what you cut comes back. The hull as built is what
+## mending puts back, and `items["ship"]` keeps it, so the skiff answers K as you built it on any planet.
+var hull_stats := {"added": 0, "cut": 0, "seats": 0, "helm": 0}   # (the tests read it)
+
+func _update_hull(m: Mage, sk, piece: Dictionary) -> void:
+	var kind: String = piece["kind"]
+	var b: Vector2 = sk.to_body(m.input.aim) + sk.com
+	var ci := int(floor(b.x))
+	var cj := int(floor(b.y))
+	var t: int = clampi(build_thick, 1, 4)
+	var prev := []
+	var ok := true
+	match kind:
+		"hull":
+			var mat: int = piece["mat"]
+			var cost_mat: int = (piece["cost"] as Dictionary).keys()[0]
+			var sq := {}
+			for dj in t:
+				for di in t:
+					sq[Vector2i(ci - t / 2 + di, cj - t / 2 + dj)] = true
+			# (cells that touch the ship, and those touching them within the stroke)
+			var take := []
+			var got := {}
+			var grew := true
+			while grew:
+				grew = false
+				for c in sq:
+					var cv: Vector2i = c
+					if got.has(cv) or sk.at(cv.x, cv.y) != 0 or sk.in_seat(cv.x, cv.y) or _crew_at(sk, cv):
+						continue
+					var joins: bool = sk.can_hull(cv.x, cv.y)
+					for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+						if got.has(cv + d):
+							joins = true
+					if joins:
+						got[cv] = true
+						take.append(cv)
+						grew = true
+			for c2 in take:
+				prev.append([sk.cell_world((c2 as Vector2i).x, (c2 as Vector2i).y), Defs.COLOR[mat]])
+			ok = not take.is_empty() and m.inv[cost_mat] >= take.size()
+			build_prev = {"cells": prev, "ok": ok}
+			if cabin_cast and frame % 3 == 0:
+				if not ok:
+					if not take.is_empty():
+						_build_need(piece)
+					return
+				if not pay_mana(m, place_mana(take.size()), sk.pos, "build the hull"):
+					return
+				var old_com: Vector2 = sk.com
+				var acc := Vector2i.ZERO
+				for c3 in take:
+					var cc: Vector2i = (c3 as Vector2i) + acc
+					var off: Vector2i = sk.grow_for(cc.x, cc.y)
+					if off != Vector2i.ZERO:
+						acc += off
+						cc += off
+						old_com += Vector2(off)
+						for pm in players:
+							if pm.aboard == sk and pm.deck:
+								pm.deck_b += Vector2(off)
+					sk.add_hull(cc.x, cc.y, mat, _hull_variant(mat, cc.x, cc.y))
+					m.inv[cost_mat] -= 1
+					hull_stats["added"] += 1
+				sk.finish_edit(old_com)
+				items["ship"] = sk.save_cells()
+				vfx.conjure(sk.cell_world(ci + acc.x, cj + acc.y), Defs.COLOR[mat])
+				audio.play("place", sk.pos, 0.4)
+		"cut":
+			var tr := maxi(t, 1)
+			var cut := []
+			for dj2 in tr:
+				for di2 in tr:
+					var i2 := ci - tr / 2 + di2
+					var j2 := cj - tr / 2 + dj2
+					if sk.at(i2, j2) != 0:
+						cut.append(Vector2i(i2, j2))
+						prev.append([sk.cell_world(i2, j2), Color(1.0, 0.5, 0.4)])
+			ok = not cut.is_empty()
+			build_prev = {"cells": prev, "ok": ok}
+			if cabin_cast and ok and frame % 3 == 0:
+				var old_com2: Vector2 = sk.com
+				for c4 in cut:
+					var cv2: Vector2i = c4
+					var gm: int = sk.cut(cv2.x, cv2.y)
+					if gm == Defs.RUNESTONE:
+						gm = Defs.MASONRY
+					elif gm == Defs.SCAFFOLD:
+						gm = Defs.PLANK
+					if gm != 0:
+						m.inv[gm] += 1
+						hull_stats["cut"] += 1
+				sk.finish_edit(old_com2)
+				items["ship"] = sk.save_cells()
+				vfx.shape_burst(prev.map(func(e): return e[0]), false)
+		"helm", "seat":
+			# (where someone would sit: the floor under the cursor, room for them over it)
+			var skip: int = 0 if kind == "helm" else -1
+			var at_j := -1
+			for jj in range(cj, cj + 24):
+				if sk.seat_ok(ci, jj, skip):
+					at_j = jj
+					break
+			var existing: int = sk.seat_near(ci, cj) if kind == "seat" else -1
+			if existing >= 0:
+				var ec: Vector2i = sk.seat_cells[existing]
+				for dj3 in range(-16, 1):
+					prev.append([sk.cell_world(ec.x, ec.y + dj3), Color(1.0, 0.5, 0.4)])
+				build_prev = {"cells": prev, "ok": true}
+			else:
+				if at_j >= 0:
+					for dj4 in range(-16, 1):
+						for di4 in range(-3, 4):
+							if absi(di4) == 3 or dj4 == -16 or dj4 == 0:
+								prev.append([sk.cell_world(ci + di4, at_j + dj4), Color(0.6, 0.9, 1.0)])
+				var cost: Dictionary = Build.payable(piece, m.inv)
+				ok = at_j >= 0 and not cost.is_empty() and (kind == "helm" or sk.seat_cells.size() < 8)
+				build_prev = {"cells": prev, "ok": ok}
+			if cabin_cast and not _cabin_latch:
+				_cabin_latch = true
+				if existing >= 0:
+					if sk.riders[existing] != null:
+						ui.toast("Someone's sitting there", Color(1, 0.7, 0.5), 1.5)
+					else:
+						sk.remove_seat(existing)
+						m.inv[Defs.PLANK] += 4
+						hull_stats["seats"] -= 1
+						items["ship"] = sk.save_cells()
+						ui.toast("Seat taken out (%d seats)" % sk.seat_cells.size(), Color(0.8, 0.9, 1.0), 1.5)
+				elif ok:
+					var cost2: Dictionary = Build.payable(piece, m.inv)
+					for cm in cost2:
+						m.inv[int(cm)] -= int(cost2[cm])
+					if kind == "helm":
+						sk.set_helm(ci, at_j)
+						hull_stats["helm"] += 1
+						ui.toast("The helm stands here now", Color(0.8, 0.9, 1.0), 1.5)
+					else:
+						sk.add_seat(ci, at_j)
+						hull_stats["seats"] += 1
+						ui.toast("A seat (%d in all)" % sk.seat_cells.size(), Color(0.8, 0.9, 1.0), 1.5)
+					sk.designed = true
+					items["ship"] = sk.save_cells()
+					vfx.place_flash(sk.cell_world(ci, at_j - 8), 10.0)
+					audio.play("place", sk.pos, 0.6)
+				elif at_j < 0:
+					ui.toast("No room to sit there: a seat needs a floor and room over it", Color(1, 0.7, 0.5), 2.0)
+				elif kind == "seat" and sk.seat_cells.size() >= 8:
+					ui.toast("Eight seats at most", Color(1, 0.7, 0.5), 1.5)
+				else:
+					_build_need(piece)
+
+## someone on deck stands in cell c of the ship
+func _crew_at(sk, c: Vector2i) -> bool:
+	for pm in players:
+		if pm.aboard == sk and pm.deck:
+			var d: Vector2 = Vector2(float(c.x) + 0.5, float(c.y) + 0.5) - pm.deck_b
+			if absf(d.x) < float(pm.w) * 0.5 + 0.6 and absf(d.y) < float(pm.h) * 0.5 + 0.6:
+				return true
+	return false
+
+## the look of a hull cell: plating in courses with seams, planks in strakes, the rest by place
+func _hull_variant(mat: int, i: int, j: int) -> int:
+	match mat:
+		Defs.HULL:
+			return 0 if i % 10 == 0 else (1 if (j / 4) % 2 == 0 else 2)
+		Defs.PLANK:
+			return (j / 3 + i / 9) % 3
+		Defs.RUNESTONE:
+			return 3 if i % 6 == 0 else (i / 3 + j) % 3
+	return (i + j) % 4
+
+# ============================================================ the hold ===
+## Trade goods ride as crates in your ship's hold (user, 23 Nov: a hold "for big things only"): `items["cargo"]`
+## (good -> crates), bought and sold at outposts (towns.gd), as many as `hold_cap` (the room your hull closes in).
+func cargo_count() -> int:
+	var n := 0
+	var cargo: Dictionary = items.get("cargo", {})
+	for gd in cargo:
+		n += int(cargo[gd])
+	return n
+
+func hold_cap() -> int:
+	if skiff == null or not items.has("skiff"):
+		return 0
+	return skiff.hold_cap()
