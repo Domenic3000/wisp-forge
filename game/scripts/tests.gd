@@ -2049,6 +2049,16 @@ func run() -> void:
 			chest2 = c2_spot
 			c2obj = c2_ch
 			break
+	if c2obj == null:
+		# (none at the surface: set one down on open, level ground with solid ground under it)
+		var c2_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 60, Defs.CHEST_W + 8, 30, 1, 16, true)
+		if _cs_found:
+			chest2 = Vector2i(c2_st.x + 4, b.ground_row(c2_st.x + 4 + Defs.CHEST_W / 2))
+			c2obj = g.new_chest()
+			c2obj.pos = _cell_pos(chest2.x + Defs.CHEST_W / 2, chest2.y - 5)
+			g.chests.append(c2obj)
+			_go(_cell_pos(chest2.x - 14, chest2.y - 10))
+			await _frames(60)
 	if c2obj != null:
 		var r_before: float = c2obj.pos.length()
 		_go(_cell_pos(chest2.x - 14, chest2.y - 10))
@@ -3408,12 +3418,26 @@ func run() -> void:
 	g.hp = g.max_hp
 	g.iframes = 0
 	var hp1: float = g.hp
+	var pit_log := []
+	var pit_hp: float = g.hp
+	var pit_r0: float = g.player.pos.length()
 	for pk in 4:
 		var upk: Vector2 = g.player.pos.normalized()
 		g.brushes.append([g.player.pos - upk * 12.0, g.player.dig_r, 1, 0, g.player.tier, 0, 0, 0])
-		await _frames(25)
-	await _frames(60)
-	_ok("digging a pit under yourself doesn't hurt", g.hp >= hp1, "health %.0f -> %.0f" % [hp1, g.hp])
+		for pf in 25:
+			await _frames(1)
+			if g.hp < pit_hp - 0.01:
+				# (what hurt: falling cells this frame, rigid pieces about, lava, fire, how far you'd dropped)
+				pit_log.append("f%d -%.0f (fall n %d max %d, pieces %d, lava %d, fire %d, dropped %.0f, %s)" % [pk * 25 + pf, pit_hp - g.hp, g.gpu.counts[Defs.C_FALL_N], g.gpu.counts[Defs.C_FALL_MAX],
+					g.chunks.list.size(), g.gpu.counts[Defs.LAVA], g.gpu.counts[Defs.FIRE], pit_r0 - g.player.pos.length(), g.hazard])
+				pit_hp = g.hp
+	for pf2 in 60:
+		await _frames(1)
+		if g.hp < pit_hp - 0.01:
+			pit_log.append("after f%d -%.0f (fall n %d max %d, pieces %d)" % [pf2, pit_hp - g.hp, g.gpu.counts[Defs.C_FALL_N], g.gpu.counts[Defs.C_FALL_MAX], g.chunks.list.size()])
+			pit_hp = g.hp
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("pit.png"))
+	_ok("digging a pit under yourself doesn't hurt", g.hp >= hp1, "health %.0f -> %.0f at column %d; %s" % [hp1, g.hp, pit_st.x, "; ".join(pit_log)])
 	# ---- a frozen world's open water ices over from the top (tried here with the planet's frost turned
 	# on: a basin dug and filled, then left out in the cold) ----
 	# (you stand on the same clear stretch, well to the side of the basin, and can't come to harm: a
@@ -5100,6 +5124,14 @@ func _test_indoors() -> void:
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("indoors_built.png"))
 	for r in in_rows:
 		print("[indoors] " + r)
+	# (the slab and the house on it are taken away again: nothing left hanging over the checks after this)
+	var in_clr := PackedInt32Array()
+	in_clr.resize((IW + 40) * 90)
+	in_clr.fill(Defs.AIR | (Defs.AIR << 8))
+	g.stamps.append({"x0": posmod(in_c.x - 20, Defs.NS), "y0": in_c.y - 70, "w": IW + 40, "h": 90, "data": in_clr, "ax": in_c.x, "aw": IW})
+	for in_dr in g.doors.duplicate():
+		if (in_dr["pos"] as Vector2).distance_to(_cell_pos(in_mid, in_c.y - 20, in_c.x, IW)) < 90.0:
+			g.doors.erase(in_dr)
 	_go(in_back)
 	await _frames(20)
 	_ok("indoors, workshops and furniture go down on a house's floor", in_houses > 0 and in_fit["kiln"] * 2 >= in_tried["kiln"] and in_fit["table"] * 3 >= in_tried["table"],

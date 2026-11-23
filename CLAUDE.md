@@ -883,6 +883,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ground curves away in it (a row every 10-15 cells far out): never assume a floor is on one row; follow it
   (`_ground`, `_walk_to`, `_standable3`). `Enemy.climb_why` says why the last look found no way up (tests print it).
   Test: `_test_climb`, a course in open air (floor, platform 22 up, ledge 22 above), up and back down.
+- Checks that fail now and then in the full run but not alone (22 Nov): the wild-life checks, the felled tree
+  (it lies whole but the wood counted round it can drop just past its bar), digging a pit (prints each hurt
+  with what fell). A test that sets something up in the air takes it away again (`_test_indoors` clears its
+  slab and house).
 - The wild-life checks (`_test_creatures`, `_test_ecology`) are set up near `start_pos` (where you arrived), in clear
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
