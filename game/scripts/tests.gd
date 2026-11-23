@@ -7173,6 +7173,24 @@ func _test_pirates() -> void:
 		if g.space.active:
 			break
 	g.test_cast = false
+	# ---- zooming out by hand (user, 23 Nov: "a zoom in and out feature in space. Not auto zoom"): over the
+	# planet, which is still drawn from its cells
+	var pi_z0: float = g.zoom
+	g.space.zoom_by(4)
+	for kz in 40:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	var pi_zp: float = g.zoom
+	var pi_live: bool = g.space.live
+	_shot("space_zoom_planet.png")
+	g.space.zoom_by(-10)
+	for kz2 in 40:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	var pi_zb: float = g.zoom
+	var pi_okz: bool = absf(pi_z0 - 1.0) < 0.01 and absf(pi_zp - 4.0) < 0.05 and absf(pi_zb - 1.0) < 0.05
+	pi_rows.append("%sthe view zooms by hand out there: %.1f -> %.2f (the planet still live %s) -> back to %.2f" % ["" if pi_okz else "(!) ", pi_z0, pi_zp, pi_live, pi_zb])
+	pi_ok = pi_ok and pi_okz
 	# well out from home, where nothing else is
 	var pi_at: Vector2 = g.space.home_at() + pi_up * (Defs.R_SPACE + 5200.0)
 	sk.pos = pi_at
@@ -7203,6 +7221,18 @@ func _test_pirates() -> void:
 		sk.vel = Vector2.ZERO
 		await _frames(1)
 	_shot("pirate_ships.png")
+	g.space.zoom_by(3)
+	for kz3 in 40:
+		pc.pos = pi_at + pi_r * 90.0 + pi_up * 60.0
+		pb.pos = pi_at - pi_r * 110.0 + pi_up * 70.0
+		pc.vel = Vector2.ZERO
+		pb.vel = Vector2.ZERO
+		sk.pos = pi_at
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	_shot("space_zoom.png")
+	g.space.zoom_by(-10)
+	await _frames(40)
 	g.space._drop_pirates()
 	# ---- a cutter comes for you: it closes, works round you and fires; its bolts hole the hull
 	var had_shield: bool = g.items.has("shield")
@@ -7305,7 +7335,7 @@ func _test_pirates() -> void:
 	g.items["shield"] = true
 	g.space.shield = 1.0
 	var sv0: int = int(g.space.stats["shield_saves"])
-	var fr: Vector2 = sk.pos + pi_r * 120.0
+	var fr: Vector2 = sk.pos + pi_r * (float(sk.w) * 0.5 + 14.0)     # (close by: drifting debris can't take it)
 	g.space.foe_shots.append([fr, (sk.pos - fr).normalized() * 7.0, 60, null])
 	for k5 in 40:
 		sk.pos = pi_at

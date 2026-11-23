@@ -465,8 +465,8 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	var t: Texture2D = tex[key]
 	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground, m.w)[0]
 	var rot := 0.0 if game.close_view() else wrapf((game.view_angle() if game.space.active else atan2(game.cam_c.y, game.cam_c.x)) - a, -PI, PI)
-	# (out in space the view zooms far out: the mage stays big enough to see)
-	var zs: float = minf(game.zoom, 2.0) if game.space.active else game.zoom
+	# (out in space, zoomed out by hand: true to scale up to 4x, then held there so you can still find him)
+	var zs: float = minf(game.zoom, 4.0) if game.space.active else game.zoom
 	var sc: Vector2 = Vector2(-1.0 if m.facing < 0 else 1.0, 1.0) / zs
 	if not place.is_empty():
 		# (seated in the skiff: placed and turned with it)
@@ -487,12 +487,12 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 ## The skiff's body -> screen map: turned with its own frame, one body cell to one pixel at the
 ## view's zoom, like every sprite. (In the close view the terrain's columns are drawn a pixel each,
 ## and they widen with height, so a map taken straight from the world would stretch the ship as it
-## climbs.) Out in space, where the view zooms far out, it's drawn bigger, like the mage.
+## climbs.) Out in space, zoomed out past 4x, it's held at its 4x size, like the mage.
 func _skiff_xf(sk) -> Transform2D:
 	var p: Vector2 = game.world_to_screen(sk.pos)
 	var ex: Vector2 = game.world_to_screen(sk.pos + sk.axis_x()) - p
 	var ey: Vector2 = game.world_to_screen(sk.pos + sk.axis_y()) - p
-	var zs: float = minf(float(game.zoom), 2.0) if game.space.active else float(game.zoom)
+	var zs: float = minf(float(game.zoom), 4.0) if game.space.active else float(game.zoom)
 	var xn := ex.normalized()
 	var yn := Vector2(-xn.y, xn.x)
 	if yn.dot(ey) < 0.0:

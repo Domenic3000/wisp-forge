@@ -72,6 +72,7 @@ void fragment() {
 }"
 
 const SWAP_ZOOM := 3.0          # zoomed out this far, a cell is smaller than a pixel: the picture takes over
+const ZOOMS := [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0]   # the zooms you can choose out here (wheel, - and +)
 const JET := 0.075              # the staff jet's push, per tick
 const JET_MANA := 0.32
 const MAX_SPEED := 36.0
@@ -113,6 +114,7 @@ const PixelFont := preload("res://scripts/pixel_font.gd")
 var game
 var active := false             # the local mage is out in space
 var live := true                # the planet is still drawn from its cells (zoomed in close enough)
+var zoom_i := 0                 # the zoom you chose out here (ZOOMS; never changed for you)
 var easing := false             # back on the planet: the zoom eases back to the chosen view
 var vel := Vector2.ZERO         # the mage's velocity out here (world units a tick)
 var jetting := false
@@ -226,6 +228,7 @@ func try_enter() -> void:
 	live = true
 	easing = false
 	jetting = false
+	zoom_i = 0                      # (you come out as close as on the ground; zoom out yourself)
 	if sk != null:
 		game.ui.toast("Space. Fly with WASD (or hold cast toward the cursor)%s; head back down to land. M: the galaxy chart." % (", hold Shift for the Starsail" if game.items.has("sail") else ""), Color(0.75, 0.9, 1.0), 4.5)
 	else:
@@ -853,11 +856,13 @@ func pull(p: Vector2) -> float:
 	var top: float = float(near.get("space", Defs.R_SPACE))
 	return 0.17 * 0.06 * pow(top / maxf((p - centre).length(), top), 2.0)
 
-## the camera stays on you, as close as on the ground (the user: no zooming out as you leave), turning
+## the camera stays on you, as close as on the ground unless you zoom out yourself (the user: no zooming
+## out as you leave; 23 Nov: "a zoom in and out feature in space. Not auto zoom though"), turning
 ## to keep the nearest planet below you. Home (at the origin) is drawn from its cells while any of its
 ## orbit band is on screen; past that the GPU rests.
 func _follow(m) -> void:
-	game.zoom = float(game.zoom_levels[0])
+	var zt: float = ZOOMS[zoom_i]
+	game.zoom = zt if absf(game.zoom - zt) < 0.02 else lerpf(game.zoom, zt, 0.2)
 	game.cam_c = m.pos                   # (on you exactly: out here you can go very fast)
 	var reach: float = Vector2(game.VW, game.VH).length() * 0.5 * game.zoom + 8.0
 	live = game.cam_c.length() - Defs.R_SPACE < reach and not game.travelling and at_home()
@@ -2291,3 +2296,11 @@ func reset_after_death() -> void:
 	visible = false
 	game.view_rect.visible = true
 	game.view_c = Vector2.ZERO
+
+## Out here you choose how far you see: the wheel or - zooms out, + back in (`ZOOMS`, eased to)
+func zoom_by(d: int) -> void:
+	var zi := clampi(zoom_i + d, 0, ZOOMS.size() - 1)
+	if zi == zoom_i:
+		return
+	zoom_i = zi
+	game.ui.toast("View: %sx" % str(ZOOMS[zoom_i]).trim_suffix(".0"), Color(0.75, 0.9, 1.0), 1.0)

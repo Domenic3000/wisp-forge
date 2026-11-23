@@ -117,7 +117,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   planet's picture (`main.capture_planet`: one render with the camera at the centre, zoomed so the band fits,
   turned to the view's angle), and from then `_tick` hands over to `space.tick()`: the staff jet (hold cast, push
   toward the aim, mana), the planet's pull fading with distance, a wisp bubble (no breath). The camera stays on you
-  at the ground's zoom (user, 20 Nov: no zooming out). While any of the orbit band is within the screen's half
+  at the ground's zoom (user, 20 Nov: no zooming out by itself; 23 Nov: "a zoom in and out feature in space. Not
+  auto zoom though": the wheel or - / + choose `space.ZOOMS` 1..8 (`zoom_by`, eased in `_follow`, back to 1 each time
+  you leave the planet; `close_view()` is false in space above 1.01, so a live planet is drawn as on the map; the
+  mage and skiff are true to scale up to 4x and held at their 4x size past it, overlay `zs`). While any of the orbit band is within the screen's half
   diagonal the live planet is rendered (`live`; space.gd, drawn UNDER the picture, shows its stars past the band);
   beyond it the GPU does nothing (`_process` skips `_gpu_frame`), `view_c` follows `cam_c`, and space.gd draws the
   stars (two depths of drift, so speed shows), the sun (a small disc toward the screen's edge, as in the planet's

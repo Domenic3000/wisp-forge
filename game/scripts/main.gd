@@ -1715,8 +1715,8 @@ func unroll_step(r: float) -> float:
 func close_view() -> bool:
 	# (out in space, with the planet shown as its picture, the view is always flat: close by an
 	# asteroid it zooms right in, and nothing there needs the planet's curve unrolled)
-	if space != null and space.active and not space.live:
-		return false
+	if space != null and space.active and (not space.live or zoom > 1.01):
+		return false                 # (zoomed out in space with the planet in sight: drawn as on the map)
 	return zoom < 2.5
 
 ## the close view drawn in strips (the "view" setting), rather than as the world is
@@ -4822,6 +4822,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if build_on and _build_key(k):
 			return
+		if space.active and (k == KEY_MINUS or k == KEY_KP_SUBTRACT or k == KEY_EQUAL or k == KEY_KP_ADD):
+			space.zoom_by(1 if k == KEY_MINUS or k == KEY_KP_SUBTRACT else -1)     # (- out, + in)
+			return
 		if k >= KEY_1 and k <= KEY_9:
 			var n := k - KEY_1
 			if n < known.size():
@@ -4864,6 +4867,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 			build_click = true
 		if build_on and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
 			_build_step(-1 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
+			return
+		if wheel and space.active:
+			# (out in space the wheel zooms the view: spells aren't cast out there)
+			space.zoom_by(-1 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
 			return
 		if ev.button_index == MOUSE_BUTTON_RIGHT:
 			dig_tap = 10
