@@ -33,7 +33,7 @@ var _mood := ""
 var _fade := 1.0
 
 const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak": 50, "rumble": 25, "land": 8,
-	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8, "croak": 18, "chirp": 10}
+	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8, "croak": 18, "chirp": 10, "song": 90, "glyph": 6}
 
 func _ready() -> void:
 	for k in 10:
@@ -333,4 +333,8 @@ func _build_sfx() -> void:
 	# lightning out of a storm belt: a sharp crackle and a falling buzz
 	sfx["zap"] = _wav(_mix(_noise(0.45, 0.85, 9.0, 1.0), _sweep(0.3, 1500.0, 260.0, "saw", 11.0, 0.3)))
 	sfx["thud"] = _wav(_mix(_lowpass(_noise(0.35, 0.05, 9.0, 1.1), 0.25), _sweep(0.3, 75.0, 38.0, "sine", 9.0, 0.6)))
+	# space's own life (voidlife.gd): a manta's low song, a glyph waking, a rift's roar
+	sfx["song"] = _wav(_mix(_sweep(1.6, 150.0, 96.0, "sine", 1.6, 0.32), _sweep(1.2, 300.0, 210.0, "sine", 2.4, 0.08)))
+	sfx["glyph"] = _wav(_chime([392.0, 587.33, 783.99], 0.07, 0.7, 0.18))
+	sfx["rift"] = _wav(_mix(_lowpass(_noise(1.1, 0.4, 2.4, 0.6), 0.3), _sweep(1.1, 70.0, 880.0, "sine", 2.2, 0.35)))
 	randomize()

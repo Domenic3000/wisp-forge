@@ -436,6 +436,40 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   deck with the riders. Test: `_test_hull` ("hull": a deck grown 64 aft, the cabin's back cut through, a seat on
   it, stand, walk, jump, sit, the helm, a climb, it holds with you on deck, walk off its end, save/load; pictures
   `hull_built.png`, `hull_deck.png`; the skiff as forged is put back after).
+- SPACE'S OWN LIFE AND ANOMALIES (scripts/voidlife.gd, monolith.gd; user, 23 Nov: "space creatures and anomalies",
+  each with a secret): space.gd `vl` (VoidLife, a RefCounted) holds them in space's coordinates (`vl.shift` from
+  `_shift`), streamed with their sectors (`_load_sector` -> `vl.sector_in` BEFORE the sect_state early return,
+  `_unload_sector` -> `sector_out`), ticked by `vl.tick` (space `_pmark` "void life"), drawn by `draw_under`
+  (wells, rifts: on space under the rock sprites), `draw_mid` (creatures, essence motes, glyph light: `_mid`),
+  `draw_top` (bars), `draw_markers`. galaxy.gd `_void_content` (its own RNG, seed 78, so nothing older moved):
+  in an empty deep sector (`DEEP` 50000 from planets) a gravity well (`WELL`) or an ancient monolith (`MONOLITH`,
+  a rock of kind "monolith"); a manta herd where the nebula is thick; eels with a deep field; jellies with a
+  comet (they ride its loop: `_home` from `comet_at`); rift ends (`rift_pair(r)`: 60% of systems, end "a" RIFT_D
+  from its first planet, its twin "b" by system r + 4..11; `rifts_near`; ends 46000+ from any planet so no
+  journey begins there). A content entry may have no "rocks" (space uses `c.get("rocks", [])`).
+  CREATURES (`Beast`, `groups`; art grown in code: `_manta_img` 6 flap frames from above, `_eel_head`/`_eel_seg`
+  along `trail` (`_segments`), `_jelly_img` 4 pulse frames + pixel tentacles): mantas glide after a leader in a
+  V, shed a mote now and then, a hurt one scatters the herd (`scared`); eels patrol, hunt the skiff (or you on
+  foot), bite (`_bites`: `skiff_hit` at `_first_cell`, the shield takes it), recoil, flee after 3 bites or half
+  hp; jellies pulse round their comet and sting on touch. `hostile_ok()`: never in the test mode unless
+  `allow_hostile`. The cannon (`shot_hit` in `_update_shots`) and your staff on foot (`sear`, from `_mine_at`,
+  mana a tick) hurt them; killed (`_kill`) they drop Void Essence motes (`motes`, drawn to you within
+  `MOTE_REACH`). VOIDESS (material 63, NM 64). Outposts buy it.
+  WELLS: `well_force(p, v, who)` from the skiff's tick and the mage's (pull WELL_G/d^2, at most WELL_MAX; the
+  heart CORE_R spits you out hurt; at the nearest point of a fast pass (`in`/`min` per who) a slingshot x1.35
+  (harness x1.8), `sling_t` slows the Starsail's shedding and the mage's speed cap; the Void Harness
+  (`items["harness"]`) zeroes the pull toward EDGE_R and pushes out inside it, no spit), 6 orbiting essence
+  crystals (`_update_crystals`, back after 4000 ticks), `clearance` for the Starsail.
+  RIFTS: within RIFT_IN of an end, `_through`: space `carry(d)` moves you, the skiff and what follows you (not
+  the world; bolts and pirates are left), then `_shift` recentres; `known` (pair -> [end a, end b]) for markers
+  and the map's dashed line. MONOLITHS (monolith.gd extends wreck.gd; never saved as a rock, `mono_state` by
+  seed): 5 glyphs that wake only root first (`next_glyph`; out of turn "early" fizzles), each burns `FADE` ticks;
+  the cannon (`strike_at` looks 18 cells on along the bolt) or the staff on foot; the last opens the seal (an
+  OBSIDIAN alcove), its cache (`_loot` "monolith" -> `vl.mono_loot`: essence, star iron, coins, a scroll, and
+  `reveal_rift`). Recipes: "harness" (Travel) and the GEAR "voidmantle" (stat "space_mana", read in `vl.tick`),
+  both learned on finding Void Essence. HUD: "Lumen eels!", "Gravity well". Test: `_test_voidlife`
+  ("voidlife"; in the full run after `_test_cargo`; pictures `void_mantas/eels/jellies/well/monolith/
+  monolith_open/rift/map.png`).
 - THE CARGO HOLD (user, 23 Nov: "Hold for big things only"): `Defs.GOODS` (8 trade goods with a base price) ride
   as crates in `items["cargo"]` (good -> crates; "sealed" is a courier job's), never the satchel; drawn where they
   stand (skiff `crate_slots`: in its room away from the helm, else lashed on its open deck; overlay `_crate_tex`); `Defs.trade_of(outpost seed)`: three goods an
@@ -1113,7 +1147,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "spacebench", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

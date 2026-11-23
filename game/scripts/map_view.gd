@@ -221,6 +221,28 @@ func _draw_space() -> void:
 						draw_rect(Rect2(wsp + Vector2(-4, 0), Vector2(1, 1)), Color(0.5, 0.85, 1.0))
 						if gz < 140.0:
 							_label(wsp + Vector2(0, -6), String(c["name"]), Color(0.75, 0.9, 0.85))
+					elif c["type"] == "well":
+						# (a gravity well: a dark heart in a ring of fire)
+						var gsp := sp.floor()
+						draw_arc(gsp, 3.0, 0.0, TAU, 12, Color(1.0, 0.65, 0.35, 0.9), 1.0)
+						draw_rect(Rect2(gsp - Vector2(1, 1), Vector2(2, 2)), Color(0, 0, 0))
+						if gz < 140.0:
+							_label(gsp + Vector2(0, -6), "Gravity well", Color(1.0, 0.75, 0.5))
+					elif c["type"] == "monolith":
+						# (a standing stone, its glyphs alight once you've opened it)
+						var msp := sp.floor()
+						var mo_open: bool = bool(g.space.vl.mono_state.get(str(int(c["rocks"][0]["seed"])), {}).get("open", false))
+						draw_rect(Rect2(msp + Vector2(-1, -4), Vector2(3, 8)), Color(0.35, 0.3, 0.45))
+						draw_rect(Rect2(msp + Vector2(0, -3), Vector2(1, 6)), Color(0.75, 0.5, 1.0) if mo_open else Color(0.15, 0.12, 0.2))
+						if gz < 140.0:
+							_label(msp + Vector2(0, -8), "Ancient monolith" + (" (open)" if mo_open else ""), Color(0.8, 0.65, 1.0))
+					elif c["type"] == "mantas" or c["type"] == "eels" or c["type"] == "jellies":
+						if gz < 140.0:
+							var ccol: Color = {"mantas": Color(0.7, 0.6, 1.0), "eels": Color(0.5, 1.0, 0.85), "jellies": Color(1.0, 0.7, 0.95)}[c["type"]]
+							draw_rect(Rect2(sp.floor() + Vector2(4, 4), Vector2(2, 1)), ccol)
+							_label(sp + Vector2(0, 10), String(c["name"]), Color(ccol.r, ccol.g, ccol.b, 0.8))
+					elif c["type"] == "rift":
+						pass                          # (drawn with the rifts you know of, below)
 					else:
 						var big: bool = c.get("big", false)
 						for q in (7 if big else 4):
@@ -290,6 +312,27 @@ func _draw_space() -> void:
 				if gz < 900.0:
 					_label(psp + Vector2(0, dr + 9.0), String(pl["name"]), tc)
 					_label(psp + Vector2(0, dr + 15.0), ("you are here" if here else String(pl.get("kind", "")) + ("" if visited else " · unexplored") + (" · storm belt: needs a Core Drive" if walled else "")), Color(tc.r, tc.g, tc.b, 0.7))
+	# the rifts you know of: each end a tear, a line to its twin once you know both
+	for pk in g.space.vl.known:
+		var rp: Dictionary = Galaxy.rift_pair(int(pk))
+		if rp.is_empty():
+			continue
+		var kn: Array = g.space.vl.known[pk]
+		var ra := to_screen(rp["a"])
+		var rb := to_screen(rp["b"])
+		if kn[0] and kn[1]:
+			draw_dashed_line(ra, rb, Color(0.8, 0.55, 1.0, 0.35), 1.0, 4.0)
+		for e in 2:
+			if not kn[e]:
+				continue
+			var rs: Vector2 = (ra if e == 0 else rb).floor()
+			if rs.x < -10.0 or rs.y < -10.0 or rs.x > w + 10.0 or rs.y > h + 10.0:
+				continue
+			draw_rect(Rect2(rs + Vector2(0, -3), Vector2(1, 7)), Color(0.95, 0.85, 1.0))
+			draw_rect(Rect2(rs + Vector2(-1, -2), Vector2(3, 5)), Color(0.75, 0.45, 1.0, 0.6))
+			if gz < 6000.0:
+				var tw: int = int(rp["twin"]) if e == 0 else int(pk)
+				_label(rs + Vector2(0, -7), "Rift" + ((" to the %s system" % Galaxy.star_name(tw)) if kn[1 - e] else ""), Color(0.85, 0.65, 1.0))
 	# the waypoint, and a line to it from you
 	var on := 0.75 + 0.25 * sin(tt * 6.0)
 	var you := to_screen(g.space.player_g())

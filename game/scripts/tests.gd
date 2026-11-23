@@ -60,6 +60,7 @@ func _test_gear() -> void:
 			g.items.erase(ge_k)
 	for ge_om in range(Defs.FIREOPAL, Defs.SILVER + 1):
 		g.player.inv[ge_om] = 0
+	g.player.inv[Defs.VOIDESS] = 0
 	# hidden: all but the first piece of each ore, until it's found
 	var ge_hid := 0
 	var ge_first := 0
@@ -69,7 +70,11 @@ func _test_gear() -> void:
 				ge_hid += 1
 			elif not g.recipe_unlocked(ge_r):
 				ge_first += 1
-	var ge_hide_ok := ge_first == Defs.KIND_ORES.size() and ge_hid == Defs.GEAR.size() - Defs.KIND_ORES.size()
+	var ge_ores := {}
+	for ge_gid in Defs.GEAR:
+		if Defs.gear_ores(ge_gid).size() == 1:
+			ge_ores[int(Defs.gear_ores(ge_gid)[0])] = true
+	var ge_hide_ok := ge_first == ge_ores.size() and ge_hid == Defs.GEAR.size() - ge_ores.size()
 	# forge each, and check its stats
 	g.dig_r = maxf(g.dig_r, 11.0)                 # (the Rime Lens builds on Wide Excavation)
 	var ge_bad := []
@@ -1438,6 +1443,10 @@ func run() -> void:
 			await _test_hull()
 		elif only == "cargo":
 			await _test_cargo()
+		elif only == "voidlife":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_voidlife()
 		elif only == "spacebench":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4111,6 +4120,7 @@ func run() -> void:
 	await _test_fuel()
 	await _test_hull()
 	await _test_cargo()
+	await _test_voidlife()
 	await _test_spacebench()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
@@ -4947,6 +4957,426 @@ func _bench_line(label: String, r: Dictionary) -> String:
 ## Starsail streaming sectors in. Each 300 frames with vsync off; prints each part's time ("space: ..."), the
 ## screen's drawing on the GPU and the planet's simulation. Passes under 16.7 ms on average and 25 at the 95th
 ## percentile in each.
+## Space's own life and its anomalies (voidlife.gd, monolith.gd; user, 23 Nov): the galaxy grows them;
+## mantas glide and scatter; eels bite the hull and die to the cannon, leaving essence you gather; jellies
+## sting (the shield takes it); a well pulls, spits you out of its heart, flings you on, holds you at its
+## edge with the Void Harness, and gives its crystals; a monolith's glyphs wake only root first (the cannon,
+## your staff) and its cache tells of a rift; a rift carries you to its twin; the map; the recipes.
+## Pictures: void_mantas.png, void_eels.png, void_jellies.png, void_well.png, void_monolith.png,
+## void_monolith_open.png, void_rift.png, void_map.png.
+func _test_voidlife() -> void:
+	var rows := []
+	var ok := true
+	var G = load("res://scripts/galaxy.gd")
+	var vl = g.space.vl
+	# ---- 1. the galaxy grows them, and every rift's ends are where its pair says
+	var cnt := {}
+	for sy in 40:
+		for sx in 40:
+			for c in G.sector_content(Vector2i(sx - 500, sy + 220)):
+				cnt[c["type"]] = int(cnt.get(c["type"], 0)) + 1
+	var rp_n := 0
+	var rp_ok := true
+	var rp_first := -1
+	for r in 30:
+		var rp: Dictionary = G.rift_pair(r)
+		if rp.is_empty():
+			continue
+		rp_n += 1
+		if rp_first < 0 and not G._near_planet_r(rp["a"][0], rp["a"][1], 44000.0) and not G._near_planet_r(rp["b"][0], rp["b"][1], 44000.0):
+			rp_first = r
+		for e in 2:
+			var eg: PackedFloat64Array = rp["a"] if e == 0 else rp["b"]
+			var found := false
+			for c2 in G.sector_content(G.sector_of(eg[0], eg[1])):
+				if c2["type"] == "rift" and int(c2["pair"]) == r and int(c2["end"]) == e:
+					found = true
+			rp_ok = rp_ok and found
+	var have_recipes := 0
+	for rc in g.recipes:
+		if rc["id"] == "harness" or rc["id"] == "voidmantle":
+			have_recipes += 1
+	var ok1: bool = int(cnt.get("well", 0)) > 0 and int(cnt.get("monolith", 0)) > 0 and int(cnt.get("eels", 0)) > 0 and rp_n >= 8 and rp_ok and have_recipes == 2 and Defs.NAMES[Defs.VOIDESS] == "Void Essence"
+	rows.append("%sin 1600 deep sectors: %s; %d of 30 systems have a rift pair, every end in its sector %s; both recipes %s" % ["" if ok1 else "(!) ", str(cnt), rp_n, rp_ok, have_recipes == 2])
+	ok = ok and ok1
+	# ---- up in the skiff, out to deep space
+	g.player.dead = false
+	var god0: bool = g.test_god
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var up0: Vector2 = sk.pos.normalized()
+	sk.pos = up0 * (Defs.R_SPACE - 11.0)
+	sk.vel = up0 * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	var keep_items := {}
+	for ik in ["cannon", "shield", "harness", "voidmantle"]:
+		keep_items[ik] = g.items.get(ik, null)
+	var mana0: float = g.max_mana
+	var hl: Vector2 = g.space.home_at()
+	var spot: Vector2 = hl + Vector2(130000.0, 0.0)
+	for t in 24:
+		var dir := Vector2.from_angle(float(t) / 24.0 * TAU)
+		var gp: PackedFloat64Array = g.space.galaxy_of(hl + dir * 130000.0)
+		if not G._near_planet_r(gp[0], gp[1], 70000.0):
+			spot = hl + dir * 130000.0
+			break
+	sk.pos = spot
+	sk.vel = Vector2.ZERO
+	await _frames(40)
+	sk = g.skiff
+	# ---- 2. void mantas: a herd glides; hurt one and it scatters; one killed leaves essence, gathered
+	var gk: String = vl.add_test("mantas", sk.pos + Vector2(150.0, -40.0), 5, 11)
+	await _frames(90)
+	_shot("void_mantas.png")
+	var herd := []
+	for b in vl.beasts:
+		if b.gk == gk:
+			herd.append(b)
+	var hit_at: Vector2 = (herd[0].pos as Vector2) + Vector2(-30.0, 0.0)
+	var d0 := 0.0
+	for b2 in herd:
+		d0 += (b2.pos as Vector2).distance_to(hit_at)
+	vl.hurt_beast(herd[0], 5.0, hit_at)
+	await _frames(120)
+	var d1 := 0.0
+	for b3 in herd:
+		d1 += (b3.pos as Vector2).distance_to(hit_at)
+	var scared: int = int(vl.groups[gk]["scared"])
+	var es0: int = g.player.inv[Defs.VOIDESS]
+	var motes0: int = vl.motes.size()
+	var kill_at: Vector2 = herd[1].pos
+	vl.hurt_beast(herd[1], 999.0, kill_at)
+	var dropped: int = vl.motes.size() - motes0
+	sk.pos = kill_at + Vector2(0.0, 30.0)
+	sk.vel = Vector2.ZERO
+	for k2 in 200:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		if g.player.inv[Defs.VOIDESS] - es0 >= dropped:
+			break
+	var gathered: int = g.player.inv[Defs.VOIDESS] - es0
+	var ok2: bool = scared > 0 and d1 > d0 + 300.0 and dropped >= 6 and gathered >= dropped
+	rows.append("%smantas: the herd fled the blow (%.0f -> %.0f from it, scared %d); one killed dropped %d motes, %d gathered" % ["" if ok2 else "(!) ", d0, d1, scared, dropped, gathered])
+	ok = ok and ok2
+	vl.clear_test()
+	# ---- 3. lumen eels: they hunt the skiff and bite its hull; the cannon kills them
+	vl.allow_hostile = true
+	g.items.erase("shield")
+	sk.mend(100000)
+	var hull0: float = sk.hull_f
+	var bites0: int = int(vl.stats["bites"])
+	var hh0: int = int(g.space.stats["hull_hits"])
+	var gk2: String = vl.add_test("eels", sk.pos + Vector2(450.0, 0.0), 3, 22)
+	var snap := false
+	for k3 in 900:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		if not snap:
+			for b4 in vl.beasts:
+				if b4.gk == gk2 and (b4.pos as Vector2).distance_to(sk.pos) < 90.0:
+					_shot("void_eels.png")
+					snap = true
+					break
+		if int(vl.stats["bites"]) > bites0:
+			break
+	var bit: int = int(vl.stats["bites"]) - bites0
+	var hull1: float = sk.hull_f
+	g.items["cannon"] = true
+	var kills0: int = int(vl.stats["kills"])
+	g.test_cast = true
+	for k4 in 900:
+		g.player.mana = g.player.max_mana
+		var tgt = null
+		var td := 1e9
+		for b5 in vl.beasts:
+			if b5.gk == gk2 and (b5.pos as Vector2).distance_to(sk.pos) < td:
+				td = (b5.pos as Vector2).distance_to(sk.pos)
+				tgt = b5
+		if tgt == null:
+			break
+		if td > 500.0:
+			sk.pos = (tgt.pos as Vector2) + Vector2(-260.0, 0.0)
+		sk.vel = Vector2.ZERO
+		g.test_aim = (tgt.pos as Vector2) + (tgt.vel as Vector2) * td / 9.0
+		await _frames(1)
+	g.test_cast = false
+	var by_cannon: int = int(vl.stats["kills"]) - kills0
+	for b6 in vl.beasts.duplicate():
+		if b6.gk == gk2:
+			vl.hurt_beast(b6, 999.0, b6.pos)
+	var ok3: bool = bit > 0 and (hull1 < hull0 or int(g.space.stats["hull_hits"]) > hh0) and by_cannon >= 1
+	rows.append("%seels: bit %d times (hull %.2f -> %.2f, %d hull hits), %d of 3 killed by the cannon" % ["" if ok3 else "(!) ", bit, hull0, hull1, int(g.space.stats["hull_hits"]) - hh0, by_cannon])
+	ok = ok and ok3
+	vl.clear_test()
+	# ---- 4. star jellies: touch one and it stings (the shield takes it)
+	g.items["shield"] = true
+	g.space.shield = 1.0
+	var saves0: int = int(g.space.stats["shield_saves"])
+	var st0: int = int(vl.stats["stings"])
+	var gk3: String = vl.add_test("jellies", sk.pos + Vector2(0.0, -120.0), 7, 33)
+	var jn := 0
+	for bj in vl.beasts:
+		if bj.gk == gk3:
+			bj.pos = sk.pos + Vector2.from_angle(float(jn) * 0.9 + 0.4) * (90.0 + float(jn % 3) * 30.0)
+			bj.vel = Vector2.ZERO
+			jn += 1
+	await _frames(30)
+	_shot("void_jellies.png")
+	for b7 in vl.beasts:
+		if b7.gk == gk3:
+			b7.pos = sk.pos
+			b7.cd = 0
+			break
+	await _frames(4)
+	var ok4: bool = int(vl.stats["stings"]) > st0 and int(g.space.stats["shield_saves"]) > saves0
+	rows.append("%sjellies: stung %d, the shield took it %s" % ["" if ok4 else "(!) ", int(vl.stats["stings"]) - st0, int(g.space.stats["shield_saves"]) > saves0])
+	ok = ok and ok4
+	vl.clear_test()
+	g.items.erase("shield")
+	# ---- 5. a gravity well: it pulls, its heart spits you out, skimming it flings you on, the harness holds you
+	sk.mend(100000)
+	var wp: Vector2 = sk.pos + Vector2(0.0, -700.0)
+	var w: Dictionary = vl.add_test_well(wp)
+	sk.vel = Vector2.ZERO
+	await _frames(90)
+	var pulled: float = 700.0 - sk.pos.distance_to(wp)
+	var spat0: int = int(vl.stats["spat"])
+	var pic := false
+	for k5 in 900:
+		await _frames(1)
+		if not pic and sk.pos.distance_to(wp) < 150.0:
+			_shot("void_well.png")
+			pic = true
+		if int(vl.stats["spat"]) > spat0:
+			break
+	var spat: bool = int(vl.stats["spat"]) > spat0
+	var hull2: float = sk.hull_f
+	await _frames(30)
+	sk.mend(100000)
+	var sl0: int = int(vl.stats["slings"])
+	sk.pos = wp + Vector2(-2500.0, 420.0)
+	sk.vel = Vector2(34.0, 0.0)
+	var v_in := 0.0
+	var v_out := 0.0
+	for k6 in 400:
+		await _frames(1)
+		if int(vl.stats["slings"]) > sl0:
+			v_out = sk.vel.length()
+			break
+		v_in = sk.vel.length()
+	var flung: bool = int(vl.stats["slings"]) > sl0 and v_out > v_in * 1.2
+	g.items["harness"] = true
+	var spat1: int = int(vl.stats["spat"])
+	sk.pos = wp + Vector2(0.0, 600.0)
+	sk.vel = Vector2.ZERO
+	var nearest := 1e9
+	for k7 in 400:
+		await _frames(1)
+		nearest = minf(nearest, sk.pos.distance_to(wp))
+	var held: bool = nearest > 260.0 * 0.7 and int(vl.stats["spat"]) == spat1
+	# (a crystal orbits through where you are)
+	sk.vel = Vector2.ZERO
+	var cr: Array = w["crystals"][0]
+	var es1: int = g.player.inv[Defs.VOIDESS]
+	cr[0] = sk.pos.distance_to(wp)
+	cr[1] = (sk.pos - wp).angle() - 0.01
+	cr[2] = 0
+	await _frames(4)
+	var crystal: bool = g.player.inv[Defs.VOIDESS] >= es1 + 3
+	var ok5: bool = pulled > 20.0 and spat and hull2 < 1.0 and flung and held and crystal
+	rows.append("%sa well: pulled in %.0f in 1.5 s, spat out %s (hull %.2f), flung on %s (%.1f -> %.1f), the harness held you %s (nearest %.0f), a crystal taken %s" % ["" if ok5 else "(!) ", pulled, spat, hull2, flung, v_in, v_out, held, nearest, crystal])
+	ok = ok and ok5
+	vl.clear_test()
+	# ---- 6. an ancient monolith: its glyphs wake root first (the cannon, your staff), then its seal and cache
+	var Mono = load("res://scripts/monolith.gd")
+	var mo = Mono.make_monolith(4242)
+	mo.pos = sk.pos + Vector2(110.0, 0.0)
+	mo.ang = 0.0
+	mo.sect = "test"
+	g.space.rocks.append(mo)
+	sk.vel = Vector2.ZERO
+	await _frames(10)
+	_shot("void_monolith.png")
+	g.items["cannon"] = true
+	var lit_wrong := false
+	for k8 in 90:
+		g.player.mana = g.player.max_mana
+		sk.vel = Vector2.ZERO
+		g.test_cast = true
+		g.test_aim = mo.glyph_pos(2)
+		await _frames(1)
+		if int(mo.glyphs[2]["lit"]) > 0:
+			lit_wrong = true
+	var lit0 := false
+	for k9 in 120:
+		g.player.mana = g.player.max_mana
+		sk.vel = Vector2.ZERO
+		g.test_aim = mo.glyph_pos(0)
+		await _frames(1)
+		if int(mo.glyphs[0]["lit"]) > 0:
+			lit0 = true
+			break
+	g.test_cast = false
+	# (on foot: your staff to the next)
+	g._skiff_interact(g.player)
+	await _frames(4)
+	var m = g.player
+	var on_foot: bool = m.aboard == null
+	m.pos = mo.glyph_pos(1) + Vector2(-34.0, 0.0)
+	g.space.vel = Vector2.ZERO
+	var lit1 := false
+	g.test_dig = true
+	for k10 in 120:
+		m.mana = m.max_mana
+		m.pos = mo.glyph_pos(1) + Vector2(-34.0, 0.0)
+		g.space.vel = Vector2.ZERO
+		g.test_aim = mo.glyph_pos(1)
+		await _frames(1)
+		if int(mo.glyphs[1]["lit"]) > 0:
+			lit1 = true
+			break
+	g.test_dig = false
+	var res := ""
+	for gk4 in range(2, mo.glyphs.size()):
+		res = vl.strike(mo, gk4, mo.glyph_pos(gk4))
+	await _frames(20)
+	_shot("void_monolith_open.png")
+	var known0: int = vl.known.size()
+	var es2: int = g.player.inv[Defs.VOIDESS]
+	m.pos = mo.cache_pos(mo.caches[0]) - mo.axis_y() * 12.0
+	g.space.vel = Vector2.ZERO
+	var opened := false
+	for k11 in 30:
+		m.pos = mo.cache_pos(mo.caches[0]) - mo.axis_y() * 12.0
+		g.space.vel = Vector2.ZERO
+		await _frames(1)
+		if g.space.near_cache != null and g.space.wreck_interact(m):
+			opened = true
+			break
+	var ok6: bool = not lit_wrong and lit0 and on_foot and lit1 and res == "open" and mo.opened and opened and g.player.inv[Defs.VOIDESS] > es2 and vl.known.size() > known0
+	rows.append("%sa monolith: out of turn stays dark %s, the cannon lit the root %s, your staff the next %s (on foot %s), the last opened it (%s), its cache opened %s (+%d essence), a rift pair revealed %s" % ["" if ok6 else "(!) ", not lit_wrong, lit0, lit1, on_foot, res, opened, g.player.inv[Defs.VOIDESS] - es2, vl.known.size() > known0])
+	ok = ok and ok6
+	g.space.rocks.erase(mo)
+	# ---- 7. a rift: into it, out by its twin
+	m.pos = sk.pos
+	g._skiff_interact(g.player)
+	await _frames(4)
+	var ok7 := false
+	if rp_first >= 0:
+		var rp2: Dictionary = G.rift_pair(rp_first)
+		vl.known.erase(str(rp_first))
+		var ra: Vector2 = g.space.local_of(rp2["a"])
+		sk.pos = ra + Vector2(0.0, -300.0)
+		sk.vel = Vector2.ZERO
+		var there = null
+		for k12 in 200:
+			sk.vel = Vector2.ZERO
+			await _frames(1)
+			for rr in vl.rifts:
+				if int(rr["pair"]) == rp_first and int(rr["end"]) == 0:
+					there = rr
+			if there != null:
+				break
+		var thr0: int = int(vl.stats["rifts"])
+		if there != null:
+			sk.pos = (there["pos"] as Vector2) + Vector2(0.0, -150.0)
+			await _frames(30)
+			_shot("void_rift.png")
+			for k13 in 200:
+				sk.vel = ((there["pos"] as Vector2) - sk.pos).normalized() * 5.0
+				await _frames(1)
+				if int(vl.stats["rifts"]) > thr0:
+					break
+		var pg: PackedFloat64Array = g.space.player_g()
+		var to_b: float = Vector2(pg[0] - rp2["b"][0], pg[1] - rp2["b"][1]).length()
+		var kn: Array = vl.known.get(str(rp_first), [false, false])
+		ok7 = there != null and int(vl.stats["rifts"]) > thr0 and to_b < 1000.0 and kn[0] and kn[1]
+		rows.append("%sa rift (pair %d): streamed in %s, through it %s, out %.0f from its twin, both ends charted %s" % ["" if ok7 else "(!) ", rp_first, there != null, int(vl.stats["rifts"]) > thr0, to_b, kn[0] and kn[1]])
+		await _frames(30)
+		g.open_map()
+		g.map_view.gz = 600.0
+		g.map_view.centre_on_you()
+		await _frames(10)
+		_shot("void_map.png")
+		g.close_map()
+		await _frames(4)
+	else:
+		rows.append("(!) no rift pair among the first 30 systems")
+	ok = ok and ok7
+	# ---- 8. the recipes: the harness, and the mantle (mana back twice as fast out here)
+	var made := 0
+	for rc2 in g.recipes:
+		if rc2["id"] == "harness" or rc2["id"] == "voidmantle":
+			for ck in rc2["cost"]:
+				g.player.inv[int(ck)] += int(rc2["cost"][ck])
+			g.learn(String(rc2["id"]), "test")
+			if g.craft(rc2):
+				made += 1
+	g.player.mana = 0.0
+	await _frames(60)
+	var regen: float = g.player.mana
+	var ok8: bool = made == 2 and g.items.has("harness") and absf(g.gear("space_mana") - 2.0) < 0.001 and regen > g.mana_regen * 60.0 * 1.5
+	rows.append("%sforged the Void Harness and the Mantle of the Void (%d of 2): mana back %.1f in a second out here (%.1f without)" % ["" if ok8 else "(!) ", made, regen, g.mana_regen * 60.0])
+	ok = ok and ok8
+	# ---- tidy up, home again, and down
+	vl.allow_hostile = false
+	vl.clear_test()
+	for ik2 in keep_items:
+		if keep_items[ik2] == null:
+			g.items.erase(ik2)
+		else:
+			g.items[ik2] = keep_items[ik2]
+	g.max_mana = mana0
+	g.player.max_mana = mana0
+	g.player.mana = minf(g.player.mana, mana0)
+	sk.mend(100000)
+	sk.vel = Vector2.ZERO
+	sk.pos = g.space.home_at() + Vector2(0.0, -(Defs.R_SPACE + 150.0))
+	await _frames(30)
+	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0
+	g.test_cast = true
+	for k14 in 600:
+		g.test_aim = g.space.home_at() + (sk.pos - g.space.home_at()) * 0.3
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	for k15 in 1200:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+		await _frames(10)
+	g.test_god = god0
+	print("[voidlife] " + "\n[voidlife] ".join(rows))
+	_ok("space's own life and anomalies: mantas, eels, jellies, wells, monoliths, rifts, their essence and recipes", ok, "; ".join(rows))
+
 func _test_spacebench() -> void:
 	var rows := []
 	var ok := true

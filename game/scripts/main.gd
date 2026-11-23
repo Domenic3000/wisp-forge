@@ -4744,7 +4744,8 @@ func recipe_lock_text(r: Dictionary) -> String:
 		var parts := []
 		for om in r["ores"]:
 			if not ore_found(int(om)):
-				parts.append("%s (%s worlds)" % [Defs.NAMES[int(om)], Defs.ore_kind(int(om))])
+				var okd := Defs.ore_kind(int(om))
+				parts.append("%s (%s)" % [Defs.NAMES[int(om)], (okd + " worlds") if okd != "" else "deep space"])
 		if not parts.is_empty():
 			return "Needs " + " and ".join(parts)
 	return "Locked"
@@ -4825,7 +4826,7 @@ func craft(r: Dictionary) -> bool:
 			mana_regen = 0.32
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
-		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate", "sail":
+		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate", "sail", "harness":
 			items[String(r["id"])] = true
 		"shield", "cannon":
 			# (a part salvaged from a wreck, fitted to the skiff: the part is used up)

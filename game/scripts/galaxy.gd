@@ -20,6 +20,14 @@ const FIRST_WRECK := 22000.0     # every journey's first wreck drifts about this
 const OUTPOST_D := 27000.0       # every system's trading outpost (outpost.gd) is about this far from its first planet
 const STATION_D := 38000.0       # every system's derelict station (station.gd) about this far
 const STATION := 0.012           # a deep-space sector's chance of a derelict station of its own
+const WELL := 0.022              # an empty deep sector's chance of a gravity well (voidlife.gd)
+const MONOLITH := 0.014          # ...of an ancient monolith (monolith.gd)
+const MANTAS := 0.6              # a sector deep in a nebula: its chance of a herd of void mantas
+const EELS := 0.45               # a deep-space asteroid field's chance of lumen eels among its rocks
+const JELLIES := 0.65            # a comet's chance of star jellies drifting along with it
+const DEEP := 50000.0            # "deep space": this far from every planet
+const RIFT_CHANCE := 0.6         # a system's chance of a rift pair: one end near it, its twin near a system far on
+const RIFT_D := 60000.0          # (each end this far from its system's first planet; a twin's end a third farther)
 const CHART_R := 220000.0        # a system is charted (its planets on the map) once you come this close
 const SCAN_R := 32000.0          # what you see round you marks the map's sectors as explored
 const BODY_R := 300000.0         # the planets of systems this close are out there with you (space.gd bodies)
@@ -146,7 +154,91 @@ static func sector_content(s: Vector2i) -> Array:
 			out.append(_wreck(rng, at, false))
 		else:
 			out.append(_station(rng.randi() & 0xFFFFFF, at))
+	_void_content(s, sg, out, op_here or s == sector_of(fw[0], fw[1]))
 	_content[key] = out
+	return out
+
+## Space's own life and its anomalies (voidlife.gd), grown from their own seed so nothing above moves:
+## a gravity well or an ancient monolith in an empty deep sector, a herd of void mantas deep in a
+## nebula, lumen eels among a deep field's rocks, star jellies with a comet, and the end of a rift.
+static func _void_content(s: Vector2i, sg: PackedFloat64Array, out: Array, taken: bool) -> void:
+	var vr := RandomNumberGenerator.new()
+	vr.seed = hash([Defs.world_seed, s.x, s.y, 78])
+	var roll := vr.randf()
+	var at := Vector2(vr.randf_range(0.25, 0.75), vr.randf_range(0.25, 0.75)) * SECTOR
+	var deep := not _near_planet_r(sg[0] + at.x, sg[1] + at.y, DEEP)
+	if out.is_empty() and not taken and deep:
+		if roll < WELL:
+			out.append({"type": "well", "at": at, "name": "Gravity well", "seed": vr.randi()})
+		elif roll < WELL + MONOLITH:
+			out.append({"type": "monolith", "at": at, "name": "Ancient monolith",
+				"rocks": [{"seed": vr.randi() & 0xFFFFFF, "r": 0.0, "kind": "monolith", "off": Vector2.ZERO, "vel": Vector2.ZERO}]})
+	var r2 := vr.randf()
+	var sd := vr.randi()
+	var nb := nebula(sg[0] + at.x, sg[1] + at.y)
+	if float(nb[0]) > 0.35 and r2 < MANTAS and not taken:
+		out.append({"type": "mantas", "at": at + Vector2(vr.randf_range(-3000.0, 3000.0), vr.randf_range(-3000.0, 3000.0)),
+			"name": "Void mantas", "n": vr.randi_range(3, 6), "seed": sd, "col": nb[1]})
+	for c in out.duplicate():
+		if c["type"] == "field" and deep and r2 < EELS:
+			out.append({"type": "eels", "at": c["at"], "name": "Lumen eels", "n": vr.randi_range(2, 4), "seed": sd ^ 0x55})
+		elif c["type"] == "comet" and r2 < JELLIES:
+			out.append({"type": "jellies", "at": c["at"], "orbit": c["rocks"][0]["orbit"], "name": "Star jellies",
+				"n": vr.randi_range(4, 8), "seed": sd ^ 0x77})
+	# (the end of a rift, if one lies in this sector)
+	var mid := PackedFloat64Array([sg[0] + SECTOR * 0.5, sg[1] + SECTOR * 0.5])
+	for e in rifts_near(mid[0], mid[1], SECTOR):
+		var eg: PackedFloat64Array = e["g"]
+		if sector_of(eg[0], eg[1]) == s:
+			out.append({"type": "rift", "at": Vector2(eg[0] - sg[0], eg[1] - sg[1]), "name": "Rift", "pair": e["pair"], "end": e["end"]})
+
+## System r's rift pair, if it has one: {"pair": r, "a": end near r, "b": its twin near system "twin", "twin"};
+## {} if none. A rift's twin lies 4-11 systems on round the spiral, far across the galaxy.
+static func rift_pair(r: int) -> Dictionary:
+	var key := "rift:%d:%d" % [Defs.world_seed, r]
+	if _content.has(key):
+		return _content[key]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([Defs.world_seed, r, 6161])
+	var out := {}
+	if r >= 0 and rng.randf() < RIFT_CHANCE:
+		var twin := r + rng.randi_range(4, 11)
+		out = {"pair": r, "twin": twin, "a": _rift_spot(r, RIFT_D, rng), "b": _rift_spot(twin, RIFT_D * 1.33, rng)}
+	_content[key] = out
+	return out
+
+## a rift's end round system r's first planet, d from it, clear of its planets, its outpost and its station
+static func _rift_spot(r: int, d0: float, rng: RandomNumberGenerator) -> PackedFloat64Array:
+	var hg: PackedFloat64Array = Defs.planet_g(r * Defs.SYSTEM.size())
+	var og := system_outpost(r)
+	var stg := system_station(r)
+	var best := PackedFloat64Array([hg[0], hg[1] + d0])
+	for t in 40:
+		var a := rng.randf() * TAU
+		var d := d0 + rng.randf_range(-4000.0, 4000.0)
+		var gx: float = hg[0] + cos(a) * d
+		var gy: float = hg[1] + sin(a) * d
+		best = PackedFloat64Array([gx, gy])
+		var by_op: bool = (gx - og[0]) * (gx - og[0]) + (gy - og[1]) * (gy - og[1]) < 12000.0 * 12000.0
+		var by_st: bool = (gx - stg[0]) * (gx - stg[0]) + (gy - stg[1]) * (gy - stg[1]) < 12000.0 * 12000.0
+		if not by_op and not by_st and not _near_planet_r(gx, gy, 46000.0):   # (past a journey's reach: space.gd TRAVEL_R)
+			break
+	return best
+
+## the rift ends within `rad` of (gx, gy): [{"pair", "end" (0: near its system, 1: the twin), "g", "to" (the other end)}]
+static func rifts_near(gx: float, gy: float, rad: float) -> Array:
+	var out := []
+	for r in systems_near(gx, gy, RIFT_D * 1.33 + rad + 80000.0):
+		for q in range(maxi(0, r - 11), r + 1):
+			var rp := rift_pair(q)
+			if rp.is_empty():
+				continue
+			for end in 2:
+				if (end == 0 and q != r) or (end == 1 and int(rp["twin"]) != r):
+					continue
+				var eg: PackedFloat64Array = rp["a"] if end == 0 else rp["b"]
+				if (eg[0] - gx) * (eg[0] - gx) + (eg[1] - gy) * (eg[1] - gy) < rad * rad:
+					out.append({"pair": q, "end": end, "g": eg, "to": rp["b"] if end == 0 else rp["a"]})
 	return out
 
 ## where every journey's first wreck drifts: FIRST_WRECK from the home planet, the way (from the

@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 63
+const NM := 64
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -78,6 +78,7 @@ const WISPBAR := 59       # Wisp Ingot
 const HULL := 60          # Hull Plating: salvaged from derelict wrecks in deep space (wreck.gd)
 const XENITE := 61        # Xenite: the glowing chitin of the aliens in derelict stations (alien.gd)
 const WISPCELL := 62      # Wisp Cell: the skiff's fuel for the long hauls (the Starsail, journeys between planets)
+const VOIDESS := 63       # Void Essence: what space's own life is made of (voidlife.gd: mantas, eels, jellies, wells, monoliths)
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -104,7 +105,7 @@ const MAT_NAMES := {
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
-	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE", 62: "WISPCELL",
+	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE", 62: "WISPCELL", 63: "VOIDESS",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -258,6 +259,8 @@ func _init() -> void:
 	PLACE[XENITE] = 0
 	_def(WISPCELL, "Wisp Cell", K_SOLID, ["#3c7ad8", "#7ec8ff", "#2a4ea8", "#e0f6ff"], {"hard": 1, "self": 1, "glow": Vector3(0.3, 0.6, 1.0)})
 	PLACE[WISPCELL] = 0
+	_def(VOIDESS, "Void Essence", K_SOLID, ["#5a2a9a", "#b070ff", "#2c1466", "#f2dcff"], {"hard": 1, "self": 1, "glow": Vector3(0.6, 0.35, 1.0)})
+	PLACE[VOIDESS] = 0
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -780,7 +783,7 @@ const SHOPS := {
 			{"name": "Copper Ingots x6", "price": 20, "give": {COPPERBAR: 6}},
 			{"name": "Star Iron x3", "price": 60, "give": {STARIRON: 3}},
 			{"name": "Healing Draught", "price": 45, "potion": 1}],
-		"buy": {HULL: [10, 12], XENITE: [4, 14], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
+		"buy": {HULL: [10, 12], XENITE: [4, 14], VOIDESS: [3, 16], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
 			FROST: [3, 4], COPPER: [8, 3], COAL: [8, 2]}, "ores": [2, 7]},
 	"shipwright": {"title": "Shipwright", "sell": [
 			{"name": "Mend the skiff's hull at the dock", "price": 35, "repair": true},
@@ -799,7 +802,7 @@ const SHOPS := {
 			{"name": "Star charts: the two nearest uncharted systems", "price": 50, "star_chart": 2},
 			{"name": "Star charts: the five nearest uncharted systems", "price": 110, "star_chart": 5},
 			{"name": "Scanner Lens (a ship's part)", "price": 260, "part": "scanner"}],
-		"buy": {CRYSTAL: [3, 10], XENITE: [4, 15]}},
+		"buy": {CRYSTAL: [3, 10], XENITE: [4, 15], VOIDESS: [3, 18]}},
 }
 ## Trade goods (user, 23 Nov: a cargo hold "for big things only": crates that ride in your ship's hold, never
 ## the satchel). Every outpost sells a few cheaply and pays well for a few others (`trade_of`), so carrying them
@@ -919,6 +922,8 @@ const GEAR := {
 	"silver": {"name": "Silver Sigil", "ore": SILVER, "cost": {SILVER: 14, CRYSTAL: 2, WISP: 6}, "mods": {"mana_cost": 0.75}, "desc": "Your spells cost a quarter less mana."},
 	"silverbane": {"name": "Silverbane Charm", "ore": SILVER, "cost": {SILVER: 10, BRICK: 6, WISP: 4}, "mods": {"undead_dmg": 2.0}, "desc": "Your spells hurt the dead (skeletons, archers and wardens) twice as hard."},
 	"silverthread": {"name": "Silver-Thread Cloak", "ore": SILVER, "cost": {SILVER: 12, LEAF: 10, PLANK: 4}, "mods": {"jump": 1.2}, "desc": "You jump higher."},
+	# space's own: Void Essence, from the creatures and anomalies between the stars (voidlife.gd)
+	"voidmantle": {"name": "Mantle of the Void", "ore": VOIDESS, "cost": {VOIDESS: 18, XENITE: 4, CRYSTAL: 4}, "mods": {"max_mana": 40.0, "space_mana": 2.0}, "desc": "+40 max mana, and out in space your mana comes back twice as fast."},
 	# alloys: two worlds' ores bound in star iron ("ore" is then a list; the forge's "Alloys")
 	"steamheart": {"name": "Steamheart Focus", "ore": [FIREOPAL, RIMECRYSTAL], "cost": {FIREOPAL: 10, RIMECRYSTAL: 10, STARIRON: 6}, "mods": {"spell_fireball": 1.3, "spell_frost": 1.3, "mana_cost": 0.9}, "desc": "Fire and frost in one stone: Fireball and Frostbite a third stronger, every spell a tenth cheaper."},
 	"solarlens": {"name": "Solar Forge Lens", "ore": [FIREOPAL, SUNSTONE], "cost": {FIREOPAL: 10, SUNSTONE: 10, STARIRON: 6}, "mods": {"dig_rate": 1.35, "spell_spark": 1.3, "light": 24.0}, "desc": "Your staff digs faster, your Spark Bolts hit harder, and its tip glows."},
@@ -959,7 +964,7 @@ const LEARN := {
 	"sandstone": {"find": [SAND]},
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
-	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]}, "sail": {"find": [STARIRON]},
+	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
 	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
 	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
@@ -1335,6 +1340,7 @@ const RECIPES := [
 	{"id": "scanner", "cat": "Travel", "name": "Wisp Scanner", "part": "part_scanner", "cost": {XENITE: 12, CRYSTAL: 10, WISPBAR: 6, HULL: 10}, "desc": "A lens of alien glass fitted to your skiff, built round a Scanner Lens from a derelict station's vault: what you see round you reaches three times as far, systems are charted from farther off, and the nearest wreck and derelict station within reach are marked at the edge of the screen."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars; it burns a Wisp Cell every few seconds (refined at a smelter from wisp ore and coal, or bought at an outpost). Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
+	{"id": "harness", "cat": "Travel", "name": "Void Harness", "cost": {VOIDESS: 16, STARIRON: 6, WISPBAR: 4}, "desc": "Bands of void essence round your skiff's keel: a gravity well can never drag it past its edge, and skimming one flings you out much faster. Needs the skiff."},
 ]
 
 # -------------------------------------------------------------- workshops ---

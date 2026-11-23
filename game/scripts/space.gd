@@ -32,6 +32,8 @@ const Outpost := preload("res://scripts/outpost.gd")
 const Station := preload("res://scripts/station.gd")
 const Alien := preload("res://scripts/alien.gd")
 const Spacer := preload("res://scripts/spacer.gd")
+const Monolith := preload("res://scripts/monolith.gd")
+const VoidLife := preload("res://scripts/voidlife.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 ## The galaxy (user, 22 Nov: infinite space). Space's origin follows you (`org`: the galaxy point that
@@ -213,6 +215,7 @@ var _burn := 0.0               # (ticks of sailing since the last Wisp Cell burn
 var _fuel_warn := 0
 var _st_jobs := []              # stations being grown on a worker thread: [task id, its plan]
 var scan_marks := []            # the Wisp Scanner: [galaxy point, name, colour] of wrecks and stations near you
+var vl                          # space's own life and its anomalies (voidlife.gd): creatures, wells, rifts, monoliths
 
 func _ready() -> void:
 	_mask = Shader.new()
@@ -224,6 +227,7 @@ func _ready() -> void:
 	for k in 420:
 		stars.append([Vector2(rng.randf() * 1024.0, rng.randf() * 1024.0), rng.randf(), rng.randf() * TAU])
 	visible = false
+	vl = VoidLife.new(self)
 	_mid = Node2D.new()
 	add_child(_mid)
 	_mid.draw.connect(_draw_mid)
@@ -352,6 +356,8 @@ func _tick() -> void:
 	_update_acid()
 	_update_sbolts()
 	_pmark("aliens and folk")
+	vl.tick(focus)
+	_pmark("void life")
 	if game.frame % 60 == 11:
 		_scanner_marks()
 	_pirate_chance(focus)
@@ -377,6 +383,7 @@ func _tick() -> void:
 		var v0: Vector2 = sk.vel
 		sk.fly(want, pl != null or game.crew_on_deck(), pull(sk.pos), true, 0.0, 0.9995)
 		_sail(sk, pl, want, v0)
+		sk.vel = vl.well_force(sk.pos, sk.vel, "skiff")
 		sk.vel = _storm(sk.pos, sk.vel)
 		sk.pos = _hold(sk.pos, sk)
 		# (it bumps against asteroids: the skiff's own collision, against their cells)
@@ -441,6 +448,7 @@ func _tick() -> void:
 		_after_move(m, a)
 		return
 	vel -= up * pull(m.pos)
+	vel = vl.well_force(m.pos, vel, "mage")
 	if m.input.cast and m.mana > JET_MANA:
 		var d: Vector2 = m.input.aim - m.pos
 		if d.length() > 1.0:
@@ -457,7 +465,7 @@ func _tick() -> void:
 				m.facing = 1 if side > 0.0 else -1
 	vel *= DRAG
 	if vel.length() > MAX_SPEED:
-		vel = vel.normalized() * MAX_SPEED
+		vel = vel.normalized() * (maxf(MAX_SPEED, vel.length() * 0.995) if vl.sling_t > 0 else MAX_SPEED)
 	vel = _storm(m.pos, vel)
 	var goal := _hold(m.pos + vel, null)
 	var dv: Vector2 = goal - m.pos
@@ -741,9 +749,36 @@ func _shift(d: Vector2) -> void:
 		ac[0] = (ac[0] as Vector2) + d
 	for sb in sbolts:
 		sb["pos"] = (sb["pos"] as Vector2) + d
+	vl.shift(d)
 	org[0] -= d.x
 	org[1] -= d.y
 	stats["recentred"] += 1
+
+## Through a rift (voidlife.gd): you, the skiff and whoever rides it, the camera and what follows you are
+## moved by `d`; the world out here stays (space's origin then follows you: `_shift`). Bolts in flight and
+## pirates after you are left behind.
+func carry(d: Vector2) -> void:
+	_st_w = Vector2.INF
+	for m in game.players:
+		if m.aboard != null or m == game.player:
+			m.pos += d
+			m.grid_g = m.pos
+	if game.skiff != null and game.player.aboard == game.skiff:
+		game.skiff.pos += d
+	game.cam_c += d
+	if game.view_c != Vector2.ZERO:
+		game.view_c += d
+	game.wisp += d
+	for p in game.parts:
+		p["pos"] += d
+	game.vfx.shift(d)
+	shots.clear()
+	foe_shots.clear()
+	acid.clear()
+	sbolts.clear()
+	bolts.clear()
+	beam_to = null
+	_drop_pirates()
 
 ## the galaxy point a point out here is
 func galaxy_of(p: Vector2) -> PackedFloat64Array:
@@ -841,7 +876,8 @@ func _sail(sk, pl, want: Vector2, v0: Vector2) -> void:
 		return
 	if v0.length() > cap:
 		# (let go: the extra speed goes in a few seconds, not at once)
-		sk.vel = v0.normalized() * maxf(cap, v0.length() * 0.96)
+		# (a slingshot's speed lasts a while)
+		sk.vel = v0.normalized() * maxf(cap, v0.length() * (0.997 if vl.sling_t > 0 else 0.96))
 
 ## how far the way ahead is clear: to the nearest planet's air (or a storm belt round one out of
 ## reach), or rock, along `dir` (anything within a wide cone counts)
@@ -861,7 +897,7 @@ func _clearance(p: Vector2, dir: Vector2) -> float:
 		# (only what's in the way: ahead, and near the line you're on)
 		if t2 > 0.0 and (o2 - d * t2).length() < a.reach() + 400.0:
 			best = minf(best, maxf(t2 - a.reach() - 300.0, 0.0))
-	return best
+	return minf(best, vl.clearance(p, d))
 
 ## The sectors round you: their asteroid fields and comets come in (a rock a tick), the ones you've
 ## left behind go (kept as they are if you mined them).
@@ -914,6 +950,7 @@ func _stream(focus: Vector2) -> void:
 			match String(pl["kind"]):
 				"wreck": a = Wreck.make_wreck(int(pl["seed"]), bool(pl.get("first", false)))
 				"scrap": a = Wreck.scrap(int(pl["seed"]), float(pl["r"]))
+				"monolith": a = Monolith.make_monolith(int(pl["seed"]))
 				_: a = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
 		_place_rock(a, pl)
 
@@ -927,6 +964,8 @@ func _place_rock(a, pl: Dictionary) -> void:
 		_station_in(a)
 	if a.kind == "outpost":
 		_outpost_in(a)
+	if a.kind == "monolith":
+		vl.mono_in(a)
 	if a.kind == "outpost" or a.kind == "station":
 		# (an outpost stands level over the planet the view turns to: its floors are floors)
 		var oup: Vector2 = (a.pos - centre).normalized() if not near.is_empty() else Vector2.from_angle(view_ang)
@@ -950,6 +989,7 @@ static func _g_add(g: PackedFloat64Array, v: Vector2) -> PackedFloat64Array:
 func _load_sector(s: Vector2i, key: String) -> void:
 	_loaded[key] = s
 	stats["sectors"] += 1
+	vl.sector_in(s, key)
 	var sg := Galaxy.sector_g(s)
 	if sect_state.has(key):
 		for d in sect_state[key]:
@@ -959,7 +999,7 @@ func _load_sector(s: Vector2i, key: String) -> void:
 				"orbit": dd.get("orbit", {}), "at": Vector2(float(dd.get("at", [0, 0])[0]), float(dd.get("at", [0, 0])[1]))})
 		return
 	for c in Galaxy.sector_content(s):
-		for r in c["rocks"]:
+		for r in c.get("rocks", []):
 			_sect_plan.append({"sect": key, "seed": r["seed"], "r": r["r"], "kind": r["kind"], "vel": r["vel"], "first": r.get("first", false), "sys": r.get("sys", -1),
 				"g": _g_add(sg, (c["at"] as Vector2) + (r["off"] as Vector2)), "orbit": r.get("orbit", {}), "at": c["at"]})
 
@@ -976,11 +1016,16 @@ func _unload_sector(key: String) -> void:
 			_station_out(a)
 			rocks.remove_at(k)
 			continue                       # (grown again as it was: a station's changes are in station_state)
+		if a.kind == "monolith":
+			vl.mono_out(a)
+			rocks.remove_at(k)
+			continue                       # (grown again by seed: its state is in vl.mono_state)
 		any = any or a.touched
 		keep.append(_rock_save(a, sg))
 		rocks.remove_at(k)
 	if any:
 		sect_state[key] = keep
+	vl.sector_out(key)
 	_loaded.erase(key)
 
 ## a sector's rock as saved: its place from the sector's corner, not out here
@@ -1002,13 +1047,13 @@ func save_state() -> Dictionary:
 		var keep := []
 		var any := false
 		for a in rocks:
-			if a.sect == key and a.kind != "station" and a.kind != "outpost":
+			if a.sect == key and a.kind != "station" and a.kind != "outpost" and a.kind != "monolith":
 				any = any or a.touched
 				keep.append(_rock_save(a, sg))
 		if any:
 			ss[key] = keep
 	return {"seen": seen.keys(), "charted": charted.keys(), "waypoint": null if waypoint == null else [waypoint[0], waypoint[1]],
-		"sectors": ss, "stations": station_state}
+		"sectors": ss, "stations": station_state, "void": vl.save_state()}
 
 func load_state(d: Dictionary) -> void:
 	seen.clear()
@@ -1025,6 +1070,8 @@ func load_state(d: Dictionary) -> void:
 		sect_state = ss
 	var sts = d.get("stations", {})
 	station_state = sts if sts is Dictionary else {}
+	var vd = d.get("void", {})
+	vl.load_state(vd if vd is Dictionary else {})
 	# (a new game: what's round the home planet)
 	var hs := Defs.planet_g(0)
 	_scan_quiet(hs)
@@ -1223,6 +1270,7 @@ func _draw_space() -> void:
 		if not shown.has(si):
 			sprites[si].visible = false
 	_draw_belts(xf)
+	vl.draw_under(self, xf)
 	_draw_rocks(xf)
 	# where the planets are when they're off screen: a marker at the edge, pointing the way
 	for b2 in bodies:
@@ -1267,6 +1315,7 @@ func _draw_space() -> void:
 	var nwk = nearest_wreck(game.player.pos)
 	if nwk != null:
 		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85))
+	vl.draw_markers(xf)
 	_top.queue_redraw()
 	if _mid.get_index() != get_child_count() - 1:
 		move_child(_mid, -1)        # (after every rock sprite, still before the overlay's mage)
@@ -1658,7 +1707,7 @@ func _comet_tail(a) -> void:
 
 ## A rock cut through: its smaller pieces drift off as rocks of their own, scraps crumble to dust.
 func _split(a) -> void:
-	if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
+	if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" or a.kind == "monolith":
 		return                             # (a wreck holds together: its caches are in its cells)
 	var pcs: Array = a.pieces()
 	if pcs.size() <= 1 and (pcs.is_empty() or pcs[0].size() >= ROCK_SCRAP):
@@ -1688,6 +1737,8 @@ func mine(m) -> void:
 
 ## digs the asteroid cells within r of p into m's satchel (what m's staff can cut)
 func _mine_at(m, p: Vector2, r: float) -> void:
+	if m.aboard == null:
+		vl.sear(m, p, r)
 	var hard := false
 	var got := 0
 	for a in _rocks_near(p, r + 2.0):
@@ -1737,7 +1788,7 @@ func nearest_rock(p: Vector2, within := 900.0) -> Variant:
 	var best = null
 	var bd := within
 	for a in rocks:
-		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" or a.kind == "monolith":
 			continue
 		var d: float = (a.pos - p).length() - a.reach()
 		if d < bd:
@@ -1790,7 +1841,7 @@ func _rock_push(m, close: Array) -> bool:
 			continue
 		touched = true
 		var n: Vector2 = (m.pos - a.pos).normalized()
-		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" or a.kind == "monolith":
 			# (a hull has rooms inside: out the shortest way, never "away from its middle", which would
 			# push you on through the wall you touched from inside)
 			var out := _shortest_out(m, a, pts, rr, dd)
@@ -1885,9 +1936,9 @@ func _draw_rocks(xf: Transform2D) -> void:
 		sm.set_shader_parameter("sun", Vector2(sun.dot(ax), sun.dot(ay)).normalized())
 		sm.set_shader_parameter("ctr", a.com)
 		sm.set_shader_parameter("rad", a.rad * 1.2)
-		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" else 0.0)
+		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" or a.kind == "monolith" else 0.0)
 		spr2.modulate = Color(1.6, 1.3, 1.3) if a.kind == "pirate" and a.hit_t > 0 else Color.WHITE
-		if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
+		if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" or a.kind == "monolith":
 			bk.visible = true
 			bk.texture = a.back_texture()
 			bk.transform = spr2.transform
@@ -1898,8 +1949,10 @@ func _draw_rocks(xf: Transform2D) -> void:
 ## reach, if there is one (F opens it: `wreck_interact`).
 func _wreck_near(m) -> void:
 	for a in _rocks_near(m.pos, 4.0):
-		if a.kind != "wreck" and a.kind != "station":
+		if a.kind != "wreck" and a.kind != "station" and a.kind != "monolith":
 			continue
+		if a.kind == "monolith" and not a.opened:
+			continue                       # (its alcove is sealed until every glyph burns)
 		var b: Vector2 = a.to_body(m.pos) + a.com
 		var inside: bool = a.kind == "wreck" and b.x > 0.0 and b.y > 0.0 and b.x < float(a.w) and b.y < float(a.h) and int(a.bg[int(b.y) * a.w + int(b.x)]) != 0
 		if inside and not a.visited:
@@ -2031,6 +2084,8 @@ func _loot(m, wk, c: Dictionary) -> void:
 			var sc := randi_range(10, 30)
 			it["coins"] = int(it.get("coins", 0)) + sc
 			got.append("%d coins" % sc)
+		"monolith":
+			vl.mono_loot(m, wk, give, got)
 		"pirate":
 			# (a pirate's strongbox: their takings)
 			var pc := randi_range(45, 110)
@@ -2114,16 +2169,26 @@ func _update_shots() -> void:
 		var v: Vector2 = sh[1]
 		var n := maxi(1, int(ceil(v.length() / 2.0)))
 		var hit = null
+		var at_beast := false
 		for q in n:
 			p += v / float(n)
+			if vl.shot_hit(p, CANNON_DMG):
+				at_beast = true
+				break
 			hit = _rock_at(p, null)
 			if hit != null:
 				break
 		sh[0] = p
 		sh[2] = int(sh[2]) - 1
-		if hit != null:
+		if at_beast:
+			stats["shot_hits"] += 1
+			game.vfx.blast(p, 4.0, 2)
+			shots.remove_at(k)
+		elif hit != null:
 			if hit.kind == "pirate":
 				_hurt_pirate(hit, CANNON_DMG, p)
+			if hit.kind == "monolith":
+				vl.strike_at(hit, p, v)
 			_blast_rocks(p, CANNON_R)
 			stats["shot_hits"] += 1
 			shots.remove_at(k)
@@ -2146,7 +2211,7 @@ func _blast_rocks(p: Vector2, r: float) -> void:
 					game._particle(a.cell_world(i, j), a.vel + Vector2(randf() - 0.5, randf() - 0.5) * 1.2, 30 + randi() % 30,
 						Color.hex((Defs.PAL[t * 4 + (int(a.vars[ck]) & 3)] << 8) | 0xff), false, 0.0)
 				a.take(ck)
-		if a.kind != "outpost" and a.kind != "station":
+		if a.kind != "outpost" and a.kind != "station" and a.kind != "monolith":
 			a.vel += (a.pos - p).normalized() * 0.02 / maxf(1.0, a.mass / 400.0)
 	_mining = 0
 	game.vfx.blast(p, 6.0, 2)
@@ -2198,6 +2263,7 @@ func _draw_top_parts() -> void:
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.04, 0.8))
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(pa.hp / pa.hp_max, 0.0, 1.0), 2.0)), Color(1.0, 0.35, 0.3))
 	_draw_alien_marks(xf)
+	vl.draw_top(_top, xf)
 	# each outpost's name over it
 	for oa in rocks:
 		if oa.kind != "outpost":
@@ -2593,6 +2659,7 @@ func reset_after_death() -> void:
 		_shift(-home_at())
 		org = Defs.planet_g(home)
 	_drop_pirates()
+	vl.calm()
 	shots.clear()
 	acid.clear()
 	sbolts.clear()
@@ -3403,6 +3470,7 @@ func _draw_mid() -> void:
 
 func _draw_mid_parts() -> void:
 	var xf := _world_xf()
+	vl.draw_mid(_mid, xf)
 	_draw_aliens(xf)
 	var zs: float = minf(float(game.zoom), 4.0)
 	for oa in rocks:
