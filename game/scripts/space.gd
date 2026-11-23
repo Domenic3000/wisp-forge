@@ -316,28 +316,47 @@ func exit() -> void:
 
 # ---------------------------------------------------------------- ticks ---
 
+## the profiler (F3, the benchmarks): the time since the last mark goes to "space: <sec>"
+var _pt0 := 0
+func _pmark(sec: String) -> void:
+	var t := Time.get_ticks_usec()
+	game.prof_add("space: " + sec, t - _pt0)
+	_pt0 = t
+
 ## One tick out in space (main._tick hands over to this while active).
 func tick() -> void:
+	var t0 := Time.get_ticks_usec()
+	_tick()
+	game.prof_add("space: tick", Time.get_ticks_usec() - t0)
+
+func _tick() -> void:
+	_pt0 = Time.get_ticks_usec()
 	var m = game.player
 	var sk = game.skiff
 	sun_ang += TAU / game.day_len()
 	var focus: Vector2 = sk.pos if m.aboard != null else m.pos
 	_galaxy(focus)
 	focus = sk.pos if m.aboard != null else m.pos      # (moved over if space's origin just followed you)
+	_pmark("galaxy")
 	_find_near(focus)
 	_station_frame(focus)
+	_pmark("near")
 	_grow_disc()
 	_ensure_rocks()
 	_stream(focus)
+	_pmark("streaming")
 	_update_rocks()
+	_pmark("rocks")
 	_update_aliens(focus)
 	_update_folk(focus)
 	_update_acid()
 	_update_sbolts()
+	_pmark("aliens and folk")
 	if game.frame % 60 == 11:
 		_scanner_marks()
 	_pirate_chance(focus)
 	_update_pirates()
+	_pmark("pirates")
 	game._mend_skiff(m)
 	if game.build_on and m.aboard != null and not m.dead:
 		game._update_cabin(m)
@@ -361,7 +380,11 @@ func tick() -> void:
 		sk.vel = _storm(sk.pos, sk.vel)
 		sk.pos = _hold(sk.pos, sk)
 		# (it bumps against asteroids: the skiff's own collision, against their cells)
-		sk.advance(Callable(self, "_rock_solid") if not _rocks_near(sk.pos, 120.0).is_empty() else Callable())
+		# (only the rocks its whole path this tick could touch are checked, once for the tick: at Starsail speed
+		# through a field, checking every rock at every point of its outline cost 50 ms a tick)
+		var sweep: float = float(maxi(sk.w, sk.h)) * 0.75 + sk.vel.length() * 0.5 + 6.0
+		var close_r: Array = _rocks_near(sk.pos + sk.vel * 0.5, sweep)
+		sk.advance(Callable(self, "_solid_among").bind(close_r) if not close_r.is_empty() else Callable())
 		if sk.bump > CRASH_SPACE:
 			skiff_crash(sk)
 		for rider in sk.riders:
@@ -372,6 +395,7 @@ func tick() -> void:
 				game._ride(pm)                     # (up and about on its deck)
 		if sk.thrusting:
 			game._skiff_exhaust()
+	_pmark("skiff")
 	_age_bolts()
 	_update_shots()
 	_update_foe_shots()
@@ -1091,6 +1115,11 @@ func _world_xf() -> Transform2D:
 	return Transform2D(game.world_to_screen(Vector2(1, 0)) - t, game.world_to_screen(Vector2(0, 1)) - t, t)
 
 func _draw() -> void:
+	var td := Time.get_ticks_usec()
+	_draw_space()
+	game.prof_add("space: drawing", Time.get_ticks_usec() - td)
+
+func _draw_space() -> void:
 	if not active and not backdrop():
 		return
 	var w: int = game.VW
@@ -1730,6 +1759,13 @@ func nearest_wreck(p: Vector2, within := 30000.0) -> Variant:
 	return best
 
 ## is world point p inside an asteroid's cell? (the skiff collides by this)
+## is p in one of these rocks' cells? (the rocks a body's path could touch, found once: `_rocks_near`)
+func _solid_among(p: Vector2, list: Array) -> bool:
+	for a in list:
+		if a.solid_at(p):
+			return true
+	return false
+
 func _rock_solid(p: Vector2) -> bool:
 	for a in _rocks_near(p, 2.0):
 		if a.solid_at(p):
@@ -2120,6 +2156,11 @@ func _blast_rocks(p: Vector2, r: float) -> void:
 func _draw_top() -> void:
 	if not active:
 		return
+	var tdt := Time.get_ticks_usec()
+	_draw_top_parts()
+	game.prof_add("space: drawing marks", Time.get_ticks_usec() - tdt)
+
+func _draw_top_parts() -> void:
 	var xf := _world_xf()
 	for sh in shots:
 		var sp: Vector2 = xf * (sh[0] as Vector2)
@@ -3356,6 +3397,11 @@ func _update_acid() -> void:
 func _draw_mid() -> void:
 	if not active:
 		return
+	var tdm := Time.get_ticks_usec()
+	_draw_mid_parts()
+	game.prof_add("space: drawing figures", Time.get_ticks_usec() - tdm)
+
+func _draw_mid_parts() -> void:
 	var xf := _world_xf()
 	_draw_aliens(xf)
 	var zs: float = minf(float(game.zoom), 4.0)

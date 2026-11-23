@@ -70,6 +70,7 @@ func _kill(i: int) -> void:
 func emit(kind: int, n: float, br: Vector2, bd: Vector2, wind: float) -> void:
 	var w := float(game.VW)
 	var h := float(game.VH)
+	n *= game._fxb                   # (fewer drops and flakes at a lower quality: main.fx_budget)
 	var k := int(n) + (1 if randf() < n - floorf(n) else 0)
 	for q in k:
 		# (from the top edge, or from the side the wind blows from when it blows hard)

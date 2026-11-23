@@ -345,7 +345,7 @@ var sky_rain := 0.0        # rain as seen in the sky, eased between biomes
 var cam_unwrap := 0.0      # camera angle without the jump at a full turn (for parallax)
 var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
-var settings := {"quality": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed", "view": "world"}
+var settings := {"settings_v": 2, "quality": "auto", "auto_q": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed", "view": "world"}
 var boss_info := Vector4.ZERO
 var boss_clouds := []          # the Mycelord's spore clouds (boss_ai.gd update_clouds)
 var eco_carcasses := []        # creatures killed by others, lying a while (ecology.gd): {pos, type, facing, t, h}
@@ -653,7 +653,8 @@ func _ready() -> void:
 	add_child(audio)
 	gpu = GpuWorld.new()
 	_load_settings()
-	gpu.apply_quality(settings["quality"])
+	gpu.apply_quality(quality())
+	_fxb = fx_budget()
 	_apply_volumes()
 	_apply_window()
 	_layout()
@@ -686,7 +687,7 @@ func _layout() -> void:
 	scale_px = maxi(2, int(round(s.y / 220.0)))
 	if int(settings["pixel"]) > 0:
 		scale_px = int(settings["pixel"])
-	elif settings["quality"] == "low":
+	elif quality() == "low":
 		scale_px += 1   # bigger pixels: fewer of them to simulate light for and draw
 	VW = int(ceil(s.x / scale_px))
 	VH = int(ceil(s.y / scale_px))
@@ -705,6 +706,73 @@ func _exit_tree() -> void:
 ## on battery, say) it runs two or three ticks before drawing, so the world never slows down; on
 ## a very fast screen some frames run none. The GPU's work for a frame is collected at the start
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
+## the quality the world is simulated and drawn at: the setting, or (Auto, the default) the level it has
+## stepped down to (`_auto_quality`)
+func quality() -> String:
+	var q := String(settings.get("quality", "auto"))
+	return String(settings.get("auto_q", "high")) if q == "auto" else q
+
+## how many of the small particles (sparks, dust, smoke puffs, rain streaks) a quality level keeps: drawing
+## them one by one is the game's dearest drawing on a slow CPU (the big shapes, halos, rings, runes and
+## bolts, are always drawn)
+func fx_budget() -> float:
+	match quality():
+		"low":
+			return 0.35
+		"medium":
+			return 0.6
+	return 1.0
+
+var _fxb := 1.0                 # (fx_budget(), kept: read for every particle)
+
+## Auto quality (user, 23 Nov: "make sure it runs on lower end pc's with decent framerates"): while you play,
+## if the frames come slower than 50 a second on average over AUTO_WINDOW seconds, the quality steps down a
+## level (high, medium, low), and that's remembered (settings "auto_q"). Never while loading, travelling, in
+## a menu, on the map, or in the test mode (unless a test asks: `auto_test`).
+const AUTO_WINDOW := 4.0
+const AUTO_SLOW_MS := 20.0
+var _aq_t := 0.0                # (seconds of play timed in this window)
+var _aq_n := 0                  # (frames in it)
+var _aq_wait := 300             # (frames to let pass first: after a start, a journey, a step down)
+var auto_test := false
+func _auto_quality(delta: float) -> void:
+	if String(settings.get("quality", "auto")) != "auto" or (testing and not auto_test):
+		return
+	if state != "play" or travelling:
+		_aq_t = 0.0
+		_aq_n = 0
+		return
+	if _aq_wait > 0:
+		_aq_wait -= 1
+		return
+	if delta > 0.25:
+		return                     # (a stall: a save, the window dragged; not the game's pace)
+	_aq_t += delta
+	_aq_n += 1
+	if _aq_t < AUTO_WINDOW:
+		return
+	var avg_ms: float = _aq_t * 1000.0 / float(_aq_n)
+	_aq_t = 0.0
+	_aq_n = 0
+	if avg_ms <= AUTO_SLOW_MS:
+		return
+	var cur := String(settings.get("auto_q", "high"))
+	var nxt: String = {"high": "medium", "medium": "low"}.get(cur, "")
+	if nxt == "":
+		return
+	settings["auto_q"] = nxt
+	gpu.apply_quality(quality())
+	_fxb = fx_budget()
+	_layout()
+	_save_settings()
+	_aq_wait = 300
+	ui.toast("Running at %.0f frames a second: quality lowered to %s to keep it smooth (Settings)" % [1000.0 / avg_ms, nxt.capitalize()], Color(0.8, 0.9, 1.0), 4.0)
+
+func _save_settings() -> void:
+	var f := FileAccess.open(_real_save_dir().path_join("settings.json"), FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(settings))
+
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
 	if testing and Time.get_ticks_msec() > 1080000:
@@ -714,6 +782,7 @@ func _process(delta: float) -> void:
 		return
 	if gpu == null:
 		return
+	_auto_quality(delta)
 	var tp := Time.get_ticks_usec()
 	gpu.flush()
 	prof_add("read back", gpu.read_us)
@@ -3908,7 +3977,7 @@ func _local_daylight(p: Vector2) -> float:
 
 # ============================================================= particles ===
 func _particle(p: Vector2, v: Vector2, life: int, col: Color, self_lit: bool, grav: float) -> void:
-	if parts.size() > 1500:
+	if parts.size() > int(1500.0 * _fxb) or (_fxb < 1.0 and randf() > _fxb):
 		return
 	parts.append({"pos": p, "vel": v, "life": life, "col": col, "self": self_lit, "grav": grav, "home": false})
 
@@ -6395,6 +6464,9 @@ func _gt(nm: String) -> void:
 
 func _make_world(index: int, arriving: bool) -> void:
 	var tree := get_tree()
+	_aq_wait = 300                 # (Auto quality lets the new planet's first frames settle)
+	_aq_t = 0.0
+	_aq_n = 0
 	for nv in navs:
 		nv.clear()
 	gen_times.clear()
@@ -6992,6 +7064,9 @@ func _load_settings() -> void:
 			for k in settings:
 				if d.has(k):
 					settings[k] = d[k]
+			if int(d.get("settings_v", 0)) < 2 and String(d.get("quality", "")) == "high":
+				settings["quality"] = "auto"   # (high was only the old default: Auto is the new one)
+	settings["settings_v"] = 2
 	settings["pixel"] = int(settings["pixel"])   # JSON numbers come back as floats
 	settings["music"] = int(settings["music"])
 	settings["sound"] = int(settings["sound"])
@@ -7002,7 +7077,13 @@ func set_setting(key: String, value) -> void:
 	if f:
 		f.store_string(JSON.stringify(settings))
 	if key == "quality":
-		gpu.apply_quality(value)
+		if value == "auto":
+			settings["auto_q"] = "high"        # (Auto starts again from the top, and steps down if it must)
+			_aq_t = 0.0
+			_aq_n = 0
+			_aq_wait = 300
+		gpu.apply_quality(quality())
+		_fxb = fx_budget()
 	if key == "quality" or key == "pixel":
 		_layout()
 	if key == "window":

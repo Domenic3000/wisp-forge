@@ -359,8 +359,9 @@ func hold_cap() -> int:
 
 ## where n crates (CRATE_W x CRATE_H cells, top-left corners) stand: in its room first (on the floor or on each
 ## other, as far from the helm as they go, never in a seat's space or over furniture), then lashed on its open
-## deck (outside, on the hull's top: the skiff as forged has little room in its cabin but seats). A crate that
-## finds no place is left out: still carried, just not drawn. Kept until the hull or n changes.
+## deck (outside, on the hull's top: the skiff as forged has little room in its cabin but seats), at last on
+## anything it can rest on (the canopy's slope, the fin). A crate that finds no place is left out: still
+## carried, just not drawn. Kept until the hull or n changes.
 const CRATE_W := 7
 const CRATE_H := 6
 var _crates := []
@@ -379,12 +380,12 @@ func crate_slots(n: int) -> Array:
 	for c in n:
 		var best := Vector2i(-1, -1)
 		var best_s := -1e9
-		for pass_k in 2:
+		for pass_k in 3:
 			if best.x >= 0:
 				break
 			for j in range(1, h - CRATE_H):
 				for i in range(0, w - CRATE_W + 1):
-					if not _crate_fits(i, j, taken, pass_k == 1):
+					if not _crate_fits(i, j, taken, pass_k >= 1, 4 if pass_k < 2 else 1):
 						continue
 					# (far from the helm first, then low down)
 					var sc := absf(float(i) + float(CRATE_W) * 0.5 - helm_x) * 4.0 + float(j)
@@ -399,20 +400,22 @@ func crate_slots(n: int) -> Array:
 				taken[(best.y + jj) * w + best.x + ii] = 1
 	return _crates
 
-func _crate_fits(i: int, j: int, taken: PackedByteArray, on_deck := false) -> bool:
+func _crate_fits(i: int, j: int, taken: PackedByteArray, on_deck := false, min_held := 4) -> bool:
 	for jj in CRATE_H:
 		for ii in CRATE_W:
 			var k := (j + jj) * w + i + ii
 			var place_ok: bool = (outside[k] != 0) if on_deck else (room[k] != 0)
 			if not place_ok or cells[k] != 0 or taken[k] != 0 or (deco.size() == w * h and deco[k] != 0) or in_seat(i + ii, j + jj):
 				return false
-	# (resting on the hull, a deck or another crate all the way across)
+	# (resting on the hull, a deck or another crate: most of the way across, so a crown or a slope of deck
+	# still holds one)
 	var below := (j + CRATE_H) * w
+	var held := 0
 	for ii2 in CRATE_W:
 		var kb := below + i + ii2
-		if cells[kb] == 0 and taken[kb] == 0:
-			return false
-	return true
+		if cells[kb] != 0 or taken[kb] != 0:
+			held += 1
+	return held >= min_held
 
 func _recount() -> void:
 	if design.size() != cells.size():

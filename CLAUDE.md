@@ -1113,7 +1113,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "spacebench", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -1242,12 +1242,38 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   performance pass): 24 provoked foes, rain, a fireball every 20 frames, digging every frame, sand poured, vsync
   off, 600 frames; prints every frame over 50 ms with the parts over 3 ms, each part's worst, a histogram. Passes
   under 16.7 ms on average and 25 at the 95th percentile (27 ms average / 115 worst before; 7.6 / 14.7 after).
+- Space is profiled too: `space: tick` (all of it) and its parts via `_pmark` ("galaxy", "near", "streaming",
+  "rocks", "aliens and folk", "pirates", "skiff"), `space: drawing` / `drawing marks` / `drawing figures`. The
+  space benchmark `_test_spacebench` ("spacebench"; in the full run after `_test_cargo`): a fight in the system's
+  derelict, the outpost's deck, pirates among home's rocks with the cannon, the Starsail streaming sectors; 300
+  frames each through `_bench_measure(n, each)` (vsync off; avg, p95, worst, the engine's drawing on the CPU,
+  the GPU's drawing and simulation, a histogram, and every frame over 25 ms with the parts over 1.5 ms in it;
+  `_bench_line`); about 2.5 ms a frame in each on the RTX 3070 laptop (23 Nov). The skiff out there collides only
+  with the rocks its whole path this tick could touch (`_rocks_near` over the sweep, `_solid_among` bound to
+  them): checking every rock at every outline point of every sub-step cost 50 ms a tick under the Starsail.
+- LOWER-END PCs (user, 23 Nov: "make sure it runs on lower end pc's with decent framerates"): setting "quality"
+  is "auto" by default (also high/medium/low). main `quality()` is the level in use ("auto" -> `settings["auto_q"]`,
+  starting "high"); `_auto_quality(delta)` (each `_process`, only in play, not travelling, not in tests unless
+  `auto_test`, `_aq_wait` frames after a start or a journey): if the frames over `AUTO_WINDOW` (4 s) average
+  slower than `AUTO_SLOW_MS` (20 ms, under 50 fps) it steps down a level (high, medium, low), remembered in
+  settings.json, with a toast. Choosing Auto again starts from high. `fx_budget()` (1 / 0.6 / 0.35, kept in
+  `_fxb`): vfx.gd `spawn` keeps that share of the small particles (DOT, STREAK, SMOKE, SHARD, CHUNK; never the
+  halos, rings, runes, bolts, beams) and caps at MAX x budget; weather.gd `emit` and main `_particle` too
+  (drawing particles one rect at a time is the dearest drawing on a slow CPU, ~0.8 us each). Low quality also has
+  bigger pixels and fewer simulation and light passes (`gpu.apply_quality`). The planet benchmark runs the busy
+  scene again at high and at low (`_bench_measure`) and checks Auto quality steps down at 33 fps and stays at
+  60 (23 Nov on the 3070 laptop: 7.5 ms high, 5.8 ms low; the game's own work ~3.8 ms, effects drawing ~1.7,
+  particles ~1.4, the read-back ~1.6, the GPU only ~1 ms: a weaker CPU matters more than a weaker GPU). Still
+  read back and uploaded again every frame: the picture (`view_buf`), because the simulation runs on a local
+  RenderingDevice; moving it onto Godot's own device (roadmap step 10, for mobile) removes that.
 - Hot paths: `box_solid` / `box_count` read the collision grid bytes straight from `gpu.grid` through a 64-entry
   table (`_solid_table`), falling back on `gsolid` only off the grid's edge (cell by cell through `gsolid` they
   took 55 ms a frame with 24 foes). Loops over many points (vfx particles, overlay particles) use
   `main.screen_xf()` (world_to_screen as one Transform2D) when `screen_xf_ok()` (not the unrolled view), and
-  particles read the light straight from `gpu.light_at`. The remaining spike is chunks' `read_rect` (a GPU sync
-  when a tree or piece is lifted out, ~8 ms).
+  particles read the light straight from `gpu.light_at`. Chunks no longer stall (23 Nov): `detect` asks
+  (`_ask`: `gpu.request_rect` with the anchor of the moment) and `_poll` lifts the piece out a frame or two later
+  when the read is back (`_pend`; R carries the anchor at R[6], the screen mapping at R[7]/R[8]; `_clear`'s stamp
+  uses that anchor); a tree bigger than its block asks again for twice the block.
 - No stalls (user, 22 Nov: "a small hitch when starting a new game"; a performance pass): `gpu.read_rect` waits
   for the frame in flight (flush + its own submit and sync), so code that reads now and then while you play
   asks instead: `gpu.request_rect(c0, r0, w, h)` goes out with the next frame's commands (dispatched at the end

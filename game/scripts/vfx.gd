@@ -71,8 +71,11 @@ func count() -> int:
 
 ## one particle
 func spawn(kind: int, p: Vector2, v: Vector2, life: int, c0: Color, c1: Color, s0: float, s1: float, add := true, grav := 0.0, drag := 1.0, f := 0.0) -> void:
-	if P.size() >= MAX:
+	var b: float = game._fxb if game != null else 1.0
+	if P.size() >= int(float(MAX) * b):
 		return
+	if b < 1.0 and (kind == DOT or kind == STREAK or kind == SMOKE or kind == SHARD or kind == CHUNK) and randf() > b:
+		return                       # (a lower quality keeps fewer of the small ones: main.fx_budget)
 	P.append(p)
 	V.append(v)
 	L.append(life)

@@ -1120,8 +1120,8 @@ func _build_settings() -> void:
 	left.mouse_filter = Control.MOUSE_FILTER_PASS
 	cols.add_child(left)
 	var rows := [
-		["Quality", "quality", [["High", "high"], ["Medium", "medium"], ["Low", "low"]],
-			"Low simulates and lights the world in fewer passes, with bigger pixels."],
+		["Quality", "quality", [["Auto", "auto"], ["High", "high"], ["Medium", "medium"], ["Low", "low"]],
+			"Auto starts high and steps down if the game runs under 50 frames a second. Low simulates and lights the world in fewer passes, with bigger pixels."],
 		["Dithering", "dither", [["Off", "off"], ["Subtle", "subtle"], ["Retro", "retro"]],
 			"Off draws clean colour bands like a SNES; Retro the old checkerboard."],
 		["View", "view", [["World", "world"], ["Unrolled", "unrolled"]],
@@ -1481,7 +1481,7 @@ func update_hud(g) -> void:
 		info.text = "\n".join(lines)
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
-			info.text += "\n%d FPS · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [Engine.get_frames_per_second(), g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.settings["quality"], g.prof_text(6, "\n")]
+			info.text += "\n%d FPS · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [Engine.get_frames_per_second(), g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.quality() + (" (auto)" if g.settings["quality"] == "auto" else ""), g.prof_text(6, "\n")]
 		# the villagers' requests you've taken (towns.gd)
 		var rqs: Array = g.towns.requests() if g.towns != null else []
 		for rq in rqs:

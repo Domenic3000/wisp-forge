@@ -102,6 +102,7 @@ func _init(game) -> void:
 
 func clear() -> void:
 	list.clear()
+	_pend.clear()
 	_recent.clear()
 
 # ------------------------------------------------------------------ frames ---
@@ -157,8 +158,50 @@ func textures(c: Chunk) -> void:
 
 # ------------------------------------------------------------------ finding ---
 
+## Reads of the world asked for and not back yet (user, 23 Nov: the performance pass: reading a block back at
+## once stalled the frame for the GPU, ~8 ms, whenever a tree or a piece of building broke loose; now the read
+## goes out with the next frame, `gpu.request_rect`, and the piece is lifted out a frame or two later):
+## [kind "tree"/"block", mage, world point, big, request id, c0, r0, w, h, anchor, frame asked]
+var _pend := []
+var _polled := -1
+
+## the reads that are back: lift their pieces out
+func _poll() -> void:
+	if _polled == g.frame:
+		return
+	_polled = g.frame
+	for k in range(_pend.size() - 1, -1, -1):
+		var p: Array = _pend[k]
+		var rr: Dictionary = g.gpu.take_rect(int(p[4]))
+		if rr.is_empty():
+			if g.frame - int(p[10]) > 30:
+				_pend.remove_at(k)            # (lost: a new planet, a save)
+			continue
+		_pend.remove_at(k)
+		var R := [p[5], p[6], p[7], p[8], rr["fg"], rr["bg"], p[9]]
+		if p[0] == "tree":
+			_take_tree(p[1], p[2], R, bool(p[3]))
+		else:
+			_take_block(p[1], p[2], R)
+
+## ask for a block of shell-0 cells around a world point (see `_read_around`), to be lifted out from later
+func _ask(kind: String, m, wp: Vector2, size: Vector2i, up_frac: float, big := false) -> void:
+	var cc: Vector2i = Build.cell_of(wp)
+	var w := size.x
+	var h := size.y
+	var c0 := cc.x - w / 2
+	var r0 := cc.y - int(h * up_frac)
+	r0 = clampi(r0, 0, Defs.ROWS - 1)
+	h = mini(h, Defs.ROWS - r0)
+	if h < 8 or cc.y >= Defs.ROWS:
+		return
+	var ax: int = Defs.anchor_c
+	var id: int = g.gpu.request_rect(c0, r0, w, h, ax)
+	_pend.append([kind, m, wp, big, id, c0, r0, w, h, ax, g.frame])
+
 ## Called with each mage's counters from the last GPU frame.
 func detect(m, cn: PackedInt32Array) -> void:
+	_poll()
 	if list.size() >= MAX_CHUNKS or cn.size() < 61:
 		return
 	g._use_grid(m)
@@ -168,12 +211,12 @@ func detect(m, cn: PackedInt32Array) -> void:
 		# (a tree just lifted out is gone from the world by the next frame, so only a short pause here:
 		# a long one left the rest of a big tree, or the next tree felled, crumbling meanwhile)
 		if not _seen(wp, 20.0, 6):
-			_take_tree(m, wp)
+			_ask("tree", m, wp, TREE_READ, 0.6)
 	if cn[Defs.C_CREAK_N] > 0 and list.size() < MAX_CHUNKS:
 		var u2: int = cn[Defs.C_CREAK] & 0xFFFFFFFF
 		var wp2: Vector2 = g.from_grid(Vector2((u2 & 1023) + 0.5, ((u2 >> 10) & 1023) + 0.5))
 		if not _seen(wp2, 20.0, 8):
-			_take_block(m, wp2)
+			_ask("block", m, wp2, BLOCK_READ, 0.55)
 	g._use_grid(g.player)
 
 func _seen(p: Vector2, r: float, frames: int) -> bool:
@@ -198,15 +241,12 @@ func _read_around(p: Vector2, size: Vector2i, up_frac: float) -> Array:
 	if h < 8 or cc.y >= Defs.ROWS:
 		return []
 	var rr: Dictionary = g.gpu.read_rect(c0, r0, w, h)
-	return [c0, r0, w, h, rr["fg"], rr["bg"]]
+	return [c0, r0, w, h, rr["fg"], rr["bg"], Defs.anchor_c]
 
 ## A felled tree: the cells of that plant (its id is in background bits 16-31) no longer joined, through
 ## each other, to its wood resting on the ground.
-func _take_tree(m, wp: Vector2, big := false) -> void:
+func _take_tree(m, wp: Vector2, R: Array, big := false) -> void:
 	var tr := Time.get_ticks_usec()
-	var R := _read_around(wp, TREE_READ * 2 if big else TREE_READ, 0.5 if big else 0.6)
-	g.prof_add("lift: read", Time.get_ticks_usec() - tr)
-	tr = Time.get_ticks_usec()
 	if R.is_empty():
 		return
 	var c0: int = R[0]
@@ -259,7 +299,7 @@ func _take_tree(m, wp: Vector2, big := false) -> void:
 			var bi := k % w
 			var bj := k / w
 			if bi == 0 or bj == 0 or bi == w - 1 or bj == h - 1:
-				_take_tree(m, wp, true)
+				_ask("tree", m, wp, TREE_READ * 2, 0.5, true)
 				return
 	var tp := Time.get_ticks_usec()
 	# what came loose, split into the pieces actually joined together: each falls on its own (a few
@@ -327,8 +367,7 @@ func _spread(q: PackedInt32Array, mark: PackedByteArray, w: int, h: int, from: i
 
 ## A piece of a building breaking loose: the loose blocks joined to the creaking one, with the back
 ## walls and furniture that hang off them; broken into fragments along jagged lines.
-func _take_block(m, wp: Vector2) -> void:
-	var R := _read_around(wp, BLOCK_READ, 0.55)
+func _take_block(m, wp: Vector2, R: Array) -> void:
 	if R.is_empty():
 		return
 	var c0: int = R[0]
@@ -609,21 +648,21 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 			pal = _decor[((b >> 16) & 63) % _decor.size()]
 		pal = pal * Color(0.72, 0.72, 0.76)             # background layers are drawn darker
 		pal.a = 1.0
-	if hidden or g.gpu.view_img == null:
-		return pal
+	if hidden or g.gpu.view_img == null or g._fxb < 1.0:
+		return pal          # (below high quality, the material's own colour: matching the screen's costs ~10 ms a tree)
 	# (where the cell is on screen: one step from the block's corner, worked out once per block)
-	if R.size() < 7:
+	if R.size() < 8:
 		var s0: Vector2 = g.world_to_pic(cell_pos(int(R[0]), int(R[1])))
 		R.append([s0, g.world_to_pic(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_pic(cell_pos(int(R[0]), int(R[1]) + 1)) - s0])
 		R.append({})                                    # light by light cell (each covers several pixels)
-	var lin: Array = R[6]
+	var lin: Array = R[7]
 	var sp: Vector2 = ((lin[0] as Vector2) + (lin[1] as Vector2) * float(k % w) + (lin[2] as Vector2) * float(k / w)).floor()
 	var img: Image = g.gpu.view_img
 	if sp.x < 0 or sp.y < 0 or sp.x >= img.get_width() or sp.y >= img.get_height():
 		return pal
 	var ls: int = g.gpu.LS
 	var lk: int = int(sp.x) / ls * 65536 + int(sp.y) / ls
-	var lc: Dictionary = R[7]
+	var lc: Dictionary = R[8]
 	var lit: Color
 	if lc.has(lk):
 		lit = lc[lk]
@@ -673,7 +712,9 @@ func _clear(R: Array, tf: Array, tb: Array, tb2: Array) -> void:
 		for k in arr2:
 			var o2: int = (k / w - j0) * bw + (k % w - i0)
 			data[o2] = data[o2] & 0x00FF    # background: none
-	g.stamps.append({"x0": posmod(c0 + i0, Defs.NS), "y0": r0 + j0, "w": bw, "h": bh, "data": data})
+	var st := {"x0": posmod(c0 + i0, Defs.NS), "y0": r0 + j0, "w": bw, "h": bh, "data": data}
+	st["ax"] = int(R[6])                   # (the anchor the cells were read at)
+	g.stamps.append(st)
 
 ## one cell set into the world (raw: only where that layer is empty); -1 leaves a layer alone
 func _put(col: int, row: int, f: int, b: int) -> void:

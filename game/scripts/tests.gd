@@ -1438,6 +1438,10 @@ func run() -> void:
 			await _test_hull()
 		elif only == "cargo":
 			await _test_cargo()
+		elif only == "spacebench":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_spacebench()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4107,6 +4111,7 @@ func run() -> void:
 	await _test_fuel()
 	await _test_hull()
 	await _test_cargo()
+	await _test_spacebench()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
 	g.player.pos = sf_sk.pos
@@ -4876,6 +4881,290 @@ func _test_fog() -> void:
 
 ## A busy scene, uncapped (user, 21 Nov: the performance pass): two dozen foes hunting you, a fireball every
 ## 20 frames, digging all the while, sand poured from above, rain; where the frame's time goes.
+## frames timed with vsync off: `each` is called before every frame with its number. Returns {avg, p95, worst
+## (ms), gpu (the screen's drawing on the GPU, ms a frame), parts (the profiler's top parts), hist}.
+func _bench_measure(n: int, each: Callable) -> Dictionary:
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	var vp: RID = g.get_viewport().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp, true)
+	await _frames(10)
+	g.prof_reset()
+	var times := []
+	var gpu_draw := 0.0
+	var gpu_sim := 0.0
+	var eng_cpu := 0.0
+	var t0 := Time.get_ticks_usec()
+	var shown := 0
+	var draw_us := {"pre": 0, "took": 0}
+	var on_pre := func() -> void:
+		draw_us["pre"] = Time.get_ticks_usec()
+	var on_post := func() -> void:
+		draw_us["took"] = Time.get_ticks_usec() - int(draw_us["pre"])
+	RenderingServer.frame_pre_draw.connect(on_pre)
+	RenderingServer.frame_post_draw.connect(on_post)
+	for f in n:
+		each.call(f)
+		await _frames(1)
+		var now := Time.get_ticks_usec()
+		times.append(now - t0)
+		if now - t0 > 25000 and shown < 8:
+			# a slow frame: what took the time in it
+			shown += 1
+			var grew := []
+			for sec in g.prof:
+				if float(g.prof[sec][4]) > 1500.0:
+					grew.append("%s %.1f" % [sec, float(g.prof[sec][4]) / 1000.0])
+			print("[bench] slow frame %d: %.1f ms (%s; process %.1f ms, the engine's drawing %.1f ms)" % [f, (now - t0) / 1000.0, ", ".join(grew),
+				Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, float(draw_us["took"]) / 1000.0])
+		t0 = now
+		gpu_draw += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+		eng_cpu += RenderingServer.viewport_get_measured_render_time_cpu(vp) + RenderingServer.get_frame_setup_time_cpu()
+		for gk in g.prof:
+			if String(gk).begins_with("GPU ") and gk != "GPU submit" and gk != "GPU results":
+				gpu_sim += float(g.prof[gk][4]) / 1000.0
+	RenderingServer.frame_pre_draw.disconnect(on_pre)
+	RenderingServer.frame_post_draw.disconnect(on_post)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
+	Engine.max_fps = 60
+	RenderingServer.viewport_set_measure_render_time(vp, false)
+	times.sort()
+	var sum := 0
+	for v in times:
+		sum += int(v)
+	var hist := [0, 0, 0, 0]
+	for v2 in times:
+		var ms := float(v2) / 1000.0
+		hist[0 if ms < 8.0 else (1 if ms < 16.7 else (2 if ms < 33.0 else 3))] += 1
+	return {"avg": float(sum) / times.size() / 1000.0, "p95": float(times[int(times.size() * 0.95)]) / 1000.0, "worst": float(times[-1]) / 1000.0,
+		"gpu": gpu_draw / float(n), "sim": gpu_sim / float(n), "eng": eng_cpu / float(n), "parts": g.prof_text(10, "; "), "hist": hist}
+
+func _bench_line(label: String, r: Dictionary) -> String:
+	return "%s: %.2f ms on average, 95%% under %.2f, the worst %.1f (the engine's drawing on the CPU %.2f; GPU: drawing %.2f, simulation %.2f a frame; frames <8 / 8-16.7 / 16.7-33 / >33 ms: %s); %s" % [label, r["avg"], r["p95"], r["worst"], r["eng"], r["gpu"], r["sim"], str(r["hist"]), r["parts"]]
+
+## Busy scenes out in space (user, 23 Nov: the performance pass; "make sure it runs on lower end pc's with decent
+## framerates"): a fight in a derelict station, a busy outpost's deck, pirates attacking among asteroids, the
+## Starsail streaming sectors in. Each 300 frames with vsync off; prints each part's time ("space: ..."), the
+## screen's drawing on the GPU and the planet's simulation. Passes under 16.7 ms on average and 25 at the 95th
+## percentile in each.
+func _test_spacebench() -> void:
+	var rows := []
+	var ok := true
+	var G = load("res://scripts/galaxy.gd")
+	g.player.dead = false
+	var god0: bool = g.test_god
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var up0: Vector2 = sk.pos.normalized()
+	sk.pos = up0 * (Defs.R_SPACE - 11.0)
+	sk.vel = up0 * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	# ---- 1. a fight in a derelict station: every alien awake, sparks cast at the nearest
+	var sl: Vector2 = g.space.local_of(G.system_station(0))
+	sk.pos = sl + Vector2(-1400.0, 0.0)
+	sk.vel = Vector2.ZERO
+	var st = null
+	for k1 in 400:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		for a in g.space.rocks:
+			if a.kind == "station":
+				st = a
+		if st != null:
+			break
+	if st != null:
+		var dm: Dictionary = st.mods[st.dock]
+		var mouth_b := Vector2(float(int(dm["x0"]) - 60) if st.dock_side < 0 else float(int(dm["x1"]) + 60), float(int(dm["y1"]) - 16))
+		sk.pos = st.to_world(mouth_b - st.com) + st.axis_x() * float(st.dock_side) * 120.0
+		sk.vel = Vector2.ZERO
+		await _frames(20)
+		g._skiff_interact(g.player)
+		await _frames(4)
+		# (into the powered room with the most aliens)
+		var best := -1
+		var best_n := -1
+		for k2 in st.mods.size():
+			if not st.mods[k2]["powered"] or st.mods[k2]["role"] == "vault":
+				continue
+			var n := 0
+			for al in g.space.aliens:
+				if al.st == st and al.home == k2:
+					n += 1
+			if n > best_n:
+				best_n = n
+				best = k2
+		var md: Dictionary = st.mods[maxi(best, 0)]
+		_st_put(st, Vector2(float(int(md["x0"]) + 10), float(int(md["y1"]) - 10)))
+		for al2 in g.space.aliens:
+			if al2.st == st:
+				al2.awake = true
+		var fight := func(f: int) -> void:
+			g.player.hp = g.player.max_hp
+			g.player.mana = g.player.max_mana
+			var near_a = null
+			var nd := 1e9
+			for al3 in g.space.aliens:
+				if al3.dead or al3.st != st:
+					continue
+				var d: float = al3.world().distance_to(g.player.pos)
+				if d < nd:
+					nd = d
+					near_a = al3
+			g.test_aim = near_a.world() if near_a != null else g.player.pos + st.axis_x() * 40.0
+			g.test_cast = f % 20 < 2
+		var r1: Dictionary = await _bench_measure(300, fight)
+		g.test_cast = false
+		var n_al := 0
+		for al4 in g.space.aliens:
+			if al4.st == st and not al4.dead:
+				n_al += 1
+		rows.append(_bench_line("a fight in %s (%d aliens left)" % [st.wname, n_al], r1))
+		ok = ok and r1["avg"] < 16.7 and r1["p95"] < 25.0
+		_shot("bench_station.png")
+		g.player.pos = sk.pos
+		g.space.vel = Vector2.ZERO
+		await _frames(2)
+		g._skiff_interact(g.player)
+		await _frames(4)
+	else:
+		rows.append("(!) no derelict station came in")
+		ok = false
+	# ---- 2. a busy outpost: docked, walking its deck among its spacers
+	var ol: Vector2 = g.space.local_of(G.system_outpost(0))
+	sk.pos = ol + Vector2(-1400.0, 0.0)
+	sk.vel = Vector2.ZERO
+	var op = null
+	for k3 in 400:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		op = g.space.nearest_outpost(sk.pos, 5000.0)
+		if op != null:
+			break
+	if op != null:
+		var hr: Rect2i = op.hangar_rect()
+		var bay_x: float = float(hr.position.x) + 50.0 if op.hangar_side < 0 else float(hr.end.x) - 50.0
+		sk.pos = op.to_world(Vector2(bay_x, float(hr.end.y) - 26.0) - op.com)
+		sk.ang = op.axis_x().angle()
+		sk.vel = Vector2.ZERO
+		await _frames(20)
+		g._skiff_interact(g.player)
+		await _frames(40)
+		var walk := func(f: int) -> void:
+			g.test_move = (1 if (f / 100) % 2 == 0 else -1) * -op.hangar_side
+		var r2: Dictionary = await _bench_measure(300, walk)
+		g.test_move = 0
+		rows.append(_bench_line("aboard %s (%d spacers)" % [op.wname, g.space.folk.size()], r2))
+		ok = ok and r2["avg"] < 16.7 and r2["p95"] < 25.0
+		_shot("bench_outpost.png")
+		g.player.pos = sk.pos
+		g.space.vel = Vector2.ZERO
+		await _frames(2)
+		g._skiff_interact(g.player)
+		await _frames(4)
+	else:
+		rows.append("(!) no outpost came in")
+		ok = false
+	# ---- 3. pirates among home's asteroids: three ships, the cannon firing back
+	sk.pos = g.space.home_at() + Vector2(0.0, -(Defs.R_SPACE + 1300.0))
+	sk.vel = Vector2.ZERO
+	g.space._ensure_rocks(true)
+	for k4 in 60:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	var rk = g.space.nearest_rock(sk.pos, 1e9)
+	if rk != null:
+		sk.pos = rk.pos + (sk.pos - rk.pos).normalized() * (rk.reach() + 90.0)
+	var cannon0: bool = g.items.has("cannon")
+	g.items["cannon"] = true
+	g.space.allow_pirates = true
+	g.space.spawn_pirates(sk.pos, Vector2.RIGHT, "brig")
+	g.space.spawn_pirates(sk.pos, Vector2.LEFT, "cutter")
+	var fire := func(f: int) -> void:
+		g.player.hp = g.player.max_hp
+		g.player.mana = g.player.max_mana
+		sk.mend(100000)
+		var tp = null
+		var td := 1e9
+		for pa in g.space.rocks:
+			if pa.kind == "pirate":
+				var d2: float = pa.pos.distance_to(sk.pos)
+				if d2 < td:
+					td = d2
+					tp = pa
+		g.test_aim = tp.pos if tp != null else sk.pos + Vector2(100.0, 0.0)
+		g.test_cast = true
+	var r3: Dictionary = await _bench_measure(300, fire)
+	g.test_cast = false
+	rows.append(_bench_line("pirates among the asteroids (%d ships, %d rocks)" % [g.space.pirate_count(), g.space.rocks.size()], r3))
+	ok = ok and r3["avg"] < 16.7 and r3["p95"] < 25.0
+	_shot("bench_pirates.png")
+	g.space._drop_pirates()
+	g.space.allow_pirates = false
+	if not cannon0:
+		g.items.erase("cannon")
+	# ---- 4. under the Starsail, sectors streaming in
+	var sail0: bool = g.items.has("sail")
+	g.items["sail"] = true
+	var away: Vector2 = (sk.pos - g.space.home_at()).normalized()
+	var sailing := func(_f: int) -> void:
+		g.test_sail = true
+		g.test_cast = true
+		g.test_aim = sk.pos + away * 1000.0
+	var r4: Dictionary = await _bench_measure(300, sailing)
+	g.test_sail = false
+	g.test_cast = false
+	rows.append(_bench_line("under the Starsail (%d sectors made so far)" % int(g.space.stats["sectors"]), r4))
+	ok = ok and r4["avg"] < 16.7 and r4["p95"] < 25.0
+	if not sail0:
+		g.items.erase("sail")
+	# ---- home again, and down
+	sk.vel = Vector2.ZERO
+	sk.pos = g.space.home_at() + Vector2(0.0, -(Defs.R_SPACE + 150.0))
+	await _frames(30)
+	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0
+	g.test_cast = true
+	for k9 in 600:
+		g.test_aim = g.space.home_at() + (sk.pos - g.space.home_at()) * 0.3
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	for k10 in 1200:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+		await _frames(10)
+	g.test_god = god0
+	print("[spacebench] " + "\n[spacebench] ".join(rows))
+	_ok("busy scenes out in space hold 60 fps with room to spare (a station fight, an outpost, pirates among rocks, the Starsail)", ok, "; ".join(rows))
+
 func _test_bench() -> void:
 	var bn_god0: bool = g.test_god
 	var bn_wild0: bool = g.test_no_wild
@@ -4914,6 +5203,8 @@ func _test_bench() -> void:
 	var bn_prev := {}
 	var bn_shown := 0
 	var bn_t0 := Time.get_ticks_usec()
+	var bn_gdraw := 0.0
+	var bn_gsim := 0.0
 	for bn_f in 600:
 		g.player.hp = g.player.max_hp
 		if bn_f % 20 == 0:
@@ -4931,6 +5222,9 @@ func _test_bench() -> void:
 		await _frames(1)
 		var bn_now := Time.get_ticks_usec()
 		bn_times.append(bn_now - bn_t0)
+		bn_gdraw += RenderingServer.viewport_get_measured_render_time_gpu(g.get_viewport().get_viewport_rid())
+		for bn_gk in g.gpu.gpu_us:
+			bn_gsim += float(g.gpu.gpu_us[bn_gk]) / 1000.0
 		if bn_now - bn_t0 > 50000 and bn_shown < 14:
 			# a slow frame: the parts whose worst grew in it
 			bn_shown += 1
@@ -4978,7 +5272,56 @@ func _test_bench() -> void:
 	print("[bench] %.2f ms a frame on average, 95%% under %.2f, the worst %.1f (the game's own %.1f); foes %d, particles %d, vfx %d; %s" % [bn_avg, bn_p95, bn_worst,
 		g.hitch_us / 1000.0, g.enemies.size(), g.parts.size(), g.vfx.count(), bn_txt])
 	_ok("a busy scene holds 60 fps with room to spare", bn_avg < 16.7 and bn_p95 < 25.0,
-		"%.2f ms on average, 95%% of frames under %.2f ms, the worst %.1f ms; %d of 24 foes left; %s" % [bn_avg, bn_p95, bn_worst, bn_alive, bn_txt])
+		"%.2f ms on average, 95%% of frames under %.2f ms, the worst %.1f ms (GPU: drawing %.2f, simulation %.2f a frame); %d of 24 foes left; %s" % [bn_avg, bn_p95, bn_worst, bn_gdraw / 600.0, bn_gsim / 600.0, bn_alive, bn_txt])
+	# the same busy scene at low quality (bigger pixels, fewer passes): what a weaker PC would choose
+	var bn_q0: String = g.settings["quality"]
+	var bn_low := func(f: int) -> void:
+		g.player.hp = g.player.max_hp
+		if f % 20 == 0:
+			var bn_dir2: Vector2 = (bn_side * (1.0 if (f / 20) % 2 == 0 else -1.0) + bn_up * 0.15).normalized()
+			g._spawn_proj("fireball", g.player.pos + bn_up * 4.0, bn_dir2 * 3.9, "player")
+		g.brushes.append([g.player.pos + bn_side * 18.0 * (1.0 if (f / 90) % 2 == 0 else -1.0) - bn_up * 6.0, 7.5, 1, 0, 2, 0.0, 0, 0])
+	var bn_hr: Dictionary = await _bench_measure(300, bn_low)
+	print("[bench] " + _bench_line("again at high quality", bn_hr))
+	g.set_setting("quality", "low")
+	await _frames(20)
+	var bn_lr: Dictionary = await _bench_measure(300, bn_low)
+	g.set_setting("quality", bn_q0)
+	await _frames(20)
+	print("[bench] " + _bench_line("the same at low quality", bn_lr))
+	_ok("the busy scene at low quality costs less", bn_lr["avg"] < bn_hr["avg"], _bench_line("high quality", bn_hr) + " | " + _bench_line("low quality", bn_lr))
+	# Auto quality: frames slower than 50 a second for its window step it down a level, remembered; a fast
+	# machine stays where it is
+	var aq_keep: Dictionary = g.settings.duplicate()
+	g.settings["quality"] = "auto"
+	g.settings["auto_q"] = "high"
+	g.auto_test = true
+	g._aq_wait = 0
+	g._aq_t = 0.0
+	g._aq_n = 0
+	for aq_k in 300:
+		g._auto_quality(1.0 / 60.0)
+	var aq_fast: String = g.quality()
+	for aq_k2 in 160:
+		g._auto_quality(0.03)
+	var aq_one: String = g.quality()
+	g._aq_wait = 0
+	for aq_k3 in 160:
+		g._auto_quality(0.03)
+	var aq_two: String = g.quality()
+	g._aq_wait = 0
+	for aq_k4 in 160:
+		g._auto_quality(0.03)
+	var aq_floor: String = g.quality()
+	g.auto_test = false
+	g.settings = aq_keep
+	g.gpu.apply_quality(g.quality())
+	g._fxb = g.fx_budget()
+	g._layout()
+	g._save_settings()
+	await _frames(20)
+	_ok("Auto quality steps down on a slow machine (high, medium, low) and stays put on a fast one", aq_fast == "high" and aq_one == "medium" and aq_two == "low" and aq_floor == "low",
+		"at 60 fps: %s; at 33 fps: %s, then %s, then %s" % [aq_fast, aq_one, aq_two, aq_floor])
 	for bn_e3 in bn_foes:
 		g.enemies.erase(bn_e3)
 	g.projs.clear()
@@ -6853,7 +7196,7 @@ func _in_cells(a, p: Vector2) -> bool:
 	var ua: float = (p - g.space.centre).angle()
 	var rr: Vector2 = g.basis_r(ua)
 	var dd: Vector2 = g.basis_d(ua)
-	for q in g.space.box_pts(g.player, 0.9):
+	for q in g.space.box_pts(g.player, 1.0):
 		if a.solid_at(p + rr * q.x + dd * q.y):
 			return true
 	return false
@@ -9087,8 +9430,20 @@ func _test_cargo() -> void:
 			for ii in cx_sk.CRATE_W:
 				if cx_sk.in_seat(slv.x + ii, slv.y + jj):
 					off_seat = false
-	var ok2b: bool = slots.size() >= mini(cap, 2) and off_seat
-	rows.append("%s%d of %d crates stand in the hold, none in a seat %s" % ["" if ok2b else "(!) ", slots.size(), g.cargo_count(), off_seat])
+	# (and on skiffs of other shapes: every seed's finds a place for its crates)
+	var Skf = load("res://scripts/skiff.gd")
+	var shapes_ok := 0
+	var shapes_txt := []
+	for sq in 12:
+		var sk_q = Skf.make(1000 + sq * 7919)
+		sk_q.rebuild()
+		var nq: int = sk_q.hold_cap()
+		var got_q: int = sk_q.crate_slots(nq).size()
+		shapes_txt.append("%d/%d" % [got_q, nq])
+		if got_q >= mini(nq, 2):
+			shapes_ok += 1
+	var ok2b: bool = slots.size() >= mini(cap, 2) and off_seat and shapes_ok == 12
+	rows.append("%s%d of %d crates stand in the hold, none in a seat %s; on 12 other skiffs %s" % ["" if ok2b else "(!) ", slots.size(), g.cargo_count(), off_seat, " ".join(shapes_txt)])
 	ok = ok and ok2b
 	if not g.space.active:
 		var cpos: Vector2 = g.player.pos
