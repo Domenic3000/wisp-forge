@@ -168,7 +168,9 @@ static func frames(id: String, b: Dictionary) -> Dictionary:
 			out[id + "_air"] = _beast(b, sd, {"tuck": 1.0, "mouth": 1.0})
 			# its daily life (ecology.gd): head down to the grass or the water, and asleep, lying down
 			out[id + "_graze"] = _beast(b, sd, {"graze": 1.0, "crouch": 0.15})
-			out[id + "_sleep"] = _beast(b, sd, {"crouch": 1.0, "lie": 1.0, "graze": 0.5, "shut": 1.0})
+			# (asleep its head lies low in front and its ears and antlers lie back: held up, over a body flat on
+			# the ground they read as legs in the air, and deer and hares looked upside down: user, 22 Nov)
+			out[id + "_sleep"] = _beast(b, sd, {"crouch": 1.0, "lie": 1.0, "graze": 0.9, "shut": 1.0})
 		"toad":
 			out[id] = _toad(b, sd, {})
 			for k in 4:
@@ -409,7 +411,7 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 		# a hare's: long, laid back a little, the far one darker
 		for side3 in [1, 0]:
 			var eb := hp + Vector2(-hd * (0.2 + 0.2 * side3), -hd * 0.3)
-			var tip3 := eb + Vector2(-hd * (0.55 + 0.15 * side3), -hd * 1.7)
+			var tip3 := eb + Vector2(-hd * (0.55 + 0.15 * side3), -hd * 1.7).lerp(Vector2(-hd * (1.7 + 0.2 * side3), -hd * (0.45 - 0.15 * side3)), lie)
 			c.limb(eb, tip3, maxf(0.7, 1.3 * ks * 1.6), maxf(0.5, 0.9 * ks * 1.6), base.darkened(0.25 * side3))
 			if side3 == 0:
 				c.line(eb + Vector2(0.0, -1.0), tip3 + Vector2(0.5, 1.0), belly.lerp(Color(0.95, 0.7, 0.7), 0.4))
@@ -423,7 +425,7 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var sides: Array = [0, 1] if ant > 0 else []
 	for side2 in sides:
 		var root := hp + Vector2(-hd * (0.15 + 0.25 * side2), -hd * 0.45)
-		var dirn := Vector2(-0.35 - 0.25 * side2, -1.0).normalized()
+		var dirn := Vector2(-0.35 - 0.25 * side2 - 0.9 * lie, -1.0 + 0.35 * lie).normalized()
 		var p0 := root
 		for k2 in ant:
 			var p1 := p0 + dirn * (6.0 - k2 * 0.6) * ks

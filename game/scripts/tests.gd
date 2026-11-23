@@ -4465,6 +4465,27 @@ func _test_ecology() -> void:
 	ec_rows.append("%sa hyena asleep by day %s, woke %d frames after you came by" % ["" if ec_ok3 else "(!) ", ec_slept, ec_woke])
 	ec_good = ec_good and ec_ok3
 	ec_hy.dead = true
+	# (prey asleep, then woken: pictures of how they lie and how they get up: user, 22 Nov, deer and hares
+	# seemed upside down until startled)
+	ec_stand.call(-90.0)
+	await _frames(20)
+	var ec_dr = ec_spawn.call("c_deer", 24.0)
+	var ec_hr = ec_spawn.call("c_hare", 44.0)
+	for ec_q in [ec_dr, ec_hr]:
+		ec_q.asleep = true
+		ec_q.act = ""
+	await _frames(40)
+	print("[prey] asleep: deer pose '%s' frame %s air %s; hare pose '%s' frame %s air %s" % [ec_dr.pose, g.overlay._boss_frame(ec_dr), ec_dr.air_on, ec_hr.pose, g.overlay._boss_frame(ec_hr), ec_hr.air_on])
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("eco_prey_sleep.png"))
+	ec_stand.call(2.0)
+	for ec_pw in 40:
+		await _frames(1)
+		if ec_pw % 8 == 0:
+			print("[prey] f%d deer asleep %s pose '%s' frame %s; hare asleep %s pose '%s' frame %s" % [ec_pw, ec_dr.asleep, ec_dr.pose, g.overlay._boss_frame(ec_dr), ec_hr.asleep, ec_hr.pose, g.overlay._boss_frame(ec_hr)])
+		if ec_pw == 6:
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("eco_prey_woke.png"))
+	ec_dr.dead = true
+	ec_hr.dead = true
 
 	# ---- the territorial warn you off first, then charge ----
 	ec_stand.call(-30.0)

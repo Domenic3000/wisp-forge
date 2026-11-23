@@ -349,6 +349,23 @@ vec3 wallColor(float r, vec4 sa, vec4 sb, ivec2 w, uint cu, uint cl, uint cr) {
 	return col;
 }
 
+// the biome at an angle of a background layer's own coordinates (any angle: wrapped round the planet)
+int layerBiome(float a) { return int(surfA(mod(a, TAU)).y); }
+// the colour of the land a background layer stands for at angle a of its own coordinates: the biome's top
+// ground, averaged over a box 7 samples wide sliding smoothly (a fixed grid of 26 columns, the end samples
+// weighted by how far between grid points this is), so across a border it ramps without steps
+vec3 layerLand(float a, uint shade) {
+	vec3 acc = vec3(0.0);
+	float gc = a * RS0 / 26.0;
+	float g0 = floor(gc), gf = gc - g0;
+	for (int k = -3; k <= 4; k++) {
+		float wk = k == -3 ? 1.0 - gf : (k == 4 ? gf : 1.0);
+		uint tm = uint(P.p[8 + 2 * layerBiome((g0 + float(k)) * 26.0 / RS0)].z);
+		acc += palColor(tm, shade) * wk;
+	}
+	return acc / 7.0;
+}
+
 float hillH(float ang, float scale, int seed) {
 	return fbm(vec2(ang * RS0 / scale, 0.5), seed, 3);
 }
@@ -475,7 +492,7 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 		for (int k = -3; k <= 3; k++) {
 			float bk = bi + float(k);
 			float cx = (bk + 0.5) * 6.0;
-			int ftk = int(P.p[9 + 2 * int(surfA(th + (cx - arcN) / RS0).y)].w) >> 4;
+			int ftk = int(P.p[9 + 2 * layerBiome(2.0 * cx / RS0)].w) >> 4;
 			if (!(ftk == 1 || ftk == 2 || ftk == 4 || ftk == 5 || ftk == 7)) continue;
 			float hr = h2(ivec2(int(bk), 403), 9);
 			if (hr > (ftk == 5 ? 0.3 : (ftk == 2 ? 0.95 : 0.75))) continue;
@@ -497,17 +514,12 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 		// column by column they changed at a hard vertical line)
 		// (a box 7 samples wide sliding smoothly: samples on a fixed grid of 26 columns, the end ones
 		// weighted by how far between grid points this column is, so the colour ramps without steps)
-		vec3 landN = vec3(0.0), landF = vec3(0.0);
-		float gc = th * RS0 / 26.0;
-		float g0 = floor(gc), gf = gc - g0;
-		for (int k = -3; k <= 4; k++) {
-			float wk = k == -3 ? 1.0 - gf : (k == 4 ? gf : 1.0);
-			uint tm = uint(P.p[8 + 2 * int(surfA((g0 + float(k)) * 26.0 / RS0).y)].z);
-			landN += palColor(tm, 1u) * wk;
-			landF += palColor(tm, 2u) * wk;
-		}
-		landN /= 7.0;
-		landF /= 7.0;
+		// (each layer's land is read in the layer's OWN coordinates (2 x uN for the near hills, 4 x uF for the
+		// far ones), so it drifts with the layer and a tree never changes kind or vanishes as you walk (the
+		// user saw them pop in and out at a biome border); scaled so a border on the hills lines up with the
+		// real one just as you cross it)
+		vec3 landN = layerLand(2.0 * uN, 1u);
+		vec3 landF = layerLand(4.0 * uF, 2u);
 		vec3 haze = horizon;
 		if (r < hnT) {
 			// --- near hills and their trees ---

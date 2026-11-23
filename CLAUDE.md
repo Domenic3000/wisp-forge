@@ -83,6 +83,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   ragged crowns). Hills take the colour of the biome's top ground (`palColor` of P.p[8 + 2b].z) mixed with
   the haze; each layer is mottled in its own coordinates (so its detail drifts with it) and misted toward
   its foot where a nearer layer rises in front (`mist`, 26-40 rows), so layers fade into each other.
+  A layer's biome (its trees' kinds, its land colour: `layerBiome`, `layerLand`) is read in the LAYER'S OWN
+  coordinates (2 x uN for the near hills, 4 x uF for the far ones), never at the world column under the pixel:
+  that slid under the layer as you walked, so trees changed kind or vanished at a biome border (user, 22 Nov:
+  "parts that pop in and out"). The scale puts a border on the hills over the real one as you cross it.
 - The view (user, 20 Nov: "switch from bent strips to world coordinates"): the close view is the world as it is
   (setting "view": "world", the default), turned so up points away from the planet's centre, a pixel always
   `zoom` world units, so nothing squeezes going up or down; the horizon curves a little. `_write_frame_params`
@@ -535,6 +539,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   always over or under the screen). Killing the last roused foe within 320 (`_check_cleared`, from `_kill_enemy`)
   makes the area quiet: no spawns for `QUIET_TICKS` (90 s) within `QUIET_R` (450) of there (a blood moon
   ignores it), toast "The area falls quiet". Test: `_test_spawns` ("spawns").
+- A beast asleep ("_sleep": lie, graze 0.9) rests its head low in front, long ears laid back along its body and
+  antlers tilted back (user, 22 Nov: held up over a body flat on the ground they read as legs in the air, and
+  deer and hares looked upside down until they woke). `_test_ecology` saves `eco_prey_sleep.png` / `_woke.png`.
 - Asleep means asleep (user: birds frozen in their attack pose until woken): falling asleep clears `e.act`, and
   overlay `_boss_frame` picks the "_sleep" frame (or the pose, or standing / flying) before any attack frame.
 - Burrowers (user, 21 Nov: "the holes they pop out of are floating way above the ground"): under the ground they're
