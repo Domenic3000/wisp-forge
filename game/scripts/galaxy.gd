@@ -18,6 +18,8 @@ const COMET := 0.07              # ...of a comet
 const WRECK := 0.045             # ...of a derelict wreck (wreck.gd) with scrap drifting round it
 const FIRST_WRECK := 22000.0     # every journey's first wreck drifts about this far from the home planet
 const OUTPOST_D := 27000.0       # every system's trading outpost (outpost.gd) is about this far from its first planet
+const STATION_D := 38000.0       # every system's derelict station (station.gd) about this far
+const STATION := 0.012           # a deep-space sector's chance of a derelict station of its own
 const CHART_R := 220000.0        # a system is charted (its planets on the map) once you come this close
 const SCAN_R := 32000.0          # what you see round you marks the map's sectors as explored
 const BODY_R := 300000.0         # the planets of systems this close are out there with you (space.gd bodies)
@@ -124,18 +126,26 @@ static func sector_content(s: Vector2i) -> Array:
 			op_here = true
 			out.append({"type": "outpost", "at": Vector2(og[0] - sg[0], og[1] - sg[1]), "sys": r,
 				"name": outpost_name(r), "rocks": [{"seed": outpost_seed(r), "r": 0.0, "kind": "outpost", "off": Vector2.ZERO, "vel": Vector2.ZERO}]})
+	# (and its derelict station: nothing else is grown there either)
+	for r2 in systems_near(sg[0] + SECTOR * 0.5, sg[1] + SECTOR * 0.5, STATION_D + SECTOR * 2.0):
+		var stg := system_station(r2)
+		if sector_of(stg[0], stg[1]) == s:
+			op_here = true
+			out.append(_station(station_seed(r2), Vector2(stg[0] - sg[0], stg[1] - sg[1])))
 	if s == sector_of(fw[0], fw[1]):
 		# (the first wreck: near home, so every journey finds one; its bridge always holds a ship part)
 		out.append(_wreck(rng, Vector2(fw[0] - sg[0], fw[1] - sg[1]), true))
-	elif roll < FIELD + BIG + COMET + WRECK and not op_here and not _near_planet(sg[0] + at.x, sg[1] + at.y):
+	elif roll < FIELD + BIG + COMET + WRECK + STATION and not op_here and not _near_planet(sg[0] + at.x, sg[1] + at.y):
 		if roll < BIG:
 			out.append(_field(rng, at, true))
 		elif roll < BIG + FIELD:
 			out.append(_field(rng, at, false))
 		elif roll < BIG + FIELD + COMET:
 			out.append(_comet(rng, at))
-		else:
+		elif roll < BIG + FIELD + COMET + WRECK:
 			out.append(_wreck(rng, at, false))
+		else:
+			out.append(_station(rng.randi() & 0xFFFFFF, at))
 	_content[key] = out
 	return out
 
@@ -181,6 +191,41 @@ static func system_outpost(r: int) -> PackedFloat64Array:
 			break
 	_content[key] = best
 	return best
+
+## where system r's derelict station hangs: STATION_D from its first planet, clear of every planet, its
+## outpost and the first wreck
+static func system_station(r: int) -> PackedFloat64Array:
+	var key := "station:%d:%d" % [Defs.world_seed, r]
+	if _content.has(key):
+		return _content[key]
+	var hg: PackedFloat64Array = Defs.planet_g(r * Defs.SYSTEM.size())
+	var fw := first_wreck()
+	var og := system_outpost(r)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([Defs.world_seed, r, 5150])
+	var best := PackedFloat64Array([hg[0] + STATION_D, hg[1]])
+	for t in 40:
+		var a := rng.randf() * TAU
+		var d := STATION_D + rng.randf_range(-3000.0, 3000.0)
+		var gx: float = hg[0] + cos(a) * d
+		var gy: float = hg[1] + sin(a) * d
+		best = PackedFloat64Array([gx, gy])
+		var by_wreck: bool = (gx - fw[0]) * (gx - fw[0]) + (gy - fw[1]) * (gy - fw[1]) < 14000.0 * 14000.0
+		var by_op: bool = (gx - og[0]) * (gx - og[0]) + (gy - og[1]) * (gy - og[1]) < 16000.0 * 16000.0
+		if not by_wreck and not by_op and not _near_planet_r(gx, gy, NEAR_PLANET + 8000.0):
+			break
+	_content[key] = best
+	return best
+
+static func station_seed(r: int) -> int:
+	return hash([Defs.world_seed, r, 5151]) & 0xFFFFFF
+
+static func station_name(r: int) -> String:
+	return load("res://scripts/station.gd").station_name(station_seed(r))
+
+static func _station(sd: int, at: Vector2) -> Dictionary:
+	return {"type": "station", "at": at, "name": "Derelict " + String(load("res://scripts/station.gd").station_name(sd)),
+		"rocks": [{"seed": sd, "r": 0.0, "kind": "station", "off": Vector2.ZERO, "vel": Vector2.ZERO}]}
 
 static func outpost_seed(r: int) -> int:
 	return hash([Defs.world_seed, r, 4243]) & 0xFFFFFF

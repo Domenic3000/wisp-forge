@@ -369,6 +369,11 @@ func _lit(sp: Vector2) -> Color:
 ## forth). Returns [drawn position, unsnapped position].
 func _feet(wpos: Vector2, body_h: float, grounded: bool, body_w := 0.0) -> Array:
 	var up := wpos.normalized()
+	if game.space.active:
+		# (out in space "up" is away from space.centre: the nearest planet, or under a station's floor; and
+		# there's no planet's ground to stand the feet on)
+		up = (wpos - game.space.centre).normalized()
+		grounded = false
 	var feet := wpos - up * (body_h * 0.5)
 	var raw: Vector2 = game.world_to_screen(feet)
 	if grounded:

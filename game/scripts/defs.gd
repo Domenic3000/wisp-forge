@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 61
+const NM := 62
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -76,6 +76,7 @@ const SILVER := 57        # realm
 const COPPERBAR := 58     # Copper Ingot
 const WISPBAR := 59       # Wisp Ingot
 const HULL := 60          # Hull Plating: salvaged from derelict wrecks in deep space (wreck.gd)
+const XENITE := 61        # Xenite: the glowing chitin of the aliens in derelict stations (alien.gd)
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -102,7 +103,7 @@ const MAT_NAMES := {
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
-	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL",
+	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -252,6 +253,8 @@ func _init() -> void:
 	PLACE[COPPERBAR] = 0
 	PLACE[WISPBAR] = 0
 	_def(HULL, "Hull Plating", K_SOLID, ["#5c6470", "#76808c", "#3e444e", "#9aa4ae"], {"hard": 2})
+	_def(XENITE, "Xenite", K_SOLID, ["#7a3cc8", "#9cf05a", "#4a1e88", "#d8ffa0"], {"hard": 2, "self": 1, "glow": Vector3(0.45, 0.8, 0.3)})
+	PLACE[XENITE] = 0
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -775,7 +778,7 @@ const SHOPS := {
 			{"name": "Star charts: the two nearest uncharted systems", "price": 50, "star_chart": 2},
 			{"name": "Shield Emitter (a ship's part)", "price": 160, "part": "shield"},
 			{"name": "Cannon Coil (a ship's part)", "price": 200, "part": "cannon"}],
-		"buy": {HULL: [10, 12], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
+		"buy": {HULL: [10, 12], XENITE: [4, 14], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
 			FROST: [3, 4], COPPER: [8, 3], COAL: [8, 2]}, "ores": [2, 7]},
 }
 ## What a village's shops add on each kind of planet (towns.gd `shop_def` merges it into SHOPS): the ward its
@@ -1267,6 +1270,7 @@ const RECIPES := [
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
 	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},
+	{"id": "scanner", "cat": "Travel", "name": "Wisp Scanner", "part": "part_scanner", "cost": {XENITE: 12, CRYSTAL: 10, WISPBAR: 6, HULL: 10}, "desc": "A lens of alien glass fitted to your skiff, built round a Scanner Lens from a derelict station's vault: what you see round you reaches three times as far, systems are charted from farther off, and the nearest wreck and derelict station within reach are marked at the edge of the screen."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars. Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 ]

@@ -1428,6 +1428,12 @@ func update_hud(g) -> void:
 				wn += " · Starsail"
 		if g.space.active and g.space.pirate_count() > 0:
 			wn = ("" if wn == "Clear" else wn + " · ") + "Pirates!"
+		if g.space.active and g.space.in_station != null:
+			# (aboard a derelict station: its name, the room, and whether its gravity holds)
+			var dst = g.space.in_station
+			var rk: int = dst.module_at(dst.to_body(g.player.pos) + dst.com)
+			where = "Derelict %s" % dst.wname
+			depth_txt = "%s · %s" % [dst.role_name(rk), "gravity" if rk >= 0 and dst.mods[rk]["powered"] else "no gravity"]
 		# (only what matters now: where you are, the time, the weather when there is any, how deep
 		# underground; the staff, relics and coins are in the satchel)
 		var lines := PackedStringArray([where, g.local_time_text() + ("" if wn == "Clear" else " · " + wn)])

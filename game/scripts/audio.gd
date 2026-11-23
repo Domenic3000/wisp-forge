@@ -326,6 +326,9 @@ func _build_sfx() -> void:
 	sfx["bow"] = _wav(_mix(_sweep(0.14, 220.0, 150.0, "square", 18.0, 0.12), _noise(0.05, 0.5, 60.0, 0.25)))
 	sfx["screech"] = _wav(_sweep(0.22, 2400.0, 1500.0, "square", 9.0, 0.07))
 	# falling pieces: wood cracking as a trunk goes, and the heavy thud of a piece landing
+	sfx["hiss"] = _wav(_mix(_noise(0.45, 0.8, 6.0, 0.45), _sweep(0.4, 900.0, 520.0, "square", 7.0, 0.035)))
+	sfx["chitter"] = _wav(_mix(_sweep(0.11, 1800.0, 2700.0, "square", 26.0, 0.06), _noise(0.09, 0.7, 36.0, 0.25)))
+	sfx["spit"] = _wav(_mix(_noise(0.2, 0.35, 15.0, 0.5), _sweep(0.16, 520.0, 190.0, "sine", 13.0, 0.22)))
 	sfx["crack"] = _wav(_mix(_noise(0.18, 0.6, 22.0, 0.7), _sweep(0.12, 180.0, 90.0, "saw", 20.0, 0.15)))
 	# lightning out of a storm belt: a sharp crackle and a falling buzz
 	sfx["zap"] = _wav(_mix(_noise(0.45, 0.85, 9.0, 1.0), _sweep(0.3, 1500.0, 260.0, "saw", 11.0, 0.3)))

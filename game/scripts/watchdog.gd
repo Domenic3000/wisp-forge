@@ -1,6 +1,6 @@
 ## Loaded before everything else (an autoload), and kept tiny so it never breaks: in the test mode
 ## (`--test`) it quits the game if the main scene never comes up (a parse error in main.gd would
-## otherwise leave a blank window open for good) or if the whole run goes on past 16 minutes.
+## otherwise leave a blank window open for good) or if the whole run goes on past 19 minutes.
 extends Node
 
 var _t0 := 0
@@ -25,7 +25,7 @@ func _process(_delta: float) -> void:
 		printerr("SCRIPT ERROR: the main scene stopped while starting (a preloaded script failed?); the test run stops")
 		get_tree().quit(1)
 		_on = false
-	elif t > 960.0:
-		printerr("SCRIPT ERROR: the test run went on past 16 minutes; stopped")
+	elif t > 1140.0:
+		printerr("SCRIPT ERROR: the test run went on past 19 minutes; stopped")
 		get_tree().quit(1)
 		_on = false

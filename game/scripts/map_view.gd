@@ -205,6 +205,13 @@ func _draw_space() -> void:
 							_label(csp + Vector2(0, -5), "Comet", Color(0.75, 0.9, 1.0))
 					elif c["type"] == "outpost":
 						pass                          # (drawn with its system, below)
+					elif c["type"] == "station":
+						# (a derelict station in deep space, explored: a block of rooms, dark)
+						var dsp := sp.floor()
+						draw_rect(Rect2(dsp + Vector2(-4, -2), Vector2(9, 4)), Color(0.42, 0.36, 0.55))
+						draw_rect(Rect2(dsp + Vector2(-2, -1), Vector2(2, 2)), Color(0.65, 1.0, 0.45))
+						if gz < 140.0:
+							_label(dsp + Vector2(0, -7), String(c["name"]), Color(0.8, 0.65, 1.0))
 					elif c["type"] == "wreck":
 						# (a little broken hull)
 						var wsp := sp.floor()
@@ -255,6 +262,12 @@ func _draw_space() -> void:
 			draw_rect(Rect2(osp + Vector2(0, -3), Vector2(1, 2)), Color(1.0, 0.5, 0.3))
 			if gz < 900.0:
 				_label(osp + Vector2(0, -7), Galaxy.outpost_name(r) + " · trading post", Color(1.0, 0.85, 0.5))
+			# and its derelict station: a block of rooms, a sick green light in it
+			var dsp2 := to_screen(Galaxy.system_station(r)).floor()
+			draw_rect(Rect2(dsp2 + Vector2(-4, -2), Vector2(9, 4)), Color(0.42, 0.36, 0.55))
+			draw_rect(Rect2(dsp2 + Vector2(-2, -1), Vector2(2, 2)), Color(0.65, 1.0, 0.45))
+			if gz < 900.0:
+				_label(dsp2 + Vector2(0, -7), "Derelict " + Galaxy.station_name(r), Color(0.8, 0.65, 1.0))
 			for k in Defs.SYSTEM.size():
 				var i := r * Defs.SYSTEM.size() + k
 				var psp := to_screen(Defs.planet_g(i))

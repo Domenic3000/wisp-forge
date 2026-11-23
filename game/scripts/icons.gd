@@ -14,7 +14,7 @@ const MAT_STYLE := {
 	18: "orb", 20: "glassy", 21: "speckle", 22: "orb", 23: "shroom", 25: "brick", 26: "pane", 28: "gem", 30: "plank",
 	31: "cactus", 32: "plank", 34: "masonry", 35: "masonry", 36: "masonry", 37: "grass", 39: "torch", 42: "rune",
 	44: "door", 7: "log", 8: "leaf", 49: "log", 50: "ingot", 51: "gem", 52: "pearl", 53: "gem", 54: "ore",
-	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
+	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 61: "gem", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
 }
 
 ## spell glyphs, 11 x 11: "#" the spell's colour, "o" its light, "w" white-hot
@@ -90,6 +90,8 @@ const THINGS := {
 	"cannon": ["cannon", {"i": Color(0.36, 0.4, 0.48), "I": Color(0.6, 0.66, 0.76), "w": Color(0.7, 0.95, 1.0), "b": Color(0.5, 0.32, 0.18)}],
 	"sail": ["sail", {"m": Color(0.5, 0.32, 0.18), "s": Color(0.6, 0.92, 1.0), "b": Color(0.45, 0.3, 0.17)}],
 	"beam": ["lens", {"#": Color(0.3, 0.32, 0.4), "w": Color(0.75, 0.8, 0.9), "c": Color(0.75, 0.5, 1.0), "o": Color(0.85, 0.7, 1.0)}],
+	"scanner": ["lens", {"#": Color(0.25, 0.12, 0.4), "w": Color(0.6, 0.95, 0.4), "c": Color(0.5, 0.25, 0.85), "o": Color(0.75, 1.0, 0.55)}],
+	"part_scanner": ["lens", {"#": Color(0.25, 0.12, 0.4), "w": Color(0.6, 0.95, 0.4), "c": Color(0.5, 0.25, 0.85), "o": Color(0.75, 1.0, 0.55)}],
 	"gear:wispband": ["band", {"#": Color(0.15, 0.25, 0.35), "o": Color(0.5, 0.85, 0.95), "w": Color(1, 1, 1)}],
 	"gear:staredge": ["blade", {"w": Color(0.95, 0.95, 1.0), "o": Color(0.6, 0.65, 0.8), "#": Color(0.85, 0.7, 0.3), "b": Color(0.45, 0.3, 0.18)}],
 	"recipe": ["scroll", {"y": Color(0.75, 0.55, 0.3), "w": Color(0.95, 0.9, 0.75), "k": Color(0.45, 0.35, 0.3)}],

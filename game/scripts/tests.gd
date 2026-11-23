@@ -1423,6 +1423,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_cabin()
+		elif only == "stations":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_stations()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4088,6 +4092,7 @@ func run() -> void:
 	await _test_pirates()
 	await _test_outposts()
 	await _test_cabin()
+	await _test_stations()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
 	g.player.pos = sf_sk.pos
@@ -8039,3 +8044,494 @@ func _test_cabin() -> void:
 		await _frames(10)
 	print("[cabin] " + "\n[cabin] ".join(cb_rows))
 	_ok("building inside the skiff's cabin: blocks, back walls, furniture, taken back, kept", cb_ok, "; ".join(cb_rows))
+
+
+# ------------------------------------------------------------------ derelict stations ---
+## (user, 23 Nov: "Derelict space stations and everything with aliens and such to fight"; "Both, by section")
+func _test_stations() -> void:
+	var rows := []
+	var ok := true
+	var G = load("res://scripts/galaxy.gd")
+	var S = load("res://scripts/station.gd")
+	# ---- where: STATION_D from the first planet, clear of the planets, the outpost and the first wreck
+	var sg0: PackedFloat64Array = G.system_station(0)
+	var hg: PackedFloat64Array = Defs.planet_g(0)
+	var sd0: float = Defs.g_rel(sg0, hg).length()
+	var s_op: float = Defs.g_rel(sg0, G.system_outpost(0)).length()
+	var s_fw: float = Defs.g_rel(sg0, G.first_wreck()).length()
+	var s_in := false
+	for c in G.sector_content(G.sector_of(sg0[0], sg0[1])):
+		if c["type"] == "station":
+			s_in = true
+	var ok1: bool = sd0 > 34000.0 and sd0 < 42000.0 and s_op > 15000.0 and s_fw > 13000.0 and s_in and not G._near_planet_r(sg0[0], sg0[1], G.NEAR_PLANET + 6000.0)
+	rows.append("%s%s: %.0fk from home, %.0fk from the outpost, %.0fk from the first wreck, in its sector's content %s" % ["" if ok1 else "(!) ", G.station_name(0), sd0 / 1000.0, s_op / 1000.0, s_fw / 1000.0, s_in])
+	ok = ok and ok1
+	# ---- grown: every room reached from outside (drifting, with the hatches' one-way floors open), the vault
+	# only once its seal is broken; powered and dead rooms both; aliens and caches in it
+	var n_good := 0
+	var lay_txt := []
+	for q in 10:
+		var sq = S.make_station(7001 + q * 1543)
+		var reach_shut := _station_rooms_reached(sq)
+		sq.open_seal()
+		var reach_open := _station_rooms_reached(sq)
+		var n_pow := 0
+		for md in sq.mods:
+			if md["powered"]:
+				n_pow += 1
+		var all_but_vault := true
+		for k in sq.mods.size():
+			if k != sq.vault and not reach_shut[k]:
+				all_but_vault = false
+		var vault_shut: bool = not reach_shut[sq.vault]
+		var vault_open: bool = reach_open[sq.vault]
+		var has_vc := false
+		for cc2 in sq.caches:
+			if cc2["kind"] == "vault":
+				has_vc = true
+		var n_brood := 0
+		for sp in sq.spawns:
+			if sp["kind"] == "brood":
+				n_brood += 1
+		var good: bool = all_but_vault and vault_shut and vault_open and n_pow >= 2 and n_pow < sq.mods.size() and has_vc and n_brood == 1 and sq.caches.size() >= 3
+		if good:
+			n_good += 1
+		lay_txt.append("%s%dx%d %d rooms (%d powered), %d aliens, %d caches; all reached %s, vault shut %s then open %s" % ["" if good else "(!) ", sq.cols, sq.rows, sq.mods.size(), n_pow, sq.spawns.size(), sq.caches.size(), all_but_vault, vault_shut, vault_open])
+		if q < 3:
+			_station_picture(sq, "station_layout_%d.png" % q)
+	var ok2: bool = n_good == 10
+	rows.append("%s10 stations grown: %d sound. %s" % ["" if ok2 else "(!) ", n_good, " | ".join(lay_txt)])
+	ok = ok and ok2
+	# ---- up into space in the skiff, out to the station
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var up0: Vector2 = sk.pos.normalized()
+	sk.pos = up0 * (Defs.R_SPACE - 11.0)
+	sk.vel = up0 * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	var sl: Vector2 = g.space.local_of(sg0)
+	sk.pos = sl + Vector2(-1400.0, 0.0)
+	sk.vel = Vector2.ZERO
+	var st = null
+	for k1 in 300:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		for a in g.space.rocks:
+			if a.kind == "station":
+				st = a
+		if st != null:
+			break
+	if st == null:
+		_ok("derelict stations: grown, boarded, fought through, looted", false, "; ".join(rows) + "; (!) no station came in with its sector")
+		return
+	var al_n := 0
+	for al in g.space.aliens:
+		if al.st == st:
+			al_n += 1
+	# outside it, by the dock
+	var dm: Dictionary = st.mods[st.dock]
+	var mouth_b := Vector2(float(int(dm["x0"]) - 60) if st.dock_side < 0 else float(int(dm["x1"]) + 60), float(int(dm["y1"]) - 16))
+	sk.pos = st.to_world(mouth_b - st.com) + st.axis_x() * float(st.dock_side) * 40.0
+	sk.vel = Vector2.ZERO
+	g.space.zoom_i = 3
+	await _frames(70)
+	_shot("station_outside.png")
+	g.space.zoom_i = 0
+	await _frames(30)
+	g._skiff_interact(g.player)
+	await _frames(4)
+	sk.pos += st.axis_x() * float(st.dock_side) * 80.0
+	# drifted in through the dock's mouth: inside it now, its floor "down"
+	_st_put(st, mouth_b)
+	g.space.vel = -st.axis_x() * float(st.dock_side) * 1.2
+	var got_in := false
+	for k2 in 120:
+		await _frames(1)
+		if g.space.in_station == st:
+			got_in = true
+			break
+	g.space.vel = Vector2.ZERO
+	await _frames(40)
+	var framed: bool = g.space.frame_st == st and absf(wrapf(g.space.view_ang - (g.cam_c - g.space.centre).angle(), -PI, PI)) < 0.2
+	_shot("station_dock.png")
+	var ok3: bool = got_in and framed and al_n > 0
+	rows.append("%s%s came in with its sector (%d rooms, %d aliens); drifted in through the dock %s, the view levelled with its floor %s" % ["" if ok3 else "(!) ", st.wname, st.mods.size(), al_n, got_in, framed])
+	ok = ok and ok3
+	# ---- a powered room: you fall to its floor, walk, jump, land on a ledge and drop through it
+	var pr := -1
+	var br := -1
+	for k3 in st.mods.size():
+		var role: String = st.mods[k3]["role"]
+		if role == "vault" or role == "nest":
+			continue
+		var plain: bool = role == "quarters" or role == "stores" or role == "hall" or role == "dock"
+		if st.mods[k3]["powered"] and (pr < 0 or plain and not ["quarters", "stores", "hall", "dock"].has(String(st.mods[pr]["role"]))):
+			pr = k3
+		elif not st.mods[k3]["powered"] and br < 0:
+			br = k3
+	var calm := func() -> void:
+		for al2 in g.space.aliens:
+			al2.awake = false
+			al2.cd = 9999
+	var pw_txt := "no powered room"
+	var pw_ok := false
+	if pr >= 0:
+		calm.call()
+		var pm: Dictionary = st.mods[pr]
+		_st_put(st, st.room_mid(pr))
+		await _frames(70)
+		var b1: Vector2 = st.to_body(g.player.pos) + st.com
+		var feet1: float = b1.y + 8.5
+		var on_floor: bool = g.player.on_ground and feet1 < float(int(pm["y1"])) + 0.6 and feet1 > float(int(pm["y1"])) - 7.0
+		g.test_move = 1 if b1.x < st.room_mid(pr).x + 10.0 else -1
+		await _frames(14)
+		g.test_move = 0
+		var b2: Vector2 = st.to_body(g.player.pos) + st.com
+		var walked: float = absf(b2.x - b1.x)
+		await _frames(10)
+		g.test_jump = true
+		var top := b2.y
+		for k4 in 50:
+			await _frames(1)
+			top = minf(top, (st.to_body(g.player.pos) + st.com).y)
+		g.test_jump = false
+		await _frames(60)
+		var b3: Vector2 = st.to_body(g.player.pos) + st.com
+		var rise: float = b2.y - top
+		var landed: bool = g.player.on_ground
+		_shot("station_powered.png")
+		pw_ok = on_floor and walked > 12.0 and rise > 20.0 and landed
+		pw_txt = "%s: fell to the floor %s, walked %.0f cells, jumped %.0f up and landed %s" % [st.role_name(pr), on_floor, walked, rise, landed]
+		# a ledge (a hatch's one-way floor's ledge) in a powered room
+		var ledge = null
+		for k5 in st.mods.size():
+			if not st.mods[k5]["powered"] or ledge != null:
+				continue
+			var lm: Dictionary = st.mods[k5]
+			for j in range(int(lm["y0"]) + 4, int(lm["y1"]) - 4):
+				for i in range(int(lm["x0"]) + 4, int(lm["x1"]) - 4):
+					if ledge == null and st.at(i, j) == Defs.SCAFFOLD and st.at(i + 6, j) == Defs.SCAFFOLD and st.at(i + 12, j) == Defs.SCAFFOLD:
+						ledge = Vector2i(i + 7, j)
+		if ledge != null:
+			_st_put(st, Vector2(float(ledge.x), float(ledge.y) - 8.5 - 3.0))
+			await _frames(50)
+			var b4: Vector2 = st.to_body(g.player.pos) + st.com
+			print("[stations] ledge at %s (room %s), mage at %s, on the ground %s, box free there %s" % [ledge, st.role_name(st.module_at(Vector2(ledge))), b4, g.player.on_ground, st.box_free(b4, 3.5, 8.5)])
+			var on_ledge: bool = g.player.on_ground and absf(b4.y + 8.5 - float(ledge.y)) < 1.0
+			g.test_down = true
+			g.test_jump = true
+			await _frames(6)
+			g.test_jump = false
+			await _frames(14)
+			g.test_down = false
+			var b5: Vector2 = st.to_body(g.player.pos) + st.com
+			var dropped: bool = b5.y + 8.5 > float(ledge.y) + 3.0
+			pw_ok = pw_ok and on_ledge and dropped
+			pw_txt += "; stood on a hatch's ledge %s, dropped through it %s" % [on_ledge, dropped]
+	rows.append("%s%s" % ["" if pw_ok else "(!) ", pw_txt])
+	ok = ok and pw_ok
+	# ---- a dead room: no gravity; the movement keys push you
+	var bk_ok := false
+	var bk_txt := "no dead room"
+	if br >= 0:
+		calm.call()
+		_st_put(st, st.room_mid(br))
+		await _frames(40)
+		var c1: Vector2 = st.to_body(g.player.pos) + st.com
+		var drift: float = c1.distance_to(st.room_mid(br))
+		var floats: bool = not g.player.on_ground and g.player.floating
+		g.test_move = 1
+		await _frames(30)
+		g.test_move = 0
+		var c2: Vector2 = st.to_body(g.player.pos) + st.com
+		g.test_jump = true
+		await _frames(20)
+		g.test_jump = false
+		var c3: Vector2 = st.to_body(g.player.pos) + st.com
+		_shot("station_dead_room.png")
+		bk_ok = drift < 2.0 and floats and c2.x - c1.x > 8.0 and c2.y - c3.y > 3.0
+		bk_txt = "%s: hung where it was put (%.1f cells in 40 frames) floating %s; pushed along %.0f and up %.0f by the jet" % [st.role_name(br), drift, floats, c2.x - c1.x, c2.y - c3.y]
+		g.space.vel = Vector2.ZERO
+	rows.append("%s%s" % ["" if bk_ok else "(!) ", bk_txt])
+	ok = ok and bk_ok
+	# ---- fighting: a spell kills a skitter; a skitter's bite hurts; a drifter spits
+	g.player.known = g.player.known.duplicate()
+	if not g.player.known.has("spark"):
+		g.player.known.append("spark")
+	g.player.sel = g.player.known.find("spark")
+	var sk_al = null
+	var dr_al = null
+	for al3 in g.space.aliens:
+		if al3.st != st or al3.dead:
+			continue
+		if al3.kind == "skitter" and al3.home != st.nest and sk_al == null:
+			sk_al = al3
+		if al3.kind == "drifter" and al3.home != st.nest and dr_al == null:
+			dr_al = al3
+	var fight_ok := false
+	var fight_txt := "no skitter"
+	if sk_al != null:
+		var kills0: int = int(g.space.stats.get("aliens_killed", 0))
+		var xen0: int = g.player.inv[Defs.XENITE]
+		var hp0: float = g.player.hp
+		g.test_god = false
+		sk_al.awake = true
+		sk_al.cd = 9999
+		_st_put(st, _st_spot(st, sk_al))
+		var bit := false
+		for k6 in 150:
+			await _frames(1)
+			if g.player.hp < hp0:
+				bit = true
+				break
+		g.player.hp = g.player.max_hp
+		g.test_god = true
+		_st_put(st, _st_spot(st, sk_al))
+		var shots := 0
+		for k7 in 400:
+			g.test_aim = sk_al.world()
+			g.test_cast = k7 % 4 < 2
+			if g.test_cast and k7 % 4 == 0:
+				shots += 1
+			await _frames(1)
+			if sk_al.dead:
+				break
+			if k7 == 30:
+				_shot("station_fight.png")
+		g.test_cast = false
+		await _frames(10)
+		var killed: bool = sk_al.dead and int(g.space.stats.get("aliens_killed", 0)) > kills0
+		var xen_got: int = g.player.inv[Defs.XENITE] - xen0
+		fight_ok = bit and killed and xen_got > 0
+		fight_txt = "a skitter bit you %s; spark bolts (%d cast, %d hits) killed it %s, %d Xenite" % [bit, shots, int(g.space.stats.get("alien_hits", 0)), killed, xen_got]
+	var spat := false
+	if dr_al != null:
+		calm.call()
+		dr_al.awake = true
+		dr_al.cd = 10
+		_st_put(st, _st_spot(st, dr_al))
+		for k8 in 240:
+			await _frames(1)
+			if not g.space.acid.is_empty():
+				spat = true
+				break
+		if spat:
+			await _frames(6)
+			_shot("station_drifter.png")
+		fight_txt += "; a drifter spat acid %s" % spat
+		fight_ok = fight_ok and spat
+	rows.append("%s%s" % ["" if fight_ok else "(!) ", fight_txt])
+	ok = ok and fight_ok
+	# ---- the nest: the Broodmother lays skitters and spits; she falls; the seal on the vault breaks
+	var brood = null
+	for al4 in g.space.aliens:
+		if al4.st == st and al4.kind == "brood":
+			brood = al4
+	var nest_ok := false
+	var nest_txt := "no Broodmother"
+	if brood != null:
+		calm.call()
+		var seal0: bool = st.seal_open
+		var nm: Dictionary = st.mods[st.nest]
+		_st_put(st, Vector2(float(int(nm["x0"]) + 14), float(int(nm["y1"])) - 10.0))
+		brood.awake = true
+		brood.cd = 30
+		brood.lay_cd = 60
+		var laid0: int = int(g.space.stats.get("laid", 0))
+		for k9 in 160:
+			g.test_aim = brood.world()
+			await _frames(1)
+			if k9 == 100:
+				_shot("station_brood.png")
+		var laid: bool = int(g.space.stats.get("laid", 0)) > laid0
+		brood.hp = 30.0
+		for k10 in 400:
+			g.test_aim = brood.world()
+			g.test_cast = k10 % 4 < 2
+			await _frames(1)
+			if brood.dead:
+				break
+		g.test_cast = false
+		await _frames(20)
+		var sealed_then_open: bool = not seal0 and st.seal_open
+		var cleared := true
+		for sc3 in st.seal_cells:
+			if st.cells[sc3] == Defs.RUNESTONE or st.cells[sc3] == Defs.WISP:
+				cleared = false
+		nest_ok = laid and brood.dead and sealed_then_open and cleared
+		nest_txt = "the Broodmother laid skitters %s, fell %s; the vault's seal was shut and broke %s (its runestone gone %s)" % [laid, brood.dead, sealed_then_open, cleared]
+	rows.append("%s%s" % ["" if nest_ok else "(!) ", nest_txt])
+	ok = ok and nest_ok
+	# ---- the vault: its cache holds a Scanner Lens; the Wisp Scanner can be forged
+	calm.call()
+	var vc = null
+	for vc4 in st.caches:
+		if vc4["kind"] == "vault":
+			vc = vc4
+	var vault_ok := false
+	if vc != null:
+		g.items.erase("part_scanner")
+		g.items.erase("scanner")
+		g.player.pos = st.cache_pos(vc) - st.axis_y() * 6.0 - st.axis_x() * 14.0
+		g.space.vel = Vector2.ZERO
+		await _frames(12)
+		var near_it: bool = g.space.near_cache == vc
+		g._interact()
+		await _frames(10)
+		_shot("station_vault.png")
+		var sc_rec: Dictionary = {}
+		for r2 in g.recipes:
+			if r2["id"] == "scanner":
+				sc_rec = r2
+		vault_ok = near_it and bool(vc["open"]) and g.items.has("part_scanner") and not sc_rec.is_empty() and g.recipe_unlocked(sc_rec)
+		rows.append("%sthe vault's cache in reach %s, opened %s: a Scanner Lens %s, the Wisp Scanner can be forged %s" % ["" if vault_ok else "(!) ", near_it, vc["open"], g.items.has("part_scanner"), not sc_rec.is_empty() and g.recipe_unlocked(sc_rec)])
+	else:
+		rows.append("(!) no vault cache")
+	ok = ok and vault_ok
+	# ---- kept: streamed out and in again, it's as you left it
+	var key := str(st.seed_)
+	var ss: Dictionary = g.space.save_state()
+	var saved: bool = (ss.get("stations", {}) as Dictionary).has(key)
+	var dead_n: int = (g.space.station_state[key]["dead"] as Array).size()
+	var open_n: int = (g.space.station_state[key]["open"] as Array).size()
+	var st2 = S.make_station(st.seed_)
+	st2.pos = st.pos
+	st2.ang = st.ang
+	var alive_before := 0
+	for al5 in g.space.aliens:
+		if al5.st == st and not al5.dead and al5.id >= 0:
+			alive_before += 1
+	g.space._station_out(st)
+	g.space.rocks.erase(st)
+	st2.sect = st.sect
+	g.space.rocks.append(st2)
+	g.space._station_in(st2)
+	var alive_after := 0
+	for al6 in g.space.aliens:
+		if al6.st == st2:
+			alive_after += 1
+	var open2 := 0
+	for oc5 in st2.caches:
+		if oc5["open"]:
+			open2 += 1
+	var kept_ok: bool = saved and st2.seal_open and open2 == open_n and alive_after == alive_before and dead_n > 0
+	rows.append("%skept: in the save %s; grown again with its seal broken %s, %d of its caches open (%d), %d aliens alive (%d before; %d dead kept)" % ["" if kept_ok else "(!) ", saved, st2.seal_open, open2, open_n, alive_after, alive_before, dead_n])
+	ok = ok and kept_ok
+	# the map
+	g.open_map()
+	g.map_view.gz = 300.0
+	g.map_view.centre_on_you()
+	await _frames(10)
+	_shot("station_map.png")
+	g.close_map()
+	await _frames(4)
+	# home again, and down
+	calm.call()
+	g.player.pos = sk.pos
+	g.space.vel = Vector2.ZERO
+	g._skiff_interact(g.player)
+	await _frames(4)
+	sk.pos = g.space.home_at() + (sl - g.space.home_at()).normalized() * (Defs.R_SPACE + 150.0)
+	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0
+	g.test_cast = true
+	for k11 in 600:
+		g.test_aim = g.space.home_at() + (sk.pos - g.space.home_at()) * 0.3
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	for k12 in 1200:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+		await _frames(10)
+	print("[stations] " + "\n[stations] ".join(rows))
+	_ok("derelict stations: grown, boarded, gravity by section, aliens fought, the Broodmother and her vault, kept", ok, "; ".join(rows))
+
+## a spot in an alien's room, on the side of the room away from it (on its floor if it has power)
+func _st_spot(st, al) -> Vector2:
+	var rk: int = st.module_at(al.b)
+	if rk < 0:
+		rk = al.home
+	var rm: Vector2 = st.room_mid(rk)
+	var side := -1.0 if al.b.x > rm.x else 1.0
+	var md: Dictionary = st.mods[rk]
+	var y: float = float(int(md["y1"])) - 9.5 if md["powered"] else rm.y
+	return Vector2(rm.x + side * 28.0, y)
+
+## puts the mage at a point of a station (its cells), still
+func _st_put(st, b: Vector2) -> void:
+	g.player.pos = st.to_world(b - st.com)
+	g.space.vel = Vector2.ZERO
+
+## which of a station's rooms a body the mage's size can drift to from outside (hatches' one-way floors
+## open, as they are with no gravity)
+func _station_rooms_reached(st) -> Array:
+	var saved: PackedByteArray = st.cells.duplicate()
+	for k in st.cells.size():
+		if st.cells[k] == Defs.SCAFFOLD:
+			st.cells[k] = 0
+	var got := _wreck_reach(st, 8.0)
+	st.cells = saved
+	var out := []
+	for md in st.mods:
+		var hit := false
+		for j in range(int(md["y0"]) + 8, int(md["y1"]) - 8, 3):
+			for i in range(int(md["x0"]) + 8, int(md["x1"]) - 8, 3):
+				if got[j * st.w + i] == 1:
+					hit = true
+					break
+			if hit:
+				break
+		out.append(hit)
+	return out
+
+## a picture of a grown station (back layer under its cells), twice size
+func _station_picture(st, file: String) -> void:
+	var img: Image = st.back_texture().get_image().duplicate() as Image
+	img.convert(Image.FORMAT_RGBA8)
+	var front: Image = st.texture().get_image()
+	front.convert(Image.FORMAT_RGBA8)
+	var bgc := Image.create(st.w, st.h, false, Image.FORMAT_RGBA8)
+	bgc.fill(Color(0.02, 0.02, 0.05))
+	bgc.blend_rect(img, Rect2i(0, 0, st.w, st.h), Vector2i.ZERO)
+	bgc.blend_rect(front, Rect2i(0, 0, st.w, st.h), Vector2i.ZERO)
+	for sp in st.spawns:
+		var p: Vector2 = sp["b"]
+		var col := Color(0.6, 1.0, 0.4) if sp["kind"] != "brood" else Color(1.0, 0.3, 0.6)
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var x := int(p.x) + dx
+				var y := int(p.y) + dy
+				if x >= 0 and y >= 0 and x < st.w and y < st.h:
+					bgc.set_pixel(x, y, col)
+	bgc.resize(st.w * 2, st.h * 2, Image.INTERPOLATE_NEAREST)
+	bgc.save_png(g._real_save_dir().path_join("shots").path_join(file))

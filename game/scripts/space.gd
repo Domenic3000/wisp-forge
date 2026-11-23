@@ -29,6 +29,8 @@ const Asteroid := preload("res://scripts/asteroid.gd")
 const Wreck := preload("res://scripts/wreck.gd")
 const Pirate := preload("res://scripts/pirate.gd")
 const Outpost := preload("res://scripts/outpost.gd")
+const Station := preload("res://scripts/station.gd")
+const Alien := preload("res://scripts/alien.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 ## The galaxy (user, 22 Nov: infinite space). Space's origin follows you (`org`: the galaxy point that
@@ -182,6 +184,25 @@ var _hull_warn := 1.0           # (the hull warning given last, so it's said onc
 var near_trader = null          # the outpost whose trader you're beside (F trades), or null
 var docked = null               # the outpost whose hangar the skiff is in, or null
 var near_wreck = null
+# derelict stations (station.gd) and their aliens (alien.gd)
+const STATION_DOWN := 400000.0  # inside a station, "down" is its floor: `centre` is put this far under it
+const ST_JET := 0.085           # a dead room's jet: the movement keys push you (cast casts)
+const ST_JET_MANA := 0.12
+const ST_DRAG := 0.985
+const ALIEN_NEAR := 1400.0      # aliens are ticked while you're this near their station
+var station_state := {}         # a station's seed (String) -> {"open": [cache], "seal": bool, "dead": [alien ids]}
+var aliens := []                # the aliens of the stations out here now
+var acid := []                  # what they spit: [pos, vel, ticks left, damage]
+var sbolts := []                # your spells out here (in a station): {"type", "pos", "vel", "life", "st"}
+var in_station = null           # the station the local mage is inside (its rooms), or null
+var frame_st = null             # the station whose floor is "down" now (you're within its bounds), or null
+var st_room := -1               # (the room you were in last: a note when you come into another)
+var _st_jump := false
+var _st_b := Vector2.ZERO       # (the mage's place in the station's cells last tick, and the world point it was put at:
+var _st_w := Vector2.INF        # kept, so a single float's rounding far out never moves you a hair a tick)
+var _drop_t := 0
+var _st_jobs := []              # stations being grown on a worker thread: [task id, its plan]
+var scan_marks := []            # the Wisp Scanner: [galaxy point, name, colour] of wrecks and stations near you
 
 func _ready() -> void:
 	_mask = Shader.new()
@@ -244,6 +265,10 @@ func try_enter() -> void:
 ## Back into the orbit band: the planet's own physics take over again, and the view eases back in.
 func exit() -> void:
 	shots.clear()
+	acid.clear()
+	sbolts.clear()
+	in_station = null
+	frame_st = null
 	_drop_pirates()
 	var m = game.player
 	var sk = game.skiff
@@ -287,10 +312,16 @@ func tick() -> void:
 	_galaxy(focus)
 	focus = sk.pos if m.aboard != null else m.pos      # (moved over if space's origin just followed you)
 	_find_near(focus)
+	_station_frame(focus)
 	_grow_disc()
 	_ensure_rocks()
 	_stream(focus)
 	_update_rocks()
+	_update_aliens(focus)
+	_update_acid()
+	_update_sbolts()
+	if game.frame % 60 == 11:
+		_scanner_marks()
 	_pirate_chance(focus)
 	_update_pirates()
 	game._mend_skiff(m)
@@ -347,9 +378,19 @@ func tick() -> void:
 			exit()
 		return
 	var up: Vector2 = (m.pos - centre).normalized()
-	vel -= up * pull(m.pos)
 	jetting = false
 	var a := up.angle()
+	if m.cast_cd > 0:
+		m.cast_cd -= 1
+	if not m.input.cast:
+		m.cast_latch = false
+	if in_station != null and not m.dead:
+		_station_move(m, in_station)
+		if m.input.cast and not m.cast_latch:
+			_space_cast(m, in_station)
+		_after_move(m, a)
+		return
+	vel -= up * pull(m.pos)
 	if m.input.cast and m.mana > JET_MANA:
 		var d: Vector2 = m.input.aim - m.pos
 		if d.length() > 1.0:
@@ -381,14 +422,18 @@ func tick() -> void:
 			m.pos += dv / float(ns)
 			if _rock_push(m, close):
 				break
-	if m.input.dig and not m.dead:
-		mine(m)
-	_wreck_near(m)
-	_trader_near(m)
 	m.vx = vel.dot(game.basis_r(a))
 	m.vy = vel.dot(game.basis_d(a))
 	m.on_ground = false
 	m.floating = true
+	_after_move(m, a)
+
+## on foot out here, after moving (in open space or in a station): digging, what's near, mana and breath
+func _after_move(m, _a: float) -> void:
+	if m.input.dig and not m.dead:
+		mine(m)
+	_wreck_near(m)
+	_trader_near(m)
 	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
 	m.breath = minf(m.max_breath, m.breath + 4.0)       # (inside the wisp bubble)
 	if m.iframes > 0:
@@ -538,7 +583,7 @@ func _maybe_travel(p: Vector2) -> void:
 	if near.is_empty() or game.travelling or target >= 0 or int(near["index"]) == home or not reachable(int(near["index"])):
 		return
 	# (and close to it: far out in the dark, which planet is "nearer" means nothing, and making one is work)
-	var dn := (p - centre).length()
+	var dn := (p - (near["pos"] as Vector2)).length()
 	if dn < NEARER * (p - home_at()).length() and dn < TRAVEL_R:
 		travel(int(near["index"]))
 
@@ -590,6 +635,7 @@ func _reanchor(d: Vector2) -> void:
 
 ## Moves everything out here by `d`, and space's origin with it (the galaxy doesn't move: `org` does).
 func _shift(d: Vector2) -> void:
+	_st_w = Vector2.INF
 	for m in game.players:
 		m.pos += d
 		m.grid_g = m.pos
@@ -618,6 +664,10 @@ func _shift(d: Vector2) -> void:
 		sh[0] = (sh[0] as Vector2) + d
 	for fs in foe_shots:
 		fs[0] = (fs[0] as Vector2) + d
+	for ac in acid:
+		ac[0] = (ac[0] as Vector2) + d
+	for sb in sbolts:
+		sb["pos"] = (sb["pos"] as Vector2) + d
 	org[0] -= d.x
 	org[1] -= d.y
 	stats["recentred"] += 1
@@ -676,13 +726,15 @@ func _galaxy(focus: Vector2) -> void:
 
 ## what you see round you goes on the map: the sectors within SCAN_R, and a system once you're near it
 func _scan(g: PackedFloat64Array) -> void:
-	var r := Galaxy.SCAN_R
+	# (the Wisp Scanner sees three times as far, and charts systems from farther off)
+	var scanner: bool = game.items.has("scanner")
+	var r := Galaxy.SCAN_R * (3.0 if scanner else 1.0)
 	var s0 := Galaxy.sector_of(g[0] - r, g[1] - r)
 	var s1 := Galaxy.sector_of(g[0] + r, g[1] + r)
 	for sy in range(s0.y, s1.y + 1):
 		for sx in range(s0.x, s1.x + 1):
 			seen[Galaxy.key_of(Vector2i(sx, sy))] = true
-	for sr in Galaxy.systems_near(g[0], g[1], Galaxy.CHART_R):
+	for sr in Galaxy.systems_near(g[0], g[1], Galaxy.CHART_R * (1.6 if scanner else 1.0)):
 		if not charted.has(sr):
 			charted[sr] = true
 			game.ui.toast("Charted: the %s system" % Galaxy.star_name(sr), Galaxy.star_col(sr), 3.5)
@@ -741,10 +793,24 @@ func _stream(focus: Vector2) -> void:
 			var s2: Vector2i = _loaded[key2]
 			if absi(s2.x - sc.x) > LOAD_R + 1 or absi(s2.y - sc.y) > LOAD_R + 1:
 				_unload_sector(key2)
+	# a station grown on a worker thread (it's ten times a wreck): in when it's done
+	for k in range(_st_jobs.size() - 1, -1, -1):
+		var job: Array = _st_jobs[k]
+		if WorkerThreadPool.is_task_completed(int(job[0])):
+			WorkerThreadPool.wait_for_task_completion(int(job[0]))
+			_st_jobs.remove_at(k)
+			var jp: Dictionary = job[1]
+			if _loaded.has(String(jp["sect"])) and jp.has("made"):
+				_place_rock(jp["made"], jp)
 	# one rock a tick, so a sector coming in never stalls a frame
 	if not _sect_plan.is_empty():
 		var pl: Dictionary = _sect_plan.pop_front()
 		if not _loaded.has(String(pl["sect"])):
+			return
+		if String(pl.get("kind", "")) == "station" and not pl.has("save"):
+			var sdd := int(pl["seed"])
+			var tid := WorkerThreadPool.add_task(func() -> void: pl["made"] = Station.make_station(sdd))
+			_st_jobs.append([tid, pl])
 			return
 		var a
 		if pl.has("save"):
@@ -758,19 +824,26 @@ func _stream(focus: Vector2) -> void:
 				"scrap": a = Wreck.scrap(int(pl["seed"]), float(pl["r"]))
 				"outpost": a = Outpost.make_outpost(int(pl["seed"]))
 				_: a = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
-			a.vel = pl["vel"]
-		a.sect = String(pl["sect"])
-		a.pos = local_of(pl["g"])
-		if a.kind == "outpost":
-			# (an outpost stands level over the planet the view turns to: its floors are floors)
-			var oup: Vector2 = (a.pos - centre).normalized() if not near.is_empty() else Vector2.from_angle(view_ang)
-			a.ang = Vector2(oup.y, -oup.x).angle()
-		if pl.has("orbit") and not (pl["orbit"] as Dictionary).is_empty():
-			a.orbit = pl["orbit"]
-			a.loop_at = pl["at"]
-			a.pos = local_of(_g_add(Galaxy.sector_g(_loaded[a.sect]), a.loop_at + Galaxy.comet_at(a.orbit, game.time)))
-		rocks.append(a)
-		stats["rocks_made"] += 1
+		_place_rock(a, pl)
+
+## a rock (asteroid, wreck, outpost, station) made for a sector: placed out here, and in
+func _place_rock(a, pl: Dictionary) -> void:
+	if not pl.has("save"):
+		a.vel = pl["vel"]
+	a.sect = String(pl["sect"])
+	a.pos = local_of(pl["g"])
+	if a.kind == "station":
+		_station_in(a)
+	if a.kind == "outpost" or a.kind == "station":
+		# (an outpost stands level over the planet the view turns to: its floors are floors)
+		var oup: Vector2 = (a.pos - centre).normalized() if not near.is_empty() else Vector2.from_angle(view_ang)
+		a.ang = Vector2(oup.y, -oup.x).angle()
+	if pl.has("orbit") and not (pl["orbit"] as Dictionary).is_empty():
+		a.orbit = pl["orbit"]
+		a.loop_at = pl["at"]
+		a.pos = local_of(_g_add(Galaxy.sector_g(_loaded[a.sect]), a.loop_at + Galaxy.comet_at(a.orbit, game.time)))
+	rocks.append(a)
+	stats["rocks_made"] += 1
 
 ## a rock back from its save: a wreck if it was one
 func _rock_from_save(d: Dictionary) -> RefCounted:
@@ -806,6 +879,10 @@ func _unload_sector(key: String) -> void:
 		var a = rocks[k]
 		if a.sect != key:
 			continue
+		if a.kind == "station" or a.kind == "outpost":
+			_station_out(a)
+			rocks.remove_at(k)
+			continue                       # (grown again as it was: a station's changes are in station_state)
 		any = any or a.touched
 		keep.append(_rock_save(a, sg))
 		rocks.remove_at(k)
@@ -832,13 +909,13 @@ func save_state() -> Dictionary:
 		var keep := []
 		var any := false
 		for a in rocks:
-			if a.sect == key:
+			if a.sect == key and a.kind != "station" and a.kind != "outpost":
 				any = any or a.touched
 				keep.append(_rock_save(a, sg))
 		if any:
 			ss[key] = keep
 	return {"seen": seen.keys(), "charted": charted.keys(), "waypoint": null if waypoint == null else [waypoint[0], waypoint[1]],
-		"sectors": ss}
+		"sectors": ss, "stations": station_state}
 
 func load_state(d: Dictionary) -> void:
 	seen.clear()
@@ -853,6 +930,8 @@ func load_state(d: Dictionary) -> void:
 	var ss = d.get("sectors", {})
 	if ss is Dictionary:
 		sect_state = ss
+	var sts = d.get("stations", {})
+	station_state = sts if sts is Dictionary else {}
 	# (a new game: what's round the home planet)
 	var hs := Defs.planet_g(0)
 	_scan_quiet(hs)
@@ -1078,6 +1157,12 @@ func _draw() -> void:
 	if near_sys >= 0:
 		var opl: Vector2 = game.cam_c + Defs.g_rel(Galaxy.system_outpost(near_sys), galaxy_of(game.cam_c))
 		_marker(xf, opl, 120.0, Galaxy.outpost_name(near_sys) + " · trading post", Color(1.0, 0.82, 0.45))
+		# and its derelict station
+		if frame_st == null:
+			var stl: Vector2 = game.cam_c + Defs.g_rel(Galaxy.system_station(near_sys), galaxy_of(game.cam_c))
+			_marker(xf, stl, 200.0, "Derelict " + Galaxy.station_name(near_sys), Color(0.75, 0.55, 1.0))
+	for smk in scan_marks:
+		_marker(xf, game.cam_c + Defs.g_rel(smk[0], galaxy_of(game.cam_c)), 100.0, String(smk[1]), smk[2])
 	for pa in rocks:
 		if pa.kind == "pirate":
 			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4))
@@ -1092,7 +1177,7 @@ func _draw() -> void:
 		draw_arc(ssp, 34.0, 0.0, TAU, 40, Color(0.6, 0.9, 1.0, 0.25 * sa), 2.0)
 		draw_arc(ssp, 30.0, 0.0, TAU, 40, Color(0.85, 1.0, 1.0, 0.35 * sa), 1.0)
 	# you, in your wisp bubble (drawn by the overlay; the bubble here, under the sprite)
-	if game.player.aboard == null:
+	if game.player.aboard == null and not (in_station != null and in_station.powered_at(in_station.to_body(game.player.pos) + in_station.com)):
 		var ms: Vector2 = xf * game.player.pos
 		draw_arc(ms, 11.0, 0.0, TAU, 28, Color(0.55, 0.85, 1.0, 0.35 if jetting else 0.22), 1.0)
 	# the Prospector's Beam
@@ -1472,7 +1557,7 @@ func _comet_tail(a) -> void:
 
 ## A rock cut through: its smaller pieces drift off as rocks of their own, scraps crumble to dust.
 func _split(a) -> void:
-	if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost":
+	if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
 		return                             # (a wreck holds together: its caches are in its cells)
 	var pcs: Array = a.pieces()
 	if pcs.size() <= 1 and (pcs.is_empty() or pcs[0].size() >= ROCK_SCRAP):
@@ -1551,7 +1636,7 @@ func nearest_rock(p: Vector2, within := 900.0) -> Variant:
 	var best = null
 	var bd := within
 	for a in rocks:
-		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
 			continue
 		var d: float = (a.pos - p).length() - a.reach()
 		if d < bd:
@@ -1597,7 +1682,7 @@ func _rock_push(m, close: Array) -> bool:
 			continue
 		touched = true
 		var n: Vector2 = (m.pos - a.pos).normalized()
-		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
 			# (a hull has rooms inside: out the shortest way, never "away from its middle", which would
 			# push you on through the wall you touched from inside)
 			var out := _shortest_out(m, a, pts, rr, dd)
@@ -1692,9 +1777,9 @@ func _draw_rocks(xf: Transform2D) -> void:
 		sm.set_shader_parameter("sun", Vector2(sun.dot(ax), sun.dot(ay)).normalized())
 		sm.set_shader_parameter("ctr", a.com)
 		sm.set_shader_parameter("rad", a.rad * 1.2)
-		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" else 0.0)
+		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station" else 0.0)
 		spr2.modulate = Color(1.6, 1.3, 1.3) if a.kind == "pirate" and a.hit_t > 0 else Color.WHITE
-		if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost":
+		if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost" or a.kind == "station":
 			bk.visible = true
 			bk.texture = a.back_texture()
 			bk.transform = spr2.transform
@@ -1705,10 +1790,10 @@ func _draw_rocks(xf: Transform2D) -> void:
 ## reach, if there is one (F opens it: `wreck_interact`).
 func _wreck_near(m) -> void:
 	for a in _rocks_near(m.pos, 4.0):
-		if a.kind != "wreck":
+		if a.kind != "wreck" and a.kind != "station":
 			continue
 		var b: Vector2 = a.to_body(m.pos) + a.com
-		var inside: bool = b.x > 0.0 and b.y > 0.0 and b.x < float(a.w) and b.y < float(a.h) and int(a.bg[int(b.y) * a.w + int(b.x)]) != 0
+		var inside: bool = a.kind == "wreck" and b.x > 0.0 and b.y > 0.0 and b.x < float(a.w) and b.y < float(a.h) and int(a.bg[int(b.y) * a.w + int(b.x)]) != 0
 		if inside and not a.visited:
 			a.visited = true
 			a.touched = true
@@ -1735,6 +1820,8 @@ func wreck_interact(m) -> bool:
 	var c: Dictionary = near_cache
 	wk.open_cache(c)
 	stats["caches"] += 1
+	if wk.kind == "station":
+		(_st_state(wk)["open"] as Array).append(wk.caches.find(c))
 	var cp: Vector2 = wk.cache_pos(c)
 	game.audio.play("chest_open", cp, 0.9)
 	for k in 26:
@@ -1781,6 +1868,58 @@ func _loot(m, wk, c: Dictionary) -> void:
 			if randf() < 0.4:
 				game._chest_recipe(3)
 			game.ui.toast("The captain's log: %s" % wk.fate, Color(0.75, 0.9, 0.85), 4.0)
+		"vault":
+			# (a derelict station's vault, past the Broodmother: its crew's best)
+			var vc := randi_range(120, 220)
+			it["coins"] = int(it.get("coins", 0)) + vc
+			got.append("%d coins" % vc)
+			give.call(Defs.STARIRON, randi_range(6, 10))
+			give.call(Defs.WISPBAR, randi_range(4, 8))
+			give.call(Defs.XENITE, randi_range(6, 10))
+			if not it.has("part_scanner") and not it.has("scanner"):
+				it["part_scanner"] = 1
+				game.ui.toast("A Scanner Lens! The Wisp Forge can build it into a Wisp Scanner for your skiff (Travel)", Color(0.8, 1.0, 0.6), 5.0)
+				game.audio.play("rare", null, 0.9)
+			_star_chart()
+			game._chest_recipe(3)
+			it["potion"] = int(it.get("potion", 0)) + 1
+			got.append("a Healing Draught")
+		"nest":
+			give.call(Defs.XENITE, randi_range(6, 12))
+			if randf() < 0.5:
+				give.call(Defs.CRYSTAL, randi_range(2, 5))
+			var nc := randi_range(20, 50)
+			it["coins"] = int(it.get("coins", 0)) + nc
+			got.append("%d coins (a lost crewman's)" % nc)
+		"lab":
+			give.call(Defs.XENITE, randi_range(2, 5))
+			give.call(Defs.CRYSTAL, randi_range(2, 4))
+			give.call(Defs.GLASS, randi_range(4, 8))
+			if randf() < 0.4:
+				game._chest_recipe(2)
+			if randf() < 0.35:
+				it["potion"] = int(it.get("potion", 0)) + 1
+				got.append("a Healing Draught")
+		"quarters":
+			var qc := randi_range(15, 45)
+			it["coins"] = int(it.get("coins", 0)) + qc
+			got.append("%d coins" % qc)
+			if randf() < 0.4:
+				it["potion"] = int(it.get("potion", 0)) + 1
+				got.append("a Healing Draught")
+			if randf() < 0.3:
+				_star_chart()
+			give.call(Defs.PLANK, randi_range(4, 10))
+		"stores":
+			give.call(Defs.HULL, randi_range(8, 16))
+			give.call(Defs.COPPERBAR, randi_range(3, 6))
+			if randf() < 0.6:
+				give.call(Defs.WISPBAR, randi_range(2, 4))
+			if randf() < 0.35:
+				give.call(Defs.STARIRON, randi_range(1, 3))
+			var sc := randi_range(10, 30)
+			it["coins"] = int(it.get("coins", 0)) + sc
+			got.append("%d coins" % sc)
 		"pirate":
 			# (a pirate's strongbox: their takings)
 			var pc := randi_range(45, 110)
@@ -1896,7 +2035,7 @@ func _blast_rocks(p: Vector2, r: float) -> void:
 					game._particle(a.cell_world(i, j), a.vel + Vector2(randf() - 0.5, randf() - 0.5) * 1.2, 30 + randi() % 30,
 						Color.hex((Defs.PAL[t * 4 + (int(a.vars[ck]) & 3)] << 8) | 0xff), false, 0.0)
 				a.take(ck)
-		if a.kind != "outpost":
+		if a.kind != "outpost" and a.kind != "station":
 			a.vel += (a.pos - p).normalized() * 0.02 / maxf(1.0, a.mass / 400.0)
 	_mining = 0
 	game.vfx.blast(p, 6.0, 2)
@@ -1942,6 +2081,7 @@ func _draw_top() -> void:
 		var bw := 30.0
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.04, 0.8))
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(pa.hp / pa.hp_max, 0.0, 1.0), 2.0)), Color(1.0, 0.35, 0.3))
+	_draw_aliens(xf)
 	# the outposts' traders behind their counters, and each outpost's name over it
 	var zs: float = minf(float(game.zoom), 4.0)
 	for oa in rocks:
@@ -2331,6 +2471,10 @@ func reset_after_death() -> void:
 		org = Defs.planet_g(home)
 	_drop_pirates()
 	shots.clear()
+	acid.clear()
+	sbolts.clear()
+	in_station = null
+	frame_st = null
 	bolts.clear()
 	belt = 0.0
 	beam_to = null
@@ -2425,3 +2569,546 @@ func _top_text(at: Vector2, txt: String, col: Color) -> void:
 	_top.draw_string(f2, Vector2(-wd * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
 	_top.draw_string(f2, Vector2(-wd * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, col)
 	_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+# ------------------------------------------------------- derelict stations ---
+# (user, 23 Nov: "much bigger more complex outposts ... Derelict space stations and everything with aliens
+# and such to fight"; inside, "Both, by section": a powered room keeps its gravity, a dead one has none)
+
+## a station streamed in: what changed in it before, and the aliens still living in it
+func _station_in(st) -> void:
+	var sd: Dictionary = station_state.get(str(st.seed_), {})
+	st.apply_state(sd)
+	var dead := {}
+	for d in sd.get("dead", []):
+		dead[int(d)] = true
+	for sp in st.spawns:
+		if dead.has(int(sp["id"])):
+			continue
+		aliens.append(Alien.make(String(sp["kind"]), st, sp["b"], int(sp["id"]), int(sp["mod"])))
+
+## a station streamed out: its aliens go with it (they're grown again with it)
+func _station_out(st) -> void:
+	for k in range(aliens.size() - 1, -1, -1):
+		if aliens[k].st == st:
+			aliens.remove_at(k)
+	for k2 in range(sbolts.size() - 1, -1, -1):
+		if sbolts[k2]["st"] == st:
+			sbolts.remove_at(k2)
+	if in_station == st:
+		in_station = null
+	if frame_st == st:
+		frame_st = null
+
+func _st_state(st) -> Dictionary:
+	var key := str(st.seed_)
+	if not station_state.has(key):
+		station_state[key] = {"open": [], "seal": false, "dead": []}
+	return station_state[key]
+
+## Near a station (within its bounds) its floor is "down": `centre` goes far under it, so the view, your
+## upright pose and the skiff all level with it. Inside its rooms on foot (`in_station`), you move by its
+## rules (`_station_move`) and your spells are cast (`_space_cast`).
+func _station_frame(focus: Vector2) -> void:
+	frame_st = null
+	in_station = null
+	var m = game.player
+	for a in _rocks_near(focus, 40.0):
+		if a.kind != "station":
+			continue
+		var b: Vector2 = a.to_body(focus) + a.com
+		if b.x < -30.0 or b.y < -30.0 or b.x > float(a.w) + 30.0 or b.y > float(a.h) + 30.0:
+			continue
+		frame_st = a
+		if m.aboard == null and not m.dead and a.inside(b):
+			in_station = a
+			if not a.visited:
+				a.visited = true
+				game.ui.toast("Aboard %s, a derelict. %s" % [a.wname, a.fate], Color(0.8, 0.7, 1.0), 5.0)
+				game.audio.play("creak", m.pos, 0.8)
+			var rk: int = a.module_at(b)
+			if rk >= 0 and rk != st_room:
+				st_room = rk
+				var pw: bool = a.mods[rk]["powered"]
+				game.ui.toast("%s · %s" % [a.role_name(rk), "its gravity holds" if pw else "no gravity: the movement keys push you"],
+					Color(0.85, 0.8, 1.0) if pw else Color(0.6, 0.75, 0.9), 2.0)
+		break
+	if in_station == null:
+		st_room = -1
+	if frame_st != null:
+		centre = frame_st.pos + frame_st.axis_y() * STATION_DOWN
+
+## On foot in a station, in its own cells: a powered room pulls you to its floor (walk, jump, drop down
+## through a hatch's floor with down + jump, step up onto a ledge like on a planet); a dead room has no
+## gravity, and the movement keys push you by the staff's jet (the cast button casts).
+func _station_move(m, st) -> void:
+	var ax: Vector2 = st.axis_x()
+	var ay: Vector2 = st.axis_y()
+	var b: Vector2 = _st_b if m.pos == _st_w else st.to_body(m.pos) + st.com
+	var bv := Vector2(vel.dot(ax), vel.dot(ay))
+	var hw := float(m.w) * 0.5
+	var hh := float(m.h) * 0.5
+	var pw: bool = st.powered_at(b)
+	var face: float = (m.input.aim - m.pos).dot(ax)
+	if absf(face) > 1.0:
+		m.facing = 1 if face > 0.0 else -1
+	var jump: bool = m.input.jump
+	if _drop_t > 0:
+		_drop_t -= 1
+	jetting = false
+	if pw:
+		var speed: float = 1.5 * game.gear("speed", m) * (1.2 if m.items.has("coil") else 1.0)
+		bv.x += (float(m.input.move) * speed - bv.x) * (0.35 if m.on_ground else 0.12)
+		if m.on_ground:
+			m.ground_t = 0
+		else:
+			m.ground_t += 1
+		if jump and not _st_jump:
+			if m.input.down and _on_platform(st, b, hw, hh):
+				_drop_t = 12
+				bv.y = maxf(bv.y, 1.0)
+			elif m.ground_t <= 6:
+				bv.y = (-4.6 if m.items.has("boots") else -3.9) * sqrt(game.gear("jump", m))
+				game.audio.play("jump", m.pos, 0.6)
+				m.ground_t = 99
+		bv.y = minf(bv.y + Alien.G, 6.0)
+		m.floating = false
+	else:
+		var want := Vector2(float(m.input.move), (1.0 if m.input.down else 0.0) - (1.0 if jump else 0.0))
+		if want != Vector2.ZERO and m.mana > ST_JET_MANA:
+			var dirb := want.normalized()
+			bv += dirb * ST_JET
+			m.mana -= ST_JET_MANA
+			jetting = true
+			var dw: Vector2 = ax * dirb.x + ay * dirb.y
+			if game.frame % 2 == 0:
+				game._particle(m.pos - dw * 4.0 + Vector2(randf() - 0.5, randf() - 0.5) * 3.0, -dw * (0.4 + randf() * 0.6) + vel,
+					12 + randi() % 8, Color8(140, 220, 255), true, 0.0)
+		bv *= ST_DRAG
+		bv = bv.limit_length(4.5)
+		m.floating = true
+	var was_ground: bool = m.on_ground
+	var r: Array = st.move_box(b, bv, hw, hh, pw, 5 if (pw and m.on_ground) else 0, _drop_t > 0)
+	b = r[0]
+	bv = r[1]
+	m.on_ground = bool(r[2]) and pw
+	if m.on_ground and not was_ground and m.air_time > 18:
+		game.audio.play("land", m.pos, clampf(float(m.air_time) / 60.0, 0.3, 1.0))
+	m.air_time = 0 if m.on_ground else m.air_time + 1
+	if m.on_ground:
+		var a0: float = m.anim
+		m.anim += absf(bv.x) * 0.13
+		if int(m.anim * 0.5) != int(a0 * 0.5):
+			game.audio.play("step", m.pos, 0.3)
+	_st_jump = jump
+	m.pos = st.to_world(b - st.com)
+	_st_b = b
+	_st_w = m.pos
+	vel = ax * bv.x + ay * bv.y
+	m.vx = bv.x
+	m.vy = bv.y
+	m.in_liquid = false
+
+func _on_platform(st, b: Vector2, hw: float, hh: float) -> bool:
+	var fy := int(round(b.y + hh))
+	for i in range(int(floor(b.x - hw)), int(ceil(b.x + hw))):
+		if st.scaffold_cell(i, fy):
+			return true
+	return false
+
+## Your spell, cast in a station: the same spell and look as on a planet, its bolt flying through the
+## station's rooms (a powered room's pull bends a fireball's arc), hurting the aliens it meets. Mending heals
+## as ever; Blink steps through the rooms; Conjure has no ground to draw from.
+func _space_cast(m, st) -> void:
+	if m.known.is_empty():
+		return
+	m.sel = clampi(m.sel, 0, m.known.size() - 1)
+	var id: String = m.known[m.sel]
+	var s: Dictionary = Defs.SPELLS[id]
+	var cost: float = float(s["mana"]) * game.gear("mana_cost", m)
+	if m.cast_cd > 0 or m.mana < cost:
+		return
+	match id:
+		"mend":
+			game._cast(m, id, m.input.aim)
+			return
+		"conjure":
+			m.cast_latch = true
+			m.cast_cd = 30
+			game.ui.toast("Conjure needs ground to draw from: there's none out here", Color(0.7, 0.8, 1.0), 1.6)
+			game.vfx.fizzle(m.input.aim)
+			return
+		"blink":
+			if _st_blink(m, st):
+				game.audio.play("blink", m.pos)
+				m.mana -= cost
+				m.cast_cd = int(s["cd"])
+				m.cast_frame = game.frame
+			return
+	if not Defs.PROJ.has(id):
+		return
+	m.cast_frame = game.frame
+	m.cast_latch = bool(s.get("single", false))
+	m.mana -= cost
+	m.cast_cd = int(s["cd"])
+	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
+	game.audio.play(snd.get(id, "spark"), m.pos, 0.8)
+	var hand: Vector2 = m.pos + st.axis_x() * (float(m.facing) * 6.0) - st.axis_y() * 0.5
+	var dir: Vector2 = (m.input.aim - hand).normalized()
+	if dir == Vector2.ZERO:
+		dir = st.axis_x() * float(m.facing)
+	var pd: Dictionary = Defs.PROJ[id]
+	var at: Vector2 = hand + dir * 10.0
+	sbolts.append({"type": id, "pos": at, "vel": dir * float(pd["speed"]), "life": int(pd["life"]), "st": st, "owner": "player"})
+	game.vfx.cast(id, at, dir, m)
+	stats["spells"] = int(stats.get("spells", 0)) + 1
+
+## Blink through the rooms: to the cursor (up to 48 cells), or the last clear spot inside on the way
+func _st_blink(m, st) -> bool:
+	var b0: Vector2 = st.to_body(m.pos) + st.com
+	var d: Vector2 = st.to_body(m.input.aim) + st.com - b0
+	if d.length() > 48.0:
+		d = d.normalized() * 48.0
+	var n := int(d.length())
+	for k in range(n, 3, -1):
+		var tb := b0 + d * (float(k) / float(n))
+		if st.inside(tb) and st.box_free(tb, float(m.w) * 0.5, float(m.h) * 0.5):
+			var to: Vector2 = st.to_world(tb - st.com)
+			game.vfx.blink(m.pos, to)
+			m.pos = to
+			vel = Vector2.ZERO
+			return true
+	return false
+
+## your spells in flight out here
+func _update_sbolts() -> void:
+	for k in range(sbolts.size() - 1, -1, -1):
+		var pr: Dictionary = sbolts[k]
+		var pd: Dictionary = Defs.PROJ[pr["type"]]
+		var st = pr["st"]
+		var p: Vector2 = pr["pos"]
+		var v: Vector2 = pr["vel"]
+		if st != null and st.powered_at(st.to_body(p) + st.com):
+			v += st.axis_y() * float(pd["g"])
+		pr["life"] = int(pr["life"]) - 1
+		var steps := maxi(1, int(ceil(v.length() * 2.0)))
+		var hit := false
+		var hit_a = null
+		for q in steps:
+			p += v / float(steps)
+			if _bolt_blocked(p):
+				hit = true
+				break
+			hit_a = _alien_at(p)
+			if hit_a != null:
+				hit = true
+				break
+		pr["pos"] = p
+		pr["vel"] = v
+		if hit or int(pr["life"]) <= 0:
+			_sbolt_impact(pr, hit, hit_a)
+			sbolts.remove_at(k)
+			continue
+		game.vfx.trail(pr)
+
+## is p in a solid cell of anything out here (a scaffold is no wall to a bolt)?
+func _bolt_blocked(p: Vector2) -> bool:
+	for a in _rocks_near(p, 2.0):
+		var bb: Vector2 = a.to_body(p) + a.com
+		var t: int = a.at(int(floor(bb.x)), int(floor(bb.y)))
+		if t != 0 and t != Defs.SCAFFOLD:
+			return true
+	return false
+
+func _alien_at(p: Vector2) -> Variant:
+	for al in aliens:
+		if al.dead:
+			continue
+		var bb: Vector2 = al.st.to_body(p) + al.st.com
+		if al.touches(bb, 1.0, 1.0):
+			return al
+	return null
+
+func _sbolt_impact(pr: Dictionary, hit: bool, al) -> void:
+	var p: Vector2 = pr["pos"]
+	var type: String = pr["type"]
+	var pd: Dictionary = Defs.PROJ[type]
+	match type:
+		"mote":
+			if al != null:
+				_hurt_alien(al, float(pd["dmg"]), p, 0.6)
+		"spark":
+			if al != null:
+				_hurt_alien(al, float(pd["dmg"]) * game.gear("spell_spark"), p, 1.0)
+				if game.items.has("rimefang"):
+					al.slow = maxi(al.slow, 150)
+		"frost":
+			var rk: float = game.gear("spell_frost")
+			for o in aliens:
+				if not o.dead and o.world().distance_to(p) < 13.0 * rk + o.hw:
+					o.slow = int(200.0 * rk)
+			if al != null:
+				_hurt_alien(al, float(pd["dmg"]) * rk, p, 0.8)
+		"tide":
+			if al != null:
+				_hurt_alien(al, float(pd["dmg"]), p, 2.4)
+		"fireball":
+			var fk: float = game.gear("spell_fireball")
+			_alien_blast(p, 10.0 * fk, 38.0 * fk)
+			game.vfx.blast(p, 10.0 * fk, 1)
+		"quake":
+			_alien_blast(p, 22.0, 70.0)
+			game.vfx.blast(p, 22.0, 2)
+		"starfall":
+			_alien_blast(p, 17.0, 80.0)
+			game.vfx.blast(p, 17.0, 1)
+	game.vfx.impact(type, p, hit)
+
+## a blast out here: every alien within r of p takes it (less toward the edge)
+func _alien_blast(p: Vector2, r: float, dmg: float) -> void:
+	game.audio.play("boom", p, clampf(r / 14.0, 0.4, 1.2), 1.3 - clampf(r / 40.0, 0.0, 0.5))
+	game.shake = maxf(game.shake, r * 0.25)
+	for al in aliens:
+		if al.dead:
+			continue
+		var d: float = maxf(0.0, al.world().distance_to(p) - maxf(al.hw, al.hh))
+		if d < r:
+			_hurt_alien(al, dmg * (1.0 - 0.5 * d / r), p, 1.6)
+
+## an alien hurt: it flashes, is knocked back (not the Broodmother), wakes its room, and dies at 0
+func _hurt_alien(al, dmg: float, p: Vector2, kb: float) -> void:
+	if al.dead:
+		return
+	al.hp -= dmg
+	al.hit_t = 8
+	al.awake = true
+	stats["alien_hits"] = int(stats.get("alien_hits", 0)) + 1
+	if al.kind != "brood":
+		var away: Vector2 = al.world() - p
+		if away.length() > 0.01:
+			away = away.normalized()
+			var kbb := Vector2(away.dot(al.st.axis_x()), away.dot(al.st.axis_y()))
+			al.v += kbb * kb * (0.35 if al.kind == "brute" else 1.0)
+	game.audio.play("hit", p, 0.6)
+	alien_wake(al)
+	if al.hp <= 0.0:
+		_kill_alien(al)
+
+func _kill_alien(al) -> void:
+	al.dead = true
+	var wp: Vector2 = al.world()
+	var xr: Array = al.spec()["xen"]
+	var n := randi_range(int(xr[0]), int(xr[1]))
+	var m = game.player
+	m.inv[Defs.XENITE] += n
+	stats["aliens_killed"] = int(stats.get("aliens_killed", 0)) + 1
+	game.audio.play("foe_die", wp, 0.9)
+	for k in 18 + int(al.hw) * 2:
+		game.vfx.spawn(Vfx.DOT, wp + Vector2(randf() - 0.5, randf() - 0.5) * al.hw, Vector2.from_angle(randf() * TAU) * randf_range(0.3, 1.6),
+			24 + randi() % 30, Alien.C_GLOW2, Color(Alien.C_MID.r, Alien.C_MID.g, Alien.C_MID.b, 0.0), 1.5, 0.5, true, 0.0, 0.94)
+	game.vfx.spawn(Vfx.GLOW, wp, Vector2.ZERO, 20, Color(0.7, 1.0, 0.45, 0.8), Color(0.4, 0.2, 0.7, 0.0), 6.0, 6.0 + al.hw)
+	for k2 in mini(n, 8):
+		game.parts.append({"pos": wp + Vector2(randf() - 0.5, randf() - 0.5) * 6.0, "vel": Vector2(randf() - 0.5, randf() - 0.5) * 1.5,
+			"life": 70, "col": Defs.COLOR[Defs.XENITE], "self": true, "grav": 0.0, "home": true})
+	if al.id >= 0:
+		(_st_state(al.st)["dead"] as Array).append(al.id)
+	if al.kind == "brood":
+		al.st.open_seal()
+		_st_state(al.st)["seal"] = true
+		game.shake = maxf(game.shake, 8.0)
+		game.audio.play("rare", null, 1.0)
+		game.ui.toast("The Broodmother falls! The seal on the vault breaks (%d Xenite)" % n, Color(0.8, 1.0, 0.55), 5.0)
+		for c in al.st.seal_cells:
+			if randf() < 0.3:
+				game.vfx.spawn(Vfx.DOT, al.st.cell_world(int(c) % al.st.w, int(c) / al.st.w), Vector2.from_angle(randf() * TAU) * 0.8, 40,
+					Color(0.6, 0.7, 1.0), Color(0.3, 0.4, 1.0, 0.0), 1.5, 0.5, true, 0.0, 0.95)
+
+## the aliens near you: ticked in their station's cells; touching you hurts
+var _mb = null                  # (the mage's middle in the station's cells, for the aliens this tick)
+func _update_aliens(focus: Vector2) -> void:
+	for k in range(aliens.size() - 1, -1, -1):
+		if aliens[k].dead:
+			aliens.remove_at(k)
+	var m = game.player
+	_mb = null
+	if m.aboard == null and in_station != null and not m.dead:
+		_mb = in_station.to_body(m.pos) + in_station.com
+	for al in aliens.duplicate():
+		if al.dead:
+			continue
+		if (al.st.pos - focus).length() > al.st.reach() + ALIEN_NEAR:
+			continue
+		var mine_mb = _mb if al.st == in_station else null
+		al.tick(mine_mb, self)
+		if mine_mb != null and al.bite_cd <= 0 and al.touches(mine_mb, float(m.w) * 0.5, float(m.h) * 0.5):
+			var dmg: float = float(al.spec()["dmg"])
+			if al.kind == "brute" and al.act != "charge":
+				dmg *= 0.5
+			var kx: float = signf((mine_mb as Vector2).x - al.b.x)
+			var kn := Vector2(kx * (3.2 if al.act == "charge" else 2.0), -1.4)
+			var before: int = m.iframes
+			game.hurt(m, dmg, Vector2.ZERO, true)
+			if before == 0 and m.iframes > 0:
+				vel += al.st.axis_x() * kn.x + al.st.axis_y() * kn.y
+				game.audio.play("chitter", m.pos, 0.6)
+			al.bite_cd = 50
+			if al.act == "leap":
+				al.v *= -0.3
+
+## an alien wakes, and its room with it
+func alien_wake(al) -> void:
+	var woke := false
+	for o in aliens:
+		if o.st == al.st and o.home == al.home and not o.awake:
+			o.awake = true
+			woke = true
+	if woke or al.kind == "brood":
+		game.audio.play("hiss", al.world(), 0.7)
+
+## can it see you (no wall between, in its station's cells)?
+func alien_sees(al) -> bool:
+	if _mb == null:
+		return false
+	var d: Vector2 = (_mb as Vector2) - al.b
+	var n := int(d.length() / 2.0) + 1
+	for k in range(1, n):
+		var q: Vector2 = al.b + d * (float(k) / float(n))
+		if al.st.solid_cell(int(floor(q.x)), int(floor(q.y))):
+			return false
+	return true
+
+## it spits acid at you: `n` globs, `spread` apart
+func alien_spit(al, spread: float, n: int, speed: float) -> void:
+	if _mb == null:
+		return
+	var st = al.st
+	var from_b: Vector2 = al.b + Vector2(float(al.facing) * al.hw * 0.8, -al.hh * 0.2)
+	var dir_b: Vector2 = ((_mb as Vector2) - from_b).normalized()
+	var from_w: Vector2 = st.to_world(from_b - st.com)
+	for k in n:
+		var d: Vector2 = dir_b.rotated((float(k) - float(n - 1) * 0.5) * spread)
+		var wv: Vector2 = (st.axis_x() * d.x + st.axis_y() * d.y) * speed
+		acid.append([from_w, wv, 160, 10.0 if al.kind == "brood" else 7.0])
+	game.audio.play("spit", from_w, 0.7)
+	for k2 in 6:
+		game.vfx.spawn(Vfx.DOT, from_w, Vector2.from_angle(randf() * TAU) * randf_range(0.2, 0.8), 14 + randi() % 8,
+			Alien.C_GLOW, Color(0.3, 0.6, 0.1, 0.0), 1.0, 0.5, true, 0.0, 0.92)
+
+## the Broodmother lays a skitter (at most 4 of hers at once)
+func alien_lay(al) -> void:
+	var mine := 0
+	for o in aliens:
+		if not o.dead and o.mother == al:
+			mine += 1
+	if mine >= 4:
+		return
+	var y = Alien.make("skitter", al.st, al.b + Vector2(-float(al.facing) * al.hw * 0.5, al.hh * 0.3), -1, al.home)
+	y.mother = al
+	y.awake = true
+	y.cd = 40
+	aliens.append(y)
+	stats["laid"] = int(stats.get("laid", 0)) + 1
+	var wp: Vector2 = y.world()
+	game.audio.play("chitter", wp, 0.8)
+	for k in 10:
+		game.vfx.spawn(Vfx.DOT, wp, Vector2.from_angle(randf() * TAU) * randf_range(0.3, 1.0), 20 + randi() % 10,
+			Alien.C_GLOW2, Color(0.3, 0.6, 0.1, 0.0), 1.5, 0.5, true, 0.0, 0.93)
+
+## the aliens' acid in flight: it splashes on walls, and burns you
+func _update_acid() -> void:
+	var m = game.player
+	for k in range(acid.size() - 1, -1, -1):
+		var ac: Array = acid[k]
+		var p: Vector2 = ac[0]
+		var v: Vector2 = ac[1]
+		ac[2] = int(ac[2]) - 1
+		var hit := false
+		for q in 2:
+			p += v * 0.5
+			if _bolt_blocked(p):
+				hit = true
+				break
+			if m.aboard == null and not m.dead and _hits_mage(m, p):
+				var before: int = m.iframes
+				game.hurt(m, float(ac[3]), Vector2.ZERO, true)
+				if before == 0 and m.iframes > 0:
+					vel += v.normalized() * 1.4
+				stats["acid_hits"] = int(stats.get("acid_hits", 0)) + 1
+				hit = true
+				break
+		ac[0] = p
+		if hit or int(ac[2]) <= 0:
+			for k2 in 7:
+				game.vfx.spawn(Vfx.DOT, p, Vector2.from_angle(randf() * TAU) * randf_range(0.2, 0.9), 16 + randi() % 10,
+					Alien.C_GLOW, Color(0.25, 0.5, 0.1, 0.0), 1.0, 0.5, true, 0.0, 0.9)
+			if hit:
+				game.audio.play("hit", p, 0.3, 1.6)
+			acid.remove_at(k)
+		elif game.frame % 3 == 0:
+			game.vfx.spawn(Vfx.DOT, p, -v * 0.15, 12, Alien.C_GLOW.darkened(0.2), Color(0.3, 0.5, 0.1, 0.0), 1.0, 0.5, true, 0.0, 0.9)
+
+## the aliens and their acid, over the stations
+func _draw_aliens(xf: Transform2D) -> void:
+	var zs: float = minf(float(game.zoom), 4.0)
+	var scr := Vector2(game.VW, game.VH)
+	for al in aliens:
+		if al.dead:
+			continue
+		var sp: Vector2 = xf * al.world()
+		if sp.x < -60.0 or sp.y < -60.0 or sp.x > scr.x + 60.0 or sp.y > scr.y + 60.0:
+			continue
+		var t: ImageTexture = al.frame()
+		var tw := float(t.get_width())
+		var th := float(t.get_height())
+		var ang: float = xf.basis_xform(al.st.axis_x()).angle()
+		_top.draw_set_transform(sp.floor(), ang, Vector2(float(al.facing), 1.0) / zs)
+		var mod := Color.WHITE
+		if al.hit_t > 0:
+			mod = Color(2.0, 2.0, 2.0)
+		elif al.act == "windup" or al.act == "spit":
+			mod = Color(1.5, 1.25, 0.85)
+		elif al.slow > 0:
+			mod = Color(0.75, 0.9, 1.3)
+		var top: float = -th * 0.5 if al.flies() else al.hh + 1.0 - th
+		_top.draw_texture(t, Vector2(-tw * 0.5, top), mod)
+		_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		if al.hp < al.hp_max or (al.kind == "brood" and al.awake):
+			var up_s: Vector2 = xf.basis_xform(-al.st.axis_y()).normalized()
+			var bw: float = 50.0 if al.kind == "brood" else 16.0
+			var bar_at: Vector2 = (sp + up_s * ((al.hh + 6.0) / zs)).floor()
+			_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.06, 0.8))
+			_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(al.hp / al.hp_max, 0.0, 1.0), 2.0)), Color(0.65, 1.0, 0.4))
+			if al.kind == "brood":
+				_top_text(bar_at + up_s * 8.0, "The Broodmother", Color(0.8, 1.0, 0.6))
+	for ac in acid:
+		var ap: Vector2 = xf * (ac[0] as Vector2)
+		var at2: Vector2 = xf * ((ac[0] as Vector2) - (ac[1] as Vector2) * 1.6)
+		_top.draw_line(at2, ap, Color(0.5, 0.9, 0.3, 0.45), 2.0)
+		_top.draw_rect(Rect2(ap.floor() - Vector2(1, 1), Vector2(3, 3)), Color(0.25, 0.5, 0.12))
+		_top.draw_rect(Rect2(ap.floor() - Vector2(0, 0), Vector2(1, 1)), Color(0.9, 1.0, 0.7))
+
+## The Wisp Scanner (items["scanner"]): the nearest wreck and derelict station in the sectors round you,
+## known before their sectors come in
+func _scanner_marks() -> void:
+	scan_marks.clear()
+	if not active or not game.items.has("scanner"):
+		return
+	var g := player_g()
+	var sc := Galaxy.sector_of(g[0], g[1])
+	var best := {}
+	for dy in range(-3, 4):
+		for dx in range(-3, 4):
+			var s := sc + Vector2i(dx, dy)
+			var sg := Galaxy.sector_g(s)
+			for c in Galaxy.sector_content(s):
+				var ty: String = c["type"]
+				if ty != "wreck" and ty != "station":
+					continue
+				var at: Vector2 = c["at"]
+				var gp := PackedFloat64Array([sg[0] + at.x, sg[1] + at.y])
+				var d := Vector2(gp[0] - g[0], gp[1] - g[1]).length()
+				if d < 2500.0:
+					continue
+				if not best.has(ty) or d < float(best[ty][0]):
+					best[ty] = [d, gp, String(c["name"])]
+	for ty2 in best:
+		scan_marks.append([best[ty2][1], best[ty2][2], Color(0.75, 0.9, 0.85) if ty2 == "wreck" else Color(0.75, 0.55, 1.0)])

@@ -341,6 +341,59 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   glass pane, `design_bg`, comes back, nothing given for it) and furniture (planks back). `save_cells` packs six
   layers now (`load_cells` takes five or six). `cabin_stats`. Test: `_test_cabin` ("cabin"; `_pick_piece(name)`;
   picture `cabin_built.png`). The cabin is small (about 30 x 25 cells): bigger hulls later.
+- DERELICT STATIONS AND ALIENS (scripts/station.gd, alien.gd; user, 23 Nov: "much bigger more complex outposts ...
+  Derelict space stations and everything with aliens and such to fight"; inside, chosen "Both, by section"):
+  `Station` extends wreck.gd, kind "station"; `make_station(seed)` lays out a grid (`cols` 4-6 x `rows` 2-3, a corner
+  or two left out) of MODULES (`mods`: x0..x1, y0..y1 inside = `MW` 80 x `MH` 44, walls `T` 4, margins `OX`/`OY`),
+  joined by a random spanning tree plus loops: side by side a DOORWAY at floor level (`DOOR_H` 26), one over another
+  a HATCH (`HATCH_W` 22: its top row a one-way SCAFFOLD floor, and a scaffold LEDGE 22 down the room below to climb
+  by). Roles: dock (the lowest outer room; an open mouth 30 high and a docking arm, `dock_side`), reactor (a wisp
+  core about halfway in), the VAULT (farthest from the dock; every link but one cut) behind the NEST (its link
+  sealed with runestone: `seal_cells`, `open_seal`), the rest hydro/quarters/lab/stores/hall. POWERED rooms (the
+  ones nearest the reactor, 40-60%, the vault too, never the nest): gravity runes (RUNESTONE + WISP) in the floor,
+  lit lamps, clean panels; BROKEN rooms: dark ribbed back wall, scorching, a fallen girder, a breach in an outer
+  wall. Props, girders, troughs, lamps and crates keep clear of `ways` (doorways, hatches with their ledges, the
+  mouth; `_near_way`): a lamp under a sealed hatch once choked the vault's way in. `spawns` (aliens), caches
+  (wreck.gd's crates: stores/quarters/lab/nest/vault). Queries in station cells: `module_at`, `inside` (a room or
+  way: bg set), `powered_at`, `box_free` / `platform_under` (with `EPS` give: world positions are single floats, about
+  0.005 of a cell out here), `move_box` (a box a cell at a time: across with a step up, then along +y landing on solid
+  or, falling, on a scaffold's top). Its pictures are painted through a colour table (`_paint`), and what changes is
+  repainted cell by cell (`_repaint`): it's ten times a wreck. Never saved as a rock: grown again by seed;
+  `state()` / `apply_state` (open caches, seal) plus the dead aliens' ids live in space.gd `station_state` (saved in
+  progress.json "space" "stations"). Galaxy: every system's `system_station(r)` (`STATION_D` 38000 from its first
+  planet, clear of planets, its outpost and the first wreck), `station_seed`/`station_name`, and `STATION` 0.012 a
+  deep sector (`_station`). space.gd grows one on a WorkerThreadPool task as its sector streams in (`_st_jobs`), then
+  `_place_rock` (aligned like an outpost) and `_station_in` (state, aliens).
+  GRAVITY BY SECTION: `_station_frame` (each tick after `_find_near`): within a station's bounds (`frame_st`) its floor
+  is "down" (`centre` = its pos + axis_y x `STATION_DOWN`, so the view, your upright pose and the skiff level with
+  it); inside its rooms on foot (`in_station`, a toast on boarding and per room) `_station_move` runs in its cells
+  (kept between ticks in `_st_b`/`_st_w`, so float rounding far out never drifts you): a powered room pulls you
+  (`Alien.G` 0.17), you walk, jump, step up, land on and (down + jump) drop through scaffold; a broken room has no
+  gravity and the movement keys push you by the jet (`ST_JET`, `ST_JET_MANA`, `ST_DRAG`); the cast button CASTS
+  (`_space_cast`: the spell's projectile as `sbolts`, the same SPELL_FX looks, bent by a powered room's pull; mending
+  heals, Blink steps through the rooms (`_st_blink`), Conjure fizzles). `_update_sbolts` / `_sbolt_impact` /
+  `_alien_blast` / `_hurt_alien` / `_kill_alien` (Xenite into the satchel; the Broodmother's death breaks the seal).
+  Overlay `_feet` in space: up is away from `space.centre` and nothing stands on the planet's ground.
+  ALIENS (alien.gd, `Alien.make(kind, station, b, id, room)`; `KINDS`): live in their station's cells (`b`, `v`, +y
+  down), ticked by space.gd `_update_aliens` within `ALIEN_NEAR` of their station; asleep until you're within 110 or in
+  their room (`alien_wake` wakes the room, "hiss"); without you inside they go home. skitter (walks, hops when stuck,
+  winds up and leaps; in a dead room kicks after you), drifter (floats at 80, `alien_spit` acid when `alien_sees` you),
+  brute (powered rooms: plods, rears up 36 ticks (its tell), charges; flounders without gravity), brood (the
+  Broodmother: hovers over you in the nest, volleys of 3 (5 enraged), `alien_lay` skitters, at most 4). Touching you
+  bites (`spec()["dmg"]`, knock in the station's frame). `acid` ([pos, vel, ticks, dmg]: `_update_acid`). Art grown
+  in code (`frames`: skitter 4, drifter 4, brute 4, brood 3; outlined; violet chitin, green glow), drawn by
+  `_draw_aliens` on `_top` (walkers by their feet; a hull bar when hurt; "The Broodmother" over hers). XENITE (material
+  61, NM 62): their glowing chitin; outposts buy it. The vault's cache: coins, star iron, wisp ingots, Xenite, a
+  chart, a recipe, a draught and a Scanner Lens (`items["part_scanner"]`) -> the WISP SCANNER (recipe "scanner",
+  Travel: `_scan` sees 3x as far and charts 1.6x as far; `_scanner_marks` marks the nearest wreck and station in the 7
+  x 7 sectors round you). HUD: "Derelict <name>" and the room with "gravity"/"no gravity". Map: stations in explored
+  sectors and at every charted system. Sounds "hiss", "chitter", "spit". Test: `_test_stations` ("stations"; in the
+  full run after `_test_cabin`): 10 grown (every room reached by drifting, the vault only once unsealed:
+  `_station_rooms_reached`), the system's station streamed in, drifted in through the dock, a powered room (fall,
+  walk, jump, a ledge stood on and dropped through), a dead room (hangs, the jet pushes), a skitter's bite, sparks kill
+  it, a drifter spits, the Broodmother lays and falls, the seal breaks, the vault's Scanner Lens, kept after streaming
+  out and in; pictures `station_layout_0..2.png` (whole layouts, aliens marked), `station_outside/dock/powered/
+  dead_room/fight/drifter/brood/vault/map.png`.
 - Test: `_test_galaxy` ("galaxy"; in the full run right after the skiff's journey to Cindrel): the spiral, the
   Starsail (sailing the way farthest from every planet, home too), recentring, a field streamed in and kept as
   mined, a comet on its loop, a nebula (both chosen 80000+ from any planet, or a journey begins), the chart,
@@ -927,10 +980,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 15 minutes (a full run takes about 13.5), so a broken run never leaves the game open;
+- Test mode quits by itself after 18 minutes (a full run takes about 14), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
   up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
-  script it preloads failed to compile: 25 s), or that passes 16 minutes. tests.gd is loaded at run
+  script it preloads failed to compile: 25 s), or that passes 19 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -1009,7 +1062,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

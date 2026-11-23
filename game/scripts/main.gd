@@ -703,9 +703,9 @@ func _exit_tree() -> void:
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 900000:
-		# a test run that hasn't finished in 15 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 15 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 1080000:
+		# a test run that hasn't finished in 18 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 18 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:
@@ -4447,7 +4447,7 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier3": return tier == 2
 		"tier4": return tier == 3 and items.has("heart")
 		"drive": return tier >= 4 and items.has("skiff")
-		"engine", "beam", "sail", "shield", "cannon": return items.has("skiff")
+		"engine", "beam", "sail", "shield", "cannon", "scanner": return items.has("skiff")
 	if r.has("gear"):
 		# (gear from a planet kind's own ore: once you've found some, and what it builds on)
 		var need := String(Defs.GEAR[r["id"]].get("needs", ""))
@@ -4657,6 +4657,10 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"shield", "cannon":
 			if not items.has(String(r["part"])):
 				return "Salvage a %s from a derelict wreck in deep space" % ("Shield Emitter" if r["id"] == "shield" else "Cannon Coil")
+			return "Needs the Wisp Skiff"
+		"scanner":
+			if not items.has("part_scanner"):
+				return "Take a Scanner Lens from the vault of a derelict station"
 			return "Needs the Wisp Skiff"
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
