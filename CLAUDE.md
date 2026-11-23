@@ -230,6 +230,44 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   planet's distance while you're away from home.
 - A journey to another planet only begins within `TRAVEL_R` (40000) of it (and clearly nearer than home): far
   out, which planet is "nearer" means nothing, and making one is work.
+- DERELICT WRECKS (scripts/wreck.gd; user, 23 Nov: the roadmap's next step, "things to find out there", starting
+  with wrecks): `Wreck` extends asteroid.gd, so space.gd streams, drifts, mines and keeps it like a rock (kind
+  "wreck"; torn plating round it is an ordinary rock of kind "scrap", `Wreck.scrap`). `make_wreck(seed, first)`
+  grows a wisp ship from parts: HULL plating (material 60, "Hull Plating", hard 2: salvage) in courses with
+  seams and rivets (`_plate`), a prow sweeping down, a stern engine room (star-iron nozzle, wisp core, copper
+  pipes) through a bulkhead door, a hold of one or two decks (two only where each is 27 high; the hatch, 20
+  wide, in the widest room), bulkheads with 24-high doorways, a bridge cabin over the hull with a cracked glass
+  front, timber panelling and ribs on the back layer (`bg`, drawn by its own sprite under the hull), lamps
+  (CRYSTAL) under ceilings; then damage (`_breach`: the first always through the roof of the hold away from
+  the bridge, 12-14 across, wide enough to drift in; one or two more, at most one small one through the keel;
+  sometimes the prow broken off; scorching and coal round the tears); then CACHES (`caches`, 9 x 6 crates:
+  bridge first, engine, a hold crate per room; `_crate_near`). Every passage is 18+ across so the mage's
+  7 x 17 box drifts through whichever way the wreck lies. `guarded(k)`: a closed cache's cells are left by
+  mining and blasts. A wreck never splits (`_split`). `save`/`from_save` add name, fate, caches, the back layer
+  (space `_rock_from_save` picks the class). Galaxy: `WRECK` 0.045 a sector (`_wreck`: the wreck + 3-6
+  scrap), and `first_wreck()`: every journey's first, `FIRST_WRECK` (22000) from home on a bearing kept
+  18000 from every planet (so no journey begins near it); its bridge always holds a part.
+  In space (space.gd): the mage collides with a wreck by `_shortest_out` (the least move out, 16 ways, up to
+  6 cells; never "away from its middle", which pushed you through a wall from inside), over `box_pts` (4 x 9
+  points: no 2-thick wall fits between them). `_wreck_near` (on foot): aboard the first time, a toast of its
+  name and fate (`visited`); the closed cache within `CACHE_REACH` (18) is `near_cache`, drawn "[F] open the
+  cache" by `_top` (a child Node2D at z 1, over the rock sprites: prompts, cannon bolts, the shield). main
+  `_interact` -> `space.wreck_interact` -> `_loot`: hold (plating, ingots, planks, glass, now and then star
+  iron, coins, a draught), engine (star iron, wisp and copper ingots), bridge (coins; a part you lack, the
+  first wreck always, else 70%: `items["part_shield"]` then `["part_cannon"]`; half the time a star chart,
+  `_star_chart`, the nearest uncharted system; a recipe scroll 40%; the captain's log, its fate). Markers:
+  `nearest_wreck` ("Wreck of the ..."); `nearest_rock` leaves wrecks and scrap out. The map draws a wreck in
+  explored sectors with its name.
+- SHIP PARTS (recipes with "part": unlocked by the salvaged part, used up in forging, `recipe_hidden` until you
+  have a skiff): the Wisp Shield (`items["shield"]`: space `_strike` on a mage aboard is taken by it when
+  `shield` is 1, then it charges over `SHIELD_RECHARGE` ticks; a ring flash, a faint shimmer while ready) and
+  the Wisp Cannon (`items["cannon"]`: aboard in space the cast button fires instead of steering, `_fire_cannon`,
+  `CANNON_MANA` 6, `CANNON_CD` 16; `shots` step 2 cells at a time against `_rock_solid`, `_blast_rocks` blows
+  cells away (not caches), `vfx.blast` kind 2). Test: `_test_wrecks` ("wrecks"; in the full run on Verdance
+  right before the journey to Cindrel: 12 grown wrecks (a bridge cache each, every cache reached by a disc 17
+  across: `_wreck_reach`), the first wreck streamed in, aboard, every cache opened, the hull holds from inside,
+  salvage dug, the shield takes a strike, the cannon hits without steering, its sector saved and back as left,
+  the map; pictures `wreck_outside/inside/cannon/map.png`).
 - Test: `_test_galaxy` ("galaxy"; in the full run right after the skiff's journey to Cindrel): the spiral, the
   Starsail (sailing the way farthest from every planet, home too), recentring, a field streamed in and kept as
   mined, a comet on its loop, a nebula (both chosen 80000+ from any planet, or a journey begins), the chart,
@@ -816,10 +854,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 13 minutes (a full run takes about 9), so a broken run never leaves the game open;
+- Test mode quits by itself after 15 minutes (a full run takes about 12.5), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
   up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
-  script it preloads failed to compile: 25 s), or that passes 14 minutes. tests.gd is loaded at run
+  script it preloads failed to compile: 25 s), or that passes 16 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
@@ -898,7 +936,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

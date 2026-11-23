@@ -26,6 +26,7 @@
 extends Node2D
 
 const Asteroid := preload("res://scripts/asteroid.gd")
+const Wreck := preload("res://scripts/wreck.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 ## The galaxy (user, 22 Nov: infinite space). Space's origin follows you (`org`: the galaxy point that
@@ -49,6 +50,7 @@ const LIT := "shader_type canvas_item;
 uniform vec2 sun = vec2(1.0, 0.0);
 uniform vec2 ctr = vec2(0.0);
 uniform float rad = 20.0;
+uniform float flat_l = 0.0;
 void fragment() {
 	vec4 c = texture(TEXTURE, UV);
 	if (c.a < 0.5) discard;
@@ -60,10 +62,10 @@ void fragment() {
 		g.y += texture(TEXTURE, UV + vec2(0.0, px.y * f)).a - texture(TEXTURE, UV - vec2(0.0, px.y * f)).a;
 	}
 	vec2 p = (UV / px - ctr) / rad;
-	vec2 nxy = p * 0.75 - g * 0.2;
+	vec2 nxy = mix(p * 0.75 - g * 0.2, -g * 0.22, flat_l);
 	vec3 n = normalize(vec3(nxy, sqrt(max(0.08, 1.0 - min(dot(nxy, nxy), 0.92)))));
 	float d = max(dot(n, normalize(vec3(sun, 0.5))), 0.0);
-	float lit = 0.14 + 0.98 * d;
+	float lit = mix(0.14 + 0.98 * d, 0.34 + 0.72 * d, flat_l);
 	if (c.a < 0.995) lit = max(lit, 1.0);
 	COLOR = vec4(c.rgb * lit, 1.0);
 }"
@@ -80,6 +82,12 @@ const BELT_IN := 1400.0         # a planet out of the skiff's reach is wrapped i
 const BELT_OUT := 4400.0        # above its orbit band out to this. Its wind throws you back, harder the deeper
                                 # you go, and lightning strikes; a Core Drive carries the skiff through.
 const BEAM_REACH := 150.0       # the Prospector's Beam: how far from the skiff it mines
+const CANNON_MANA := 6.0        # the Wisp Cannon: mana a shot, ticks between shots, speed, blast radius
+const CANNON_CD := 16
+const CANNON_SPEED := 9.0
+const CANNON_R := 4.5
+const SHIELD_RECHARGE := 480.0  # the Wisp Shield: ticks to charge again after it takes a strike
+const CACHE_REACH := 18.0       # how near a wreck's cache you open it (F)
 const NEARER := 0.8             # another planet is clearly nearer: at this fraction of home's distance
 const TRAVEL_R := 40000.0       # ...and within this of its middle: then it's made while you come in
 const PLANET_MASK := "shader_type canvas_item;
@@ -140,7 +148,15 @@ var sail := 0.0                 # the Starsail: how far unfurled (0..1)
 var sailing := false
 var neb := 0.0                  # how thick the nebula is round you, and its colour
 var neb_col := Color.WHITE
-var stats := {"recentred": 0, "sectors": 0, "rocks_made": 0}   # (for the tests)
+var stats := {"recentred": 0, "sectors": 0, "rocks_made": 0, "shots": 0, "shot_hits": 0, "caches": 0, "shield_saves": 0}   # (for the tests)
+var shots := []                 # the Wisp Cannon's bolts: [pos, vel, ticks left]
+var _cannon_cd := 0
+var shield := 1.0               # the Wisp Shield's charge (1 = ready to take a strike)
+var shield_hit := 0             # (frames since it took one: drawn as a flash)
+var _rock_backs := []           # a wreck's back layer, a sprite under its hull's
+var _top: Node2D                # drawn over the rocks: prompts, cannon bolts, the shield
+var near_cache = null           # the closed cache you could open now (a wreck's cache dict) and its wreck
+var near_wreck = null
 
 func _ready() -> void:
 	_mask = Shader.new()
@@ -152,6 +168,10 @@ func _ready() -> void:
 	for k in 420:
 		stars.append([Vector2(rng.randf() * 1024.0, rng.randf() * 1024.0), rng.randf(), rng.randf() * TAU])
 	visible = false
+	_top = Node2D.new()
+	_top.z_index = 1
+	add_child(_top)
+	_top.draw.connect(_draw_top)
 
 # ------------------------------------------------------------- crossing ---
 
@@ -197,6 +217,7 @@ func try_enter() -> void:
 
 ## Back into the orbit band: the planet's own physics take over again, and the view eases back in.
 func exit() -> void:
+	shots.clear()
 	var m = game.player
 	var sk = game.skiff
 	belt = 0.0
@@ -248,7 +269,14 @@ func tick() -> void:
 		# aboard (one left down on the planet waits there)
 		var pl = sk.pilot()
 		sk.centre = centre
+		# (with the Wisp Cannon fitted, the cast button fires it: the keys steer)
+		var firing: bool = pl != null and game.items.has("cannon") and pl.input.cast
+		if firing:
+			pl.input.cast = false
 		var want: Vector2 = sk.steer(pl.input) if pl != null else Vector2.ZERO
+		if firing:
+			pl.input.cast = true
+			_fire_cannon(pl, sk)
 		sk.power = 1.5 if game.items.has("engine") else 1.0
 		var v0: Vector2 = sk.vel
 		sk.fly(want, pl != null, pull(sk.pos), true, 0.0, 0.9995)
@@ -263,6 +291,14 @@ func tick() -> void:
 		if sk.thrusting:
 			game._skiff_exhaust()
 	_age_bolts()
+	_update_shots()
+	if _cannon_cd > 0:
+		_cannon_cd -= 1
+	shield = minf(1.0, shield + 1.0 / SHIELD_RECHARGE)
+	if shield_hit > 0:
+		shield_hit -= 1
+	near_cache = null
+	near_wreck = null
 	beam_to = null
 	if m.aboard != null:
 		vel = sk.vel
@@ -310,6 +346,7 @@ func tick() -> void:
 				break
 	if m.input.dig and not m.dead:
 		mine(m)
+	_wreck_near(m)
 	m.vx = vel.dot(game.basis_r(a))
 	m.vy = vel.dot(game.basis_d(a))
 	m.on_ground = false
@@ -428,6 +465,14 @@ func _strike(p: Vector2, n: Vector2, f: float, col: Color) -> void:
 		game.audio.play("zap", null, 0.9)
 	for m in game.players:
 		if not m.dead and m.pos.distance_to(p) < 60.0:
+			if m.aboard != null and game.items.has("shield") and shield >= 1.0:
+				# (the Wisp Shield takes the strike, then needs a while to charge again)
+				shield = 0.0
+				shield_hit = 30
+				stats["shield_saves"] += 1
+				game.vfx.spawn(Vfx.RING, m.aboard.pos, Vector2.ZERO, 18, Color(0.6, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 30.0, 44.0)
+				game.audio.play("blink", m.aboard.pos, 0.8)
+				continue
 			game.hurt(m, 3.0 + 6.0 * f, Vector2.ZERO, true)
 
 func _age_bolts() -> void:
@@ -662,12 +707,15 @@ func _stream(focus: Vector2) -> void:
 			return
 		var a
 		if pl.has("save"):
-			a = Asteroid.from_save(pl["save"])
+			a = _rock_from_save(pl["save"])
 			if a == null:
 				return
 			a.touched = true
 		else:
-			a = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
+			match String(pl["kind"]):
+				"wreck": a = Wreck.make_wreck(int(pl["seed"]), bool(pl.get("first", false)))
+				"scrap": a = Wreck.scrap(int(pl["seed"]), float(pl["r"]))
+				_: a = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
 			a.vel = pl["vel"]
 		a.sect = String(pl["sect"])
 		a.pos = local_of(pl["g"])
@@ -677,6 +725,12 @@ func _stream(focus: Vector2) -> void:
 			a.pos = local_of(_g_add(Galaxy.sector_g(_loaded[a.sect]), a.loop_at + Galaxy.comet_at(a.orbit, game.time)))
 		rocks.append(a)
 		stats["rocks_made"] += 1
+
+## a rock back from its save: a wreck if it was one
+func _rock_from_save(d: Dictionary) -> RefCounted:
+	if d.has("wreck"):
+		return Wreck.from_save(d)
+	return Asteroid.from_save(d)
 
 static func _g_add(g: PackedFloat64Array, v: Vector2) -> PackedFloat64Array:
 	return PackedFloat64Array([g[0] + v.x, g[1] + v.y])
@@ -694,7 +748,7 @@ func _load_sector(s: Vector2i, key: String) -> void:
 		return
 	for c in Galaxy.sector_content(s):
 		for r in c["rocks"]:
-			_sect_plan.append({"sect": key, "seed": r["seed"], "r": r["r"], "kind": r["kind"], "vel": r["vel"],
+			_sect_plan.append({"sect": key, "seed": r["seed"], "r": r["r"], "kind": r["kind"], "vel": r["vel"], "first": r.get("first", false),
 				"g": _g_add(sg, (c["at"] as Vector2) + (r["off"] as Vector2)), "orbit": r.get("orbit", {}), "at": c["at"]})
 
 func _unload_sector(key: String) -> void:
@@ -967,6 +1021,10 @@ func _draw() -> void:
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
 		_marker(xf, nr.pos, nr.reach(), "Comet" if not nr.orbit.is_empty() else "Asteroid", Color(0.95, 0.82, 0.62))
+	var nwk = nearest_wreck(game.player.pos)
+	if nwk != null:
+		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85))
+	_top.queue_redraw()
 	# the Starsail unfurled: a glow round the skiff
 	if sail > 0.02 and game.skiff != null and game.player.aboard != null:
 		var ssp: Vector2 = xf * game.skiff.pos
@@ -1281,7 +1339,7 @@ func _ensure_rocks(all := false) -> void:
 	while not _rock_plan.is_empty():
 		var pl: Dictionary = _rock_plan.pop_front()
 		if pl.has("save"):
-			var a = Asteroid.from_save(pl["save"])
+			var a = _rock_from_save(pl["save"])
 			if a != null:
 				a.pos += ha
 				rocks.append(a)
@@ -1354,6 +1412,8 @@ func _comet_tail(a) -> void:
 
 ## A rock cut through: its smaller pieces drift off as rocks of their own, scraps crumble to dust.
 func _split(a) -> void:
+	if a.kind == "wreck":
+		return                             # (a wreck holds together: its caches are in its cells)
 	var pcs: Array = a.pieces()
 	if pcs.size() <= 1 and (pcs.is_empty() or pcs[0].size() >= ROCK_SCRAP):
 		return
@@ -1390,7 +1450,7 @@ func _mine_at(m, p: Vector2, r: float) -> void:
 			for i in range(maxi(0, int(b.x - r - 1.0)), mini(a.w, int(b.x + r + 2.0))):
 				var ck: int = j * a.w + i
 				var t: int = a.cells[ck]
-				if t == 0 or Vector2(i + 0.5, j + 0.5).distance_to(b) > r:
+				if t == 0 or Vector2(i + 0.5, j + 0.5).distance_to(b) > r or a.guarded(ck):
 					continue
 				if Defs.HARD[t] > m.tier:
 					hard = true
@@ -1431,6 +1491,21 @@ func nearest_rock(p: Vector2, within := 900.0) -> Variant:
 	var best = null
 	var bd := within
 	for a in rocks:
+		if a.kind == "wreck" or a.kind == "scrap":
+			continue
+		var d: float = (a.pos - p).length() - a.reach()
+		if d < bd:
+			bd = d
+			best = a
+	return best
+
+## the nearest wreck (by its edge), within `within`; null if none
+func nearest_wreck(p: Vector2, within := 30000.0) -> Variant:
+	var best = null
+	var bd := within
+	for a in rocks:
+		if a.kind != "wreck":
+			continue
 		var d: float = (a.pos - p).length() - a.reach()
 		if d < bd:
 			bd = d
@@ -1450,10 +1525,7 @@ func _rock_push(m, close: Array) -> bool:
 	var ua: float = (m.pos - centre).angle()
 	var rr: Vector2 = game.basis_r(ua)
 	var dd: Vector2 = game.basis_d(ua)
-	var hw: float = float(m.w) * 0.5
-	var hh: float = float(m.h) * 0.5
-	var pts := [Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(-hw, hh), Vector2(hw, hh), Vector2(-hw, 0.0), Vector2(hw, 0.0),
-		Vector2(0.0, -hh), Vector2(0.0, hh), Vector2.ZERO]
+	var pts := box_pts(m)
 	var touched := false
 	for a in close:
 		var inside := false
@@ -1465,6 +1537,18 @@ func _rock_push(m, close: Array) -> bool:
 			continue
 		touched = true
 		var n: Vector2 = (m.pos - a.pos).normalized()
+		if a.kind == "wreck" or a.kind == "scrap":
+			# (a hull has rooms inside: out the shortest way, never "away from its middle", which would
+			# push you on through the wall you touched from inside)
+			var out := _shortest_out(m, a, pts, rr, dd)
+			if out != Vector2.ZERO:
+				m.pos += out
+				n = out.normalized()
+				var rel0: Vector2 = vel - a.vel
+				if rel0.dot(n) < 0.0:
+					rel0 -= n * rel0.dot(n)
+				vel = a.vel + rel0 * 0.85
+				continue
 		for step in 60:
 			m.pos += n * 0.5
 			var still := false
@@ -1480,9 +1564,41 @@ func _rock_push(m, close: Array) -> bool:
 		vel = a.vel + rel * 0.8
 	return touched
 
+## points over the mage's box (4 across, 9 down: no wall two cells thick fits between them)
+func box_pts(m, k := 1.0) -> Array:
+	var hw: float = float(m.w) * 0.5 * k
+	var hh: float = float(m.h) * 0.5 * k
+	var out := []
+	for yi in 9:
+		for xi in 4:
+			out.append(Vector2(-hw + hw * 2.0 * float(xi) / 3.0, -hh + hh * 2.0 * float(yi) / 8.0))
+	return out
+
+## the least move (up to 6 cells, 16 ways round) that takes the mage's box out of a body's cells
+func _shortest_out(m, a, pts: Array, rr: Vector2, dd: Vector2) -> Vector2:
+	for step in range(1, 13):
+		var dist := float(step) * 0.5
+		for k in 16:
+			var dv := Vector2.from_angle(float(k) * TAU / 16.0) * dist
+			var free := true
+			for q in pts:
+				if a.solid_at(m.pos + dv + rr * q.x + dd * q.y):
+					free = false
+					break
+			if free:
+				return dv
+	return Vector2.ZERO
+
 ## each rock as a sprite of its cells, turned with it, lit by the sun
 func _draw_rocks(xf: Transform2D) -> void:
 	while _rock_sprites.size() < rocks.size():
+		# (a wreck's back layer under its hull: added first, so it draws first)
+		var bspr := Sprite2D.new()
+		bspr.centered = false
+		bspr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		bspr.visible = false
+		add_child(bspr)
+		_rock_backs.append(bspr)
 		var spr := Sprite2D.new()
 		spr.centered = false
 		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -1496,6 +1612,8 @@ func _draw_rocks(xf: Transform2D) -> void:
 	var vh := float(game.VH)
 	for k in _rock_sprites.size():
 		var spr2: Sprite2D = _rock_sprites[k]
+		var bk: Sprite2D = _rock_backs[k]
+		bk.visible = false
 		if k >= rocks.size():
 			spr2.visible = false
 			continue
@@ -1514,3 +1632,223 @@ func _draw_rocks(xf: Transform2D) -> void:
 		sm.set_shader_parameter("sun", Vector2(sun.dot(ax), sun.dot(ay)).normalized())
 		sm.set_shader_parameter("ctr", a.com)
 		sm.set_shader_parameter("rad", a.rad * 1.2)
+		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" else 0.0)
+		if a.kind == "wreck":
+			bk.visible = true
+			bk.texture = a.back_texture()
+			bk.transform = spr2.transform
+
+# ------------------------------------------------------------------ wrecks ---
+
+## Near a wreck on foot: the first time you're inside it, its name and fate; and the closed cache within
+## reach, if there is one (F opens it: `wreck_interact`).
+func _wreck_near(m) -> void:
+	for a in _rocks_near(m.pos, 4.0):
+		if a.kind != "wreck":
+			continue
+		var b: Vector2 = a.to_body(m.pos) + a.com
+		var inside: bool = b.x > 0.0 and b.y > 0.0 and b.x < float(a.w) and b.y < float(a.h) and int(a.bg[int(b.y) * a.w + int(b.x)]) != 0
+		if inside and not a.visited:
+			a.visited = true
+			a.touched = true
+			game.ui.toast("Aboard the wreck of %s. %s" % [a.wname, a.fate], Color(0.75, 0.9, 0.85), 5.0)
+			game.audio.play("creak", m.pos, 0.7)
+		var bd := CACHE_REACH
+		for c in a.caches:
+			if c["open"]:
+				continue
+			var d: float = (a.cache_pos(c) as Vector2).distance_to(m.pos)
+			if d < bd:
+				bd = d
+				near_cache = c
+				near_wreck = a
+
+## F out in space: open the cache within reach. True if it did.
+func wreck_interact(m) -> bool:
+	if not active or m.aboard != null or near_cache == null:
+		return false
+	var wk = near_wreck
+	var c: Dictionary = near_cache
+	wk.open_cache(c)
+	stats["caches"] += 1
+	var cp: Vector2 = wk.cache_pos(c)
+	game.audio.play("chest_open", cp, 0.9)
+	for k in 26:
+		game.vfx.spawn(Vfx.DOT, cp, Vector2.from_angle(randf() * TAU) * randf_range(0.3, 1.4), 30 + randi() % 30,
+			Color(1.0, 0.9, 0.5), Color(1.0, 0.6, 0.2, 0.0), 1.5, 0.5, true, 0.0, 0.95)
+	game.vfx.spawn(Vfx.GLOW, cp, Vector2.ZERO, 24, Color(1.0, 0.85, 0.45, 0.8), Color(1.0, 0.6, 0.2, 0.0), 8.0, 18.0)
+	_loot(m, wk, c)
+	near_cache = null
+	return true
+
+## What a cache holds, decided as you open it: salvage in the hold, star iron and wisp ingots in the
+## engine room, and on the bridge coins, a ship's part you haven't found yet (the first wreck always
+## has one), a star chart, a recipe scroll.
+func _loot(m, wk, c: Dictionary) -> void:
+	var got := []
+	var it: Dictionary = game.items
+	var give := func(mat: int, n: int) -> void:
+		if n > 0:
+			m.inv[mat] += n
+			got.append("%d %s" % [n, Defs.NAMES[mat]])
+	match String(c["kind"]):
+		"engine":
+			give.call(Defs.STARIRON, randi_range(3, 6))
+			give.call(Defs.WISPBAR, randi_range(2, 4))
+			give.call(Defs.COPPERBAR, randi_range(2, 4))
+		"bridge":
+			var coins := randi_range(25, 60)
+			it["coins"] = int(it.get("coins", 0)) + coins
+			got.append("%d coins" % coins)
+			var part := ""
+			if wk.first or randf() < 0.7:
+				if not it.has("part_shield") and not it.has("shield"):
+					part = "part_shield"
+				elif not it.has("part_cannon") and not it.has("cannon"):
+					part = "part_cannon"
+			if part != "":
+				it[part] = 1
+				game.ui.toast("Salvaged a %s! The Wisp Forge can fit it to your skiff (Travel)" % ("Shield Emitter" if part == "part_shield" else "Cannon Coil"), Color(1.0, 0.85, 0.4), 5.0)
+				game.audio.play("rare", null, 0.9)
+			else:
+				give.call(Defs.STARIRON, randi_range(2, 4))
+			if randf() < 0.5:
+				_star_chart()
+			if randf() < 0.4:
+				game._chest_recipe(3)
+			game.ui.toast("The captain's log: %s" % wk.fate, Color(0.75, 0.9, 0.85), 4.0)
+		_:
+			give.call(Defs.HULL, randi_range(6, 12))
+			if randf() < 0.7:
+				give.call(Defs.COPPERBAR, randi_range(2, 4))
+			if randf() < 0.5:
+				give.call(Defs.PLANK, randi_range(8, 16))
+			if randf() < 0.4:
+				give.call(Defs.GLASS, randi_range(3, 6))
+			if randf() < 0.35:
+				give.call(Defs.WISPBAR, randi_range(1, 2))
+			if randf() < 0.2:
+				give.call(Defs.STARIRON, randi_range(1, 3))
+			var cn := randi_range(10, 30)
+			it["coins"] = int(it.get("coins", 0)) + cn
+			got.append("%d coins" % cn)
+			if randf() < 0.2:
+				it["potion"] = int(it.get("potion", 0)) + 1
+				got.append("a Healing Draught")
+	game.ui.toast("The cache held " + ", ".join(got), Color(1.0, 0.9, 0.6), 4.0)
+
+## a star chart from a wreck's bridge: the nearest system you haven't charted goes on your map
+func _star_chart() -> void:
+	var g := player_g()
+	var best := -1
+	var bd := 1e18
+	for r in Galaxy.systems_near(g[0], g[1], 2400000.0):
+		if charted.has(int(r)):
+			continue
+		var sg: PackedFloat64Array = Defs.system_g(int(r))
+		var d: float = (sg[0] - g[0]) * (sg[0] - g[0]) + (sg[1] - g[1]) * (sg[1] - g[1])
+		if d < bd:
+			bd = d
+			best = int(r)
+	if best >= 0:
+		charted[best] = true
+		game.ui.toast("A star chart: the %s system is on your map (M, Tab)" % Galaxy.star_name(best), Color(0.8, 0.9, 1.0), 4.0)
+
+# ------------------------------------------------------------ ship parts ---
+
+## The Wisp Cannon: a bolt of wisp-light from the skiff toward the cursor (the pilot's mana)
+func _fire_cannon(pl, sk) -> void:
+	if _cannon_cd > 0 or pl.mana < CANNON_MANA or pl.dead:
+		return
+	var d: Vector2 = pl.input.aim - sk.pos
+	if d.length() < 2.0:
+		return
+	var dir := d.normalized()
+	var from: Vector2 = sk.pos + dir * (float(sk.w) * 0.5 + 2.0)
+	shots.append([from, sk.vel + dir * CANNON_SPEED, 110])
+	pl.mana -= CANNON_MANA
+	_cannon_cd = CANNON_CD
+	stats["shots"] += 1
+	game.vfx.spawn(Vfx.GLOW, from, sk.vel, 8, Color(0.75, 0.95, 1.0), Color(0.4, 0.6, 1.0, 0.0), 6.0, 2.0)
+	game.vfx.spawn(Vfx.RING, from, sk.vel, 8, Color(0.6, 0.9, 1.0), Color(0.4, 0.6, 1.0, 0.0), 1.0, 7.0)
+	game.audio.play("zap", from, 0.5)
+
+## the bolts fly (in 2-cell steps, so none goes through a thin hull) and burst on rock or hull
+func _update_shots() -> void:
+	for k in range(shots.size() - 1, -1, -1):
+		var sh: Array = shots[k]
+		var p: Vector2 = sh[0]
+		var v: Vector2 = sh[1]
+		var n := maxi(1, int(ceil(v.length() / 2.0)))
+		var hit := false
+		for q in n:
+			p += v / float(n)
+			if _rock_solid(p):
+				hit = true
+				break
+		sh[0] = p
+		sh[2] = int(sh[2]) - 1
+		if hit:
+			_blast_rocks(p, CANNON_R)
+			stats["shot_hits"] += 1
+			shots.remove_at(k)
+		elif int(sh[2]) <= 0:
+			shots.remove_at(k)
+		elif game.frame % 2 == 0:
+			game.vfx.spawn(Vfx.DOT, p, v * 0.1, 10, Color(0.8, 0.95, 1.0), Color(0.4, 0.6, 1.0, 0.0), 1.5, 0.5, true, 0.0, 0.9)
+
+## a cannon bolt bursts: the cells round it are blown away (a wreck's caches stay), as sparks and dust
+func _blast_rocks(p: Vector2, r: float) -> void:
+	for a in _rocks_near(p, r + 2.0):
+		var b: Vector2 = a.to_body(p) + a.com
+		for j in range(maxi(0, int(b.y - r - 1.0)), mini(a.h, int(b.y + r + 2.0))):
+			for i in range(maxi(0, int(b.x - r - 1.0)), mini(a.w, int(b.x + r + 2.0))):
+				var ck: int = j * a.w + i
+				var t: int = a.cells[ck]
+				if t == 0 or Vector2(i + 0.5, j + 0.5).distance_to(b) > r or a.guarded(ck):
+					continue
+				if randf() < 0.35:
+					game._particle(a.cell_world(i, j), a.vel + Vector2(randf() - 0.5, randf() - 0.5) * 1.2, 30 + randi() % 30,
+						Color.hex((Defs.PAL[t * 4 + (int(a.vars[ck]) & 3)] << 8) | 0xff), false, 0.0)
+				a.take(ck)
+		a.vel += (a.pos - p).normalized() * 0.02 / maxf(1.0, a.mass / 400.0)
+	_mining = 0
+	game.vfx.blast(p, 6.0, 2)
+	game.audio.play("boom", p, 0.5)
+
+## over the rocks: the cannon's bolts, the shield, the prompt at a cache
+func _draw_top() -> void:
+	if not active:
+		return
+	var xf := _world_xf()
+	for sh in shots:
+		var sp: Vector2 = xf * (sh[0] as Vector2)
+		var tail: Vector2 = xf * ((sh[0] as Vector2) - (sh[1] as Vector2) * 1.2)
+		_top.draw_line(tail, sp, Color(0.5, 0.8, 1.0, 0.6), 2.0)
+		_top.draw_line(tail.lerp(sp, 0.5), sp, Color(0.9, 1.0, 1.0), 1.0)
+		_top.draw_rect(Rect2(sp.floor() - Vector2.ONE, Vector2(2, 2)), Color(1, 1, 1))
+	var sk = game.skiff
+	if sk != null and game.player.aboard != null and game.items.has("shield"):
+		var ssp: Vector2 = xf * sk.pos
+		var r: float = float(maxi(sk.w, sk.h)) * 0.62 / game.zoom
+		if shield_hit > 0:
+			var f := float(shield_hit) / 30.0
+			_top.draw_arc(ssp, r, 0.0, TAU, 48, Color(0.6, 0.95, 1.0, 0.8 * f), 2.0)
+			_top.draw_arc(ssp, r - 3.0, 0.0, TAU, 48, Color(0.85, 1.0, 1.0, 0.5 * f), 1.0)
+		elif shield >= 1.0:
+			var tw := float(game.frame) * 0.05
+			for q in 6:
+				var a0 := tw + float(q) * TAU / 6.0
+				_top.draw_arc(ssp, r, a0, a0 + 0.35, 6, Color(0.6, 0.9, 1.0, 0.25), 1.0)
+	if near_cache != null and near_wreck != null:
+		var cp: Vector2 = xf * (near_wreck.cache_pos(near_cache) as Vector2)
+		var f2: Font = PixelFont.make()
+		var px: float = float(game.scale_px)
+		var sz: int = PixelFont.SIZE * int(game.ui.U)
+		var txt := "[F] open the cache"
+		var wd := f2.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
+		_top.draw_set_transform(cp + Vector2(0, -30), 0.0, Vector2.ONE / px)
+		_top.draw_string(f2, Vector2(-wd * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
+		_top.draw_string(f2, Vector2(-wd * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(1.0, 0.88, 0.5))
+		_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+

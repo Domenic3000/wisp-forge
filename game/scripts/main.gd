@@ -701,9 +701,9 @@ func _exit_tree() -> void:
 ## of the next one (see gpu_world.step), so it runs while Godot draws.
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 780000:
-		# a test run that hasn't finished in 13 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 13 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 900000:
+		# a test run that hasn't finished in 15 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 15 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:
@@ -1430,6 +1430,8 @@ func _door_bump(m: Body) -> void:
 ## F: open a chest in reach, otherwise open or close the nearest door
 func _interact() -> void:
 	if _skiff_interact(player):
+		return
+	if space.wreck_interact(player):      # (out in space: a wreck's cache within reach)
 		return
 	if not _chest_in_reach().is_empty():
 		_try_open_chest()
@@ -4415,7 +4417,7 @@ func recipe_done(r: Dictionary) -> bool:
 		"drive": return skiff_reach() > int(planet.get("index", 0))
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
-	if r.has("gear") or r["cat"] == "Wards" or r["id"] == "engine" or r["id"] == "beam" or r["id"] == "sail":
+	if r.has("gear") or r["cat"] == "Wards" or r["id"] in ["engine", "beam", "sail", "shield", "cannon"]:
 		return items.has(String(r["id"]))
 	return false
 
@@ -4427,12 +4429,14 @@ func skiff_reach() -> int:
 func recipe_unlocked(r: Dictionary) -> bool:
 	if r.has("scroll") and not items.has(r["scroll"]):
 		return false
+	if r.has("part") and not items.has(r["part"]):
+		return false
 	match r["id"]:
 		"tier2": return tier == 1
 		"tier3": return tier == 2
 		"tier4": return tier == 3 and items.has("heart")
 		"drive": return tier >= 4 and items.has("skiff")
-		"engine", "beam", "sail": return items.has("skiff")
+		"engine", "beam", "sail", "shield", "cannon": return items.has("skiff")
 	if r.has("gear"):
 		# (gear from a planet kind's own ore: once you've found some, and what it builds on)
 		var need := String(Defs.GEAR[r["id"]].get("needs", ""))
@@ -4550,6 +4554,9 @@ func ore_found(om: int) -> bool:
 ## ore, which shows (locked) where that ore is found.
 ## (An alloy shows, locked, once you've found either of its ores.)
 func recipe_hidden(r: Dictionary) -> bool:
+	if r.has("part"):
+		# (ship parts: once you have a skiff to fit them to)
+		return not items.has("skiff") and not items.has(String(r["part"]))
 	if r.has("sigil"):
 		# (only the guardians this planet has, and not yet beaten)
 		return not summoning.callable_biomes().has(String(r["sigil"]))
@@ -4636,6 +4643,10 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"tier4": return "Needs Obsidian Focus + the Ember Heart"
 		"drive": return "Needs the Core Siphon and the Wisp Skiff"
 		"engine", "beam", "sail": return "Needs the Wisp Skiff"
+		"shield", "cannon":
+			if not items.has(String(r["part"])):
+				return "Salvage a %s from a derelict wreck in deep space" % ("Shield Emitter" if r["id"] == "shield" else "Cannon Coil")
+			return "Needs the Wisp Skiff"
 		"blink": return "Find the Scroll of Blink in a chest"
 		"starfall": return "Find the Scroll of Starfall in a chest"
 		"mend": return "Find the Scroll of Mending in a chest"
@@ -4728,6 +4739,13 @@ func craft(r: Dictionary) -> bool:
 		"ward": heat_ward = true
 		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate", "sail":
 			items[String(r["id"])] = true
+		"shield", "cannon":
+			# (a part salvaged from a wreck, fitted to the skiff: the part is used up)
+			items[String(r["id"])] = true
+			items.erase(String(r["part"]))
+			ui.toast("Fitted to your skiff: %s" % ("the Wisp Shield takes a lightning strike out there, then charges again" if r["id"] == "shield" else "the Wisp Cannon fires with the cast button while you fly in space (the keys steer)"), Color(1, 0.85, 0.4), 5.0)
+			save_game()
+			return true
 		"drive":
 			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
 			var nxt := String(Defs.make_planet(int(items["reach"]))["name"])

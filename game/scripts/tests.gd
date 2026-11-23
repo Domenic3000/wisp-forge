@@ -1407,6 +1407,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_spawns()
+		elif only == "wrecks":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_wrecks()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4067,6 +4071,8 @@ func run() -> void:
 	_ok("the Wisp Skiff: forged, called, boarded, flown into space and back, landed and left",
 		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 200.0 and sf_vmax < float(Skiff.CRUISE_HIGH) + 0.5 and sf_land > 40 and sf_scale.min() > 0.99 and sf_scale.max() < 1.01,
 		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later (fastest through the air %.1f a tick), %.0f above the ground line, you still aboard %s; stepped out %s; drawn cells per pixel while climbing %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_vmax, sf_above, sf_with, sf_out, str(sf_scale)])
+
+	await _test_wrecks()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
 	g.player.pos = sf_sk.pos
@@ -6746,6 +6752,354 @@ func _test_workshops() -> void:
 ## waypoint; what you've charted is saved; and back home, space's origin is home again and you land.
 ## Pictures: galaxy_sail.png, galaxy_field.png, galaxy_comet.png, galaxy_nebula.png, galaxy_map.png,
 ## galaxy_map_far.png.
+## Where a wreck can be drifted through: cells at least `r` from any of its cells (a disc that holds the
+## mage however the wreck lies), flooded from its grid's edge. 1 = reached.
+func _wreck_reach(wq, r: float) -> PackedByteArray:
+	var ww: int = wq.w
+	var hh: int = wq.h
+	var dist := PackedFloat32Array()
+	dist.resize(ww * hh)
+	for k in ww * hh:
+		dist[k] = 0.0 if wq.cells[k] != 0 else 1e6
+	# (two passes of a chamfer distance: 1 across, 1.41 diagonally)
+	for j in hh:
+		for i in ww:
+			var k := j * ww + i
+			if i > 0: dist[k] = minf(dist[k], dist[k - 1] + 1.0)
+			if j > 0: dist[k] = minf(dist[k], dist[k - ww] + 1.0)
+			if i > 0 and j > 0: dist[k] = minf(dist[k], dist[k - ww - 1] + 1.41)
+			if i < ww - 1 and j > 0: dist[k] = minf(dist[k], dist[k - ww + 1] + 1.41)
+	for j in range(hh - 1, -1, -1):
+		for i in range(ww - 1, -1, -1):
+			var k := j * ww + i
+			if i < ww - 1: dist[k] = minf(dist[k], dist[k + 1] + 1.0)
+			if j < hh - 1: dist[k] = minf(dist[k], dist[k + ww] + 1.0)
+			if i < ww - 1 and j < hh - 1: dist[k] = minf(dist[k], dist[k + ww + 1] + 1.41)
+			if i > 0 and j < hh - 1: dist[k] = minf(dist[k], dist[k + ww - 1] + 1.41)
+	var got := PackedByteArray()
+	got.resize(ww * hh)
+	var q := PackedInt32Array()
+	for k in ww * hh:
+		var bi := k % ww
+		var bj := k / ww
+		if (bi == 0 or bj == 0 or bi == ww - 1 or bj == hh - 1) and dist[k] >= r:
+			got[k] = 1
+			q.append(k)
+	while not q.is_empty():
+		var c: int = q[q.size() - 1]
+		q.resize(q.size() - 1)
+		for d in [1, -1, ww, -ww]:
+			var nk: int = c + int(d)
+			if nk < 0 or nk >= ww * hh or (absi(int(d)) == 1 and nk / ww != c / ww):
+				continue
+			if got[nk] == 0 and dist[nk] >= r:
+				got[nk] = 1
+				q.append(nk)
+	return got
+
+## can you drift up to a wreck's cache? (a reached cell within 15 of its middle: it opens within 18)
+func _cache_reached(wq, c: Dictionary, got: PackedByteArray) -> bool:
+	var cm := Vector2(float(c["i"]) + float(c["w"]) * 0.5, float(c["j"]) + float(c["h"]) * 0.5)
+	for j in range(int(cm.y) - 16, int(cm.y) + 17):
+		for i in range(int(cm.x) - 16, int(cm.x) + 17):
+			if i >= 0 and j >= 0 and i < wq.w and j < wq.h and got[j * wq.w + i] == 1 and Vector2(i + 0.5, j + 0.5).distance_to(cm) <= 15.0:
+				return true
+	return false
+
+## a body point of a wreck, in the open over a cache (where you float to open it)
+func _over_cache(wq, c: Dictionary) -> Vector2:
+	return wq.to_world(Vector2(float(c["i"]) + float(c["w"]) * 0.5, float(c["j"]) - 9.0) - wq.com)
+
+## is the mage's box in a body's cells?
+func _in_cells(a, p: Vector2) -> bool:
+	var ua: float = (p - g.space.centre).angle()
+	var rr: Vector2 = g.basis_r(ua)
+	var dd: Vector2 = g.basis_d(ua)
+	for q in g.space.box_pts(g.player, 0.9):
+		if a.solid_at(p + rr * q.x + dd * q.y):
+			return true
+	return false
+
+func _test_wrecks() -> void:
+	var wr_rows := []
+	var wr_ok := true
+	var G = load("res://scripts/galaxy.gd")
+	var W = load("res://scripts/wreck.gd")
+	# ---- grown from parts: rooms, caches, a bridge, a way in to every cache
+	var wr_n := 0
+	var wr_bridge := 0
+	var wr_caches := 0
+	var wr_reach := 0
+	var wr_sizes := []
+	for q in 12:
+		var wq = W.make_wreck(7001 + q * 313, q == 0)
+		var got := _wreck_reach(wq, 8.0)
+		wr_n += 1
+		wr_sizes.append("%dx%d" % [wq.w, wq.h])
+		var why := []
+		var has_b := false
+		for c in wq.caches:
+			wr_caches += 1
+			if c["kind"] == "bridge":
+				wr_bridge += 1
+				has_b = true
+			if _cache_reached(wq, c, got):
+				wr_reach += 1
+			else:
+				why.append("%s at %d,%d" % [c["kind"], int(c["i"]), int(c["j"])])
+		if not has_b or not why.is_empty():
+			print("[wrecks] seed %d %dx%d %s: bridge %s, not reached: %s" % [7001 + q * 313, wq.w, wq.h, str(wq.meta), has_b, ", ".join(why)])
+	var wr_ok1: bool = wr_bridge == wr_n and wr_caches >= wr_n * 3 and float(wr_reach) >= float(wr_caches) * 0.85
+	wr_rows.append("%s%d wrecks grown (%s): %d caches, a bridge cache in %d, %d of them reached by drifting in (a disc 17 across)" % ["" if wr_ok1 else "(!) ", wr_n, ", ".join(wr_sizes), wr_caches, wr_bridge, wr_reach])
+	wr_ok = wr_ok and wr_ok1
+	# ---- the skiff, up into space (as the galaxy's check goes)
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var wr_up: Vector2 = sk.pos.normalized()
+	sk.pos = wr_up * (Defs.R_SPACE - 11.0)
+	sk.vel = wr_up * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	for k1 in 60:
+		g.test_aim = sk.pos + sk.pos.normalized() * 1000.0
+		await _frames(1)
+	g.test_cast = false
+	# ---- the first wreck, near home: streamed in with its sector, the map knows it
+	var fw: PackedFloat64Array = G.first_wreck()
+	var wl: Vector2 = g.space.local_of(fw)
+	var home_d: float = Defs.g_rel(fw, Defs.planet_g(0)).length()
+	sk.pos = wl + Vector2.from_angle(0.7) * 400.0
+	sk.vel = Vector2.ZERO
+	var wk = null
+	for k2 in 300:
+		await _frames(1)
+		sk.vel = Vector2.ZERO
+		for a in g.space.rocks:
+			if a.kind == "wreck" and a.pos.distance_to(wl) < 3000.0:
+				wk = a
+		if wk != null:
+			break
+	var wr_scrap := 0
+	for a2 in g.space.rocks:
+		if a2.kind == "scrap" and a2.pos.distance_to(wl) < 1200.0:
+			wr_scrap += 1
+	var wr_ok2: bool = wk != null and wk.first and home_d > 18000.0 and home_d < 26000.0
+	wr_rows.append("%sthe first wreck %.0fk from home came in with its sector: %s, %d scrap round it" % ["" if wr_ok2 else "(!) ", home_d / 1000.0, ("the wreck of " + String(wk.wname)) if wk != null else "none", wr_scrap])
+	wr_ok = wr_ok and wr_ok2
+	if wk == null:
+		_ok("derelict wrecks in deep space: found, drifted into, looted, salvaged; the skiff's shield and cannon", false, "; ".join(wr_rows))
+		return
+	# beside it in the skiff, a picture
+	var side_dir: Vector2 = (sk.pos - wk.pos).normalized()
+	sk.pos = wk.pos + side_dir * (wk.reach() + 40.0)
+	sk.vel = wk.vel
+	await _frames(20)
+	_shot("wreck_outside.png")
+	# ---- out of the skiff, into the wreck: the bridge cache
+	g._skiff_interact(g.player)
+	await _frames(4)
+	var bc: Dictionary = {}
+	for c2 in wk.caches:
+		if c2["kind"] == "bridge":
+			bc = c2
+	var wr_in_ok := false
+	var wr_part := false
+	if not bc.is_empty():
+		g.player.pos = _over_cache(wk, bc)
+		g.space.vel = wk.vel
+		await _frames(20)
+		wr_in_ok = g.space.near_cache == bc and wk.visited and not _in_cells(wk, g.player.pos)
+		_shot("wreck_inside.png")
+		g._interact()
+		await _frames(10)
+		wr_part = g.items.has("part_shield") and bc["open"]
+	# the rest of its caches
+	var hull0: int = g.player.inv[Defs.HULL]
+	var opened := 0
+	var closed0 := 0
+	for c3 in wk.caches:
+		if c3["open"]:
+			continue
+		closed0 += 1
+		g.player.pos = _over_cache(wk, c3)
+		g.space.vel = wk.vel
+		await _frames(6)
+		if g.space.wreck_interact(g.player):
+			opened += 1
+	var wr_ok3: bool = wr_in_ok and wr_part and opened == closed0 and g.space.stats["caches"] >= wk.caches.size()
+	wr_rows.append("%saboard (told its fate %s), at the bridge cache %s: a Shield Emitter %s; %d of %d other caches opened (hull plating +%d)" % ["" if wr_ok3 else "(!) ", wk.visited, wr_in_ok, wr_part, opened, closed0, g.player.inv[Defs.HULL] - hull0])
+	wr_ok = wr_ok and wr_ok3
+	# ---- its walls hold you: the jet toward its bow, from inside
+	var start: Vector2 = _over_cache(wk, bc) if not bc.is_empty() else wk.pos
+	g.player.pos = start
+	g.space.vel = wk.vel
+	var stuck := 0
+	var b_max := -1e9
+	g.test_cast = true
+	for k3 in 120:
+		g.test_aim = g.player.pos + wk.axis_x() * 200.0
+		await _frames(1)
+		if _in_cells(wk, g.player.pos):
+			stuck += 1
+			if stuck <= 4:
+				var bb: Vector2 = wk.to_body(g.player.pos) + wk.com
+				print("[wrecks] in its cells at frame %d: body %.1f,%.1f of %dx%d, vel %s, wreck ang %.2f" % [k3, bb.x, bb.y, wk.w, wk.h, str(g.space.vel), wk.ang])
+		b_max = maxf(b_max, (wk.to_body(g.player.pos) + wk.com).x)
+	g.test_cast = false
+	var b_end: Vector2 = wk.to_body(g.player.pos) + wk.com
+	var still_in: bool = b_end.x > 0.0 and b_end.y > 0.0 and b_end.x < float(wk.w) and b_end.y < float(wk.h) and wk.bg[int(b_end.y) * wk.w + int(b_end.x)] != 0
+	var wr_ok4: bool = stuck <= 2 and still_in
+	wr_rows.append("%sthe hull holds: jetting at its bow from inside, in its cells %d frames, still inside %s (got to column %.0f of %d)" % ["" if wr_ok4 else "(!) ", stuck, still_in, b_max, wk.w])
+	wr_ok = wr_ok and wr_ok4
+	# ---- salvage: dig its plating
+	var tier0: int = g.player.tier
+	g.player.tier = maxi(tier0, 2)
+	var hull1: int = g.player.inv[Defs.HULL]
+	var dig_at: Vector2 = wk.cell_world(int(wk.w * 0.4), int(wk.h) - 7)
+	g.player.pos = dig_at + (dig_at - wk.pos).normalized() * 14.0
+	g.space.vel = wk.vel
+	g.test_dig = true
+	for k4 in 60:
+		g.test_aim = dig_at
+		await _frames(1)
+	g.test_dig = false
+	g.player.tier = tier0
+	var wr_ok5: bool = g.player.inv[Defs.HULL] > hull1
+	wr_rows.append("%ssalvage: dug %d hull plating from its keel" % ["" if wr_ok5 else "(!) ", g.player.inv[Defs.HULL] - hull1])
+	wr_ok = wr_ok and wr_ok5
+	# ---- the Wisp Shield: forged from the emitter, it takes a strike, then charges
+	var sh_rec: Dictionary = {}
+	var cn_rec: Dictionary = {}
+	for r in g.recipes:
+		if r["id"] == "shield":
+			sh_rec = r
+		if r["id"] == "cannon":
+			cn_rec = r
+	for k5 in sh_rec.get("cost", {}):
+		g.player.inv[int(k5)] += int(sh_rec["cost"][k5])
+	var sh_ok: bool = g.craft(sh_rec) and g.items.has("shield") and not g.items.has("part_shield")
+	g.player.pos = sk.pos
+	g._skiff_interact(g.player)
+	await _frames(4)
+	g.test_god = false
+	g.space.shield = 1.0
+	var hp0: float = g.hp
+	g.space._strike(sk.pos, (sk.pos - g.space.centre).normalized(), 0.5, Color.WHITE)
+	await _frames(2)
+	var hp1: float = g.hp
+	g.space._strike(sk.pos, (sk.pos - g.space.centre).normalized(), 0.5, Color.WHITE)
+	await _frames(2)
+	var hp2: float = g.hp
+	g.test_god = true
+	g.hp = g.max_hp
+	var wr_ok6: bool = sh_ok and hp1 >= hp0 and hp2 < hp1 and g.space.stats["shield_saves"] >= 1
+	wr_rows.append("%sthe Wisp Shield forged %s: a strike %.0f -> %.0f (taken by the shield), the next %.0f -> %.0f" % ["" if wr_ok6 else "(!) ", sh_ok, hp0, hp1, hp1, hp2])
+	wr_ok = wr_ok and wr_ok6
+	# ---- the Wisp Cannon: a Cannon Coil (from a second wreck, here given), forged, fired at the wreck
+	g.items["part_cannon"] = 1
+	for k6 in cn_rec.get("cost", {}):
+		g.player.inv[int(k6)] += int(cn_rec["cost"][k6])
+	var cn_ok: bool = g.craft(cn_rec) and g.items.has("cannon")
+	var cells0: int = wk.count()
+	var shots0: int = g.space.stats["shots"]
+	var hits0: int = g.space.stats["shot_hits"]
+	sk.pos = wk.pos + side_dir * (wk.reach() + 60.0)
+	sk.vel = wk.vel
+	var sk_p0: Vector2 = sk.pos
+	g.test_cast = true
+	for k7 in 70:
+		g.test_aim = wk.pos
+		sk.vel = wk.vel
+		await _frames(1)
+		if k7 == 24:
+			_shot("wreck_cannon.png")
+	g.test_cast = false
+	await _frames(20)
+	var cells1: int = wk.count()
+	var wr_ok7: bool = cn_ok and g.space.stats["shots"] - shots0 >= 3 and g.space.stats["shot_hits"] - hits0 >= 2 and cells1 < cells0 and sk.pos.distance_to(sk_p0) < 60.0
+	wr_rows.append("%sthe Wisp Cannon forged %s: %d shots, %d hits, the hull %d -> %d cells, the skiff held its place (moved %.0f: the cast button fires, it doesn't steer)" % ["" if wr_ok7 else "(!) ", cn_ok, g.space.stats["shots"] - shots0, g.space.stats["shot_hits"] - hits0, cells0, cells1, sk.pos.distance_to(sk_p0)])
+	wr_ok = wr_ok and wr_ok7
+	# ---- kept as you left it: its sector goes and comes back
+	var wkey: String = wk.sect
+	var ws: Vector2i = g.space._loaded[wkey]
+	var opened_n := 0
+	for c4 in wk.caches:
+		if c4["open"]:
+			opened_n += 1
+	g.space._unload_sector(wkey)
+	var js = JSON.parse_string(JSON.stringify(g.space.save_state()))
+	g.space.load_state(js)
+	g.space._load_sector(ws, wkey)
+	var wk2 = null
+	for k8 in 120:
+		await _frames(1)
+		for a3 in g.space.rocks:
+			if a3.kind == "wreck" and a3.sect == wkey:
+				wk2 = a3
+		if wk2 != null:
+			break
+	var opened2 := -1
+	if wk2 != null:
+		opened2 = 0
+		for c5 in wk2.caches:
+			if c5["open"]:
+				opened2 += 1
+	var wr_ok8: bool = wk2 != null and opened2 == opened_n and wk2.count() == cells1 and wk2.visited
+	wr_rows.append("%skept as you left it: its sector unloaded and saved, back with %d of %d caches open, %d cells (was %d)" % ["" if wr_ok8 else "(!) ", opened2, opened_n, wk2.count() if wk2 != null else -1, cells1])
+	wr_ok = wr_ok and wr_ok8
+	# ---- the map marks it
+	g.open_map()
+	g.map_view.gz = 60.0
+	g.map_view.centre_on_you()
+	await _frames(10)
+	_shot("wreck_map.png")
+	g.close_map()
+	await _frames(4)
+	# home again, and down
+	g.items.erase("cannon")
+	g.items.erase("shield")
+	sk.pos = g.space.home_at() + (wl - g.space.home_at()).normalized() * (Defs.R_SPACE + 150.0)
+	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0
+	g.test_cast = true
+	for k9 in 600:
+		g.test_aim = g.space.home_at() + (sk.pos - g.space.home_at()) * 0.3
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	for k10 in 1200:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)          # (out of the skiff, as the checks after this expect)
+		await _frames(10)
+	print("[wrecks] " + "\n[wrecks] ".join(wr_rows))
+	_ok("derelict wrecks in deep space: found, drifted into, looted, salvaged; the skiff's shield and cannon", wr_ok, "; ".join(wr_rows))
+
 func _test_galaxy() -> void:
 	var gx_rows := []
 	var gx_ok := true

@@ -8,7 +8,7 @@
 ## pans, H back to you). Space you haven't seen lies under a fog (space.gd `seen`, its sectors); the
 ## nebulae show through it faintly. Every system's star is on it; a charted one (you've been near it)
 ## shows its name and its planets (discs grown from their biomes, a storm belt's dashed ring round those
-## out of reach), and close in, what lies in the explored sectors (asteroid fields, comets). A click sets
+## out of reach), and close in, what lies in the explored sectors (asteroid fields, comets, wrecks). A click sets
 ## a waypoint (space.gd shows it out there, a marker at the edge when it's off screen); a right click
 ## clears it.
 extends Node2D
@@ -203,6 +203,15 @@ func _draw_space() -> void:
 						draw_rect(Rect2(csp.floor() - Vector2(1, 1), Vector2(3, 3)), Color(0.85, 0.95, 1.0))
 						if gz < 140.0:
 							_label(csp + Vector2(0, -5), "Comet", Color(0.75, 0.9, 1.0))
+					elif c["type"] == "wreck":
+						# (a little broken hull)
+						var wsp := sp.floor()
+						draw_rect(Rect2(wsp + Vector2(-3, -1), Vector2(6, 2)), Color(0.62, 0.68, 0.74))
+						draw_rect(Rect2(wsp + Vector2(0, -2), Vector2(2, 1)), Color(0.62, 0.68, 0.74))
+						draw_rect(Rect2(wsp + Vector2(1, -1), Vector2(1, 1)), Color(0.05, 0.06, 0.1))
+						draw_rect(Rect2(wsp + Vector2(-4, 0), Vector2(1, 1)), Color(0.5, 0.85, 1.0))
+						if gz < 140.0:
+							_label(wsp + Vector2(0, -6), String(c["name"]), Color(0.75, 0.9, 0.85))
 					else:
 						var big: bool = c.get("big", false)
 						for q in (7 if big else 4):

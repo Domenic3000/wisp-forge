@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 60
+const NM := 61
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -75,6 +75,7 @@ const SILVER := 57        # realm
 # refined in a workshop's Smelter (workshops.gd): never found in the ground
 const COPPERBAR := 58     # Copper Ingot
 const WISPBAR := 59       # Wisp Ingot
+const HULL := 60          # Hull Plating: salvaged from derelict wrecks in deep space (wreck.gd)
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -101,7 +102,7 @@ const MAT_NAMES := {
 	23: "SHROOM", 24: "GRAVEL", 25: "BRICK", 26: "GLASS", 27: "SNOW", 28: "CRYSTAL", 29: "ASH",
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
-	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR",
+	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -250,6 +251,7 @@ func _init() -> void:
 	_def(WISPBAR, "Wisp Ingot", K_SOLID, ["#8a9cff", "#b8c4ff", "#5a64d8", "#e4e8ff"], {"hard": 2, "self": 1, "glow": Vector3(0.3, 0.35, 0.8)})
 	PLACE[COPPERBAR] = 0
 	PLACE[WISPBAR] = 0
+	_def(HULL, "Hull Plating", K_SOLID, ["#5c6470", "#76808c", "#3e444e", "#9aa4ae"], {"hard": 2})
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -1248,6 +1250,8 @@ const RECIPES := [
 	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISPBAR: 4, COPPERBAR: 3}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it carries the skiff through the next planet's storm belt. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids, and a world with an ore of its own wants some of that too."},
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
+	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
+	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars. Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 ]

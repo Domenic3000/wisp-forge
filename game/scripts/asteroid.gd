@@ -254,6 +254,10 @@ func count() -> int:
 			n += 1
 	return n
 
+## (a wreck's closed caches: mining and blasts leave those cells alone; a rock has none)
+func guarded(_k: int) -> bool:
+	return false
+
 ## Is the world point p inside one of its cells?
 func solid_at(p: Vector2) -> bool:
 	var b := to_body(p) + com

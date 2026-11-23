@@ -15,6 +15,8 @@ const NEAR_PLANET := 14000.0     # nothing grown this close to a planet
 const FIELD := 0.3               # a sector's chance of an asteroid field...
 const BIG := 0.06                # ...of a big drifting one
 const COMET := 0.07              # ...of a comet
+const WRECK := 0.045             # ...of a derelict wreck (wreck.gd) with scrap drifting round it
+const FIRST_WRECK := 22000.0     # every journey's first wreck drifts about this far from the home planet
 const CHART_R := 220000.0        # a system is charted (its planets on the map) once you come this close
 const SCAN_R := 32000.0          # what you see round you marks the map's sectors as explored
 const BODY_R := 300000.0         # the planets of systems this close are out there with you (space.gd bodies)
@@ -112,15 +114,60 @@ static func sector_content(s: Vector2i) -> Array:
 	var roll := rng.randf()
 	var at := Vector2(rng.randf_range(0.2, 0.8), rng.randf_range(0.2, 0.8)) * SECTOR
 	var sg := sector_g(s)
-	if roll < FIELD + BIG + COMET and not _near_planet(sg[0] + at.x, sg[1] + at.y):
+	var fw := first_wreck()
+	if s == sector_of(fw[0], fw[1]):
+		# (the first wreck: near home, so every journey finds one; its bridge always holds a ship part)
+		out.append(_wreck(rng, Vector2(fw[0] - sg[0], fw[1] - sg[1]), true))
+	elif roll < FIELD + BIG + COMET + WRECK and not _near_planet(sg[0] + at.x, sg[1] + at.y):
 		if roll < BIG:
 			out.append(_field(rng, at, true))
 		elif roll < BIG + FIELD:
 			out.append(_field(rng, at, false))
-		else:
+		elif roll < BIG + FIELD + COMET:
 			out.append(_comet(rng, at))
+		else:
+			out.append(_wreck(rng, at, false))
 	_content[key] = out
 	return out
+
+## where every journey's first wreck drifts: FIRST_WRECK from the home planet, the way (from the
+## journey's seed) that keeps it clear of every planet
+static func first_wreck() -> PackedFloat64Array:
+	var key := "first:%d" % Defs.world_seed
+	if _content.has(key):
+		return _content[key]
+	var hg: PackedFloat64Array = Defs.planet_g(0)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([Defs.world_seed, 991])
+	var best := PackedFloat64Array([hg[0] + FIRST_WRECK, hg[1]])
+	for t in 24:
+		var a := rng.randf() * TAU
+		var gx: float = hg[0] + cos(a) * FIRST_WRECK
+		var gy: float = hg[1] + sin(a) * FIRST_WRECK
+		best = PackedFloat64Array([gx, gy])
+		if not _near_planet_r(gx, gy, NEAR_PLANET + 4000.0):
+			break
+	_content[key] = best
+	return best
+
+static func _near_planet_r(gx: float, gy: float, r: float) -> bool:
+	for sr in systems_near(gx, gy, 140000.0):
+		for k in Defs.SYSTEM.size():
+			var g: PackedFloat64Array = Defs.planet_g(sr * Defs.SYSTEM.size() + k)
+			if (g[0] - gx) * (g[0] - gx) + (g[1] - gy) * (g[1] - gy) < r * r:
+				return true
+	return false
+
+## a derelict and the scrap drifting round it
+static func _wreck(rng: RandomNumberGenerator, at: Vector2, is_first: bool) -> Dictionary:
+	var rocks := [{"seed": rng.randi(), "r": 0.0, "kind": "wreck", "off": Vector2.ZERO, "first": is_first,
+		"vel": Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 0.004}]
+	for k in rng.randi_range(3, 6):
+		rocks.append({"seed": rng.randi(), "r": rng.randf_range(4.0, 10.0), "kind": "scrap",
+			"off": Vector2.from_angle(rng.randf() * TAU) * rng.randf_range(140.0, 380.0),
+			"vel": Vector2(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0)) * 0.02})
+	var wn: String = load("res://scripts/wreck.gd").name_of(int(rocks[0]["seed"]))
+	return {"type": "wreck", "at": at, "name": "Wreck of " + wn, "rocks": rocks}
 
 static func _field(rng: RandomNumberGenerator, at: Vector2, big: bool) -> Dictionary:
 	var kinds := ["stony", "stony", "icy", "metallic"]
