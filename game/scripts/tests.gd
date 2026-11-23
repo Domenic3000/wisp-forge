@@ -1415,6 +1415,14 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_pirates()
+		elif only == "outposts":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_outposts()
+		elif only == "cabin":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_cabin()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4078,6 +4086,8 @@ func run() -> void:
 
 	await _test_wrecks()
 	await _test_pirates()
+	await _test_outposts()
+	await _test_cabin()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
 	g.player.pos = sf_sk.pos
@@ -7388,6 +7398,208 @@ func _test_pirates() -> void:
 	print("[pirates] " + "\n[pirates] ".join(pi_rows))
 	_ok("pirates: ships grown from parts hunt the skiff and hole its hull; the cannon beats them into wrecks to loot; the hull is mended", pi_ok, "; ".join(pi_rows))
 
+## Trading outposts (outpost.gd, galaxy.gd, space.gd; user, 23 Nov): every system's outpost where it
+## should be (clear of planets and the first wreck), grown with a hangar the skiff fits in and a hall you can
+## drift to the counter of; out there it streams in, the skiff flies into its hangar and docks, you step out
+## and trade: a bounty for pirates beaten, salvage sold, the hull mended at the dock, star charts, a part;
+## pirates that come near are driven off by its guns; the map shows it. Pictures: outpost.png,
+## outpost_hangar.png, outpost_trader.png, outpost_shop.png, outpost_map.png.
+func _test_outposts() -> void:
+	var op_rows := []
+	var op_ok := true
+	var G = load("res://scripts/galaxy.gd")
+	var O = load("res://scripts/outpost.gd")
+	# ---- where: OUTPOST_D from the first planet, clear of every planet and the first wreck
+	var og: PackedFloat64Array = G.system_outpost(0)
+	var hg: PackedFloat64Array = Defs.planet_g(0)
+	var fw: PackedFloat64Array = G.first_wreck()
+	var od: float = Defs.g_rel(og, hg).length()
+	var ofw: float = Defs.g_rel(og, fw).length()
+	var oclear: bool = not G._near_planet_r(og[0], og[1], G.NEAR_PLANET + 6000.0)
+	var osect := false
+	for c in G.sector_content(G.sector_of(og[0], og[1])):
+		if c["type"] == "outpost":
+			osect = true
+	var op_ok1: bool = od > 24000.0 and od < 30000.0 and oclear and ofw > 12000.0 and osect
+	op_rows.append("%s%s: %.0fk from home, %.0fk from the first wreck, clear of the planets %s, in its sector's content %s" % ["" if op_ok1 else "(!) ", G.outpost_name(0), od / 1000.0, ofw / 1000.0, oclear, osect])
+	op_ok = op_ok and op_ok1
+	# ---- grown: the hangar holds the skiff, the counter can be drifted to
+	var op_fit := 0
+	var op_reach := 0
+	for q in 6:
+		var oq = O.make_outpost(5003 + q * 977)
+		var free := true
+		for j in range(O.HANGAR.position.y + 1, O.HANGAR.position.y + 47):
+			for i in range(O.HANGAR.position.x, O.HANGAR.position.x + 66):
+				if oq.cells[j * oq.w + i] != 0:
+					free = false
+		if free:
+			op_fit += 1
+		var got := _wreck_reach(oq, 8.0)
+		var kc: Vector2 = O.KEEPER - Vector2(18.0, 10.0)
+		var reached := false
+		for j2 in range(int(kc.y) - 12, int(kc.y) + 12):
+			for i2 in range(int(kc.x) - 12, int(kc.x) + 12):
+				if i2 >= 0 and j2 >= 0 and i2 < oq.w and j2 < oq.h and got[j2 * oq.w + i2] == 1:
+					reached = true
+		if reached:
+			op_reach += 1
+	var op_ok2: bool = op_fit == 6 and op_reach == 6
+	op_rows.append("%s6 outposts grown (%dx%d): the hangar holds the skiff in %d, the counter reached by drifting in %d" % ["" if op_ok2 else "(!) ", O.W, O.H, op_fit, op_reach])
+	op_ok = op_ok and op_ok2
+	# ---- up into space in the skiff, out to the outpost
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var op_up: Vector2 = sk.pos.normalized()
+	sk.pos = op_up * (Defs.R_SPACE - 11.0)
+	sk.vel = op_up * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	var ol: Vector2 = g.space.local_of(og)
+	sk.pos = ol + Vector2(-900.0, 0.0)
+	sk.vel = Vector2.ZERO
+	var op = null
+	for k1 in 300:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		op = g.space.nearest_outpost(sk.pos, 5000.0)
+		if op != null:
+			break
+	if op == null:
+		_ok("trading outposts: found, docked at, traded with", false, "; ".join(op_rows) + "; (!) no outpost came in with its sector")
+		return
+	# beside it, then in its hangar
+	var mouth: Vector2 = op.to_world(Vector2(float(O.HANGAR.position.x) - 60.0, float(O.HANGAR.position.y) + 26.0) - op.com)
+	sk.pos = mouth
+	sk.vel = Vector2.ZERO
+	sk.ang = op.axis_x().angle()
+	await _frames(20)
+	_shot("outpost.png")
+	var bay: Vector2 = op.to_world(Vector2(float(O.HANGAR.position.x) + 40.0, float(O.HANGAR.end.y) - 24.0) - op.com)
+	var bumps0: int = int(g.space.stats["crashes"])
+	for k2 in 90:
+		sk.vel = (bay - sk.pos) * 0.08
+		await _frames(1)
+	sk.vel = Vector2.ZERO
+	await _frames(20)
+	var op_docked: bool = g.space.docked == op
+	_shot("outpost_hangar.png")
+	var op_ok3: bool = op_docked and int(g.space.stats["crashes"]) == bumps0
+	op_rows.append("%s%s came in with its sector; the skiff flew into its hangar and docked %s (no crash %s)" % ["" if op_ok3 else "(!) ", op.wname, op_docked, int(g.space.stats["crashes"]) == bumps0])
+	op_ok = op_ok and op_ok3
+	# ---- out of the skiff, to the counter
+	g._skiff_interact(g.player)
+	await _frames(4)
+	g.player.pos = op.to_world(O.KEEPER - Vector2(26.0, 9.0) - op.com)
+	g.space.vel = Vector2.ZERO
+	await _frames(15)
+	var op_near: bool = g.space.near_trader == op
+	_shot("outpost_trader.png")
+	# bounty, then the shop
+	var tr = op.trader()
+	g.items["bounty_paid"] = int(g.items.get("pirates_beaten", 0))
+	g.items["pirates_beaten"] = int(g.items.get("pirates_beaten", 0)) + 2
+	var coins0 := int(g.items.get("coins", 0))
+	g._interact()
+	await _frames(10)
+	var op_shop: bool = g.state == "shop" and g.towns.shop_of == tr
+	var coins1 := int(g.items.get("coins", 0))
+	_shot("outpost_shop.png")
+	var op_ok4: bool = op_near and op_shop and coins1 - coins0 == 70
+	op_rows.append("%sat the counter, %s's prompt %s; trading %s; a bounty of %d coins for 2 pirates" % ["" if op_ok4 else "(!) ", tr.name, op_near, op_shop, coins1 - coins0])
+	op_ok = op_ok and op_ok4
+	# sell salvage, mend the hull at the dock, buy charts and a part
+	g.player.inv[Defs.HULL] += 20
+	var hull0: int = g.player.inv[Defs.HULL]
+	var op_sold: bool = g.towns.sell(tr, Defs.HULL) and g.player.inv[Defs.HULL] == hull0 - 10 and int(g.items.get("coins", 0)) == coins1 + 12
+	g.items["coins"] = int(g.items.get("coins", 0)) + 600
+	sk.carve(sk.cell_world(6, sk.h - 4), 4.0)
+	var miss0: int = sk.missing()
+	var sd: Dictionary = g.towns.shop_def(tr)
+	var i_rep := -1
+	var i_chart := -1
+	var i_part := -1
+	for i3 in (sd["sell"] as Array).size():
+		var it: Dictionary = sd["sell"][i3]
+		if it.has("repair"):
+			i_rep = i3
+		if it.has("star_chart"):
+			i_chart = i3
+		if it.has("part") and i_part < 0 and not g.towns.owned(it):
+			i_part = i3
+	var op_mended: bool = i_rep >= 0 and miss0 > 0 and g.towns.buy(tr, i_rep) and sk.missing() == 0
+	var ch0: int = g.space.charted.size()
+	var op_charts: bool = i_chart >= 0 and g.towns.buy(tr, i_chart) and g.space.charted.size() >= ch0 + 1
+	var op_part: bool = i_part < 0 or (g.towns.buy(tr, i_part) and g.towns.owned(sd["sell"][i_part]))
+	g.towns.close_shop()
+	await _frames(5)
+	var op_ok5: bool = op_sold and op_mended and op_charts and op_part and g.state == "play"
+	op_rows.append("%ssold 10 Hull Plating %s; the hull mended at the dock %s (%d cells were missing); star charts %s (%d -> %d systems); a ship's part %s; the shop closed %s" % ["" if op_ok5 else "(!) ", op_sold, op_mended, miss0, op_charts, ch0, g.space.charted.size(), op_part, g.state == "play"])
+	op_ok = op_ok and op_ok5
+	# ---- pirates that come near are driven off by its guns
+	var made: Array = g.space.spawn_pirates(op.pos, Vector2.RIGHT, "cutter")
+	if not made.is_empty():
+		made[0].pos = op.pos + Vector2(1800.0, 0.0)
+	await _frames(10)
+	var op_ok6: bool = not made.is_empty() and g.space.pirate_count() == 0
+	op_rows.append("%sa pirate cutter come near was driven off by its guns %s" % ["" if op_ok6 else "(!) ", g.space.pirate_count() == 0])
+	op_ok = op_ok and op_ok6
+	# ---- the map
+	g.open_map()
+	g.map_view.gz = 300.0
+	g.map_view.centre_on_you()
+	await _frames(10)
+	_shot("outpost_map.png")
+	g.close_map()
+	await _frames(4)
+	# home again, and down
+	g.player.pos = sk.pos
+	g._skiff_interact(g.player)
+	await _frames(4)
+	sk.pos = g.space.home_at() + (ol - g.space.home_at()).normalized() * (Defs.R_SPACE + 150.0)
+	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0
+	g.test_cast = true
+	for k9 in 600:
+		g.test_aim = g.space.home_at() + (sk.pos - g.space.home_at()) * 0.3
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	g.test_down = true
+	for k10 in 1200:
+		await _frames(1)
+		if sk.grounded and sk.vel.length() < 0.5:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+		await _frames(10)
+	print("[outposts] " + "\n[outposts] ".join(op_rows))
+	_ok("trading outposts: found, docked at, traded with (bounties, salvage, mending, charts, parts), pirates kept off", op_ok, "; ".join(op_rows))
+
 func _test_galaxy() -> void:
 	var gx_rows := []
 	var gx_ok := true
@@ -7687,3 +7899,143 @@ func _test_galaxy() -> void:
 func _shot(fname: String) -> void:
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join(fname))
 
+
+## choose a build piece by its name (its category and place in it)
+func _pick_piece(pname: String) -> bool:
+	var Bd = load("res://scripts/build.gd")
+	if g.build_pieces.is_empty():
+		g.build_pieces = Bd.pieces()
+	for pc in g.build_pieces:
+		if String(pc["name"]) == pname:
+			var cat: int = pc["cat"]
+			g.build_cat = cat
+			while g.build_idx.size() <= cat:
+				g.build_idx.append(0)
+			g.build_idx[cat] = Bd.in_cat(g.build_pieces, cat).find(pc)
+			return true
+	return false
+
+## Building inside the skiff's cabin (user, 23 Nov): aboard, build mode paints blocks and back walls into the
+## room its hull closes in (never over a seat) and sets furniture down on the cabin's floor behind the riders;
+## the Remove tab takes them back; it's all kept with the skiff's cells. Pictures: cabin_built.png.
+func _test_cabin() -> void:
+	var cb_rows := []
+	var cb_ok := true
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	await _frames(20)
+	g.player.inv[Defs.PLANK] += 80
+	g.player.inv[Defs.LEAF] += 20
+	g.player.inv[Defs.DIRT] += 20
+	if not g.build_on:
+		g._toggle_build()
+	# ---- a plank block, high in the cabin (clear of the seats)
+	var bi := -1
+	var bj := -1
+	for j in sk.h:
+		for i in sk.w:
+			if bi < 0 and sk.in_room(i, j) and not sk.in_seat(i, j) and sk.at(i, j) == 0 and sk.in_room(i - 1, j) and sk.in_room(i + 1, j):
+				bi = i
+				bj = j
+	var cb_k: int = bj * sk.w + bi
+	var pl0: int = g.player.inv[Defs.PLANK]
+	g.build_thick = 1
+	var got_b: bool = _pick_piece("Planks")
+	g.test_cast = true
+	for k in 6:
+		g.test_aim = sk.cell_world(bi, bj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(2)
+	var cb_ok1: bool = got_b and bi >= 0 and sk.made[cb_k] == 1 and sk.cells[cb_k] == Defs.PLANK and g.player.inv[Defs.PLANK] < pl0
+	cb_rows.append("%sa plank block built at cabin cell %d,%d %s (planks %d -> %d)" % ["" if cb_ok1 else "(!) ", bi, bj, sk.made[cb_k] == 1, pl0, g.player.inv[Defs.PLANK]])
+	cb_ok = cb_ok and cb_ok1
+	# ---- a back wall over the glass pane
+	var wi := -1
+	var wj := -1
+	for j2 in sk.h:
+		for i2 in sk.w:
+			var k2: int = j2 * sk.w + i2
+			if wi < 0 and sk.in_room(i2, j2) and sk.bg[k2] == Defs.GLASS and sk.at(i2, j2) == 0:
+				wi = i2
+				wj = j2
+	var got_w: bool = _pick_piece("Plank Wall")
+	g.test_cast = true
+	for k1 in 6:
+		g.test_aim = sk.cell_world(wi, wj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(2)
+	var cb_ok2: bool = got_w and wi >= 0 and sk.bg[wj * sk.w + wi] == Defs.PLANK
+	cb_rows.append("%sa back wall of planks over the glass pane %s" % ["" if cb_ok2 else "(!) ", cb_ok2])
+	cb_ok = cb_ok and cb_ok2
+	# ---- furniture: a potted plant, behind the riders, set down on the floor
+	var deco0 := 0
+	for v in sk.deco:
+		if v != 0:
+			deco0 += 1
+	var got_f: bool = _pick_piece("Potted Plant")
+	var sc0: Vector2i = sk.seat_cells[0]
+	var sc1: Vector2i = sk.seat_cells[1]
+	var fp: Vector2 = sk.cell_world((sc0.x + sc1.x) / 2, sc0.y - 6)
+	g.test_cast = true
+	for k2b in 3:
+		g.test_aim = fp
+		await _frames(1)
+	g.test_cast = false
+	await _frames(3)
+	var deco1 := 0
+	for v2 in sk.deco:
+		if v2 != 0:
+			deco1 += 1
+	var cb_ok3: bool = got_f and deco1 > deco0 and int(g.cabin_stats["furniture"]) >= 1
+	cb_rows.append("%sa potted plant set down on the cabin floor %s (%d furniture cells)" % ["" if cb_ok3 else "(!) ", deco1 > deco0, deco1])
+	cb_ok = cb_ok and cb_ok3
+	g.cam_c = sk.pos
+	await _frames(10)
+	_shot("cabin_built.png")
+	# ---- kept with the skiff's cells
+	var Sk = load("res://scripts/skiff.gd")
+	var s2 = Sk.make(sk.design_seed)
+	var cb_loaded: bool = s2.load_cells(sk.save_cells())
+	var deco2 := 0
+	for v3 in s2.deco:
+		if v3 != 0:
+			deco2 += 1
+	var cb_ok4: bool = cb_loaded and deco2 == deco1 and s2.made[cb_k] == 1 and s2.bg[wj * s2.w + wi] == Defs.PLANK and s2.hull_f > 0.999
+	cb_rows.append("%ssaved and loaded: %s, furniture %d cells, the block and the wall kept %s, the hull counted whole %s" % ["" if cb_ok4 else "(!) ", cb_loaded, deco2, s2.made[cb_k] == 1, s2.hull_f > 0.999])
+	cb_ok = cb_ok and cb_ok4
+	# ---- the Remove tab takes the block back
+	var pl1: int = g.player.inv[Defs.PLANK]
+	var got_r: bool = _pick_piece("Remove Blocks")
+	g.test_cast = true
+	for k3 in 6:
+		g.test_aim = sk.cell_world(bi, bj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(2)
+	var cb_ok5: bool = got_r and sk.cells[cb_k] == 0 and g.player.inv[Defs.PLANK] > pl1 and sk.hull_f > 0.999
+	cb_rows.append("%sthe Remove tab took the block back %s (planks %d -> %d)" % ["" if cb_ok5 else "(!) ", sk.cells[cb_k] == 0, pl1, g.player.inv[Defs.PLANK]])
+	cb_ok = cb_ok and cb_ok5
+	if g.build_on:
+		g._toggle_build()
+	await _frames(4)
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+		await _frames(10)
+	print("[cabin] " + "\n[cabin] ".join(cb_rows))
+	_ok("building inside the skiff's cabin: blocks, back walls, furniture, taken back, kept", cb_ok, "; ".join(cb_rows))

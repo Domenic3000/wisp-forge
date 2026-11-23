@@ -704,8 +704,14 @@ func _sale_icon(it: Dictionary) -> Texture2D:
 		return Icons.item("potion")
 	if it.has("spell"):
 		return Icons.spell(String(it["spell"]))
-	if it.has("chart"):
+	if it.has("chart") or it.has("star_chart"):
 		return Icons.item("letter")
+	if it.has("repair"):
+		return Icons.item("hull")
+	if it.has("part"):
+		var pt: Texture2D = Icons.thing(String(it["part"]))
+		if pt != null:
+			return pt
 	if it.has("recipe"):
 		return Icons.thing("recipe")
 	if it.has("heat_ward"):
@@ -742,7 +748,10 @@ func _render_shop() -> void:
 		var have_it: bool = tw.owned(it)
 		var price: int = tw.price_of(_shop_v, it)
 		var ptxt := "%d" % price if price >= int(it["price"]) else "%d (%d)" % [price, int(it["price"])]
-		row.add_child(_label("yours" if have_it else ptxt, 12, DIM if have_it else GOLD))
+		var own_txt := "yours"
+		if it.has("repair"):
+			own_txt = "whole" if game.skiff != null and game.skiff.missing() == 0 else "not here"
+		row.add_child(_label(own_txt if have_it else ptxt, 12, DIM if have_it else GOLD))
 		var b := _button("Buy")
 		b.disabled = have_it or tw.coins() < price
 		b.pressed.connect(func():
@@ -753,7 +762,7 @@ func _render_shop() -> void:
 	for bb in tw.buys(_shop_v):
 		var mat: int = bb[0]
 		var have: int = game.inv[mat]
-		if mat >= Defs.FIREOPAL and have <= 0 and mat != Defs.kind_ore(game.planet):
+		if mat >= Defs.FIREOPAL and mat <= Defs.SILVER and have <= 0 and mat != Defs.kind_ore(game.planet):
 			continue                              # (a far world's ore: only shown once you have some)
 		var row2 := _box(false, 3)
 		row2.mouse_filter = Control.MOUSE_FILTER_PASS

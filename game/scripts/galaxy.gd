@@ -17,6 +17,7 @@ const BIG := 0.06                # ...of a big drifting one
 const COMET := 0.07              # ...of a comet
 const WRECK := 0.045             # ...of a derelict wreck (wreck.gd) with scrap drifting round it
 const FIRST_WRECK := 22000.0     # every journey's first wreck drifts about this far from the home planet
+const OUTPOST_D := 27000.0       # every system's trading outpost (outpost.gd) is about this far from its first planet
 const CHART_R := 220000.0        # a system is charted (its planets on the map) once you come this close
 const SCAN_R := 32000.0          # what you see round you marks the map's sectors as explored
 const BODY_R := 300000.0         # the planets of systems this close are out there with you (space.gd bodies)
@@ -115,10 +116,18 @@ static func sector_content(s: Vector2i) -> Array:
 	var at := Vector2(rng.randf_range(0.2, 0.8), rng.randf_range(0.2, 0.8)) * SECTOR
 	var sg := sector_g(s)
 	var fw := first_wreck()
+	# (a system's trading outpost, if it's in this sector: then nothing else is grown here)
+	var op_here := false
+	for r in systems_near(sg[0] + SECTOR * 0.5, sg[1] + SECTOR * 0.5, OUTPOST_D + SECTOR * 2.0):
+		var og := system_outpost(r)
+		if sector_of(og[0], og[1]) == s:
+			op_here = true
+			out.append({"type": "outpost", "at": Vector2(og[0] - sg[0], og[1] - sg[1]), "sys": r,
+				"name": outpost_name(r), "rocks": [{"seed": outpost_seed(r), "r": 0.0, "kind": "outpost", "off": Vector2.ZERO, "vel": Vector2.ZERO}]})
 	if s == sector_of(fw[0], fw[1]):
 		# (the first wreck: near home, so every journey finds one; its bridge always holds a ship part)
 		out.append(_wreck(rng, Vector2(fw[0] - sg[0], fw[1] - sg[1]), true))
-	elif roll < FIELD + BIG + COMET + WRECK and not _near_planet(sg[0] + at.x, sg[1] + at.y):
+	elif roll < FIELD + BIG + COMET + WRECK and not op_here and not _near_planet(sg[0] + at.x, sg[1] + at.y):
 		if roll < BIG:
 			out.append(_field(rng, at, true))
 		elif roll < BIG + FIELD:
@@ -149,6 +158,35 @@ static func first_wreck() -> PackedFloat64Array:
 			break
 	_content[key] = best
 	return best
+
+## where system r's trading outpost is: OUTPOST_D from its first planet, the way (from the journey's seed)
+## that keeps it clear of every planet (and, in the first system, of the first wreck)
+static func system_outpost(r: int) -> PackedFloat64Array:
+	var key := "outpost:%d:%d" % [Defs.world_seed, r]
+	if _content.has(key):
+		return _content[key]
+	var hg: PackedFloat64Array = Defs.planet_g(r * Defs.SYSTEM.size())
+	var fw := first_wreck()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([Defs.world_seed, r, 4242])
+	var best := PackedFloat64Array([hg[0] - OUTPOST_D, hg[1]])
+	for t in 32:
+		var a := rng.randf() * TAU
+		var d := OUTPOST_D + rng.randf_range(-2000.0, 2000.0)
+		var gx: float = hg[0] + cos(a) * d
+		var gy: float = hg[1] + sin(a) * d
+		best = PackedFloat64Array([gx, gy])
+		var by_wreck: bool = (gx - fw[0]) * (gx - fw[0]) + (gy - fw[1]) * (gy - fw[1]) < 12000.0 * 12000.0
+		if not by_wreck and not _near_planet_r(gx, gy, NEAR_PLANET + 6000.0):
+			break
+	_content[key] = best
+	return best
+
+static func outpost_seed(r: int) -> int:
+	return hash([Defs.world_seed, r, 4243]) & 0xFFFFFF
+
+static func outpost_name(r: int) -> String:
+	return load("res://scripts/outpost.gd").outpost_name(outpost_seed(r))
 
 static func _near_planet_r(gx: float, gy: float, r: float) -> bool:
 	for sr in systems_near(gx, gy, 140000.0):

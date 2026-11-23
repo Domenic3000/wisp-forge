@@ -305,6 +305,42 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Test: `_test_pirates` ("pirates"; in the full run right after `_test_wrecks`): 10 grown ships, a cutter's
   attack holes the hull, the cannon beats it, its strongbox, mending, the shield, a crash, death out there;
   pictures `pirate_ships/attack/beaten.png`, `skiff_damaged/mended.png`. The storm-belt check mends the skiff.
+- TRADING OUTPOSTS (scripts/outpost.gd; user, 23 Nov: outposts with traders): `Outpost` extends wreck.gd, kind
+  "outpost": streamed with its sector, drawn and collided like a wreck, but `guarded` is always true (nothing dug,
+  blasted or chipped; a blast doesn't push it) and never saved (it's grown again). `make_outpost(seed)`
+  (`outpost_name`; `W` x `H` 232 x 132): a HANGAR (`HANGAR` rect, 88 x 52 inside, open on the left, coal back wall
+  with ribs, landing lights, hazard stripes, clamps) the skiff flies into, a HALL (`HALL`) through a 26-high doorway
+  with the COUNTER, shelves of crates and roof windows, the trader standing at `KEEPER`; a domed hub with a band of
+  wisp-lit windows, an antenna and beacon, solar wings of WISPBAR panels, a keel spire. `trader()` is a `Trader`
+  (role "outpost", a folk_art name and figure, `keeper_texture`), enough of a keeper for towns.gd's shop.
+  Galaxy: every system r has one, `Galaxy.system_outpost(r)` (`OUTPOST_D` 27000 +- 2000 from its first planet, a
+  bearing clear of every planet by NEAR_PLANET + 6000 and 12000 from the first wreck), `outpost_seed`,
+  `outpost_name`; `sector_content` puts it in its sector (type "outpost", nothing else grown there). space.gd: its
+  `ang` is set level over `centre` as it streams in; `nearest_outpost`, `_trader_near` (on foot within
+  `TRADE_REACH` of the trader's chest: `near_trader`, "[F] trade with ..." on `_top`, which also draws the trader
+  and the outpost's name), `_dock_check` (the skiff in `in_hangar`: `docked`, a toast), `open_trade` (main
+  `_interact` -> `wreck_interact`: a BOUNTY of 35 coins a pirate beaten since `items["bounty_paid"]`, then
+  `towns.shop_of` + state "shop" + `ui.show_shop`). `Defs.SHOPS["outpost"]`: mend the hull at the dock ("repair"),
+  plating, ingots, star iron, a draught, star charts ("star_chart": n, via `_star_chart`), the Shield Emitter and
+  Cannon Coil ("part"); it buys salvage, ice, ores. towns.gd `owned`/`grant` know "part", "repair",
+  "star_chart"; ui.gd's sale icons too, and its sell list hides only far worlds' ores (FIREOPAL..SILVER).
+  Pirates never come out of the dark within `OUTPOST_SAFE` of one and are driven off within `OUTPOST_GUNS`.
+  Markers: this system's outpost (gold) from the galaxy, so it can be found before its sector comes in; the map
+  draws a little station at every charted system's outpost. Test: `_test_outposts` ("outposts"; pictures
+  `outpost.png`, `outpost_hangar.png`, `outpost_trader.png`, `outpost_shop.png`, `outpost_map.png`).
+- space.gd `_world_xf()` is `main.screen_xf()` (built from the view's angle and zoom). It used to difference
+  `world_to_screen` at the origin, and far from home float precision put rocks, wrecks and outposts dozens of
+  pixels from where they were (the overlay's mage and skiff looked outside a station they were inside).
+- BUILDING IN THE CABIN (user, 23 Nov): B while aboard (main `_update_cabin`, from the tick's riders and space.gd's
+  tick; `cabin_cast` takes the cast button from steering and the cannon while building). The cursor's cell is
+  `sk.to_body(aim) + sk.com`. Blocks ("block") and back walls ("wall") paint `build_thick` squares every 3 ticks
+  into `in_room` cells (blocks never in `in_seat`: a rider's box), paid a cell a material; furniture ("prop",
+  `Build.design`) goes into pixel_body's `deco` layer (Props.PALETTE index + 1; drawn by `back_texture` in front of
+  the back wall, behind the riders), let down onto the cabin floor and slid sideways until it fits
+  (`_cabin_prop_cells`), one a click; the Remove tab ("remove" layers) takes built blocks, back walls (the forged
+  glass pane, `design_bg`, comes back, nothing given for it) and furniture (planks back). `save_cells` packs six
+  layers now (`load_cells` takes five or six). `cabin_stats`. Test: `_test_cabin` ("cabin"; `_pick_piece(name)`;
+  picture `cabin_built.png`). The cabin is small (about 30 x 25 cells): bigger hulls later.
 - Test: `_test_galaxy` ("galaxy"; in the full run right after the skiff's journey to Cindrel): the spiral, the
   Starsail (sailing the way farthest from every planet, home too), recentring, a field streamed in and kept as
   mined, a comet on its loop, a nebula (both chosen 80000+ from any planet, or a journey begins), the chart,
@@ -891,7 +927,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 15 minutes (a full run takes about 13), so a broken run never leaves the game open;
+- Test mode quits by itself after 15 minutes (a full run takes about 13.5), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
   up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
   script it preloads failed to compile: 25 s), or that passes 16 minutes. tests.gd is loaded at run
@@ -973,7 +1009,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

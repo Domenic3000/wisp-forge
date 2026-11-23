@@ -541,6 +541,7 @@ func _draw_in_space() -> void:
 	if game.player.aboard == null:
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
 	_draw_skiff()
+	_draw_build_preview()                 # (building in the skiff's cabin out here)
 	if game.ui.mouse_over_ui():
 		return
 	var m: Vector2 = (get_viewport().get_mouse_position() / game.scale_px).floor()

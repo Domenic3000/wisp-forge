@@ -203,6 +203,8 @@ func _draw_space() -> void:
 						draw_rect(Rect2(csp.floor() - Vector2(1, 1), Vector2(3, 3)), Color(0.85, 0.95, 1.0))
 						if gz < 140.0:
 							_label(csp + Vector2(0, -5), "Comet", Color(0.75, 0.9, 1.0))
+					elif c["type"] == "outpost":
+						pass                          # (drawn with its system, below)
 					elif c["type"] == "wreck":
 						# (a little broken hull)
 						var wsp := sp.floor()
@@ -246,6 +248,13 @@ func _draw_space() -> void:
 			# a charted system close in: its planets
 			if gz < 2500.0:
 				_label(ssp + Vector2(0, -16), "The %s system" % Galaxy.star_name(r), scol)
+			# its trading outpost: a little station
+			var osp := to_screen(Galaxy.system_outpost(r)).floor()
+			draw_rect(Rect2(osp + Vector2(-3, -1), Vector2(7, 3)), Color(0.62, 0.66, 0.72))
+			draw_rect(Rect2(osp + Vector2(-6, 0), Vector2(13, 1)), Color(0.45, 0.6, 1.0))
+			draw_rect(Rect2(osp + Vector2(0, -3), Vector2(1, 2)), Color(1.0, 0.5, 0.3))
+			if gz < 900.0:
+				_label(osp + Vector2(0, -7), Galaxy.outpost_name(r) + " · trading post", Color(1.0, 0.85, 0.5))
 			for k in Defs.SYSTEM.size():
 				var i := r * Defs.SYSTEM.size() + k
 				var psp := to_screen(Defs.planet_g(i))

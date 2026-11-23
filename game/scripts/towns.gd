@@ -960,6 +960,11 @@ func owned(it: Dictionary) -> bool:
 		return game.known.has(String(it["spell"]))
 	if it.has("recipe"):
 		return game.knows(game.recipe_by_id(String(it["recipe"])))
+	if it.has("part"):
+		var pid := String(it["part"])
+		return game.items.has("part_" + pid) or game.items.has(pid)
+	if it.has("repair"):
+		return game.skiff == null or game.skiff.missing() == 0 or game.skiff.pos.distance_to(game.player.pos) > 600.0
 	return false
 
 ## buy the i-th thing the keeper sells
@@ -1000,6 +1005,14 @@ func grant(it: Dictionary) -> void:
 		game.known.append(String(it["spell"]))
 	if it.has("recipe"):
 		game.learn(String(it["recipe"]), "bought")
+	if it.has("part"):
+		game.items["part_" + String(it["part"])] = 1
+		game.ui.toast("The Wisp Forge can fit it to your skiff (Travel)", Color(1.0, 0.85, 0.4), 3.0)
+	if it.has("star_chart"):
+		for k in int(it["star_chart"]):
+			game.space._star_chart()
+	if it.has("repair") and game.skiff != null:
+		game.skiff.mend(100000)
 
 ## sell what the keeper pays for, one lot
 func sell(v, mat: int) -> bool:

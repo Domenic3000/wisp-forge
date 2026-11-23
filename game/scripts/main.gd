@@ -2153,6 +2153,11 @@ func _read_local_input(m: Mage) -> void:
 	inp.decon = can_act and rmb and shift
 	inp.sail = (shift and state == "play") or test_sail
 	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on) or test_mend
+	# (building inside the skiff: the cast button builds, it doesn't steer or fire)
+	cabin_cast = false
+	if build_on and m.aboard != null:
+		cabin_cast = inp.cast
+		inp.cast = false
 
 func _tick() -> void:
 	frame += 1
@@ -2194,6 +2199,8 @@ func _tick() -> void:
 				_deconstruct(m, m.input.aim)
 			else:
 				m.decon_pause = 0
+		if not m.dead and state == "play" and m.aboard != null and m.local and build_on:
+			_update_cabin(m)
 		if m.dig_tap > 0:
 			m.dig_tap -= 1
 	prof_add("mages", Time.get_ticks_usec() - tm)
@@ -4894,7 +4901,10 @@ func _toggle_build() -> void:
 			if Build.STYLES[si][1] == bn:
 				build_style = si
 		_struct_key = ""
-		ui.toast("Build mode: click to place · Q/E category · wheel piece · G how walls and blocks are laid · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
+		if player.aboard != null:
+			ui.toast("Building in the skiff's cabin: Blocks, Back Walls and Furniture go in, the Remove tab takes them out · [ ] size · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.5)
+		else:
+			ui.toast("Build mode: click to place · Q/E category · wheel piece · G how walls and blocks are laid · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
 	else:
 		ui.toast("Build mode off", Color(0.8, 0.8, 0.9), 1.0)
 
@@ -6634,6 +6644,175 @@ func _mend_skiff(m: Mage) -> void:
 	if skiff.missing() == 0:
 		ui.toast("The hull is whole again", Color(0.7, 0.9, 1.0), 2.0)
 		audio.play("blink", skiff.pos, 0.6)
+
+## Building inside the skiff's cabin (B while aboard; user, 23 Nov: "building inside the cabin"): the cursor's
+## cell in the skiff's own body. Blocks and back walls are painted cell by cell while the button is held (only
+## into the room its hull closes in, never over a seat); furniture (Build.design, as in the world) goes into
+## the body's `deco` layer, in front of the back wall and behind whoever sits there, resting on the cabin's
+## floor, one a click; the Remove tab takes back what was built. Paid from the satchel, as in the world.
+var cabin_cast := false         # (the cast button, while building in the cabin)
+var _cabin_latch := false
+var cabin_stats := {"blocks": 0, "walls": 0, "furniture": 0, "removed": 0}   # (the tests read it)
+
+func _update_cabin(m: Mage) -> void:
+	var sk = skiff
+	build_prev = {}
+	if sk == null or m.aboard != sk:
+		return
+	if not cabin_cast:
+		_cabin_latch = false
+	var piece := build_piece()
+	if piece.is_empty():
+		return
+	var kind: String = piece["kind"]
+	var b: Vector2 = sk.to_body(m.input.aim) + sk.com
+	var ci := int(floor(b.x))
+	var cj := int(floor(b.y))
+	var t: int = clampi(build_thick, 1, 4)
+	var cells := []       # [i, j]
+	var prev := []        # [world point, colour]
+	var ok := true
+	match kind:
+		"block", "wall":
+			var mat: int = piece["mat"]
+			for dj in t:
+				for di in t:
+					var i := ci - t / 2 + di
+					var j := cj - t / 2 + dj
+					if not sk.in_room(i, j):
+						continue
+					if kind == "block" and (sk.at(i, j) != 0 or sk.in_seat(i, j)):
+						continue
+					if kind == "wall" and int(sk.bg[j * sk.w + i]) == mat:
+						continue
+					cells.append(Vector2i(i, j))
+					prev.append([sk.cell_world(i, j), Defs.COLOR[mat]])
+			ok = not cells.is_empty() and m.inv[mat] >= cells.size()
+			build_prev = {"cells": prev, "ok": ok}
+			if cabin_cast and ok and frame % 3 == 0:
+				for c in cells:
+					var cc: Vector2i = c
+					if sk.place(cc.x, cc.y, mat, kind == "wall"):
+						m.inv[mat] -= 1
+						cabin_stats["blocks" if kind == "block" else "walls"] += 1
+				vfx.conjure(sk.cell_world(ci, cj), Defs.COLOR[mat])
+				audio.play("place", sk.pos, 0.4)
+			elif cabin_cast and not ok and not cells.is_empty():
+				_build_need(piece)
+		"prop":
+			var d: Dictionary = Build.design(piece, build_seed)
+			var rows: Array = d["rows"]
+			var on_wall: bool = d.get("wall", false)
+			var pw: int = String(rows[0]).length()
+			var ph: int = rows.size()
+			# where you point, or slid sideways to the nearest spot where it fits (the cabin's sides curve in)
+			var best := []
+			for off in [0, 1, -1, 2, -2, 3, -3, 4, -4, 6, -6, 8, -8, 10, -10]:
+				var tri := _cabin_prop_cells(sk, rows, on_wall, ci - pw / 2 + int(off), cj)
+				if best.is_empty():
+					best = tri
+				if bool(tri[1]):
+					best = tri
+					break
+			cells = best[0]
+			ok = bool(best[1])
+			for c0 in cells:
+				prev.append([sk.cell_world(int(c0[0]), int(c0[1])), Color.html(String(Build.Props.PALETTE[int(c0[2])]))])
+			var cost: Dictionary = Build.payable(piece, m.inv)
+			ok = ok and not cost.is_empty() and not cells.is_empty()
+			build_prev = {"cells": prev, "ok": ok}
+			if cabin_cast and not _cabin_latch:
+				_cabin_latch = true
+				if ok:
+					for c2 in cells:
+						sk.deco[int(c2[1]) * sk.w + int(c2[0])] = int(c2[2]) + 1
+					for cm in cost:
+						m.inv[int(cm)] -= int(cost[cm])
+					sk.dirty = true
+					cabin_stats["furniture"] += 1
+					build_seed = randi()
+					vfx.place_flash(sk.cell_world(ci, cj), float(maxi(pw, ph)))
+					audio.play("place", sk.pos, 0.6)
+				elif cost.is_empty():
+					_build_need(piece)
+				else:
+					ui.toast("It doesn't fit in the cabin there", Color(1, 0.7, 0.5), 1.5)
+		"remove":
+			var layer: String = piece.get("layer", "all")
+			var tr := maxi(t, 2)
+			for dj2 in tr:
+				for di2 in tr:
+					var i3 := ci - tr / 2 + di2
+					var j3 := cj - tr / 2 + dj2
+					if not sk.in_room(i3, j3):
+						continue
+					var k3: int = j3 * sk.w + i3
+					var has_front: bool = sk.made[k3] == 1 and sk.cells[k3] != 0
+					var has_back: bool = sk.bg[k3] != 0 and sk.bg[k3] != sk.design_bg[k3]
+					var has_furn: bool = sk.deco[k3] != 0
+					if (layer in ["front", "all"] and has_front) or (layer in ["back", "all"] and has_back) or (layer in ["furn", "all"] and has_furn):
+						cells.append(Vector2i(i3, j3))
+						prev.append([sk.cell_world(i3, j3), Color(1.0, 0.5, 0.4)])
+			ok = not cells.is_empty()
+			build_prev = {"cells": prev, "ok": ok}
+			if cabin_cast and ok and frame % 3 == 0:
+				var furn := 0
+				for c3 in cells:
+					var cv: Vector2i = c3
+					var k4: int = cv.y * sk.w + cv.x
+					if layer in ["front", "all"] and sk.made[k4] == 1:
+						var got: int = sk.remove(cv.x, cv.y, false)
+						if got != 0:
+							m.inv[got] += 1
+					if layer in ["back", "all"] and sk.bg[k4] != 0 and sk.bg[k4] != sk.design_bg[k4]:
+						var gb: int = sk.bg[k4]
+						sk.bg[k4] = sk.design_bg[k4]          # (what was there as forged comes back: the glass pane)
+						m.inv[gb] += 1
+					if layer in ["furn", "all"] and sk.deco[k4] != 0:
+						sk.deco[k4] = 0
+						furn += 1
+					cabin_stats["removed"] += 1
+				if furn > 0:
+					m.inv[Defs.PLANK] += maxi(1, furn / 10)
+				sk.dirty = true
+				sk.rebuild()
+				vfx.shape_burst(prev.map(func(e): return e[0]), false)
+		_:
+			if cabin_cast and not _cabin_latch:
+				_cabin_latch = true
+				ui.toast("Inside the skiff: blocks, back walls and furniture (the Remove tab takes them out)", Color(1, 0.7, 0.5), 2.0)
+
+## a piece of furniture's cells in the cabin with its left at x0 (resting on the floor under row cj, unless
+## it hangs on a wall): [[[i, j, palette index]...], whether every one is free room]
+func _cabin_prop_cells(sk, rows: Array, on_wall: bool, x0: int, cj: int) -> Array:
+	var pw: int = String(rows[0]).length()
+	var ph: int = rows.size()
+	var y1 := cj
+	if not on_wall:
+		for drop in 30:
+			var free := true
+			for dx in pw:
+				if not sk.in_room(x0 + dx, y1 + 1) or sk.at(x0 + dx, y1 + 1) != 0:
+					free = false
+					break
+			if not free:
+				break
+			y1 += 1
+	var y0 := y1 - ph + 1
+	var out := []
+	var fits := true
+	for rj in ph:
+		var row: String = rows[rj]
+		for ri in pw:
+			var ch := row[pw - 1 - ri] if build_flip else row[ri]
+			if ch == ".":
+				continue
+			var i2 := x0 + ri
+			var j2 := y0 + rj
+			if not sk.in_room(i2, j2) or sk.at(i2, j2) != 0 or int(sk.deco[j2 * sk.w + i2]) != 0:
+				fits = false
+			out.append([i2, j2, int(Build.Props.CHARS.get(ch, 0))])
+	return [out, fits]
 
 ## the wisp engine's glow streaming from the stern
 func _skiff_exhaust() -> void:

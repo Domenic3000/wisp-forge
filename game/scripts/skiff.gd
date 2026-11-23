@@ -45,6 +45,7 @@ var power := 1.0                # its engine (1.5 with the Star-Iron Engine): th
 const HULL_FLOOR := 0.25        # below this much hull, hits go through to the riders
 var design := PackedByteArray() # the hull as forged (material per cell): what mending puts back
 var design_v := PackedByteArray()
+var design_bg := PackedByteArray() # (its back layer as forged: the cabin's glass pane, given nothing back for)
 var hull0 := 1                  # cells of the hull as forged
 var engine0 := 1                # (its engine's wisp cells as forged)
 var hull_f := 1.0               # how much of the hull is left (0..1)
@@ -79,6 +80,7 @@ func _design() -> void:
 	# (the hull as forged: what mending puts back)
 	design = cells.duplicate()
 	design_v = vars.duplicate()
+	design_bg = bg.duplicate()
 	hull0 = 0
 	engine0 = 0
 	for k in design.size():
@@ -372,32 +374,48 @@ func missing() -> int:
 	return n
 
 ## Mend up to n of the hull's lost cells, from what's left outward (a gone cell beside one still there
-## first). Returns the world points of the cells put back.
+## first, pass after pass, so a deep hole fills from its edges in). Returns the world points of the cells put
+## back.
 func mend(n: int) -> Array:
 	var out := []
 	if design.size() != cells.size() or n <= 0:
 		return out
-	var cand := PackedInt32Array()
-	var lone := PackedInt32Array()
-	for k in design.size():
-		if design[k] == 0 or cells[k] != 0:
-			continue
-		var i := k % w
-		var j := k / w
-		if at(i - 1, j) != 0 or at(i + 1, j) != 0 or at(i, j - 1) != 0 or at(i, j + 1) != 0:
-			cand.append(k)
-		else:
-			lone.append(k)
-	if cand.is_empty():
-		cand = lone
-	for q in mini(n, cand.size()):
-		var pick := randi() % cand.size()
-		var k2: int = cand[pick]
-		cand.remove_at(pick)
-		cells[k2] = design[k2]
-		vars[k2] = design_v[k2]
-		made[k2] = 0
-		out.append(cell_world(k2 % w, k2 / w))
+	var left := n
+	while left > 0:
+		var cand := PackedInt32Array()
+		var lone := PackedInt32Array()
+		for k in design.size():
+			if design[k] == 0 or cells[k] != 0:
+				continue
+			var i := k % w
+			var j := k / w
+			if at(i - 1, j) != 0 or at(i + 1, j) != 0 or at(i, j - 1) != 0 or at(i, j + 1) != 0:
+				cand.append(k)
+			else:
+				lone.append(k)
+		if cand.is_empty():
+			cand = lone
+		if cand.is_empty():
+			break
+		for q in mini(left, cand.size()):
+			var pick := randi() % cand.size()
+			var k2: int = cand[pick]
+			cand.remove_at(pick)
+			cells[k2] = design[k2]
+			vars[k2] = design_v[k2]
+			made[k2] = 0
+			out.append(cell_world(k2 % w, k2 / w))
+			left -= 1
 	if not out.is_empty():
 		rebuild()
 	return out
+
+# ------------------------------------------------------------ the cabin ---
+
+## is cell (i, j) where a rider sits (their box over the seat)? Blocks aren't built there.
+func in_seat(i: int, j: int) -> bool:
+	for sc in seat_cells:
+		var c: Vector2i = sc
+		if i >= c.x - 4 and i <= c.x + 4 and j >= c.y - 17 and j <= c.y:
+			return true
+	return false

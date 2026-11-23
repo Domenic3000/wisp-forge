@@ -762,6 +762,21 @@ const SHOPS := {
 			{"name": "A night's rest (full health, till morning)", "price": 15, "rest": true},
 			{"name": "Hearty Meal (30 health)", "price": 12, "meal": 30.0}],
 		"buy": {PLANK: [10, 3], WOOD: [8, 2]}},
+	# a trading outpost in space (outpost.gd; space.gd open_trade): salvage bought, ship stock sold, the skiff
+	# mended at its dock ("repair"), charts of the stars ("star_chart": that many uncharted systems), ship parts
+	# for those who never found them in a wreck ("part": the part's id)
+	"outpost": {"title": "Trading Post", "sell": [
+			{"name": "Mend the skiff's hull at the dock", "price": 35, "repair": true},
+			{"name": "Hull Plating x12", "price": 30, "give": {HULL: 12}},
+			{"name": "Wisp Ingots x4", "price": 32, "give": {WISPBAR: 4}},
+			{"name": "Copper Ingots x6", "price": 20, "give": {COPPERBAR: 6}},
+			{"name": "Star Iron x3", "price": 60, "give": {STARIRON: 3}},
+			{"name": "Healing Draught", "price": 45, "potion": 1},
+			{"name": "Star charts: the two nearest uncharted systems", "price": 50, "star_chart": 2},
+			{"name": "Shield Emitter (a ship's part)", "price": 160, "part": "shield"},
+			{"name": "Cannon Coil (a ship's part)", "price": 200, "part": "cannon"}],
+		"buy": {HULL: [10, 12], STARIRON: [2, 22], WISPBAR: [4, 10], COPPERBAR: [6, 8], CRYSTAL: [3, 9], ICE: [10, 3],
+			FROST: [3, 4], COPPER: [8, 3], COAL: [8, 2]}, "ores": [2, 7]},
 }
 ## What a village's shops add on each kind of planet (towns.gd `shop_def` merges it into SHOPS): the ward its
 ## danger calls for, its own fare, building stock it's known for. Entries as in SHOPS, plus "item": an

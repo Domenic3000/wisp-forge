@@ -28,6 +28,7 @@ extends Node2D
 const Asteroid := preload("res://scripts/asteroid.gd")
 const Wreck := preload("res://scripts/wreck.gd")
 const Pirate := preload("res://scripts/pirate.gd")
+const Outpost := preload("res://scripts/outpost.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 ## The galaxy (user, 22 Nov: infinite space). Space's origin follows you (`org`: the galaxy point that
@@ -100,6 +101,10 @@ const PIRATE_CLEAR := 8000.0    # pirates only come out of the dark this far abo
 const PIRATE_EVERY := Vector2i(2400, 4200)   # ticks between their chances to find you
 const PIRATE_MAX := 3
 const CRASH_SPACE := 7.0        # the skiff is hurt hitting rock faster than this
+const TRADE_REACH := 40.0       # how near the trader you trade (F)
+const BOUNTY := 35              # coins an outpost pays for each pirate you've beaten
+const OUTPOST_SAFE := 12000.0   # pirates never come out of the dark this near an outpost...
+const OUTPOST_GUNS := 2500.0    # ...and one that comes this near is driven off by its guns
 const NEARER := 0.8             # another planet is clearly nearer: at this fraction of home's distance
 const TRAVEL_R := 40000.0       # ...and within this of its middle: then it's made while you come in
 const PLANET_MASK := "shader_type canvas_item;
@@ -162,7 +167,7 @@ var sailing := false
 var neb := 0.0                  # how thick the nebula is round you, and its colour
 var neb_col := Color.WHITE
 var stats := {"recentred": 0, "sectors": 0, "rocks_made": 0, "shots": 0, "shot_hits": 0, "caches": 0, "shield_saves": 0,
-	"pirates": 0, "pirate_shots": 0, "pirate_hits": 0, "pirates_beaten": 0, "hull_hits": 0, "crashes": 0}   # (for the tests)
+	"pirates": 0, "pirate_shots": 0, "pirate_hits": 0, "pirates_beaten": 0, "hull_hits": 0, "crashes": 0, "trades": 0, "bounty": 0}   # (for the tests)
 var shots := []                 # the Wisp Cannon's bolts: [pos, vel, ticks left]
 var _cannon_cd := 0
 var shield := 1.0               # the Wisp Shield's charge (1 = ready to take a strike)
@@ -174,6 +179,8 @@ var foe_shots := []             # pirates' bolts: [pos, vel, ticks left, the shi
 var _pirate_t := 1800           # ticks to the pirates' next chance to find you
 var allow_pirates := false      # (the test mode: pirates come only when a check asks)
 var _hull_warn := 1.0           # (the hull warning given last, so it's said once per step down)
+var near_trader = null          # the outpost whose trader you're beside (F trades), or null
+var docked = null               # the outpost whose hangar the skiff is in, or null
 var near_wreck = null
 
 func _ready() -> void:
@@ -287,6 +294,8 @@ func tick() -> void:
 	_pirate_chance(focus)
 	_update_pirates()
 	game._mend_skiff(m)
+	if game.build_on and m.aboard != null and not m.dead:
+		game._update_cabin(m)
 	if sk != null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
 		# the skiff: flown by its pilot (keys, or hold cast toward the cursor), or drifting if nobody's
 		# aboard (one left down on the planet waits there)
@@ -325,7 +334,9 @@ func tick() -> void:
 		shield_hit -= 1
 	near_cache = null
 	near_wreck = null
+	near_trader = null
 	beam_to = null
+	_dock_check(sk)
 	if m.aboard != null:
 		vel = sk.vel
 		if sk.pilot() == m and m.input.dig and game.items.has("beam") and not m.dead:
@@ -373,6 +384,7 @@ func tick() -> void:
 	if m.input.dig and not m.dead:
 		mine(m)
 	_wreck_near(m)
+	_trader_near(m)
 	m.vx = vel.dot(game.basis_r(a))
 	m.vy = vel.dot(game.basis_d(a))
 	m.on_ground = false
@@ -744,10 +756,15 @@ func _stream(focus: Vector2) -> void:
 			match String(pl["kind"]):
 				"wreck": a = Wreck.make_wreck(int(pl["seed"]), bool(pl.get("first", false)))
 				"scrap": a = Wreck.scrap(int(pl["seed"]), float(pl["r"]))
+				"outpost": a = Outpost.make_outpost(int(pl["seed"]))
 				_: a = Asteroid.make(int(pl["seed"]), float(pl["r"]), String(pl["kind"]))
 			a.vel = pl["vel"]
 		a.sect = String(pl["sect"])
 		a.pos = local_of(pl["g"])
+		if a.kind == "outpost":
+			# (an outpost stands level over the planet the view turns to: its floors are floors)
+			var oup: Vector2 = (a.pos - centre).normalized() if not near.is_empty() else Vector2.from_angle(view_ang)
+			a.ang = Vector2(oup.y, -oup.x).angle()
 		if pl.has("orbit") and not (pl["orbit"] as Dictionary).is_empty():
 			a.orbit = pl["orbit"]
 			a.loop_at = pl["at"]
@@ -916,7 +933,12 @@ func planet_tick() -> void:
 # ------------------------------------------------------------- the view ---
 
 ## world -> screen as one affine map (valid in the round view, where space always is)
+## (built from the view's own angle and zoom, not by differencing screen points of the origin: far from home
+## that lost so much to float precision that rocks, wrecks and outposts were drawn dozens of pixels away from
+## where they are, the mage and skiff (drawn by the overlay) seemingly outside a station they were inside)
 func _world_xf() -> Transform2D:
+	if game.screen_xf_ok():
+		return game.screen_xf()
 	var t: Vector2 = game.world_to_screen(Vector2.ZERO)
 	return Transform2D(game.world_to_screen(Vector2(1, 0)) - t, game.world_to_screen(Vector2(0, 1)) - t, t)
 
@@ -1052,6 +1074,10 @@ func _draw() -> void:
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
 		_marker(xf, nr.pos, nr.reach(), "Comet" if not nr.orbit.is_empty() else "Asteroid", Color(0.95, 0.82, 0.62))
+	# this system's trading outpost (from the galaxy: you can find it before its sector comes in)
+	if near_sys >= 0:
+		var opl: Vector2 = game.cam_c + Defs.g_rel(Galaxy.system_outpost(near_sys), galaxy_of(game.cam_c))
+		_marker(xf, opl, 120.0, Galaxy.outpost_name(near_sys) + " · trading post", Color(1.0, 0.82, 0.45))
 	for pa in rocks:
 		if pa.kind == "pirate":
 			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4))
@@ -1446,7 +1472,7 @@ func _comet_tail(a) -> void:
 
 ## A rock cut through: its smaller pieces drift off as rocks of their own, scraps crumble to dust.
 func _split(a) -> void:
-	if a.kind == "wreck" or a.kind == "pirate":
+	if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost":
 		return                             # (a wreck holds together: its caches are in its cells)
 	var pcs: Array = a.pieces()
 	if pcs.size() <= 1 and (pcs.is_empty() or pcs[0].size() >= ROCK_SCRAP):
@@ -1525,7 +1551,7 @@ func nearest_rock(p: Vector2, within := 900.0) -> Variant:
 	var best = null
 	var bd := within
 	for a in rocks:
-		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost":
 			continue
 		var d: float = (a.pos - p).length() - a.reach()
 		if d < bd:
@@ -1571,7 +1597,7 @@ func _rock_push(m, close: Array) -> bool:
 			continue
 		touched = true
 		var n: Vector2 = (m.pos - a.pos).normalized()
-		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost":
 			# (a hull has rooms inside: out the shortest way, never "away from its middle", which would
 			# push you on through the wall you touched from inside)
 			var out := _shortest_out(m, a, pts, rr, dd)
@@ -1666,9 +1692,9 @@ func _draw_rocks(xf: Transform2D) -> void:
 		sm.set_shader_parameter("sun", Vector2(sun.dot(ax), sun.dot(ay)).normalized())
 		sm.set_shader_parameter("ctr", a.com)
 		sm.set_shader_parameter("rad", a.rad * 1.2)
-		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" else 0.0)
+		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" or a.kind == "outpost" else 0.0)
 		spr2.modulate = Color(1.6, 1.3, 1.3) if a.kind == "pirate" and a.hit_t > 0 else Color.WHITE
-		if a.kind == "wreck" or a.kind == "pirate":
+		if a.kind == "wreck" or a.kind == "pirate" or a.kind == "outpost":
 			bk.visible = true
 			bk.texture = a.back_texture()
 			bk.transform = spr2.transform
@@ -1700,6 +1726,9 @@ func _wreck_near(m) -> void:
 
 ## F out in space: open the cache within reach. True if it did.
 func wreck_interact(m) -> bool:
+	if active and m.aboard == null and near_trader != null:
+		open_trade(near_trader)
+		return true
 	if not active or m.aboard != null or near_cache == null:
 		return false
 	var wk = near_wreck
@@ -1867,7 +1896,8 @@ func _blast_rocks(p: Vector2, r: float) -> void:
 					game._particle(a.cell_world(i, j), a.vel + Vector2(randf() - 0.5, randf() - 0.5) * 1.2, 30 + randi() % 30,
 						Color.hex((Defs.PAL[t * 4 + (int(a.vars[ck]) & 3)] << 8) | 0xff), false, 0.0)
 				a.take(ck)
-		a.vel += (a.pos - p).normalized() * 0.02 / maxf(1.0, a.mass / 400.0)
+		if a.kind != "outpost":
+			a.vel += (a.pos - p).normalized() * 0.02 / maxf(1.0, a.mass / 400.0)
 	_mining = 0
 	game.vfx.blast(p, 6.0, 2)
 	game.audio.play("boom", p, 0.5)
@@ -1912,6 +1942,24 @@ func _draw_top() -> void:
 		var bw := 30.0
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.04, 0.8))
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(pa.hp / pa.hp_max, 0.0, 1.0), 2.0)), Color(1.0, 0.35, 0.3))
+	# the outposts' traders behind their counters, and each outpost's name over it
+	var zs: float = minf(float(game.zoom), 4.0)
+	for oa in rocks:
+		if oa.kind != "outpost":
+			continue
+		var osp: Vector2 = xf * oa.pos
+		if osp.distance_to(Vector2(game.VW, game.VH) * 0.5) > Vector2(game.VW, game.VH).length() * 0.5 + oa.reach() / game.zoom:
+			continue
+		var kt: ImageTexture = oa.keeper_texture()
+		var kp: Vector2 = xf * oa.keeper_world()
+		var kang: float = xf.basis_xform(oa.axis_x()).angle()
+		_top.draw_set_transform(kp, kang, Vector2.ONE / zs)
+		_top.draw_texture(kt, Vector2(-float(kt.get_width()) * 0.5, -float(kt.get_height())))
+		_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		var up_o: Vector2 = xf.basis_xform(-oa.axis_y()).normalized()
+		_top_text(osp + up_o * (float(oa.h) * 0.55 / game.zoom + 8.0), oa.wname, Color(1.0, 0.85, 0.5))
+	if near_trader != null:
+		_top_text(xf * (near_trader.keeper_world() - near_trader.axis_y() * 30.0), "[F] trade with %s" % near_trader.trader().name, Color(1.0, 0.88, 0.5))
 	if near_cache != null and near_wreck != null:
 		var cp: Vector2 = xf * (near_wreck.cache_pos(near_cache) as Vector2)
 		var f2: Font = PixelFont.make()
@@ -2012,6 +2060,8 @@ func _pirate_chance(focus: Vector2) -> void:
 		return
 	if not near.is_empty() and (focus - centre).length() - float(near["space"]) < PIRATE_CLEAR:
 		return
+	if nearest_outpost(focus, OUTPOST_SAFE) != null:
+		return
 	if randf() < 0.55:
 		spawn_pirates(focus)
 
@@ -2093,6 +2143,13 @@ func _update_pirates() -> void:
 			rocks.remove_at(k)
 			if not m.dead:
 				game.ui.toast("You've shaken off %s" % pr.wname, Color(0.8, 0.9, 1.0), 3.0)
+			continue
+		var guard = nearest_outpost(pr.pos, OUTPOST_GUNS)
+		if guard != null:
+			# (an outpost's guns drive pirates off: a flash, and it's gone into the dark)
+			game.vfx.blast(pr.pos, 10.0, 2)
+			rocks.remove_at(k)
+			game.ui.toast("%s's guns drive off %s" % [guard.wname, pr.wname], Color(1.0, 0.85, 0.4), 3.0)
 			continue
 		pr.side_t -= 1
 		if pr.side_t <= 0:
@@ -2304,3 +2361,67 @@ func zoom_by(d: int) -> void:
 		return
 	zoom_i = zi
 	game.ui.toast("View: %sx" % str(ZOOMS[zoom_i]).trim_suffix(".0"), Color(0.75, 0.9, 1.0), 1.0)
+
+# --------------------------------------------------------------- outposts ---
+
+## the nearest outpost out here (by its middle) within `within`, or null
+func nearest_outpost(p: Vector2, within: float) -> Variant:
+	var best = null
+	var bd := within
+	for a in rocks:
+		if a.kind != "outpost":
+			continue
+		var d: float = (a.pos - p).length()
+		if d < bd:
+			bd = d
+			best = a
+	return best
+
+## on foot by an outpost's counter: its trader is near_trader (F trades)
+func _trader_near(m) -> void:
+	var op = nearest_outpost(m.pos, 400.0)
+	if op == null:
+		return
+	var chest: Vector2 = op.keeper_world() - op.axis_y() * 12.0
+	if chest.distance_to(m.pos) < TRADE_REACH:
+		near_trader = op
+
+## the skiff flown into an outpost's hangar: docked (a word the first time each visit)
+func _dock_check(sk) -> void:
+	if sk == null:
+		docked = null
+		return
+	var op = nearest_outpost(sk.pos, 400.0)
+	var now = op if op != null and op.in_hangar(sk.pos) else null
+	if now != null and now != docked:
+		game.ui.toast("Docked at %s. Step out (F) and see %s at the counter to trade" % [now.wname, now.trader().name], Color(1.0, 0.85, 0.5), 4.5)
+		game.audio.play("blink", sk.pos, 0.6)
+	docked = now
+
+## F at the counter: the trader's shop (towns.gd's shop and ui.gd's panel, Defs.SHOPS["outpost"]); first,
+## a bounty for every pirate you've beaten since you last traded at an outpost
+func open_trade(op) -> void:
+	var it: Dictionary = game.items
+	var owed := int(it.get("pirates_beaten", 0)) - int(it.get("bounty_paid", 0))
+	if owed > 0:
+		it["coins"] = int(it.get("coins", 0)) + owed * BOUNTY
+		it["bounty_paid"] = int(it.get("pirates_beaten", 0))
+		stats["bounty"] += owed * BOUNTY
+		game.ui.toast("A bounty: %d coins for the %d pirate ship%s you beat" % [owed * BOUNTY, owed, "" if owed == 1 else "s"], Color(1.0, 0.85, 0.4), 4.0)
+		game.audio.play("coin", null, 0.9)
+	var tr = op.trader()
+	game.towns.shop_of = tr
+	game.state = "shop"
+	game.ui.show_shop(tr)
+	stats["trades"] += 1
+
+## a line of text on the top layer, centred at a screen point, with a shadow
+func _top_text(at: Vector2, txt: String, col: Color) -> void:
+	var f2: Font = PixelFont.make()
+	var px: float = float(game.scale_px)
+	var sz: int = PixelFont.SIZE * int(game.ui.U)
+	var wd := f2.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
+	_top.draw_set_transform(at, 0.0, Vector2.ONE / px)
+	_top.draw_string(f2, Vector2(-wd * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
+	_top.draw_string(f2, Vector2(-wd * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, col)
+	_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

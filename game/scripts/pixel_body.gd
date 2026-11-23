@@ -15,6 +15,8 @@
 ## saved cell by cell (`save_cells` / `load_cells`).
 extends RefCounted
 
+const Props := preload("res://scripts/props.gd")
+
 var w := 0
 var h := 0
 var cells := PackedByteArray()     # material per cell (0 = empty)
@@ -22,6 +24,7 @@ var vars := PackedByteArray()      # colour variant per cell
 var made := PackedByteArray()      # 1: built inside (not part of the hull)
 var bg := PackedByteArray()        # back layer: material per cell (0 = none)
 var bgv := PackedByteArray()       # back layer: colour variant
+var deco := PackedByteArray()      # furniture in front of the back layer (Props.PALETTE index + 1; 0 = none)
 var room := PackedByteArray()      # 1: closed in by the hull (a place to build)
 var outside := PackedByteArray()   # 1: open to the outside (rebuild's flood)
 var keel := Vector2.ZERO           # its lowest outline point (body coordinates, from the centre of mass)
@@ -51,6 +54,8 @@ func setup(width: int, height: int) -> void:
 	bg.fill(0)
 	bgv.resize(w * h)
 	bgv.fill(0)
+	deco.resize(w * h)
+	deco.fill(0)
 	room.resize(w * h)
 	room.fill(0)
 	outside.resize(w * h)
@@ -178,10 +183,10 @@ func remove(i: int, j: int, back := false) -> int:
 		rebuild()
 	return m
 
-## the cells as saved: both layers and what was built, packed
+## the cells as saved: both layers, what was built and the furniture, packed
 func save_cells() -> Dictionary:
 	var raw := PackedByteArray()
-	for a in [cells, vars, made, bg, bgv]:
+	for a in [cells, vars, made, bg, bgv, deco]:
 		raw.append_array(a)
 	return {"w": w, "h": h, "cells": Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE))}
 
@@ -190,14 +195,20 @@ func load_cells(d: Dictionary) -> bool:
 	if int(d.get("w", -1)) != w or int(d.get("h", -1)) != h or not d.has("cells"):
 		return false
 	var n := w * h
-	var raw := Marshalls.base64_to_raw(String(d["cells"])).decompress(n * 5, FileAccess.COMPRESSION_DEFLATE)
-	if raw.size() != n * 5:
+	# (six layers since the furniture came in; a save from before has five)
+	var raw := Marshalls.base64_to_raw(String(d["cells"])).decompress(n * 6, FileAccess.COMPRESSION_DEFLATE)
+	if raw.size() != n * 5 and raw.size() != n * 6:
 		return false
 	cells = raw.slice(0, n)
 	vars = raw.slice(n, n * 2)
 	made = raw.slice(n * 2, n * 3)
 	bg = raw.slice(n * 3, n * 4)
 	bgv = raw.slice(n * 4, n * 5)
+	if raw.size() == n * 6:
+		deco = raw.slice(n * 5, n * 6)
+	else:
+		deco.resize(n)
+		deco.fill(0)
 	rebuild()
 	return true
 
@@ -255,6 +266,11 @@ func texture() -> ImageTexture:
 	var bimg := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	for j2 in h:
 		for i2 in w:
+			var dk: int = deco[j2 * w + i2] if deco.size() == w * h else 0
+			if dk > 0:
+				# (furniture, in front of the back wall: its own palette colour, a touch shaded)
+				bimg.set_pixel(i2, j2, Color.html(String(Props.PALETTE[dk - 1])).darkened(0.08))
+				continue
 			var bm := bg[j2 * w + i2]
 			if bm == 0:
 				continue
