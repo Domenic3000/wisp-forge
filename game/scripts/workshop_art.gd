@@ -33,6 +33,7 @@ static func frames(kind: String) -> Dictionary:
 			fill.fill(CLEAR)
 			_still(body, fire, fill)
 		"anvil": _anvil(body)
+		"altar": _altar(body, fire)
 	_outline(body)
 	var out := {"body": body, "fire0": fire[0], "fire1": fire[1], "fill": fill}
 	_cache[kind] = out
@@ -266,3 +267,61 @@ static func _anvil(body: Image) -> void:
 			if y == 5:
 				c = Color8(160, 120, 76)
 			body.set_pixel(x, y, c)
+
+## A Summoning Altar: a stepped plinth of dressed stone, a block carved with runes and a basin on top
+## between two short pillars capped with crystals. Its "fire" is the runes, the basin and the crystals
+## glowing mana-blue (always: an altar is never cold).
+static func _altar(body: Image, fire: Array) -> void:
+	var w := body.get_width()
+	var h := body.get_height()
+	var lt := Color8(168, 166, 178)
+	var md := Color8(124, 122, 138)
+	var dk := Color8(84, 82, 100)
+	var glow := [Color8(140, 200, 255), Color8(190, 150, 255)]
+	var core := Color8(235, 245, 255)
+	# three steps, widest at the bottom
+	for y in range(h - 3, h):
+		for x in w:
+			body.set_pixel(x, y, lt if y == h - 3 else (dk if (x + y) % 5 == 0 else md))
+	for y in range(h - 6, h - 3):
+		for x in range(2, w - 2):
+			body.set_pixel(x, y, lt if y == h - 6 else md)
+	# the block, with a row of carved runes
+	var bt := h - 11
+	for y in range(bt, h - 6):
+		for x in range(4, w - 4):
+			body.set_pixel(x, y, lt if y == bt else (md if (x % 6) != 3 else dk))
+	var rune_y := bt + 2
+	for x in range(6, w - 6):
+		if _h(x, 7) % 3 != 0:
+			body.set_pixel(x, rune_y, dk)
+			body.set_pixel(x, rune_y + 1, dk if _h(x, 9) % 2 == 0 else md)
+			for k in 2:
+				var fi: Image = fire[k]
+				fi.set_pixel(x, rune_y, glow[(x + k) % 2])
+				if _h(x, 9) % 2 == 0:
+					fi.set_pixel(x, rune_y + 1, glow[(x + k + 1) % 2])
+	# the basin on top
+	for x in range(7, w - 7):
+		body.set_pixel(x, bt - 1, dk)
+	body.set_pixel(6, bt - 2, md)
+	body.set_pixel(w - 7, bt - 2, md)
+	for k2 in 2:
+		var fi2: Image = fire[k2]
+		for x2 in range(8, w - 8):
+			fi2.set_pixel(x2, bt - 1, core if (x2 + k2) % 3 == 0 else glow[k2])
+			if (x2 + k2) % 2 == 0:
+				fi2.set_pixel(x2, bt - 2, glow[(x2 + k2) % 2])
+	# two short pillars with crystal caps
+	for px in [1, w - 3]:
+		for y2 in range(3, h - 3):
+			body.set_pixel(px, y2, lt)
+			body.set_pixel(px + 1, y2, md if y2 % 4 != 0 else dk)
+		body.set_pixel(px, 2, md)
+		body.set_pixel(px + 1, 2, md)
+		for k3 in 2:
+			var fi3: Image = fire[k3]
+			fi3.set_pixel(px, 1, glow[k3])
+			fi3.set_pixel(px + 1, 1, core if k3 == 0 else glow[1])
+			fi3.set_pixel(px, 0, core if k3 == 1 else glow[0])
+

@@ -35,6 +35,7 @@ var chest_list := []             # {pos (world centre), ruined}: treasure chests
 var door_list := []              # {pos (world centre), w, h, side}: doors (closed cells; the game opens and closes them)
 var lair_why := {}                # biome -> why no lair fitted (candidates, and what turned them down)
 var lair_list := []               # {biome, pos (the arena floor's middle), name}: the guardians' lairs
+const LAIRS := false              # (guardians are summoned now: no lairs are planned)
 var towns := []                   # villages: {x0, w, name, ruined, living, seed, houses: [{role, x0, w, floor, ruined}]}
                                   # (main's towns.gd peoples the living ones; floor = the ground floor's row)
 var _house := {}                  # (the house `_cottage` just made, for `_town`)
@@ -358,12 +359,15 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	plan_times["vaults"] = (Time.get_ticks_usec() - pt) / 1000
 	pt = Time.get_ticks_usec()
 	# each biome's guardian, in a lair in the middle of a stretch of its biome: last, in the room
-	# the rest left, with a random sequence of its own (so adding them moved nothing else)
-	var keep_rng := rng
-	rng = RandomNumberGenerator.new()
-	rng.seed = int(planet["seed"]) * 131 + 977
-	_lairs(build)
-	rng = keep_rng
+	# the rest left, with a random sequence of its own (so adding them moved nothing else). Not any more
+	# (user, 22 Nov: guardians are summoned at an altar you build, summoning.gd): `LAIRS` false leaves
+	# them out; the code stays for shrines one day.
+	if LAIRS:
+		var keep_rng := rng
+		rng = RandomNumberGenerator.new()
+		rng.seed = int(planet["seed"]) * 131 + 977
+		_lairs(build)
+		rng = keep_rng
 	plan_times["lairs"] = (Time.get_ticks_usec() - pt) / 1000
 
 func _pick(weights: Dictionary) -> String:

@@ -62,6 +62,7 @@ const THING_ART := {
 	"lens": ["..###....", ".#www#...", "#wcccw#..", "#wcccwoo.", "#wcccwooo", ".#www#...", "..###....", "..#.#....", ".##.##..."],
 	"band": ["..#####..", ".#ooooo#.", "#oo...oo#", "#o.....o#", "#o..w..o#", "#oo...oo#", ".#ooooo#.", "..#####.."],
 	"blade": ["........w", ".......wo", "......wo.", ".....wo..", "....wo...", "...wo....", ".#wo.....", "..#......", ".b.#.....", "b........"],
+	"sigil": ["..#####..", ".#ooooo#.", "#oo#w#oo#", "#o#ooo#o#", "#owoooow#", "#o#ooo#o#", "#oo#w#oo#", ".#ooooo#.", "..#####.."],
 	"scroll": ["yyyyyyyy.", "ywwwwwwy.", ".wkkkkw..", ".wwwwww..", ".wkkkw...", ".wwwwww..", ".wkkkkw..", "ywwwwwwy.", "yyyyyyyy."],
 }
 ## id -> [art, {char: colour}]
@@ -155,11 +156,17 @@ static func item(key: String) -> ImageTexture:
 
 ## a forged or bought thing's own picture (`THINGS`), or null when it has none
 static func thing(id: String) -> ImageTexture:
-	if not THINGS.has(id):
-		return null
 	var k := "t_" + id
 	if _cache.has(k):
 		return _cache[k]
+	if id.begins_with("sigil_") and Defs.BOSSES.has(id.substr(6)):
+		# (a guardian's sigil: a seal in its colour)
+		var bc: Color = Defs.BOSSES[id.substr(6)]["col"]
+		var stex := _outlined(_art(THING_ART["sigil"], {"#": bc.darkened(0.55), "o": bc, "w": bc.lightened(0.7)}))
+		_cache[k] = stex
+		return stex
+	if not THINGS.has(id):
+		return null
 	var t: Array = THINGS[id]
 	var tex := _outlined(_art(THING_ART[t[0]], t[1]))
 	_cache[k] = tex

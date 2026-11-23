@@ -86,6 +86,10 @@ func interact(m) -> bool:
 	var st = nearest(m)
 	if st == null:
 		return false
+	if st.kind == "altar":
+		# (no panel: F lays a guardian's sigil on it, summoning.gd)
+		game.summoning.try_summon(m, st)
+		return true
 	open_st = st
 	game.state = "station"
 	game.ui.show_station(st)
@@ -254,6 +258,9 @@ func work_all() -> void:
 		_work(st)
 
 func _work(st) -> void:
+	if st.kind == "altar":
+		st.lit = true                  # (its runes always glow a little: no fire, no fuel)
+		return
 	var sd: Dictionary = Defs.STATIONS[st.kind]
 	var burn := float(sd["burn"])
 	if burn <= 0.0:
@@ -341,7 +348,7 @@ func _physics() -> void:
 			st.vy = 0.0
 			# (still in water? the fire can't burn there)
 			st.in_liquid = game.box_count(l.x - st.w * 0.5, l.y + st.h * 0.5 - 4.0, st.w, 3.0, Defs.WATER) > st.w
-		if st.lit:
+		if st.lit and st.kind != "altar":
 			_fire(st)
 		if not st.out.is_empty() and (_t + int(absf(st.pos.x))) % 24 == 0:
 			# (something made waits in it: a glint over it)

@@ -540,7 +540,7 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 			float m = vnoise(vec2(ax / 14.0, r / 7.0), 408);
 			col = hc * (0.93 + floor(m * 3.0) / 3.0 * 0.12);
 			if (r > hf - 1.5) col = hc * 1.15;
-			float mist = 1.0 - smoothstep(0.0, 26.0, r - hnT);
+			float mist = 1.0 - smoothstep(0.0, 26.0, r - hn);      // (the hills, not each tree: no tree-shaped edges)
 			col = mix(col, haze * 1.03, mist * 0.55);
 		} else if (r < hm) {
 			// --- far mountains: crests lit on the sun's side, rock strata, snow on the high peaks ---
@@ -561,7 +561,7 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 			if (r > snowline && r > hm - 30.0) mc = mix(mc, vec3(0.92, 0.95, 1.0) * lit * (0.92 + 0.12 * face), 0.75);
 			col = mix(haze, mc, 0.38);
 			if (r > hm - 1.2) col = mix(col, haze * 1.25, 0.35);    // (a pale crest against the sky)
-			float mist = 1.0 - smoothstep(0.0, 40.0, r - max(hf, hnT));
+			float mist = 1.0 - smoothstep(0.0, 40.0, r - max(hf, hn));
 			col = mix(col, haze * 1.04, mist * 0.6);
 		}
 	}
@@ -589,12 +589,16 @@ void main() {
 	float th = angleOf(pos);
 	vec4 sa = surfA(th), sb = surfB(th);
 	vec3 col; int flag = 0; // 0 lit, 1 self-lit, 2 sky
+	float alpha = 1.0;
 
 	if (r < R_IN) {
 		float ring = floor(sin(r * 0.25 - TIME * 0.08) * 1.5 + 1.5);
 		col = mix(vec3(1.0, 0.78, 0.35), vec3(1.0, 0.97, 0.8), ring / 3.0); flag = 1;
 	} else if (r >= R_TOP && orbitEmpty(pos)) {
 		col = skyColor(pos, r, sa.x, px, th); flag = 2;
+		// high up, space's own starfield is drawn behind this picture (space.gd `backdrop`, bit 8): the sky
+		// thins out into it over the top of the atmosphere and the orbit band, rather than meeting it at a line
+		if ((int(P.p[122].w + 0.5) & 8) != 0) alpha = 1.0 - smoothstep(R_TOP - 40.0, R_TOP + 110.0, r);
 	} else {
 		int ci = idxAt(pos);
 		uint c = ci < 0 ? 0u : world.cells[ci];
@@ -694,5 +698,10 @@ void main() {
 	}
 	col.r += P.p[6].y * 0.2;
 	col = floor(clamp(col, 0.0, 1.0) * 31.0 + DITH) / 31.0;
-	view.px[iy * VW + ix] = packUnorm4x8(vec4(col, 1.0));
+	if (alpha < 1.0 && dmode > 0.5) {
+		// (with dithering on, faded in steps of the Bayer pattern like everything else: whole pixels)
+		float bay2 = (BAYER[(iy & 3) * 4 + (ix & 3)] + 0.5) / 16.0;
+		alpha = alpha > bay2 ? 1.0 : 0.0;
+	}
+	view.px[iy * VW + ix] = alpha <= 0.0 ? 0u : packUnorm4x8(vec4(col, alpha));
 }

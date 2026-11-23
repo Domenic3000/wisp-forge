@@ -1511,6 +1511,9 @@ func _update_satchel(g) -> void:
 	ik += "p%d" % int(g.items.get("potion", 0))
 	for did0 in Defs.DRAUGHTS:
 		ik += "%s%d%s" % [did0, int(g.items.get(did0, 0)), "*" if g.player.buffs.has(did0) else ""]
+	for sk0 in g.items.keys():
+		if String(sk0).begins_with("sigil_"):
+			ik += "%s%d" % [sk0, int(g.items[sk0])]
 	if ik == _inv_key:
 		return
 	_inv_key = ik
@@ -1567,6 +1570,12 @@ func _update_satchel(g) -> void:
 				_inv_key = "")
 		satchel.add_child(dsl)
 		n += 1
+	# guardians' sigils (summoning.gd): lay one on a Summoning Altar in its biome
+	for sk in g.items.keys():
+		if String(sk).begins_with("sigil_") and int(g.items[sk]) > 0 and Defs.BOSSES.has(String(sk).substr(6)):
+			var sb2: String = String(sk).substr(6)
+			satchel.add_child(_slot(Icons.thing(String(sk)), str(int(g.items[sk])), false, "%s  ×%d\nLay it on a Summoning Altar in the %s (F) to call %s" % [Defs.sigil_name(sb2), int(g.items[sk]), String(Defs.BIOMES[sb2]["name"]) if Defs.BIOMES.has(sb2) else sb2, Defs.BOSSES[sb2]["name"]]))
+			n += 1
 	# furniture carried whole, one slot per kind
 	var fc := {}
 	var frows := {}

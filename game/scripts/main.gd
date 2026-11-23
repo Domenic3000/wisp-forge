@@ -20,6 +20,7 @@ const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
 const Workshops := preload("res://scripts/workshops.gd")
+const Summoning := preload("res://scripts/summoning.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 const Weather := preload("res://scripts/weather.gd")
@@ -73,6 +74,9 @@ class Station extends Body:
 	var cur := ""             # the process it's working (Defs.PROCESS id)
 	var lit := false
 	var unsup_t := 0
+	var ritual := 0           # an altar calling a guardian: ticks left (summoning.gd)
+	var summon := ""          # whose
+	var summon_at := Vector2.ZERO
 	func _init() -> void:
 		step_h = 0
 
@@ -140,6 +144,7 @@ class Enemy extends Body:
 	var guard_id := -1     # which structure guard this is (-1 = a wandering foe)
 	var home := Vector2.ZERO   # where it was spawned (a boss goes back there to recover)
 	var leash_t := 0           # frames with nobody fighting it
+	var summoned := ""         # a guardian called at an altar: its biome (summoning.gd)
 	# getting around: the way it is heading, how long it wanders off after a dead end,
 	# where it was a second ago (to notice it is stuck), and a detour for fliers
 	var nav_dir := 1.0
@@ -245,6 +250,7 @@ var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
 var towns                 # the living villages' folk, talk and trade (towns.gd)
 var workshops             # the workshop stations on this planet (workshops.gd)
+var summoning             # guardians called at altars (summoning.gd)
 var vfx                   # the spells' effects (vfx.gd): its own particles, glow, flashes
 var weather               # rain, hail, snow, ash, embers, dust as you see them (weather.gd)
 var skiff = null          # the Wisp Skiff, when it's out on this planet (skiff.gd; saved in planet_state["skiff"])
@@ -291,6 +297,28 @@ void fragment() {
 	}
 	COLOR = vec4(c.rgb, c.a * alpha);
 }"
+## The retro pixel filter over the whole game view (user, 22 Nov: "the retro pixel filter seems to end at
+## the space border"): the Dithering setting's ordered dither and 5-bit colour, applied on the game's own
+## pixel grid to everything drawn under the UI (the world's picture is already quantized: those pixels
+## are kept as they are), so space, sprites and spell effects get it too.
+const POST_SHADER := "shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
+uniform float amp = 1.0;
+uniform float px = 4.0;
+const float B[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+void fragment() {
+	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
+	vec3 v = c * 31.0;
+	vec3 k = round(v);
+	ivec2 g = ivec2(floor(FRAGCOORD.xy / px));
+	float d = 0.5 + ((B[(g.y & 3) * 4 + (g.x & 3)] + 0.5) / 16.0 - 0.5) * amp;
+	vec3 q = floor(v + d);
+	// (a channel already on one of the 32 levels, give or take its 8 bits, stays put)
+	vec3 on = step(abs(v - k), vec3(0.08));
+	COLOR = vec4(mix(q, k, on) / 31.0, 1.0);
+}"
+var post_rect: ColorRect
+var _post_key := ""
 var view_mat: ShaderMaterial
 var _rows := PackedFloat32Array()      # this frame's cell picture rows (N, frac), for the view's shader
 var _rows_tex: ImageTexture
@@ -456,7 +484,7 @@ class Mage extends Body:
 
 var player := Mage.new()
 ## every Wisp Forge recipe: the fixed ones and the furniture from build mode's catalogue
-var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Build.furniture_recipes()
+var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Defs.sigil_recipes() + Build.furniture_recipes()
 var players: Array = [player]
 
 # the local mage's state, by its old names (so the rest of the game reads naturally)
@@ -575,6 +603,7 @@ func _ready() -> void:
 	space.game = self
 	towns = Towns.new(self)
 	workshops = Workshops.new(self)
+	summoning = Summoning.new(self)
 	pix.add_child(space)
 	view_rect = TextureRect.new()
 	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -601,6 +630,15 @@ func _ready() -> void:
 	map_view.game = self
 	map_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pix.add_child(map_view)
+	post_rect = ColorRect.new()
+	post_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var psh := Shader.new()
+	psh.code = POST_SHADER
+	var pmat := ShaderMaterial.new()
+	pmat.shader = psh
+	post_rect.material = pmat
+	post_rect.visible = false
+	pix.add_child(post_rect)
 	ui = UI.new()
 	ui.game = self
 	add_child(ui)
@@ -956,11 +994,19 @@ func _write_frame_params() -> void:
 	gpu.setp(5, Vector4(player.pos.x, player.pos.y, atan2(player.pos.y, player.pos.x), GS))
 	# (w, flags: 1 the close view drawn in strips (see screenToWorld), 2 out in space: clear past the
 	# orbit band, where space.gd draws the stars under the picture)
-	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0) | (4 if cellpic else 0)
+	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0) | (4 if cellpic else 0) | (8 if space.backdrop() and state != "map" else 0)
 	gpu.setp(123, Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
 	# the climate the shaders need: open water icing over (react.comp), ground fog (inc/clouds.comp)
 	gpu.setp(125, Vector4(0.0008 * float(clim.get("freeze", 0.0)), sky_level("aurora"), sky_level("bloodmoon"), float(clim.get("fog", 0.0))))
 	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
+	var pk := "%s|%d|%d|%d" % [settings["dither"], scale_px, VW, VH]
+	if pk != _post_key:
+		_post_key = pk
+		post_rect.visible = settings["dither"] != "off"
+		post_rect.position = Vector2.ZERO
+		post_rect.size = Vector2(VW, VH)
+		(post_rect.material as ShaderMaterial).set_shader_parameter("amp", 1.0 if settings["dither"] == "retro" else 0.35)
+		(post_rect.material as ShaderMaterial).set_shader_parameter("px", float(scale_px))
 	gpu.setp(122, _p122)
 	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
 	var cr := c.length()
@@ -2157,6 +2203,7 @@ func _tick() -> void:
 		lights.append([player.pos, gl, Color(1.15, 0.9, 0.55)])          # (the Sun Lantern)
 	_update_chests()
 	workshops.tick()
+	summoning.tick()
 	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
 		tq = Time.get_ticks_usec()
@@ -3202,6 +3249,7 @@ func _warden_falls(e: Enemy) -> void:
 ## the guardians of this planet's biomes, each in its lair (not the ones already beaten), and
 ## the wardens of its dungeons, each in its hall
 func _spawn_guardians() -> void:
+	summoning.on_load(planet_state)          # (a guardian called when the world was saved: its sigil back)
 	var dead_list: Array = planet_state.get("bosses_dead", [])
 	for lr in builds.lair_list:
 		var biome: String = lr["biome"]
@@ -3304,9 +3352,14 @@ func _update_enemies() -> void:
 		var dist := e.pos.distance_to(tgt.pos)
 		if e.boss:
 			# a boss nobody is fighting recovers: after a few seconds alone it is back at full
-			# health, asleep where it started, so it has to be beaten in one fight
+			# health, asleep where it started, so it has to be beaten in one fight (one called at an altar
+			# goes back where it came from, and you have its sigil again)
 			if dist > 300.0 or tgt.dead:
 				e.leash_t += 1
+				if e.leash_t > 200 and e.summoned != "":
+					summoning.dismiss(e)
+					enemies.remove_at(k)
+					continue
 				if e.leash_t > 200 and (e.hp < e.max_hp or e.awake):
 					e.hp = e.max_hp
 					e.awake = false
@@ -4497,6 +4550,9 @@ func ore_found(om: int) -> bool:
 ## ore, which shows (locked) where that ore is found.
 ## (An alloy shows, locked, once you've found either of its ores.)
 func recipe_hidden(r: Dictionary) -> bool:
+	if r.has("sigil"):
+		# (only the guardians this planet has, and not yet beaten)
+		return not summoning.callable_biomes().has(String(r["sigil"]))
 	if not r.has("gear"):
 		return false
 	var ores: Array = r["ores"]
@@ -4631,6 +4687,12 @@ func craft(r: Dictionary) -> bool:
 	if r.has("potion"):
 		items["potion"] = int(items.get("potion", 0)) + int(r["potion"])
 		ui.toast("Healing Draught forged: drink it with H (%d now)" % int(items["potion"]), Color(0.6, 1.0, 0.65), 3.0)
+		save_game()
+		return true
+	if r.has("sigil"):
+		var sk := "sigil_" + String(r["sigil"])
+		items[sk] = int(items.get(sk, 0)) + 1
+		ui.toast("%s forged: lay it on a Summoning Altar in the %s (build mode, Workshops)" % [r["name"], String(Defs.BIOMES[r["sigil"]]["name"]) if Defs.BIOMES.has(r["sigil"]) else r["sigil"]], Color(1, 0.82, 0.23), 4.0)
 		save_game()
 		return true
 	if r.has("furniture"):
@@ -4911,6 +4973,109 @@ func _floor_span(c0: int, w: int, row: int, reach: int) -> int:
 			best = f
 	return best
 
+## offsets to try, nearest first, when a piece doesn't fit where you point: 2, -2, 4, -4 ... up to `reach`
+func _slide_offsets(reach: int) -> Array:
+	var out := []
+	var k := 2
+	while k <= reach:
+		out.append(k)
+		out.append(-k)
+		k += 2
+	return out
+
+## what's in front at a cell, in words, for "it doesn't fit" (a door, a wall, the ground...)
+func _what_blocks(col: int, row: int) -> String:
+	var t := type_at(Build.cell_pos(col, row))
+	if t == Defs.WOODDOOR:
+		return "a door is in the way"
+	if Defs.KIND[t] == Defs.K_POWDER:
+		return "%s is in the way" % Defs.NAMES[t].to_lower()
+	return "a wall or the ground is in the way"
+
+## Would a piece of furniture (its pixel rows) go down centred on column cx, standing on the floor under
+## row cy (or, a wall piece, hung there)? {ok, why, pc (its cells), bottom, tree}
+func _prop_fit(rows: Array, wall: bool, cx: int, cy: int) -> Dictionary:
+	var bottom := cy + rows.size() / 2
+	var why := ""
+	var ok := true
+	if not wall:
+		# it stands on the highest ground under it (a leg may stand on a lower step)
+		var pw: int = rows[0].length()
+		bottom = _floor_span(cx - pw / 2, pw, cy - rows.size() / 2, 40)
+	if bottom < 0:
+		ok = false
+		why = "no floor under it"
+		bottom = cy + rows.size() / 2
+	var pc := Build.prop_cells(rows, cx, bottom, build_flip)
+	var feet := 0
+	var held := 0
+	var tree := false
+	for c in pc:
+		var cc: Vector2i = Vector2i(int(c[0]), int(c[1]))
+		# room in front, and no other furniture where it goes (a back wall behind it is fine)
+		var bga := _bg_at(cc.x, cc.y)
+		if not _open_at(cc.x, cc.y):
+			if ok:
+				why = _what_blocks(cc.x, cc.y)
+				build_why_cell = cc
+			ok = false
+		elif bga == 1 or bga == 3 or bga < 0:
+			if ok:
+				why = "furniture is already there (Shift + right-click takes a piece)" if bga == 1 else ("a tree is in the way" if bga == 3 else "too far away")
+				build_why_cell = cc
+			ok = false
+			if bga == 3:
+				tree = true
+		if not wall and cc.y == bottom:
+			feet += 1
+			if _solid_at(cc.x, cc.y + 1):
+				held += 1
+	if not wall and held * 2 < feet:
+		if ok:
+			why = "it needs level floor under it"
+		ok = false
+	return {"ok": ok, "why": why, "pc": pc, "bottom": bottom, "tree": tree}
+
+## Would a workshop of kind sk stand centred on column cx, on the floor under row cy?
+## {ok, why, c0, bottom, pos}
+func _station_fit(sk: String, cx: int, cy: int) -> Dictionary:
+	var sw: int = int(Defs.STATIONS[sk]["w"])
+	var sh: int = int(Defs.STATIONS[sk]["h"])
+	var c0s := cx - sw / 2
+	var ok := true
+	var why := ""
+	var sbot := _floor_span(c0s, sw, cy - sh / 2, 40)
+	if sbot < 0:
+		ok = false
+		why = "no floor under it"
+		sbot = cy + sh / 2
+	if ok:
+		for j in sh:
+			for i in sw:
+				var sc2 := Vector2i(c0s + i, sbot - sh + 1 + j)
+				if not _open_at(sc2.x, sc2.y):
+					if ok:
+						why = _what_blocks(sc2.x, sc2.y)
+					ok = false
+					break
+			if not ok:
+				break
+	var stheld := 0
+	for i2 in sw:
+		if _solid_at(c0s + i2, sbot + 1):
+			stheld += 1
+	if stheld * 2 < sw:
+		if ok:
+			why = "it needs level ground under it"
+		ok = false
+	var spos := (Build.cell_pos(c0s, sbot) + Build.cell_pos(c0s + sw - 1, sbot - sh + 1)) * 0.5
+	for ost in workshops.list:
+		if ost.pos.distance_to(spos) < (sw + ost.w) * 0.5:
+			if ok:
+				why = "another workshop is there"
+			ok = false
+	return {"ok": ok, "why": why, "c0": c0s, "bottom": sbot, "pos": spos}
+
 ## Every tick in build mode: work out what would go where (the overlay draws it, green or red),
 ## and place it on a click (walls: while the button is held).
 func _update_build(m: Mage) -> void:
@@ -4958,40 +5123,24 @@ func _update_build(m: Mage) -> void:
 		kid = Build.Props.kind_id(String(piece["prop"])) if kind == "prop" else int(piece["kid"])
 		var rows: Array = d["rows"]
 		var wall: bool = d.get("wall", false)
-		var bottom := cell.y + rows.size() / 2
-		if not wall:
-			# it stands on the highest ground under it (a leg may stand on a lower step)
-			var pw: int = rows[0].length()
-			bottom = _floor_span(cell.x - pw / 2, pw, cell.y - rows.size() / 2, 40)
-		if bottom < 0:
-			ok = false
-			build_why = "no floor under it"
-			bottom = cell.y + rows.size() / 2
-		var pc := Build.prop_cells(rows, cell.x, bottom, build_flip)
-		var feet := 0
-		var held := 0
-		for c in pc:
-			var cc: Vector2i = Vector2i(int(c[0]), int(c[1]))
-			# room in front, and no other furniture where it goes (a back wall behind it is fine)
-			var bga := _bg_at(cc.x, cc.y)
-			if not _open_at(cc.x, cc.y) or bga == 1 or bga == 3 or bga < 0:     # (3: a tree it would cut)
-				if ok:
-					build_why = "cell %s: %s, background %d" % [str(cc), Defs.NAMES[type_at(Build.cell_pos(cc.x, cc.y))], bga]
-					build_why_cell = cc
-				ok = false
-				if bga == 3:
-					tree_in_way = true
-			if not wall and cc.y == bottom:
-				feet += 1
-				if _solid_at(cc.x, cc.y + 1):
-					held += 1
+		# where you point, or (user, 22 Nov: indoors it kept saying there was no room) slid along the floor
+		# to the nearest spot where it fits: a piece is centred on the cursor, so near a wall it ran into
+		# the doorway
+		var fit := _prop_fit(rows, wall, cell.x, cell.y)
+		if not fit["ok"]:
+			var pw0: int = rows[0].length()
+			for off in _slide_offsets(pw0 / 2 + 6):
+				var f2 := _prop_fit(rows, wall, cell.x + off, cell.y)
+				if f2["ok"]:
+					fit = f2
+					break
+		ok = fit["ok"]
+		build_why = fit["why"]
+		tree_in_way = fit["tree"]
+		for c in fit["pc"]:
 			var ch: String = c[2]
-			cells.append([Build.cell_pos(cc.x, cc.y), Color(1, 0.85, 0.3) if ch == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch])])])
-		if not wall and held * 2 < feet:
-			if ok:
-				build_why = "only %d of %d feet held" % [held, feet]
-			ok = false
-		place = {"stamp": Build.prop_stamp(pc, kid)}
+			cells.append([Build.cell_pos(int(c[0]), int(c[1])), Color(1, 0.85, 0.3) if ch == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch])])])
+		place = {"stamp": Build.prop_stamp(fit["pc"], kid)}
 	elif kind == "door":
 		var c0 := cell.x - Build.DOOR_W / 2
 		var bottom2 := _floor_span(c0, Build.DOOR_W, cell.y - Build.DOOR_H / 2, 50)
@@ -5094,44 +5243,31 @@ func _update_build(m: Mage) -> void:
 		cost = Build.payable(piece, m.inv)
 		place = {"stamp": st2["stamp"]}
 	elif kind == "station":
-		# a workshop: an object standing on the ground where you point (most of its width on ground)
+		# a workshop: an object standing on the ground where you point (most of its width on ground), or
+		# slid along the floor to the nearest spot where it fits
 		var sk: String = piece["station"]
+		var sfit := _station_fit(sk, cell.x, cell.y)
+		if not sfit["ok"]:
+			for off2 in _slide_offsets(int(Defs.STATIONS[sk]["w"]) / 2 + 8):
+				var sf2 := _station_fit(sk, cell.x + off2, cell.y)
+				if sf2["ok"]:
+					sfit = sf2
+					break
+		ok = sfit["ok"]
+		build_why = sfit["why"]
 		var sw: int = int(Defs.STATIONS[sk]["w"])
 		var sh: int = int(Defs.STATIONS[sk]["h"])
-		var c0s := cell.x - sw / 2
-		var sbot := _floor_span(c0s, sw, cell.y - sh / 2, 40)
-		if sbot < 0:
-			ok = false
-			build_why = "no floor under it"
-			sbot = cell.y + sh / 2
+		var c0s: int = sfit["c0"]
+		var sbot: int = sfit["bottom"]
 		var simg: Image = WorkshopArt.frames(sk)["body"]
 		for j in sh:
 			for i in sw:
-				var sc2 := Vector2i(c0s + i, sbot - sh + 1 + j)
-				if not _open_at(sc2.x, sc2.y):
-					if ok:
-						build_why = "cell %s: %s" % [str(sc2), Defs.NAMES[type_at(Build.cell_pos(sc2.x, sc2.y))]]
-					ok = false
 				var px := simg.get_pixel(sw - 1 - i if build_flip else i, j)
 				if px.a > 0.5:
-					cells.append([Build.cell_pos(sc2.x, sc2.y), px])
-		var stheld := 0
-		for i in sw:
-			if _solid_at(c0s + i, sbot + 1):
-				stheld += 1
-		if stheld * 2 < sw:
-			if ok:
-				build_why = "it needs level ground under it"
-			ok = false
-		var spos := (Build.cell_pos(c0s, sbot) + Build.cell_pos(c0s + sw - 1, sbot - sh + 1)) * 0.5
-		for ost in workshops.list:
-			if ost.pos.distance_to(spos) < (sw + ost.w) * 0.5:
-				if ok:
-					build_why = "another workshop is there"
-				ok = false
+					cells.append([Build.cell_pos(c0s + i, sbot - sh + 1 + j), px])
 		if int(m.items.get("st_" + sk, 0)) > 0:
 			cost = {Defs.AIR: 0}              # (one you took up: set down again for free)
-		place = {"station": sk, "pos": spos}
+		place = {"station": sk, "pos": sfit["pos"]}
 	elif kind == "torch":
 		var tp := torch_plan(cell)
 		ok = tp["ok"]
@@ -5160,7 +5296,7 @@ func _update_build(m: Mage) -> void:
 		return
 	if not ok:
 		if _build_warn_t <= frame:
-			ui.toast("A tree is in the way: fell it first" if tree_in_way else ("Torch: " + build_why if kind == "torch" else "It doesn't fit there"), Color(1, 0.6, 0.5), 1.2)
+			ui.toast("A tree is in the way: fell it first" if tree_in_way else (("Torch: " if kind == "torch" else "It doesn't fit: ") + (build_why if build_why != "" else "no room there")), Color(1, 0.6, 0.5), 1.4)
 			_build_warn_t = frame + 40
 		return
 	if not pay_mana(m, _place_mana_of(place), p, "build that"):
@@ -6800,6 +6936,7 @@ func _world_meta(without_skiff: bool) -> String:
 		cs.append([c.pos.x, c.pos.y, c.opened])
 	planet_state["chests"] = cs
 	workshops.save_to(planet_state)
+	summoning.on_save(planet_state)
 	var ast = space.rocks_state(int(planet["index"]))
 	if ast != null:
 		planet_state["asteroids"] = ast

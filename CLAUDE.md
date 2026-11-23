@@ -67,6 +67,15 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Vacuum (react.comp, row < 0): fire and gases vanish, water freezes, mud dries, lava sets; no weather; the mage
   holds his breath above `R_TOP + 4`. Bodies are held below `R_SPACE - 8` (the space map comes later).
 - Render: above `R_TOP` the sky is drawn unless the orbit band has something there (`orbitEmpty`).
+- Into space without a seam (user, 22 Nov: "the retro pixel filter seems to end at the space border, and the
+  transition to space is still jaring"): `space.backdrop()` is on while you're within 320 of `R_TOP` (or out
+  there); then space.gd draws its stars and nebula (only those) UNDER the picture, P.p[122].w bit 8 tells
+  render.comp, and the sky's alpha fades 1 -> 0 from `R_TOP - 40` to `R_TOP + 110` (Bayer-stippled under the
+  retro filter), so the stars come through as the air thins. The retro filter is now a POST pass over
+  everything (main `POST_SHADER` on `post_rect`, the last child of `pix`: Bayer dither + 5-bit colour on
+  game-pixel blocks, setting "dither" off / subtle 0.35 / retro 1), so it covers space, sprites and the
+  overlay alike. Test: `_test_backdrop` ("backdrop", pictures `bg_border_day/night.png`, `bg_high.png`,
+  `bg_orbit.png`).
 - The parallax background (render.comp `skyColor`; user, 22 Nov: "make the background look higher detail and
   fade into each other better"): far mountains (ridged noise at 0.12 of your speed, crests lit on the sun's
   side by their slope, rock strata, snow over a ragged snowline, a pale crest line), far hills (0.25) and near
@@ -736,6 +745,12 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   forgets one whose flame cell isn't furniture any more in the collision grid. Digging leaves torch cells
   (brush.comp keepBg), deconstruct puts a flame out without giving anything, and Shift + right-click on a torch
   piece (kind 0, 3+ flame cells, at most `TORCH_CELLS_MAX` cells) gives back one torch (`_pick_up_furniture`).
+- Placing a piece where you point (user, 22 Nov: furniture and workshops "said there was no space" on a house's
+  floor but went on ledges): `_update_build` tries the cursor spot, then slides along the floor
+  (`_slide_offsets`: 2, -2, 4, -4 ... columns) until `_prop_fit` / `_station_fit` say it fits, and when nothing
+  does it says why ("It doesn't fit: a door is in the way", "furniture is already there", "no floor under it",
+  "it needs level floor"...; `_what_blocks`). Generated rooms are mostly furnished already: take a piece
+  (Shift + right-click) to make room. Test: `_test_indoors` ("indoors": village houses and a house built on a slab).
 - Straight building (build.gd `SHAPES`, main's `_update_shape`): back walls (Back Walls tab) and solid blocks
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
@@ -872,10 +887,28 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "lairs", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
+- SUMMONING, NOT LAIRS (user, 22 Nov: "The gaurdian seemed to be stuck in the ground when i found him. maybe we
+  move away from gaurdian lairs and go to a summoning them mechanic?"; chosen: "At an altar you build", "An
+  offering you forge"): buildings.gd `LAIRS := false` (the lair code stays; GEN_VERSION not bumped, so lairs
+  already stamped in a world stay as ruins, with no guardian). A guardian is called (scripts/summoning.gd, main
+  `summoning`): build a Summoning Altar (`Defs.STATIONS["altar"]`, 22 x 15, Workshops tab; workshop_art.gd
+  `_altar`, runes always glowing, no fuel) in a biome of this planet's "guardians", forge that biome's sigil at the
+  Wisp Forge (`Defs.sigil_recipes()`, category "Summoning", `SIGIL_MATS[biome]` + `SIGIL_COMMON`; shown only for
+  `callable_biomes()`; `items["sigil_<biome>"]`, shown in the satchel, `Icons.thing("sigil_<b>")` in the boss's
+  colour), then F at the altar (`try_summon(m, st)`: returns why not, or "" and uses the sigil). A ritual of
+  `RITUAL` frames (rune circles, motes, shaking), then `_arrive`: the guardian appears at a spot `find_spot` picked
+  BEFORE the sigil was taken (open room the size of its body on the far side of the altar from you; fliers above,
+  swimmers in water within 260, burrowers over diggable ground), awake, its home there, `tether` `ARENA` (+ main's
+  `LEASH`), and `Enemy.summoned` set. Wander off and it leaves (`dismiss`, the sigil given back); one called but
+  not beaten when you save is given back on load (`on_save`/`on_load`, `planet_state["summoned"]`). Beaten:
+  `_guardian_falls` as before (relic, loot, `bosses_dead`). Villagers' "lair" rumour now names a guardian and
+  where its altar must stand; a tavern's chart marks dungeons. Test: `_test_guardians` (each callable biome: an
+  altar on clear ground in it, or the seabed; the sigil; it comes, `box_solid` says not in the ground, it fights,
+  falls, gives its relic; `guard_info` for `_test_far_biomes`'s check that Thalassor comes in the water).
 - Biome guardians (one boss per biome; Vulkhar the Ember Golem stays the planet's deep boss): `Defs.BOSSES` (per
   biome: name, title, lair name, colour, `body` (plan + features), stats, `go`, `moves`/`rage` (dicts of move ->
   settings; a trailing digit is the same move with other settings), `relic`, `loot`, lair materials `wall`, `floor`,

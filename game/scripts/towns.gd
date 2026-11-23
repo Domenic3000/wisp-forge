@@ -634,19 +634,12 @@ func line_for(v) -> String:
 	var said := ""
 	match topic:
 		"lair":
-			var best = null
-			var bd := 1e9
-			var dead: Array = game.planet_state.get("bosses_dead", [])
-			for l in game.builds.lair_list:
-				if dead.has(l["biome"]):
-					continue
-				var dd: float = (l["pos"] as Vector2).distance_to(v.pos)
-				if dd < bd:
-					bd = dd
-					best = l
-			if best != null:
-				var bdef: Dictionary = Defs.BOSSES.get(best["biome"], {})
-				said = "They say %s sleeps in %s, %s %s." % [bdef.get("name", "something"), best["name"], _far(bd), _way(v.pos, best["pos"])]
+			# (guardians are called at an altar now, summoning.gd: who can be, and where)
+			var cb: Array = game.summoning.callable_biomes()
+			if not cb.is_empty():
+				var gb: String = cb[r.randi_range(0, cb.size() - 1)]
+				var bdef: Dictionary = Defs.BOSSES[gb]
+				said = "They say %s, %s, answers anyone who lays its sigil on an altar in the %s. Few come back the same." % [bdef["name"], bdef["title"], String(Defs.BIOMES[gb]["name"]) if Defs.BIOMES.has(gb) else gb]
 		"dungeon":
 			if not game.builds.warden_list.is_empty():
 				var w: Dictionary = game.builds.warden_list[r.randi_range(0, game.builds.warden_list.size() - 1)]
@@ -1023,7 +1016,7 @@ func sell(v, mat: int) -> bool:
 		return true
 	return false
 
-## the planet's guardian lairs and dungeons, marked on your map
+## the planet's dungeons, marked on your map
 func _chart() -> void:
 	var ch := []
 	for l in game.builds.lair_list:
@@ -1031,4 +1024,4 @@ func _chart() -> void:
 	for w in game.builds.warden_list:
 		ch.append({"pos": [w["pos"].x, w["pos"].y], "name": "Crypt", "kind": "dungeon"})
 	game.planet_state["charted"] = ch
-	game.ui.toast("The lairs and dungeons of %s are on your map now (M)" % game.planet.get("name", ""), Color(0.9, 0.85, 1.0), 4.0)
+	game.ui.toast("The dungeons of %s are on your map now (M)" % game.planet.get("name", ""), Color(0.9, 0.85, 1.0), 4.0)

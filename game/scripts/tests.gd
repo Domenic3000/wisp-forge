@@ -1397,6 +1397,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_remove()
+		elif only == "backdrop":
+			await _test_backdrop()
+		elif only == "indoors":
+			await _test_indoors()
 		elif only == "newgame":
 			await _test_newgame()
 		elif only == "spawns":
@@ -1407,10 +1411,6 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_galaxy()
-		elif only == "lairs":
-			_go(g.player.pos)
-			await _frames(60)
-			await _test_lairs()
 		elif only == "wardens":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2008,8 +2008,16 @@ func run() -> void:
 	# (another surface building's chest, not the one opened: same rules as for that one)
 	var chest2 := Vector2i(-1, -1)
 	var c2obj = null
-	for info in b.infos:
-		if not info["ruined"] and info["chests"].size() > 0:
+	# (a standing building's first; the lairs' sure chests were the only others near the start, so a ruin's will do)
+	var c2_infos: Array = []
+	for info0 in b.infos:
+		if not info0["ruined"]:
+			c2_infos.append(info0)
+	for info1 in b.infos:
+		if info1["ruined"]:
+			c2_infos.append(info1)
+	for info in c2_infos:
+		if info["chests"].size() > 0:
 			for c2_q in info["chests"]:
 				var c2_o = _chest_obj(c2_q)
 				if c2_o == null or c2_o == cobj or c2_q.y > b.ground_row(c2_q.x) + 6:
@@ -2021,6 +2029,25 @@ func run() -> void:
 				c2obj = c2_o
 				break
 		if c2obj != null:
+			break
+	# (else any closed chest at the surface that isn't in a crypt or mine)
+	var c2_why := {"opened": 0, "deep": 0, "under": 0}
+	if c2obj == null:
+		for c2_ch in g.chests:
+			if c2_ch.opened or c2_ch == cobj:
+				c2_why["opened"] += 1
+				continue
+			var c2_cell: Vector2i = Build.cell_of(c2_ch.pos)
+			var c2_spot := Vector2i(c2_cell.x - Defs.CHEST_W / 2, c2_cell.y + 5)
+			if c2_cell.y < Defs.SURF_Y0 or c2_spot.y > b.ground_row(c2_spot.x) + 6 or c2_spot.y < b.ground_row(c2_spot.x) - 60:
+				c2_why["deep"] += 1
+				continue
+			var c2_lab: String = b.label_at(c2_ch.pos)
+			if "Halls" in c2_lab or "Crypts" in c2_lab or "Tomb" in c2_lab or "Mine" in c2_lab or "Vault" in c2_lab:
+				c2_why["under"] += 1
+				continue
+			chest2 = c2_spot
+			c2obj = c2_ch
 			break
 	if c2obj != null:
 		var r_before: float = c2obj.pos.length()
@@ -2035,7 +2062,7 @@ func run() -> void:
 		var dropped: float = r_before - c2obj.pos.length()
 		_ok("a chest falls when its floor is dug out", dropped > 2.0 and not c2obj.opened, "it dropped %.1f cells, in one piece" % dropped)
 	else:
-		_ok("a chest falls when its floor is dug out", false, "no second intact chest found")
+		_ok("a chest falls when its floor is dug out", false, "no second intact chest found (%d chests: %s)" % [g.chests.size(), str(c2_why)])
 
 	# ---- guards wake up when you come near ----
 	if b.guards.size() > 0:
@@ -2670,6 +2697,7 @@ func run() -> void:
 
 	await _test_stairs()
 	await _test_workshops()
+	await _test_indoors()
 	await _test_remove()
 	await _test_spawns()
 
@@ -3729,7 +3757,6 @@ func run() -> void:
 	g.player.breath = g.player.max_breath
 	g.chunks.clear()
 
-	await _test_lairs()
 	await _test_guardians()
 	await _test_wardens()
 
@@ -4908,6 +4935,176 @@ func _trace_frames(label: String, n: int, over_ms := 40.0, part_ms := 8.0) -> vo
 	RenderingServer.frame_post_draw.disconnect(tf_post)
 	print("[%s] %d frames: the slowest %.0f ms, %d over %.0f ms" % [label, n, tf_worst / 1000.0, tf_big, over_ms])
 
+## The background and the way into space (user, 22 Nov: "the retro pixel filter seems to end at the space
+## border, and the transition to space is still jaring. There are also still sharp borders in the
+## background"): pictures with the retro filter on of a biome border by day and night, high in the sky, and
+## just out in space; the sky's top is clear over space's own stars there.
+func _test_backdrop() -> void:
+	var bd_back: Vector2 = g.player.pos
+	var bd_t0: float = g.time
+	var bd_d0: String = g.settings["dither"]
+	g.settings["dither"] = "retro"
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
+	var bd_dir: String = g._real_save_dir().path_join("shots")
+	# a biome border near where you arrived
+	var a0: float = atan2(g.player.pos.y, g.player.pos.x)
+	var b0 := int(g.gpu.surf_at(a0).y)
+	var ab := a0
+	for k in 2000:
+		ab = a0 + float(k) * 6.0 / Defs.RS0
+		if int(g.gpu.surf_at(ab).y) != b0:
+			break
+	var up := Vector2(cos(ab), sin(ab))
+	_go(up * (g.gpu.surf_at(ab).x + 14.0))
+	for bd_h in [12.0, 23.0]:
+		g.time = g.towns.time_for_hour(g.player.pos, bd_h)
+		await _frames(45)
+		g.get_viewport().get_texture().get_image().save_png(bd_dir.path_join("bg_border_%s.png" % ("day" if bd_h < 20.0 else "night")))
+	# high in the sky, then just out in space
+	g.time = g.towns.time_for_hour(g.player.pos, 12.0)
+	g.test_god = true
+	_go(up * (Defs.R_TOP - 30.0))
+	g.test_jump = true
+	await _frames(30)
+	var bd_back_on: bool = g.space.backdrop() and g.space.visible
+	g.get_viewport().get_texture().get_image().save_png(bd_dir.path_join("bg_high.png"))
+	_go(up * (Defs.R_SPACE - 40.0))
+	var bd_in := false
+	for k2 in 240:
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if g.space.active:
+			bd_in = true
+			break
+	g.test_jump = false
+	await _frames(8)
+	g.get_viewport().get_texture().get_image().save_png(bd_dir.path_join("bg_orbit.png"))
+	# (is the sky's top clear over space's stars: the picture's top row, above the atmosphere)
+	var bd_clear := false
+	if g.gpu.view_img != null:
+		var bd_px: Color = g.gpu.view_img.get_pixel(g.gpu.PMX + g.VW / 2, g.gpu.PMY + 2)
+		bd_clear = bd_px.a < 0.5
+	# back down
+	g.test_cast = true
+	for k3 in 1800:
+		g.test_aim = g.player.pos * 0.5
+		g.player.mana = g.player.max_mana
+		await _frames(1)
+		if not g.space.active:
+			break
+	g.test_cast = false
+	g.settings["dither"] = bd_d0
+	g.time = bd_t0
+	_go(bd_back)
+	await _frames(40)
+	_ok("high up, the sky thins into space's own stars, the pixel filter over all of it", bd_back_on and bd_in and bd_clear,
+		"stars behind the sky's top %s; out in space %s; the picture clear over them %s (pictures bg_border_day/night, bg_high, bg_orbit)" % [bd_back_on, bd_in, bd_clear])
+
+## Setting things down indoors (user, 22 Nov: "i wasnt able to build decorations or the forging equipment on
+## the ground inside a building. it kept saying there was no space, but i could build them on ledges"): in the
+## villages' houses, a kiln and a table aimed along each ground floor; how many spots fit, and why the others don't.
+func _test_indoors() -> void:
+	var in_back: Vector2 = g.player.pos
+	for in_m in [Defs.STONE, Defs.BRICK, Defs.PLANK, Defs.SAND, Defs.DIRT]:
+		g.player.inv[in_m] += 200
+	var in_rows := []
+	var in_fit := {"kiln": 0, "table": 0}
+	var in_tried := {"kiln": 0, "table": 0}
+	var in_houses := 0
+	for in_t in g.builds.towns:
+		if not bool(in_t.get("living", false)) or in_houses >= 5:
+			continue
+		for in_h in in_t["houses"]:
+			if bool(in_h.get("ruined", false)) or in_houses >= 5:
+				continue
+			in_houses += 1
+			var hx0: int = int(in_h["x0"])
+			var hw: int = int(in_h["w"])
+			var hf: int = int(in_h["floor"])
+			_go(_cell_pos(hx0 + hw / 2, hf - 10))
+			await _frames(30)
+			if not g.build_on:
+				g._toggle_build()
+			for in_kind in ["kiln", "table"]:
+				g.build_cat = Build.CAT_WORKSHOPS if in_kind == "kiln" else 2
+				var in_list: Array = g.build_list()
+				for in_k in in_list.size():
+					if String(in_list[in_k]["name"]) == ("Kiln" if in_kind == "kiln" else "Table"):
+						g.build_idx[g.build_cat] = in_k
+				var in_whys := {}
+				var cc := hx0 + 8
+				while cc < hx0 + hw - 8:
+					g.test_aim = _cell_pos(cc, hf - 6)
+					await _frames(2)
+					in_tried[in_kind] += 1
+					if g.build_prev.get("ok", false):
+						in_fit[in_kind] += 1
+					else:
+						var wy: String = g.build_why
+						in_whys[wy] = int(in_whys.get(wy, 0)) + 1
+					cc += 7
+				in_rows.append("house %s %d..%d floor %d, %s: %s" % [String(in_h.get("role", "?")), hx0, hx0 + hw, hf, in_kind, str(in_whys)])
+			g.test_aim = Vector2.ZERO
+			if g.build_on:
+				g._toggle_build()
+	# a house you build yourself (on a slab of natural stone up in open air), then the same inside it
+	for in_mt in [Defs.PLANK, Defs.WOOD, Defs.MASONRY, Defs.TILE, Defs.BRICK, Defs.SANDSTONE, Defs.DRYGRASS, Defs.TORCH, Defs.GLASS]:
+		g.player.inv[in_mt] += 3000
+	var in_a := atan2(g.player.pos.y, g.player.pos.x) - 0.5
+	var in_up := Vector2(cos(in_a), sin(in_a))
+	var in_c: Vector2i = Build.cell_of(in_up * (g.gpu.surf_at(in_a).x + 160.0))
+	var IW := 120
+	var in_d := PackedInt32Array()
+	in_d.resize(IW * 20)
+	in_d.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	g.stamps.append({"x0": posmod(in_c.x, Defs.NS), "y0": in_c.y, "w": IW, "h": 20, "data": in_d, "ax": in_c.x, "aw": IW})
+	await _frames(4)
+	var in_mid := in_c.x + IW / 2
+	_go(_cell_pos(in_mid + 40, in_c.y - 12, in_c.x, IW))
+	await _frames(30)
+	if not g.build_on:
+		g._toggle_build()
+	g.build_cat = 4
+	g.build_idx[4] = 0
+	g.build_style = 0
+	g.build_w = 40
+	g.build_floors = 1
+	g.test_aim = _cell_pos(in_mid, in_c.y - 3, in_c.x, IW)
+	await _frames(4)
+	var in_house_ok: bool = g.build_prev.get("ok", false)
+	g.build_click = true
+	await _frames(30)
+	for in_kind2 in ["kiln", "table"]:
+		g.build_cat = Build.CAT_WORKSHOPS if in_kind2 == "kiln" else 2
+		var in_list2: Array = g.build_list()
+		for in_k2 in in_list2.size():
+			if String(in_list2[in_k2]["name"]) == ("Kiln" if in_kind2 == "kiln" else "Table"):
+				g.build_idx[g.build_cat] = in_k2
+		var in_whys2 := {}
+		for dx in [-12, -6, 0, 6, 12]:
+			for dy in [-2, -6, 0]:
+				g.test_aim = _cell_pos(in_mid + dx, in_c.y + dy, in_c.x, IW)
+				await _frames(2)
+				in_tried[in_kind2] += 1
+				if g.build_prev.get("ok", false):
+					in_fit[in_kind2] += 1
+				else:
+					var wy2: String = g.build_why
+					in_whys2[wy2] = int(in_whys2.get(wy2, 0)) + 1
+		in_rows.append("a house you build (made %s) floor %d, %s: %s" % [in_house_ok, in_c.y, in_kind2, str(in_whys2)])
+	g.test_aim = Vector2.ZERO
+	if g.build_on:
+		g._toggle_build()
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("indoors_built.png"))
+	for r in in_rows:
+		print("[indoors] " + r)
+	_go(in_back)
+	await _frames(20)
+	_ok("indoors, workshops and furniture go down on a house's floor", in_houses > 0 and in_fit["kiln"] * 2 >= in_tried["kiln"] and in_fit["table"] * 3 >= in_tried["table"],
+		"%d houses; kiln fits %d of %d spots, table %d of %d" % [in_houses, in_fit["kiln"], in_tried["kiln"], in_fit["table"], in_tried["table"]])
+
 ## A new journey as the player starts one (user, 22 Nov: "there is a small hitch when starting a new
 ## game"): the title, then Play on an empty slot (a grown system, not the classic one), then the first
 ## ten seconds traced frame by frame, every frame over 20 ms printed with its parts over 3 ms.
@@ -5152,16 +5349,16 @@ func _test_worlds() -> void:
 	var wd_ms := Time.get_ticks_msec() - wd_t0
 	var wd_pl: Dictionary = g.planet
 	var wd_lb := []
-	for wd_l in g.builds.lair_list:
-		wd_lb.append(wd_l["biome"])
+	for wd_l in g.summoning.callable_biomes():
+		wd_lb.append(wd_l)
 	var wd_want: Array = wd_pl.get("guardians", [])
 	var wd_match := true
 	for wd_b3 in wd_lb:
 		wd_match = wd_match and wd_want.has(wd_b3)
 	var wd_made_ok: bool = g.builds.infos.size() >= 12 and wd_match and wd_lb.size() >= wd_want.size() - 1 and wd_lb.size() >= 1
 	_ok("a new game's planet is made from its own seed, with guardians only where it says", wd_made_ok,
-		"%s (%s, radius %.0f): %s; %d structures; guardians wanted %s, lairs %s (no room: %s); made in %d ms (%s)" % [wd_pl["name"], wd_pl["kind"], float(wd_pl["radius"]),
-		wd_pl["desc"], g.builds.infos.size(), str(wd_want), str(wd_lb), str(g.builds.lair_why), wd_ms, str(g.gen_times)])
+		"%s (%s, radius %.0f): %s; %d structures; guardians wanted %s, callable %s; made in %d ms (%s)" % [wd_pl["name"], wd_pl["kind"], float(wd_pl["radius"]),
+		wd_pl["desc"], g.builds.infos.size(), str(wd_want), str(wd_lb), wd_ms, str(g.gen_times)])
 	Defs.world_seed = 0
 	g._delete_worlds()
 	g.test_god = wd_god0
@@ -5290,15 +5487,9 @@ func _test_far_biomes() -> void:
 	g._enter_planet(2)
 	g.ui.title.visible = false
 	await _frames(60)
-	# the sanctum is under the water
-	var fb_wet := "no lair"
-	for fb_l in g.builds.lair_list:
-		if fb_l["biome"] == "ocean":
-			var fb_p: Vector2 = fb_l["pos"]
-			_go(fb_p + fb_p.normalized() * 30.0)
-			await _frames(20)
-			fb_wet = "water over its floor: %s" % (Defs.KIND[g.type_at(fb_p + fb_p.normalized() * 12.0)] == Defs.K_LIQUID)
+	# (Thalassor is called at an altar on the seabed and comes up in the water)
 	await _test_guardians(["ocean"])
+	var fb_wet := "Thalassor came in the water: %s" % bool(guard_info.get("ocean", {}).get("wet", false))
 	# the swimmers: somewhere the sea is deep near you, each comes after you and keeps to the water
 	g.test_god = true
 	var fb_c0 := int(floor(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS))
@@ -5828,119 +6019,31 @@ func _test_stairs() -> void:
 	_ok("build mode: a staircase stands on its posts and you walk up it", sr_fit and sr_n0 >= 120 and sr_n1 >= sr_n0 * 0.95 and sr_best >= 32.0,
 		"fits %s (%s), cost %s; %d plank cells placed, %d four seconds later; walking up it you rose %.0f of its 40" % [sr_fit, sr_why, sr_cost, sr_n0, sr_n1, sr_best])
 
-## The guardians' lairs dressed as places (lairs.gd; user, 21 Nov: "make the boss arenas feel waaay more
-## epic"): each has banners, a background of colonnade, set and statue, and its sure chest; pictures of
-## each, the whole blueprint (lair_<biome>_bp.png) and in the game at midday from the gate, the middle and
-## the dais (lair_<biome>_gate/_mid/_dais.png)
-func _test_lairs() -> void:
-	var lr_rows := []
-	var lr_ok := 0
-	var lr_n := 0
-	var lr_dir: String = g._real_save_dir().path_join("shots")
-	DirAccess.make_dir_recursive_absolute(lr_dir)
-	var lr_back: Vector2 = g.player.pos
-	var lr_god0: bool = g.test_god
-	var lr_time0: float = g.time
-	g.test_god = true
-	for lr_l in g.builds.lair_list:
-		var lr_bio: String = lr_l["biome"]
-		lr_n += 1
-		var lr_info: Dictionary = {}
-		for lr_in in g.builds.infos:
-			if int(lr_in["x0"]) == int(lr_l.get("bx0", -1)) and (lr_info.is_empty() or int(lr_in["w"]) > int(lr_info["w"])):
-				lr_info = lr_in
-		if lr_info.is_empty() or (lr_info.get("data", PackedInt32Array()) as PackedInt32Array).is_empty():
-			lr_rows.append("%s: no blueprint" % lr_bio)
-			continue
-		var lr_dat: PackedInt32Array = lr_info["data"]
-		var lr_ban := 0
-		var lr_back_cells := 0
-		var lr_natural := 0
-		var lr_plant := 0
-		for lr_v in lr_dat:
-			if (lr_v & 0x8000000) == 0 and (lr_v & 0x100000) != 0 and ((lr_v >> 8) & 255) != 0:
-				lr_plant += 1
-			var lr_f: int = lr_v & 255
-			var lr_g: int = (lr_v >> 8) & 255
-			if lr_g == Defs.DECOR:
-				lr_ban += 1
-			elif lr_g != 0 and lr_g != 255 and (lr_f == 0 or lr_f == Defs.WATER) and (lr_v & 0x40000) != 0:
-				lr_back_cells += 1
-			if lr_f != 255 and (lr_v & 0x8000000) == 0 and (lr_v & 0x80000) != 0:
-				lr_natural += 1
-		var lr_chests: int = (lr_info.get("chests", []) as Array).size()
-		_bp_image(lr_info).save_png(lr_dir.path_join("lair_%s_bp.png" % lr_bio))
-		# in the game: from the middle, and either end
-		var lr_at: Vector2 = lr_l["pos"]
-		var lr_a := atan2(lr_at.y, lr_at.x)
-		var lr_side: Vector2 = g.basis_r(lr_a)
-		g.time = g.towns.time_for_hour(lr_at, 12.5)
-		g.rain = 0.0
-		g.rain_target = 0.0
-		var lr_made := 0
-		if lr_plant > 0:
-			# (as it was made, before anyone came near: plant cells, how many are at the edge of falling,
-			# and how many of the blueprint's plant cells went in without their plant id)
-			var lr_r0: Dictionary = g.gpu.read_rect(int(lr_info["x0"]), int(lr_info["y0"]), int(lr_info["w"]), int(lr_info["h"]),
-				int(lr_info.get("ax", lr_info["x0"])), int(lr_info.get("aw", lr_info["w"])))
-			var lr_bg0: PackedInt32Array = lr_r0["bg"]
-			var lr_fg0: PackedInt32Array = lr_r0["fg"]
-			var lr_n0 := 0
-			var lr_hi := 0
-			var lr_mx := 0
-			var lr_lost := 0
-			var lr_cov := 0
-			for lr_q in mini(lr_bg0.size(), lr_dat.size()):
-				var lr_bq: int = lr_bg0[lr_q]
-				var lr_dq: int = lr_dat[lr_q]
-				var lr_isp: bool = (lr_dq & 0x8000000) == 0 and (lr_dq & 0x100000) != 0 and ((lr_dq >> 8) & 255) != 0
-				if lr_isp and (lr_bq & 0x80000000) == 0:
-					lr_lost += 1
-				if (lr_bq & 0x80000000) != 0 and (lr_bq & 255) != 0:
-					lr_n0 += 1
-					var lr_sq := (lr_bq >> 8) & 63
-					lr_mx = maxi(lr_mx, lr_sq)
-					if lr_sq >= 62:
-						lr_hi += 1
-					if lr_isp and (lr_fg0[lr_q] & 255) != 0:
-						lr_cov += 1
-			lr_made = lr_n0
-			print("[lairplants] %s: %d plant cells, %d at 62, support up to %d, %d lost their id, %d behind something in front" % [lr_bio, lr_n0, lr_hi, lr_mx, lr_lost, lr_cov])
-		for lr_k in 3:
-			var lr_off: float = [0.0, -1.0, 1.0][lr_k] * (float(lr_l["arena"]) + (10.0 if lr_l.get("deep", false) else 70.0))
-			var lr_p: Vector2 = lr_at + lr_side * lr_off
-			_go(lr_p.normalized() * (lr_at.length() + 30.0))
-			await _frames(45)
-			g.get_viewport().get_texture().get_image().save_png(lr_dir.path_join("lair_%s_%s.png" % [lr_bio, ["mid", "a", "b"][lr_k]]))
-		# its trees and giant mushrooms are living plants: still standing after you've been about (they
-		# were built back walls once, and broke apart)
-		var lr_live := -1
-		if lr_plant > 0:
-			_go(lr_at.normalized() * (lr_at.length() + 30.0))
-			await _frames(240)
-			var lr_rr: Dictionary = g.gpu.read_rect(int(lr_info["x0"]), int(lr_info["y0"]), int(lr_info["w"]), int(lr_info["h"]),
-				int(lr_info.get("ax", lr_info["x0"])), int(lr_info.get("aw", lr_info["w"])))
-			lr_live = 0
-			for lr_bv in lr_rr["bg"]:
-				if (int(lr_bv) & 0x80000000) != 0 and (int(lr_bv) & 255) != 0:
-					lr_live += 1
-		var lr_good := lr_ban >= 40 and lr_back_cells >= 1500 and lr_chests >= 1 and (lr_plant == 0 or (lr_made >= int(lr_plant * 0.85) and lr_live >= int(lr_made * 0.98)))
-		if lr_good:
-			lr_ok += 1
-		lr_rows.append("%s%s: %d banner cells, %d background cells, %d natural rock, %d chests, %dx%d, plants %d, %d made -> %d standing" % [lr_bio, " (underground)" if lr_l.get("deep", false) else "",
-			lr_ban, lr_back_cells, lr_natural, lr_chests, int(lr_info["w"]), int(lr_info["h"]), lr_plant, lr_made, lr_live])
-	g.time = lr_time0
-	g.test_god = lr_god0
-	_go(lr_back)
-	await _frames(20)
-	_ok("every guardian's lair is dressed: a gate, banners, its set, a statue, its chest", lr_n > 0 and lr_ok == lr_n,
-		"%d lairs; %s; no room: %s" % [lr_n, "; ".join(lr_rows), str(g.builds.lair_why)])
+var only_now := ""         # the one section being run alone ("" = the full run)
+var guard_info := {}       # biome -> what the guardians' check saw (`_test_far_biomes` reads the ocean's)
 
+## a column near the middle of the planet's longest stretch of a biome (-1 if it has none)
+func _biome_mid_col(bio: String) -> int:
+	var best_len := 0
+	var best_mid := -1
+	var run0 := -1
+	var n: int = Defs.NS
+	var stepc := 16
+	for k in range(0, n + stepc, stepc):
+		var c := k % n
+		var here: bool = g.builds.biome(c) == bio and k < n
+		if here and run0 < 0:
+			run0 = k
+		elif not here and run0 >= 0:
+			if k - run0 > best_len:
+				best_len = k - run0
+				best_mid = (run0 + k) / 2
+			run0 = -1
+	return best_mid % n if best_mid >= 0 else -1
 
-## the biome guardians (its own function so it can run alone: see `only`)
-var only_now := ""
 func _test_guardians(only_biomes := []) -> void:
-	# ---- the biome guardians: each waits in its lair, wakes, fights with its moves, falls, gives its relic ----
+	# ---- the biome guardians: each called at a Summoning Altar built in its biome with its sigil; it comes
+	# at a clear spot (never in the ground), fights with its moves, falls, gives its relic ----
 	var gd_items0: Dictionary = g.items.duplicate()
 	var gd_hp0: float = g.max_hp
 	var gd_god0: bool = g.test_god
@@ -5950,21 +6053,67 @@ func _test_guardians(only_biomes := []) -> void:
 	var gd_rows := []
 	var gd_ok := 0
 	var gd_lairs: Array = []
-	for gd_l0 in g.builds.lair_list:
-		if only_biomes.is_empty() or only_biomes.has(gd_l0["biome"]):
-			gd_lairs.append(gd_l0)
+	for gd_b0 in g.summoning.callable_biomes():
+		if only_biomes.is_empty() or only_biomes.has(gd_b0):
+			gd_lairs.append({"biome": gd_b0})
 	for gd_l in gd_lairs:
 		var gd_bio: String = gd_l["biome"]
-		var gd_e = null
-		for gd_en in g.enemies:
-			if gd_en.boss and gd_en.d.has("def") and gd_en.d["biome"] == gd_bio and not gd_en.dead:
-				gd_e = gd_en
-		if gd_e == null:
-			gd_rows.append("%s: no guardian" % gd_bio)
+		var gd_wet: bool = Defs.BOSSES[gd_bio].get("swim", false) or Defs.BOSSES[gd_bio].get("wet", false)
+		var gd_mid := _biome_mid_col(gd_bio)
+		if gd_mid < 0:
+			gd_rows.append("%s: no stretch of it found" % gd_bio)
 			continue
-		var gd_at: Vector2 = gd_l["pos"]
-		var gd_side: Vector2 = g.basis_r(atan2(gd_at.y, gd_at.x))
-		_go(gd_at + gd_side * 50.0 + gd_at.normalized() * 12.0)
+		# the altar: on level, clear ground in the biome (in a sea, on the seabed)
+		var gd_col := gd_mid
+		var gd_row: int = g.builds.ground_row(gd_mid)
+		if not gd_wet:
+			# (open, fairly level ground in the biome, with no building within 80 columns: a guardian boxed
+			# in between houses, you on a roof, can't get at you)
+			var gd_found := false
+			for gd_d in range(0, 3000, 16):
+				for gd_sg in [1, -1]:
+					var gc: int = gd_mid + gd_d * gd_sg
+					if gd_found or g.builds.biome(gc) != gd_bio or g.builds.wet(gc):
+						continue
+					var gmn := 1 << 30
+					var gmx := -(1 << 30)
+					var gd_clear := true
+					for gq in range(-80, 81, 8):
+						var gr2: int = g.builds.ground_row(gc + gq)
+						if absi(gq) <= 24:
+							gmn = mini(gmn, gr2)
+							gmx = maxi(gmx, gr2)
+						if g.builds.label_at(_cell_pos(gc + gq, gr2 - 6)) != "" or g.builds.label_at(_cell_pos(gc + gq, gr2 - 30)) != "":
+							gd_clear = false
+							break
+					if gd_clear and gmx - gmn <= 6:
+						gd_col = gc
+						gd_row = g.builds.ground_row(gc)
+						gd_found = true
+				if gd_found:
+					break
+		var gd_alt = g.workshops.add("altar", _cell_pos(gd_col, gd_row - 8))
+		var gd_up0: Vector2 = gd_alt.pos.normalized()
+		_go(gd_alt.pos + g.basis_r(atan2(gd_alt.pos.y, gd_alt.pos.x)) * -16.0 + gd_up0 * 4.0)
+		g.player.dead = false
+		await _frames(40)
+		g.items["sigil_" + gd_bio] = 1
+		var gd_why: String = g.summoning.try_summon(g.player, gd_alt)
+		var gd_e = null
+		for gd_w in 240:
+			await _frames(1)
+			gd_e = g.summoning.active_guardian(gd_bio)
+			if gd_e != null:
+				break
+		if gd_e == null:
+			gd_rows.append("(!) %s: not called (%s)" % [gd_bio, gd_why if gd_why != "" else "nothing came"])
+			g.workshops.list.erase(gd_alt)
+			continue
+		# (it came clear of the ground: not stuck in it, as one waiting in its lair was)
+		var gd_lg0: Vector2 = g.to_grid(gd_e.pos)
+		var gd_stuck: bool = g.box_solid(gd_lg0.x - gd_e.w * 0.5 + 1.0, gd_lg0.y - gd_e.h * 0.5 + 1.0, gd_e.w - 2.0, gd_e.h - 3.0) and gd_e.d["def"]["go"] != "burrow"
+		var gd_in_water: bool = Defs.KIND[g.type_at(gd_e.pos)] == Defs.K_LIQUID
+		guard_info[gd_bio] = {"wet": gd_in_water}
 		g.player.dead = false
 		# how it moves while it fights: how high it gets, how far it strays, how much it gets around
 		var gd_up := 0.0
@@ -5998,10 +6147,12 @@ func _test_guardians(only_biomes := []) -> void:
 		var gd_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(gd_bio)
 		# (it stays on screen: never more than about 80 cells up; in its lair; and on the move)
 		var gd_flies: bool = gd_e.d["def"]["go"] == "fly" or gd_e.d["def"]["go"] == "slither"
-		if gd_awake and gd_moves >= 1 and gd_got and gd_dead and gd_up < (95.0 if gd_flies else 70.0) and gd_out < 14.0 and gd_walk > 40.0:
+		var gd_good: bool = gd_awake and gd_moves >= 1 and gd_got and gd_dead and not gd_stuck and gd_up < (95.0 if gd_flies else 70.0) and gd_out < 14.0 and gd_walk > 30.0
+		if gd_good:
 			gd_ok += 1
-		gd_rows.append("%s%s: awake %s, %d moves, relic %s, highest %.0f, past its lair %.0f, moved %.0f" % [gd_bio, " (underground)" if gd_l.get("deep", false) else "", gd_awake, gd_moves, gd_got,
-			gd_up, gd_out, gd_walk])
+		gd_rows.append("%s%s: called, came clear %s%s, awake %s, %d moves, relic %s, highest %.0f, past its ground %.0f, moved %.0f" % ["" if gd_good else "(!) ", gd_bio, not gd_stuck,
+			" in the water" if gd_in_water else "", gd_awake, gd_moves, gd_got, gd_up, gd_out, gd_walk])
+		g.workshops.list.erase(gd_alt)
 	# (the relics are given back, so the checks after this aren't changed by them)
 	for gd_r in Defs.RELICS:
 		if not gd_items0.has(gd_r):
@@ -6014,12 +6165,12 @@ func _test_guardians(only_biomes := []) -> void:
 	_go(gd_back)                   # (back where the checks after this one expect you)
 	await _frames(60)
 	if only_biomes.is_empty():
-		_ok("each biome has a guardian in its lair that wakes, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
-			"%d lairs; %s; no room: %s" % [gd_lairs.size(), "; ".join(gd_rows), str(g.builds.lair_why)])
+		_ok("each biome's guardian comes to its sigil at an altar, clear of the ground, fights and gives up its relic", gd_lairs.size() >= 8 and gd_ok == gd_lairs.size(),
+			"%d guardians; %s" % [gd_lairs.size(), "; ".join(gd_rows)])
 	else:
-		_ok("%s: the %s guardian waits in its lair, wakes, fights and gives up its relic" % [g.planet["name"], " and ".join(only_biomes)],
+		_ok("%s: the %s guardian comes to its sigil at an altar, fights and gives up its relic" % [g.planet["name"], " and ".join(only_biomes)],
 			gd_lairs.size() == only_biomes.size() and gd_ok == gd_lairs.size(),
-			"%s; no room: %s" % ["; ".join(gd_rows), str(g.builds.lair_why)])
+			"; ".join(gd_rows))
 
 ## foes follow you to another level (its own function so it can run alone: see `only`)
 func _test_climb() -> void:

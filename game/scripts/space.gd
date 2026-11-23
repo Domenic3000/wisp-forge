@@ -799,7 +799,21 @@ func safe_return() -> Vector2:
 	return p.normalized() * (Defs.R_SPACE - 20.0)
 
 ## Every tick on the planet: just back from space, the view eases in to the zoom you chose.
+## High in the sky (or out here) the stars of space are drawn behind the planet's picture, which fades
+## out over the top of the atmosphere (render.comp, P.p[122].w bit 8): climbing out, the sky thins into
+## the same starfield you fly through, instead of being swapped for it at the edge of space (user,
+## 22 Nov: "the transition to space is still jaring").
+func backdrop() -> bool:
+	return active or (game.state == "play" and game.cam_c.length() > Defs.R_TOP - 320.0)
+
+var _backdrop_was := false
+
 func planet_tick() -> void:
+	var bd := backdrop()
+	if bd or _backdrop_was:
+		visible = bd
+		queue_redraw()
+	_backdrop_was = bd
 	if cooldown > 0:
 		cooldown -= 1
 	if game.frame % 600 == 0 and game.planet.has("index"):
@@ -822,7 +836,7 @@ func _world_xf() -> Transform2D:
 	return Transform2D(game.world_to_screen(Vector2(1, 0)) - t, game.world_to_screen(Vector2(0, 1)) - t, t)
 
 func _draw() -> void:
-	if not active:
+	if not active and not backdrop():
 		return
 	var w: int = game.VW
 	var h: int = game.VH
@@ -865,6 +879,8 @@ func _draw() -> void:
 				continue
 			var sz := 2.0 + float(k % 4)
 			draw_rect(Rect2((ctr + q1.rotated(rot)).floor(), Vector2(sz, sz)), Color(neb_col.r, neb_col.g, neb_col.b, 0.12 + 0.1 * neb))
+	if not active:
+		return                            # (still in the planet's sky: only the stars behind its fading top)
 	# the other systems near you (the nearest three get a marker at the screen's edge, below)
 	var g := player_g()
 	var near_sys: int = int(near.get("sys", -1))

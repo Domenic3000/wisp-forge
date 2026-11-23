@@ -127,6 +127,7 @@ static func pieces() -> Array:
 		{"cat": 7, "name": "Smelter", "kind": "station", "station": "smelter", "cost": Defs.STATIONS["smelter"]["cost"]},
 		{"cat": 7, "name": "Still", "kind": "station", "station": "still", "cost": Defs.STATIONS["still"]["cost"]},
 		{"cat": 7, "name": "Anvil", "kind": "station", "station": "anvil", "cost": Defs.STATIONS["anvil"]["cost"]},
+		{"cat": 7, "name": "Summoning Altar", "kind": "station", "station": "altar", "cost": Defs.STATIONS["altar"]["cost"]},
 		{"cat": 8, "name": "Remove Blocks", "kind": "remove", "layer": "front", "cost": {}},
 		{"cat": 8, "name": "Remove Back Walls", "kind": "remove", "layer": "back", "cost": {}},
 		{"cat": 8, "name": "Remove Furniture", "kind": "remove", "layer": "furn", "cost": {}},

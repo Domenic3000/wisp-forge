@@ -754,7 +754,7 @@ const SHOPS := {
 		"buy": {COPPER: [5, 2], COAL: [5, 2], STONE: [20, 1], DEEPSTONE: [10, 3], OBSIDIAN: [4, 3], EMBER: [2, 3], FROST: [2, 3]}, "ores": [2, 5]},
 	"tavern": {"title": "Tavern", "sell": [
 			{"name": "Hearty Meal (30 health)", "price": 10, "meal": 30.0},
-			{"name": "Rumours: the lairs and dungeons, on your map", "price": 30, "chart": true}],
+			{"name": "Rumours: the dungeons, on your map", "price": 30, "chart": true}],
 		"buy": {SHROOM: [4, 3], LEAF: [10, 2], WATER: [20, 2]}},
 	"inn": {"title": "Inn", "sell": [
 			{"name": "A night's rest (full health, till morning)", "price": 15, "rest": true},
@@ -1268,7 +1268,39 @@ const STATIONS := {
 		"desc": "Steeps herbs and crystals in water over a low flame: draughts."},
 	"anvil": {"name": "Anvil", "w": 13, "h": 8, "burn": 0.0, "spark": 0.0, "cost": {COPPERBAR: 6, STONE: 10},
 		"desc": "Forge ore gear within reach of an anvil and it comes out masterwork: a quarter better."},
+	"altar": {"name": "Summoning Altar", "w": 22, "h": 15, "burn": 0.0, "spark": 0.0, "cost": {MASONRY: 24, STONE: 20, CRYSTAL: 2},
+		"desc": "Lay a guardian's sigil on it (F) to call the guardian of the land it stands in. Build it where there's room to fight."},
 }
+
+## Summoning (user, 22 Nov: "maybe we move away from guardian lairs and go to a summoning them mechanic";
+## chose an altar you build, and an offering you forge): each guardian's sigil is forged from its own
+## land's matter (and a little copper and crystal), and laid on a Summoning Altar standing in that biome.
+const SIGIL_MATS := {
+	"forest": {LEAF: 20, WOOD: 12}, "jungle": {LEAF: 24, MUD: 10}, "marsh": {MUD: 16, SHROOM: 8},
+	"tundra": {SNOW: 20, FROST: 8}, "mountain": {STONE: 30, FROST: 4}, "savanna": {DRYGRASS: 20, WOOD: 8},
+	"desert": {SAND: 30, CACTUS: 8}, "grove": {MYCELIUM: 16, SHROOM: 10}, "ashland": {ASH: 20, EMBER: 8},
+	"ocean": {WATER: 30, SAND: 10},
+}
+const SIGIL_COMMON := {COPPER: 4, CRYSTAL: 2}
+
+## a guardian's sigil: its name for the forge and the satchel
+static func sigil_name(biome: String) -> String:
+	var n: String = BOSSES[biome]["name"]
+	return "Sigil of " + (n.substr(4) if n.begins_with("The ") else n)
+
+## the Wisp Forge's "Summoning" recipes: an altar's sigil for each guardian there is
+func sigil_recipes() -> Array:
+	var out := []
+	for b in SIGIL_MATS:
+		if not BOSSES.has(b):
+			continue
+		var cost: Dictionary = (SIGIL_MATS[b] as Dictionary).duplicate()
+		for m in SIGIL_COMMON:
+			cost[m] = int(cost.get(m, 0)) + int(SIGIL_COMMON[m])
+		var bd: Dictionary = BOSSES[b]
+		out.append({"id": "sigil_" + b, "cat": "Summoning", "name": sigil_name(b), "cost": cost, "sigil": b,
+			"desc": "Lay it on a Summoning Altar in the %s to call %s, %s." % [String(BIOMES[b]["name"]) if BIOMES.has(b) else b, bd["name"], bd["title"]]})
+	return out
 ## fuel for a station's fire: ticks of burning per unit
 const FUEL_TICKS := {COAL: 900, WOOD: 300, PLANK: 300, TIMBER: 200, LEAF: 60, ROOT: 300}
 const ANVIL_REACH := 48.0     # (cells from you to an anvil, for masterwork)
