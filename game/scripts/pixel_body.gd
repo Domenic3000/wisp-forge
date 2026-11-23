@@ -275,6 +275,13 @@ func back_texture() -> ImageTexture:
 
 # --------------------------------------------------------------- damage ---
 
+## Is the world point p inside one of its cells?
+func solid_at(p: Vector2) -> bool:
+	var b := to_body(p) + com
+	var i := int(floor(b.x))
+	var j := int(floor(b.y))
+	return i >= 0 and j >= 0 and i < w and j < h and cells[j * w + i] != 0
+
 ## Carve the cells within `r` of a world point out of the body. Returns how many went.
 func carve(p: Vector2, r: float) -> int:
 	var b := to_body(p) + com

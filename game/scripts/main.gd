@@ -361,6 +361,7 @@ var test_aim := Vector2.ZERO # test mode: where the local mage points (zero: the
 var test_cast := false       # test mode: hold the left button
 var test_dig := false        # test mode: hold the right button
 var test_sail := false       # test mode: hold Shift (the Starsail)
+var test_mend := false       # test mode: hold R (mend the skiff)
 var test_calm := false       # test mode: the biome guardians stay asleep (except while their own test runs)
 ## (the test mode's world seed for a new journey: 0, the classic system, but in the "newgame" check)
 var test_seed := 0
@@ -430,6 +431,7 @@ class PlayerInput:
 	var dig := false           # excavating (held, or a quick tap)
 	var decon := false         # deconstructing background tiles (Shift + right mouse)
 	var sail := false          # Shift held: the skiff's Starsail, out in space
+	var mend := false          # R held: mend the skiff's hull (beside it or aboard)
 	var aim := Vector2.ZERO    # world position of the cursor
 
 class Mage extends Body:
@@ -2150,6 +2152,7 @@ func _read_local_input(m: Mage) -> void:
 	inp.dig = (can_act and rmb and not shift) or test_dig
 	inp.decon = can_act and rmb and shift
 	inp.sail = (shift and state == "play") or test_sail
+	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on) or test_mend
 
 func _tick() -> void:
 	frame += 1
@@ -2168,6 +2171,7 @@ func _tick() -> void:
 		hurt_flash *= 0.9
 		return
 	_update_skiff()
+	_mend_skiff(player)
 	var tm := Time.get_ticks_usec()
 	for m in players:
 		if m.cast_cd > 0:
@@ -6552,6 +6556,8 @@ func _update_skiff() -> void:
 	skiff.power = 1.5 if items.has("engine") else 1.0              # (the Star-Iron Engine)
 	skiff.fly(want, pl != null, g, false, (Skiff.CRUISE_HIGH if high else Skiff.CRUISE) * skiff.power, 0.999 if high else 0.97)
 	skiff.advance(_skiff_solid if in_grid(skiff.pos, 40.0) else Callable())
+	if skiff.bump > CRASH_PLANET:
+		space.skiff_crash(skiff)
 	var up: Vector2 = skiff.pos.normalized()
 	if skiff.pos.length() > Defs.R_SPACE - 9.5:
 		if pl != null and skiff.vel.dot(up) > 0.0:
@@ -6566,6 +6572,61 @@ func _update_skiff() -> void:
 		var lead: Vector2 = skiff.pos + skiff.vel.normalized() * 14.0
 		for k in 2:
 			_particle(lead + Vector2(randf() - 0.5, randf() - 0.5) * 16.0, -skiff.vel * (0.3 + randf() * 0.3), 10 + randi() % 8, Color8(255, 170, 90), true, 0.0)
+
+## Holding R by the skiff (or aboard): its hull is knit back as it was forged, a few cells a tick, from
+## what's left outward. It's shaping magic (mana a cell, `MEND_MANA`) and takes matter: a piece of Hull
+## Plating mends `MEND_HULL` cells, a plank `MEND_PLANK`.
+const MEND_CELLS := 3
+const MEND_MANA := 0.12
+const MEND_HULL := 6
+const MEND_PLANK := 3
+const CRASH_PLANET := 9.0       # a crash on a planet hurts the skiff above this speed into the ground
+var _mend_bank := 0             # (cells paid for and not yet mended)
+var stats_mended := 0           # (cells mended: the tests read it)
+var _mend_msg := 0
+
+func _mend_skiff(m: Mage) -> void:
+	if skiff == null or not m.input.mend or m.dead:
+		return
+	var by: bool = m.aboard == skiff or m.pos.distance_to(skiff.pos) < float(skiff.w) * 0.5 + 24.0
+	if not by:
+		return
+	if skiff.missing() == 0:
+		if frame >= _mend_msg:
+			_mend_msg = frame + 90
+			ui.toast("The skiff's hull is whole", Color(0.7, 0.85, 1.0), 1.5)
+		return
+	if frame % 2 != 0:
+		return
+	if _mend_bank < MEND_CELLS:
+		if m.inv[Defs.HULL] > 0:
+			m.inv[Defs.HULL] -= 1
+			_mend_bank += MEND_HULL
+		elif m.inv[Defs.PLANK] > 0:
+			m.inv[Defs.PLANK] -= 1
+			_mend_bank += MEND_PLANK
+		elif _mend_bank <= 0:
+			if frame >= _mend_msg:
+				_mend_msg = frame + 120
+				ui.toast("Mending the hull takes Hull Plating (salvage from wrecks) or planks", Color(1, 0.7, 0.5), 2.5)
+			return
+	var need := MEND_MANA * float(mini(MEND_CELLS, _mend_bank)) * (0.0 if free_magic else 1.0)
+	if not has_mana(m, need, skiff.pos, "mend the hull"):
+		return
+	var got: Array = skiff.mend(mini(MEND_CELLS, _mend_bank))
+	_mend_bank -= got.size()
+	m.mana -= MEND_MANA * float(got.size()) * (0.0 if free_magic else 1.0)
+	m.mana_spent_t = 0
+	stats_mended += got.size()
+	var from: Vector2 = _staff(m, skiff.pos)[0] if m.aboard == null else m.pos
+	for p in got:
+		vfx.spawn(Vfx.DOT, from.lerp(p, 0.7), (p - from).normalized() * 0.4, 14, Vfx.MANA_COL, Color(0.7, 0.9, 1.0, 0.0), 1.5, 0.5, true, 0.0, 0.9)
+		vfx.spawn(Vfx.GLOW, p, Vector2.ZERO, 10, Color(0.75, 0.95, 1.0, 0.7), Color(0.4, 0.6, 1.0, 0.0), 3.0, 1.0)
+	if frame % 10 == 0:
+		audio.play("place", skiff.pos, 0.5)
+	if skiff.missing() == 0:
+		ui.toast("The hull is whole again", Color(0.7, 0.9, 1.0), 2.0)
+		audio.play("blink", skiff.pos, 0.6)
 
 ## the wisp engine's glow streaming from the stern
 func _skiff_exhaust() -> void:
@@ -6675,6 +6736,10 @@ func _skiff_interact(m: Mage) -> bool:
 	return false
 
 func _respawn() -> void:
+	# (fallen out in space: back to the planet's own frame first; the skiff answers you down there)
+	var from_space: bool = space.active
+	if from_space:
+		space.reset_after_death()
 	var rs: float = gpu.surf_at(spawn_angle).x
 	player.pos = Vector2(cos(spawn_angle), sin(spawn_angle)) * (rs + 30.0)
 	var home = _home_pos() if gpu != null else null
@@ -6690,6 +6755,8 @@ func _respawn() -> void:
 	breath = max_breath
 	dead = false
 	iframes = 90
+	if from_space and skiff != null:
+		call_skiff()
 
 # ================================================================== save ===
 const OLD_SAVE_PATH := "user://wispforge_save.json"

@@ -14,6 +14,13 @@
 ## round when you steer the other way (`look` eases through the turn for the picture). Nobody at the
 ## controls: it falls. In space it keeps its speed (thrust adds to it) and the nearest planet pulls.
 ## It collides with the world by its outline (`collide`, through main's collision grid).
+##
+## Damage (user, 23 Nov: pirates, and "hull damage and repair for the skiff"): what hits it (a pirate's
+## bolt, a storm belt's lightning, a crash into rock at speed) carves cells out of its hull (`damage`).
+## `hull_f` is how much of the hull as forged (`design`) is left, `engine_f` how much of its wisp
+## engine (its thrust goes with it). Below `HULL_FLOOR` the hull holds by its wisp-binding and the hits
+## go through to the riders. Mending (`mend`, main `_mend_skiff`: hold R by it or aboard) knits the
+## cells forged back, from what's left outward.
 extends "res://scripts/pixel_body.gd"
 
 const CRUISE := 7.0             # top speed in the air (cells a tick)
@@ -35,6 +42,15 @@ var centre := Vector2.ZERO      # the centre of the planet it flies over (space.
 var look := 1.0                 # which way it's drawn facing: eases from one side to the other in a turn
 var clear_below := 99.0         # air under the keel (cells, up to 24; `advance` measures it)
 var power := 1.0                # its engine (1.5 with the Star-Iron Engine): thrust and top speed in space
+const HULL_FLOOR := 0.25        # below this much hull, hits go through to the riders
+var design := PackedByteArray() # the hull as forged (material per cell): what mending puts back
+var design_v := PackedByteArray()
+var hull0 := 1                  # cells of the hull as forged
+var engine0 := 1                # (its engine's wisp cells as forged)
+var hull_f := 1.0               # how much of the hull is left (0..1)
+var engine_f := 1.0             # how much of its engine (thrust goes with it)
+var bump := 0.0                 # the hardest knock into something since `advance` began (speed into it)
+var bump_at := Vector2.ZERO     # (where: the middle of what touched)
 
 static func make(sd: int):
 	var s = load("res://scripts/skiff.gd").new()
@@ -60,6 +76,19 @@ func _design() -> void:
 	riders = []
 	riders.resize(SEATS)
 	rebuild()
+	# (the hull as forged: what mending puts back)
+	design = cells.duplicate()
+	design_v = vars.duplicate()
+	hull0 = 0
+	engine0 = 0
+	for k in design.size():
+		if design[k] != 0:
+			hull0 += 1
+			if design[k] == Defs.WISP:
+				engine0 += 1
+	hull0 = maxi(hull0, 1)
+	engine0 = maxi(engine0, 1)
+	_recount()
 
 ## the hull: planks from the deck down to a keel that rises toward the bow and the stern
 func _hull(length: int, deck: int, depth: int, rng: RandomNumberGenerator) -> void:
@@ -196,7 +225,7 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 			vel *= drag
 	elif in_space:
 		if steering:
-			vel += want * SPACE_THRUST * power
+			vel += want * SPACE_THRUST * power * thrust()
 			thrusting = true
 		vel -= up * g
 		vel *= drag
@@ -204,7 +233,7 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 		vel = Vector2.ZERO                     # resting on its keel
 	else:
 		# the engine holds it up: it eases to the speed you steer for, or to a hover
-		var target := want * cruise
+		var target := want * cruise * thrust()
 		if not steering and clear_below < 10.0:
 			target = -up * 1.2                 # (hands off just above the ground: it settles onto it)
 		var down := -target.dot(up)
@@ -232,6 +261,7 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 ## at each (no `solid`: out in space, or away from any collision grid); then how much air is under
 ## the keel.
 func advance(solid: Callable) -> void:
+	bump = 0.0
 	if not solid.is_valid():
 		pos += vel
 		grounded = false
@@ -287,9 +317,87 @@ func collide(solid: Callable) -> void:
 			break
 	var vn := vel.dot(n)
 	if vn < 0.0:
+		if -vn > bump:
+			bump = -vn
+			bump_at = pos - nsum / float(hit)
 		vel -= n * vn
 	# friction along whatever it scrapes
 	vel -= (vel - n * vel.dot(n)) * 0.12
 	if n.dot(up) > 0.5:
 		grounded = true
 		ground_t += 1
+
+# --------------------------------------------------------------- damage ---
+
+## Mass and the rest from the cells, and then how much of the hull and engine is left.
+func rebuild() -> void:
+	super()
+	_recount()
+
+func _recount() -> void:
+	if design.size() != cells.size():
+		hull_f = 1.0
+		engine_f = 1.0
+		return
+	var nh := 0
+	var ne := 0
+	for k in design.size():
+		var d := design[k]
+		if d != 0 and cells[k] != 0 and made[k] == 0:
+			nh += 1
+			if d == Defs.WISP:
+				ne += 1
+	hull_f = float(nh) / float(hull0)
+	engine_f = float(ne) / float(engine0)
+
+## its thrust (and cruise) as its engine is: a hit to it tells, but a wounded skiff still limps home
+func thrust() -> float:
+	return 0.4 + 0.6 * sqrt(engine_f)
+
+## A hit at world point p: the hull's cells within r are carved out. Returns how many went (0 once
+## the hull is down to HULL_FLOOR: it holds, and the hit goes through to whoever is aboard).
+func damage(p: Vector2, r: float) -> int:
+	if hull_f <= HULL_FLOOR:
+		return 0
+	return carve(p, r)
+
+## cells of the hull as forged that are gone
+func missing() -> int:
+	var n := 0
+	if design.size() != cells.size():
+		return 0
+	for k in design.size():
+		if design[k] != 0 and cells[k] == 0:
+			n += 1
+	return n
+
+## Mend up to n of the hull's lost cells, from what's left outward (a gone cell beside one still there
+## first). Returns the world points of the cells put back.
+func mend(n: int) -> Array:
+	var out := []
+	if design.size() != cells.size() or n <= 0:
+		return out
+	var cand := PackedInt32Array()
+	var lone := PackedInt32Array()
+	for k in design.size():
+		if design[k] == 0 or cells[k] != 0:
+			continue
+		var i := k % w
+		var j := k / w
+		if at(i - 1, j) != 0 or at(i + 1, j) != 0 or at(i, j - 1) != 0 or at(i, j + 1) != 0:
+			cand.append(k)
+		else:
+			lone.append(k)
+	if cand.is_empty():
+		cand = lone
+	for q in mini(n, cand.size()):
+		var pick := randi() % cand.size()
+		var k2: int = cand[pick]
+		cand.remove_at(pick)
+		cells[k2] = design[k2]
+		vars[k2] = design_v[k2]
+		made[k2] = 0
+		out.append(cell_world(k2 % w, k2 / w))
+	if not out.is_empty():
+		rebuild()
+	return out

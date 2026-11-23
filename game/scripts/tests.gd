@@ -1411,6 +1411,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_wrecks()
+		elif only == "pirates":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_pirates()
 		elif only == "galaxy":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4073,6 +4077,7 @@ func run() -> void:
 		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later (fastest through the air %.1f a tick), %.0f above the ground line, you still aboard %s; stepped out %s; drawn cells per pixel while climbing %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_vmax, sf_above, sf_with, sf_out, str(sf_scale)])
 
 	await _test_wrecks()
+	await _test_pirates()
 
 	# ---- to another planet in the skiff: Cindrel is made while you fly, then you land on it ----
 	g.player.pos = sf_sk.pos
@@ -4153,6 +4158,10 @@ func run() -> void:
 		if tvl > 360:
 			tv_bk = maxf(tv_bk, -sf_sk.vel.dot(tv_to.normalized()))
 	g.test_god = tv_god0
+	# (the belt's lightning holed the hull: mended, as the journey's checks expect a whole skiff)
+	var tv_hull: float = sf_sk.hull_f
+	sf_sk.mend(100000)
+	print("[travel] the storm belt left the hull at %.0f%%; mended" % (tv_hull * 100.0))
 	var tv_locked: bool = not tv_lk_travel and tv_lk_min > tv_lim and g.space.belt_max > 0.2
 	g.tier = 4
 	g.items["heart"] = true
@@ -7099,6 +7108,255 @@ func _test_wrecks() -> void:
 		await _frames(10)
 	print("[wrecks] " + "\n[wrecks] ".join(wr_rows))
 	_ok("derelict wrecks in deep space: found, drifted into, looted, salvaged; the skiff's shield and cannon", wr_ok, "; ".join(wr_rows))
+
+## Pirates and the skiff's hull (pirate.gd, space.gd, skiff.gd; user, 23 Nov): ships grown from parts
+## (each with guns and a strongbox you can drift up to); out in space a cutter comes for the skiff, works
+## round it and fires, its bolts carve the hull (the HUD's hull bar, the riders shaken); the Wisp Cannon
+## answers until it strikes its colours and becomes a wreck with a strongbox to loot; held R knits the
+## hull back from Hull Plating; the shield takes a bolt; ramming rock at speed holes it; and falling out
+## there brings you home with the skiff called down beside you. Pictures: pirate_ships.png (a grown
+## cutter and brig), pirate_attack.png, pirate_beaten.png, skiff_damaged.png, skiff_mended.png.
+func _test_pirates() -> void:
+	var pi_rows := []
+	var pi_ok := true
+	var P = load("res://scripts/pirate.gd")
+	# ---- grown from parts
+	var pi_n := 0
+	var pi_box := 0
+	var pi_reach := 0
+	var pi_guns := 0
+	var pi_sizes := []
+	for q in 10:
+		var c: String = "brig" if q >= 6 else "cutter"
+		var pq = P.make_pirate(9001 + q * 271, c)
+		pi_n += 1
+		pi_sizes.append("%s %dx%d" % [c[0], pq.w, pq.h])
+		if pq.guns.size() == (2 if c == "brig" else 1):
+			pi_guns += 1
+		if pq.caches.size() == 1:
+			pi_box += 1
+			if _cache_reached(pq, pq.caches[0], _wreck_reach(pq, 8.0)):
+				pi_reach += 1
+			else:
+				print("[pirates] seed %d (%s): its strongbox can't be reached %s" % [9001 + q * 271, c, str(pq.caches[0])])
+		else:
+			print("[pirates] seed %d (%s): %d strongboxes %s" % [9001 + q * 271, c, pq.caches.size(), str(pq.meta)])
+	var pi_ok1: bool = pi_box == pi_n and pi_reach == pi_n and pi_guns == pi_n
+	pi_rows.append("%s%d ships grown (%s): a strongbox on %d (reached by drifting in on %d), their guns on %d" % ["" if pi_ok1 else "(!) ", pi_n, ", ".join(pi_sizes), pi_box, pi_reach, pi_guns])
+	pi_ok = pi_ok and pi_ok1
+	# ---- up into space in the skiff
+	g.player.dead = false
+	g.test_god = true
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+		g.call_skiff()
+		await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var pi_up: Vector2 = sk.pos.normalized()
+	sk.pos = pi_up * (Defs.R_SPACE - 11.0)
+	sk.vel = pi_up * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	# well out from home, where nothing else is
+	var pi_at: Vector2 = g.space.home_at() + pi_up * (Defs.R_SPACE + 5200.0)
+	sk.pos = pi_at
+	sk.vel = Vector2.ZERO
+	await _frames(30)
+	# (two ships side by side, for their picture)
+	var pc = P.make_pirate(9001, "cutter")
+	var pb = P.make_pirate(9001 + 6 * 271, "brig")
+	var pi_r: Vector2 = Vector2(pi_up.y, -pi_up.x)
+	for pp in [pc, pb]:
+		pp.sect = "pirate"
+		pp.ang = pi_r.angle()
+		pp.hp = pp.hp_max - 1.0                 # (shown with their hull bars)
+		g.space.rocks.append(pp)
+	pc.pos = pi_at + pi_r * 90.0 + pi_up * 60.0
+	pb.pos = pi_at - pi_r * 110.0 + pi_up * 70.0
+	for k1 in 6:
+		for pp2 in [pc, pb]:
+			pp2.ang = pi_r.angle()
+			pp2.facing = 1
+		pc.vel = Vector2.ZERO
+		pb.vel = Vector2.ZERO
+		pc.fire_t = 999
+		pb.fire_t = 999
+		pc.pos = pi_at + pi_r * 90.0 + pi_up * 60.0
+		pb.pos = pi_at - pi_r * 110.0 + pi_up * 70.0
+		sk.pos = pi_at
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	_shot("pirate_ships.png")
+	g.space._drop_pirates()
+	# ---- a cutter comes for you: it closes, works round you and fires; its bolts hole the hull
+	var had_shield: bool = g.items.has("shield")
+	g.items.erase("shield")
+	g.items.erase("cannon")
+	var st0: Dictionary = g.space.stats.duplicate()
+	var hull0: float = sk.hull_f
+	var made: Array = g.space.spawn_pirates(sk.pos, pi_r, "cutter")
+	var pr = made[0] if not made.is_empty() else null
+	var pi_close := 1e9
+	var pi_hull_t := -1
+	var pi_hud := false
+	for k2 in 700:
+		sk.pos = pi_at
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		if pr != null:
+			pi_close = minf(pi_close, pr.pos.distance_to(sk.pos))
+		if pi_hull_t < 0 and sk.hull_f < hull0:
+			pi_hull_t = k2
+		if k2 == 420:
+			_shot("pirate_attack.png")
+			pi_hud = g.ui.hull_row.visible
+	var pi_fired: int = int(g.space.stats["pirate_shots"]) - int(st0["pirate_shots"])
+	var pi_hits: int = int(g.space.stats["pirate_hits"]) - int(st0["pirate_hits"])
+	var hull1: float = sk.hull_f
+	var pi_ok2: bool = pr != null and pi_close < 400.0 and pi_fired >= 4 and pi_hits >= 1 and hull1 < hull0 and pi_hud
+	pi_rows.append("%sa cutter (%s) came out of the dark %s, closed to %.0f, fired %d bolts, %d struck: the hull %.0f%% -> %.0f%% (first holed at tick %d, engine %.0f%%), the HUD's hull bar %s" % ["" if pi_ok2 else "(!) ", pr.wname if pr != null else "none", pr != null, pi_close, pi_fired, pi_hits, hull0 * 100.0, hull1 * 100.0, pi_hull_t, sk.engine_f * 100.0, pi_hud])
+	pi_ok = pi_ok and pi_ok2
+	_shot("skiff_damaged.png")
+	# ---- the cannon answers until it strikes its colours
+	g.items["cannon"] = true
+	var pi_beaten := false
+	var pi_fight := -1
+	var pi_hp0: float = pr.hp if pr != null else 0.0
+	if pr != null:
+		g.test_cast = true
+		for k3 in 1500:
+			sk.pos = pi_at
+			sk.vel = Vector2.ZERO
+			g.player.mana = g.player.max_mana
+			var dd: float = pr.pos.distance_to(sk.pos)
+			g.test_aim = pr.pos + (pr.vel - sk.vel) * (dd / 9.0)
+			await _frames(1)
+			if pr.kind != "pirate":
+				pi_beaten = true
+				pi_fight = k3
+				break
+		g.test_cast = false
+	await _frames(30)
+	var pi_scrap := 0
+	if pr != null:
+		for a in g.space.rocks:
+			if a.kind == "scrap" and a.sect == pr.sect and a.pos.distance_to(pr.pos) < 400.0:
+				pi_scrap += 1
+	_shot("pirate_beaten.png")
+	var pi_kept: bool = pr != null and pr.sect != "pirate" and g.space._loaded.has(pr.sect)
+	var pi_ok3: bool = pi_beaten and pr.kind == "wreck" and pr.caches.size() == 1 and pi_scrap >= 2 and pi_kept and g.space.pirate_count() == 0
+	pi_rows.append("%sthe Wisp Cannon answered: %s beaten %s after %d ticks (%d shots, %d hits, hp %.0f -> %.0f), a wreck now %s with %d scrap round it, kept with its sector %s" % ["" if pi_ok3 else "(!) ", pr.wname if pr != null else "-", pi_beaten, pi_fight,
+		int(g.space.stats["shots"]) - int(st0["shots"]), int(g.space.stats["shot_hits"]) - int(st0["shot_hits"]), pi_hp0, pr.hp if pr != null else 0.0, pr.kind if pr != null else "-", pi_scrap, pi_kept])
+	pi_ok = pi_ok and pi_ok3
+	# ---- its strongbox
+	var pi_loot := false
+	var coins0 := int(g.items.get("coins", 0))
+	if pi_beaten and pr.caches.size() == 1:
+		pr.vel = Vector2.ZERO
+		pr.omega = 0.0
+		g._skiff_interact(g.player)
+		await _frames(4)
+		g.player.pos = _over_cache(pr, pr.caches[0])
+		g.space.vel = pr.vel
+		await _frames(10)
+		g._interact()
+		await _frames(10)
+		pi_loot = pr.caches[0]["open"] and int(g.items.get("coins", 0)) > coins0
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+		await _frames(4)
+	var pi_ok4: bool = pi_loot and g.player.aboard == sk
+	pi_rows.append("%sits strongbox opened %s (coins %d -> %d), back aboard %s" % ["" if pi_ok4 else "(!) ", pi_loot, coins0, int(g.items.get("coins", 0)), g.player.aboard == sk])
+	pi_ok = pi_ok and pi_ok4
+	# ---- mending: hold R aboard, Hull Plating knits it back
+	var miss0: int = sk.missing()
+	g.player.inv[Defs.HULL] += 80
+	var hp_pl0: int = g.player.inv[Defs.HULL]
+	var mend0: int = g.stats_mended
+	g.test_mend = true
+	for k4 in 900:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		if sk.missing() == 0:
+			break
+	g.test_mend = false
+	var pi_ok5: bool = miss0 > 0 and sk.missing() == 0 and sk.hull_f > 0.999 and g.player.inv[Defs.HULL] < hp_pl0 and g.stats_mended - mend0 >= miss0
+	pi_rows.append("%smended: %d cells missing -> %d (hull %.0f%%), %d Hull Plating used" % ["" if pi_ok5 else "(!) ", miss0, sk.missing(), sk.hull_f * 100.0, hp_pl0 - g.player.inv[Defs.HULL]])
+	pi_ok = pi_ok and pi_ok5
+	await _frames(4)
+	_shot("skiff_mended.png")
+	# ---- the shield takes a bolt
+	g.items["shield"] = true
+	g.space.shield = 1.0
+	var sv0: int = int(g.space.stats["shield_saves"])
+	var fr: Vector2 = sk.pos + pi_r * 120.0
+	g.space.foe_shots.append([fr, (sk.pos - fr).normalized() * 7.0, 60, null])
+	for k5 in 40:
+		sk.pos = pi_at
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	var pi_ok6: bool = int(g.space.stats["shield_saves"]) > sv0 and sk.missing() == 0
+	pi_rows.append("%sthe Wisp Shield took a pirate's bolt %s (the hull still whole %s)" % ["" if pi_ok6 else "(!) ", int(g.space.stats["shield_saves"]) > sv0, sk.missing() == 0])
+	pi_ok = pi_ok and pi_ok6
+	g.items.erase("shield")
+	# ---- ramming rock at speed holes it
+	var A = load("res://scripts/asteroid.gd")
+	var rock = A.make(4242, 24.0, "stony")
+	rock.pos = pi_at + pi_r * 160.0
+	rock.vel = Vector2.ZERO
+	rock.omega = 0.0
+	rock.sect = "pirate"
+	g.space.rocks.append(rock)
+	var cr0: int = int(g.space.stats["crashes"])
+	var miss1: int = sk.missing()
+	for k6 in 60:
+		await _frames(1)
+		if k6 < 30:
+			sk.vel = pi_r * 14.0
+		if int(g.space.stats["crashes"]) > cr0:
+			break
+	var pi_ok7: bool = int(g.space.stats["crashes"]) > cr0 and sk.missing() > miss1
+	pi_rows.append("%sramming rock at 14 a tick: a crash %s, %d cells holed" % ["" if pi_ok7 else "(!) ", int(g.space.stats["crashes"]) > cr0, sk.missing() - miss1])
+	pi_ok = pi_ok and pi_ok7
+	sk.vel = Vector2.ZERO
+	g.space._drop_pirates()
+	sk.mend(100000)
+	# ---- falling out there: home, the skiff called down beside you
+	var inv0: PackedInt32Array = g.player.inv.duplicate()
+	g.test_god = false
+	g.space.allow_pirates = false
+	g.hurt(g.player, 10000.0, Vector2.ZERO, false)
+	await _frames(90)
+	var pi_dead: bool = g.dead
+	g.revive()
+	await _frames(60)
+	g.player.inv = inv0
+	var pi_r2: float = g.player.pos.length()
+	var pi_ok8: bool = pi_dead and not g.space.active and g.state == "play" and pi_r2 < Defs.R_TOP and g.player.aboard == null and g.skiff != null and g.skiff.pos.distance_to(g.player.pos) < 150.0 and g.space.at_home()
+	pi_rows.append("%sfallen out there %s: back on the planet %s (radius %.0f, the top of the air %.0f), the skiff beside you %s (%.0f away)" % ["" if pi_ok8 else "(!) ", pi_dead, not g.space.active and g.state == "play", pi_r2, Defs.R_TOP, g.skiff != null and g.skiff.pos.distance_to(g.player.pos) < 150.0, g.skiff.pos.distance_to(g.player.pos) if g.skiff != null else -1.0])
+	pi_ok = pi_ok and pi_ok8
+	g.test_god = true
+	if had_shield:
+		g.items["shield"] = true
+	g.items.erase("cannon")
+	print("[pirates] " + "\n[pirates] ".join(pi_rows))
+	_ok("pirates: ships grown from parts hunt the skiff and hole its hull; the cannon beats them into wrecks to loot; the hull is mended", pi_ok, "; ".join(pi_rows))
 
 func _test_galaxy() -> void:
 	var gx_rows := []

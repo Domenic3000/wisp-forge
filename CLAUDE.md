@@ -268,6 +268,40 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   across: `_wreck_reach`), the first wreck streamed in, aboard, every cache opened, the hull holds from inside,
   salvage dug, the shield takes a strike, the cannon hits without steering, its sector saved and back as left,
   the map; pictures `wreck_outside/inside/cannon/map.png`).
+- PIRATES (scripts/pirate.gd; user, 23 Nov: pirates with skiff hull damage and repair): `Pirate` extends wreck.gd,
+  so it lives in space.gd's `rocks` (kind "pirate", sect "pirate": never saved, dropped by `_drop_pirates` on
+  landing or falling) and is drawn, collided with and blasted like a wreck. `make_pirate(seed, cls)` grows it
+  (`CLASSES`: "cutter" 64-72 long, 90 hp, one gun; "brig" 88-100, 170 hp, two guns, two masts): dark plating
+  (`_dark_plate`) over a keel rising to the bow, a red TILE stripe, an obsidian ram and a bowsprit, a raised stern
+  castle (glass windows, an ember lamp, a red lantern), an EMBER engine (`stern`), masts with tattered COAL sails
+  (the main one with a SNOW skull), pennants, deck guns (`guns`: barrel mouths; `gun_ok` once one's shot away)
+  and a strongbox on the castle's roof (a cache of kind "pirate", always reachable from above). space.gd:
+  `_pirate_chance` (aboard, deep space only: `PIRATE_CLEAR` above any orbit band, not over 50 a tick, every
+  `PIRATE_EVERY` ticks a 55% roll; `pirates_ok`: the cannon fitted, or 150000 from the first system; never in test
+  mode unless `allow_pirates`), `spawn_pirates(focus, dir, cls)` (1300-1700 off: a cutter, a brig or two cutters,
+  `PIRATE_MAX` 3), `_update_pirates` (a ring round you at its "range", flattened top to bottom (0.55) so it fights
+  on screen, switching sides; keeps off rock, each other, planets' air; pitches toward you at most 0.45 rad and
+  flips `facing` to keep its deck up; fires every "fire" ticks within 2.2 x range, `_pirate_fire` leading you; lost
+  past `PIRATE_LOSE`), `foe_shots` (`_update_foe_shots`: 2-cell steps against the skiff's cells, a mage on foot's
+  box, rock (`_chip`)), cannon hits `_hurt_pirate` (`CANNON_DMG` 12), `_beat_pirate` at 0 hp: kind "wreck", a fate,
+  2-4 scrap, blasts, a lifeboat streak, kept with the sector it's in (`touched`), `items["pirates_beaten"]`; its
+  strongbox loot in `_loot` "pirate" (coins, star iron, wisp ingots, plating, sometimes an ore, chart, scroll,
+  draught). Markers in red, a hull bar over a hurt one (`_draw_top`), HUD weather " · Pirates!".
+- SKIFF DAMAGE AND MENDING (skiff.gd): `design`/`design_v` are the cells as forged (`hull0`, `engine0` WISP cells);
+  `rebuild` recounts `hull_f`/`engine_f`; `thrust()` (0.4 + 0.6 sqrt(engine_f)) scales thrust in space and cruise in
+  the air. `damage(p, r)` carves (nothing below `HULL_FLOOR` 0.25). space.gd `skiff_hit(sk, p, r, through)`: the
+  shield takes it if charged (in space), else the hull is carved, riders shaken (`PIRATE_SHOCK`, no iframes) or,
+  at the floor, hurt by `through`; sparks, "crack", `_hull_warning` at 75/50/25%. Used by pirate bolts (r 3.5),
+  storm lightning (`_strike`, at the first hull cell on the bolt's line: `_first_cell`) and crashes: `advance`
+  records `bump` (speed into what it hit) and `bump_at`; over `CRASH_SPACE` 7 (space) / main `CRASH_PLANET` 9
+  `skiff_crash`. Mending: hold R (`PlayerInput.mend`, not in build mode) aboard or within w/2 + 24: main
+  `_mend_skiff` mends `MEND_CELLS` every other tick (`mend(n)`: missing design cells beside ones still there
+  first) for `MEND_MANA` a cell and matter (`_mend_bank`: a Hull Plating = `MEND_HULL` 6 cells, a plank 3). HUD:
+  a hull bar (icon "hull") while aboard and hurt or in space. Falling out in space: main `_respawn` calls
+  `space.reset_after_death` (home back at the origin, pirates gone, nobody aboard, out of space) then `call_skiff`.
+  Test: `_test_pirates` ("pirates"; in the full run right after `_test_wrecks`): 10 grown ships, a cutter's
+  attack holes the hull, the cannon beats it, its strongbox, mending, the shield, a crash, death out there;
+  pictures `pirate_ships/attack/beaten.png`, `skiff_damaged/mended.png`. The storm-belt check mends the skiff.
 - Test: `_test_galaxy` ("galaxy"; in the full run right after the skiff's journey to Cindrel): the spiral, the
   Starsail (sailing the way farthest from every planet, home too), recentring, a field streamed in and kept as
   mined, a comet on its loop, a nebula (both chosen 80000+ from any planet, or a journey begins), the chart,
@@ -854,7 +888,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 15 minutes (a full run takes about 12.5), so a broken run never leaves the game open;
+- Test mode quits by itself after 15 minutes (a full run takes about 13), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
   up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
   script it preloads failed to compile: 25 s), or that passes 16 minutes. tests.gd is loaded at run
@@ -936,7 +970,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

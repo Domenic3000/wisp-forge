@@ -27,6 +27,7 @@ extends Node2D
 
 const Asteroid := preload("res://scripts/asteroid.gd")
 const Wreck := preload("res://scripts/wreck.gd")
+const Pirate := preload("res://scripts/pirate.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 ## The galaxy (user, 22 Nov: infinite space). Space's origin follows you (`org`: the galaxy point that
@@ -88,6 +89,16 @@ const CANNON_SPEED := 9.0
 const CANNON_R := 4.5
 const SHIELD_RECHARGE := 480.0  # the Wisp Shield: ticks to charge again after it takes a strike
 const CACHE_REACH := 18.0       # how near a wreck's cache you open it (F)
+const CANNON_DMG := 12.0        # what a cannon bolt takes off a pirate
+const PIRATE_BOLT := 7.0        # a pirate's bolt: speed, the hull it carves, what it does to whoever it hits
+const PIRATE_BOLT_R := 3.5
+const PIRATE_HURT := 9.0        # (a mage on foot, or riders once the hull is down to its floor)
+const PIRATE_SHOCK := 2.0       # (riders, when the hull takes it)
+const PIRATE_LOSE := 7000.0     # a pirate this far off has lost you
+const PIRATE_CLEAR := 8000.0    # pirates only come out of the dark this far above any planet's orbit band
+const PIRATE_EVERY := Vector2i(2400, 4200)   # ticks between their chances to find you
+const PIRATE_MAX := 3
+const CRASH_SPACE := 7.0        # the skiff is hurt hitting rock faster than this
 const NEARER := 0.8             # another planet is clearly nearer: at this fraction of home's distance
 const TRAVEL_R := 40000.0       # ...and within this of its middle: then it's made while you come in
 const PLANET_MASK := "shader_type canvas_item;
@@ -148,7 +159,8 @@ var sail := 0.0                 # the Starsail: how far unfurled (0..1)
 var sailing := false
 var neb := 0.0                  # how thick the nebula is round you, and its colour
 var neb_col := Color.WHITE
-var stats := {"recentred": 0, "sectors": 0, "rocks_made": 0, "shots": 0, "shot_hits": 0, "caches": 0, "shield_saves": 0}   # (for the tests)
+var stats := {"recentred": 0, "sectors": 0, "rocks_made": 0, "shots": 0, "shot_hits": 0, "caches": 0, "shield_saves": 0,
+	"pirates": 0, "pirate_shots": 0, "pirate_hits": 0, "pirates_beaten": 0, "hull_hits": 0, "crashes": 0}   # (for the tests)
 var shots := []                 # the Wisp Cannon's bolts: [pos, vel, ticks left]
 var _cannon_cd := 0
 var shield := 1.0               # the Wisp Shield's charge (1 = ready to take a strike)
@@ -156,6 +168,10 @@ var shield_hit := 0             # (frames since it took one: drawn as a flash)
 var _rock_backs := []           # a wreck's back layer, a sprite under its hull's
 var _top: Node2D                # drawn over the rocks: prompts, cannon bolts, the shield
 var near_cache = null           # the closed cache you could open now (a wreck's cache dict) and its wreck
+var foe_shots := []             # pirates' bolts: [pos, vel, ticks left, the ship that fired]
+var _pirate_t := 1800           # ticks to the pirates' next chance to find you
+var allow_pirates := false      # (the test mode: pirates come only when a check asks)
+var _hull_warn := 1.0           # (the hull warning given last, so it's said once per step down)
 var near_wreck = null
 
 func _ready() -> void:
@@ -218,6 +234,7 @@ func try_enter() -> void:
 ## Back into the orbit band: the planet's own physics take over again, and the view eases back in.
 func exit() -> void:
 	shots.clear()
+	_drop_pirates()
 	var m = game.player
 	var sk = game.skiff
 	belt = 0.0
@@ -264,6 +281,9 @@ func tick() -> void:
 	_ensure_rocks()
 	_stream(focus)
 	_update_rocks()
+	_pirate_chance(focus)
+	_update_pirates()
+	game._mend_skiff(m)
 	if sk != null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
 		# the skiff: flown by its pilot (keys, or hold cast toward the cursor), or drifting if nobody's
 		# aboard (one left down on the planet waits there)
@@ -285,6 +305,8 @@ func tick() -> void:
 		sk.pos = _hold(sk.pos, sk)
 		# (it bumps against asteroids: the skiff's own collision, against their cells)
 		sk.advance(Callable(self, "_rock_solid") if not _rocks_near(sk.pos, 120.0).is_empty() else Callable())
+		if sk.bump > CRASH_SPACE:
+			skiff_crash(sk)
 		for rider in sk.riders:
 			if rider != null:
 				game._ride(rider)
@@ -292,6 +314,7 @@ func tick() -> void:
 			game._skiff_exhaust()
 	_age_bolts()
 	_update_shots()
+	_update_foe_shots()
 	if _cannon_cd > 0:
 		_cannon_cd -= 1
 	shield = minf(1.0, shield + 1.0 / SHIELD_RECHARGE)
@@ -463,15 +486,14 @@ func _strike(p: Vector2, n: Vector2, f: float, col: Color) -> void:
 		belt_hits += 1
 		game.shake = maxf(game.shake, 6.0 + 8.0 * f)
 		game.audio.play("zap", null, 0.9)
+	var struck := {}
 	for m in game.players:
 		if not m.dead and m.pos.distance_to(p) < 60.0:
-			if m.aboard != null and game.items.has("shield") and shield >= 1.0:
-				# (the Wisp Shield takes the strike, then needs a while to charge again)
-				shield = 0.0
-				shield_hit = 30
-				stats["shield_saves"] += 1
-				game.vfx.spawn(Vfx.RING, m.aboard.pos, Vector2.ZERO, 18, Color(0.6, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 30.0, 44.0)
-				game.audio.play("blink", m.aboard.pos, 0.8)
+			if m.aboard != null:
+				# (aboard, the skiff takes it: once, on the side the bolt comes from)
+				if not struck.has(m.aboard):
+					struck[m.aboard] = true
+					skiff_hit(m.aboard, _first_cell(m.aboard, from, m.aboard.pos), 3.0, 3.0 + 6.0 * f)
 				continue
 			game.hurt(m, 3.0 + 6.0 * f, Vector2.ZERO, true)
 
@@ -577,6 +599,10 @@ func _shift(d: Vector2) -> void:
 		bo[0] = pts
 	if beam_to != null:
 		beam_to = (beam_to as Vector2) + d
+	for sh in shots:
+		sh[0] = (sh[0] as Vector2) + d
+	for fs in foe_shots:
+		fs[0] = (fs[0] as Vector2) + d
 	org[0] -= d.x
 	org[1] -= d.y
 	stats["recentred"] += 1
@@ -1021,6 +1047,9 @@ func _draw() -> void:
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
 		_marker(xf, nr.pos, nr.reach(), "Comet" if not nr.orbit.is_empty() else "Asteroid", Color(0.95, 0.82, 0.62))
+	for pa in rocks:
+		if pa.kind == "pirate":
+			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4))
 	var nwk = nearest_wreck(game.player.pos)
 	if nwk != null:
 		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85))
@@ -1412,7 +1441,7 @@ func _comet_tail(a) -> void:
 
 ## A rock cut through: its smaller pieces drift off as rocks of their own, scraps crumble to dust.
 func _split(a) -> void:
-	if a.kind == "wreck":
+	if a.kind == "wreck" or a.kind == "pirate":
 		return                             # (a wreck holds together: its caches are in its cells)
 	var pcs: Array = a.pieces()
 	if pcs.size() <= 1 and (pcs.is_empty() or pcs[0].size() >= ROCK_SCRAP):
@@ -1491,7 +1520,7 @@ func nearest_rock(p: Vector2, within := 900.0) -> Variant:
 	var best = null
 	var bd := within
 	for a in rocks:
-		if a.kind == "wreck" or a.kind == "scrap":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate":
 			continue
 		var d: float = (a.pos - p).length() - a.reach()
 		if d < bd:
@@ -1537,7 +1566,7 @@ func _rock_push(m, close: Array) -> bool:
 			continue
 		touched = true
 		var n: Vector2 = (m.pos - a.pos).normalized()
-		if a.kind == "wreck" or a.kind == "scrap":
+		if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate":
 			# (a hull has rooms inside: out the shortest way, never "away from its middle", which would
 			# push you on through the wall you touched from inside)
 			var out := _shortest_out(m, a, pts, rr, dd)
@@ -1632,8 +1661,9 @@ func _draw_rocks(xf: Transform2D) -> void:
 		sm.set_shader_parameter("sun", Vector2(sun.dot(ax), sun.dot(ay)).normalized())
 		sm.set_shader_parameter("ctr", a.com)
 		sm.set_shader_parameter("rad", a.rad * 1.2)
-		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" else 0.0)
-		if a.kind == "wreck":
+		sm.set_shader_parameter("flat_l", 1.0 if a.kind == "wreck" or a.kind == "scrap" or a.kind == "pirate" else 0.0)
+		spr2.modulate = Color(1.6, 1.3, 1.3) if a.kind == "pirate" and a.hit_t > 0 else Color.WHITE
+		if a.kind == "wreck" or a.kind == "pirate":
 			bk.visible = true
 			bk.texture = a.back_texture()
 			bk.transform = spr2.transform
@@ -1717,6 +1747,25 @@ func _loot(m, wk, c: Dictionary) -> void:
 			if randf() < 0.4:
 				game._chest_recipe(3)
 			game.ui.toast("The captain's log: %s" % wk.fate, Color(0.75, 0.9, 0.85), 4.0)
+		"pirate":
+			# (a pirate's strongbox: their takings)
+			var pc := randi_range(45, 110)
+			it["coins"] = int(it.get("coins", 0)) + pc
+			got.append("%d coins" % pc)
+			give.call(Defs.STARIRON, randi_range(2, 5))
+			give.call(Defs.WISPBAR, randi_range(2, 4))
+			give.call(Defs.HULL, randi_range(8, 14))
+			if randf() < 0.35:
+				var ores: Array = Defs.KIND_ORES.values()
+				if not ores.is_empty():
+					give.call(int((ores[randi() % ores.size()] as Dictionary)["mat"]), randi_range(3, 6))
+			if randf() < 0.35:
+				_star_chart()
+			if randf() < 0.35:
+				game._chest_recipe(3)
+			if randf() < 0.3:
+				it["potion"] = int(it.get("potion", 0)) + 1
+				got.append("a Healing Draught")
 		_:
 			give.call(Defs.HULL, randi_range(6, 12))
 			if randf() < 0.7:
@@ -1780,15 +1829,17 @@ func _update_shots() -> void:
 		var p: Vector2 = sh[0]
 		var v: Vector2 = sh[1]
 		var n := maxi(1, int(ceil(v.length() / 2.0)))
-		var hit := false
+		var hit = null
 		for q in n:
 			p += v / float(n)
-			if _rock_solid(p):
-				hit = true
+			hit = _rock_at(p, null)
+			if hit != null:
 				break
 		sh[0] = p
 		sh[2] = int(sh[2]) - 1
-		if hit:
+		if hit != null:
+			if hit.kind == "pirate":
+				_hurt_pirate(hit, CANNON_DMG, p)
 			_blast_rocks(p, CANNON_R)
 			stats["shot_hits"] += 1
 			shots.remove_at(k)
@@ -1840,6 +1891,22 @@ func _draw_top() -> void:
 			for q in 6:
 				var a0 := tw + float(q) * TAU / 6.0
 				_top.draw_arc(ssp, r, a0, a0 + 0.35, 6, Color(0.6, 0.9, 1.0, 0.25), 1.0)
+	# pirates' bolts, red; a pirate's hull, over it while it's hurt
+	for fs in foe_shots:
+		var fp: Vector2 = xf * (fs[0] as Vector2)
+		var ft: Vector2 = xf * ((fs[0] as Vector2) - (fs[1] as Vector2) * 1.3)
+		_top.draw_line(ft, fp, Color(1.0, 0.35, 0.2, 0.6), 2.0)
+		_top.draw_line(ft.lerp(fp, 0.5), fp, Color(1.0, 0.8, 0.55), 1.0)
+		_top.draw_rect(Rect2(fp.floor() - Vector2.ONE, Vector2(2, 2)), Color(1.0, 0.95, 0.8))
+	for pa in rocks:
+		if pa.kind != "pirate" or pa.hp >= pa.hp_max:
+			continue
+		var pc: Vector2 = xf * pa.pos
+		var up_s: Vector2 = xf.basis_xform((pa.pos - centre).normalized()).normalized()
+		var bar_at: Vector2 = (pc + up_s * (float(pa.h) * 0.55 / game.zoom + 6.0)).floor()
+		var bw := 30.0
+		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.04, 0.8))
+		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(pa.hp / pa.hp_max, 0.0, 1.0), 2.0)), Color(1.0, 0.35, 0.3))
 	if near_cache != null and near_wreck != null:
 		var cp: Vector2 = xf * (near_wreck.cache_pos(near_cache) as Vector2)
 		var f2: Font = PixelFont.make()
@@ -1852,3 +1919,375 @@ func _draw_top() -> void:
 		_top.draw_string(f2, Vector2(-wd * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(1.0, 0.88, 0.5))
 		_top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+
+# ----------------------------------------------------------- the skiff hit ---
+
+## the first rock (or wreck, or ship) with a cell at p, but `skip`; null if none
+func _rock_at(p: Vector2, skip) -> Variant:
+	for a in _rocks_near(p, 2.0):
+		if a != skip and a.solid_at(p):
+			return a
+	return null
+
+## where a line from `from` to `to` first meets a body's cells (`to` if it never does)
+func _first_cell(body, from: Vector2, to: Vector2) -> Vector2:
+	var d := to - from
+	var n := int(ceil(d.length()))
+	for k in n:
+		var p := from + d * (float(k) / float(maxi(n, 1)))
+		if body.solid_at(p):
+			return p
+	return to
+
+## Something strikes the skiff at p (a pirate's bolt, lightning, rock it crashed into): the Wisp Shield
+## takes it if it's charged (out here); else its hull is carved there (r) and its riders shaken, or, once
+## the hull is down to its floor, hurt (`through`).
+func skiff_hit(sk, p: Vector2, r: float, through: float) -> void:
+	if active and game.items.has("shield") and shield >= 1.0:
+		# (the Wisp Shield takes the strike, then needs a while to charge again)
+		shield = 0.0
+		shield_hit = 30
+		stats["shield_saves"] += 1
+		game.vfx.spawn(Vfx.RING, sk.pos, Vector2.ZERO, 18, Color(0.6, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 30.0, 44.0)
+		game.audio.play("blink", sk.pos, 0.8)
+		return
+	stats["hull_hits"] += 1
+	var n: int = sk.damage(p, r)
+	for k in 10:
+		game.vfx.spawn(Vfx.DOT, p, sk.vel + Vector2.from_angle(randf() * TAU) * randf_range(0.4, 1.8), 20 + randi() % 20,
+			Color(1.0, 0.8, 0.45), Color(0.9, 0.4, 0.2, 0.0), 1.5, 0.5, true, 0.0, 0.93)
+	game.vfx.spawn(Vfx.GLOW, p, sk.vel, 10, Color(1.0, 0.75, 0.4, 0.8), Color(1.0, 0.4, 0.2, 0.0), 7.0, 2.0)
+	game.shake = maxf(game.shake, 5.0)
+	game.audio.play("crack", p, 0.8)
+	for rider in sk.riders:
+		if rider != null:
+			if n == 0:
+				game.hurt(rider, through, Vector2.ZERO, true)
+			else:
+				game.hurt(rider, PIRATE_SHOCK, Vector2.ZERO, false)
+	_hull_warning(sk)
+
+## the skiff ran into rock (or the ground) hard: the faster, the bigger the hole
+func skiff_crash(sk) -> void:
+	stats["crashes"] += 1
+	var lim: float = CRASH_SPACE if active else 9.0          # (main CRASH_PLANET)
+	var r := clampf(1.5 + (sk.bump - lim) * 0.35, 1.5, 5.0)
+	skiff_hit(sk, sk.bump_at, r, sk.bump * 0.8)
+
+## a word as the hull goes down past 75%, half, and its floor
+func _hull_warning(sk) -> void:
+	var f: float = sk.hull_f
+	if f > _hull_warn:
+		_hull_warn = f
+	for step in [0.75, 0.5, 0.25]:                           # (the last: skiff.gd HULL_FLOOR)
+		if f <= float(step) and _hull_warn > float(step):
+			_hull_warn = float(step)
+			var msg := "The skiff's hull is holed. Hold R by it or aboard to mend it (Hull Plating or planks, and mana)"
+			if float(step) == 0.5:
+				msg = "The hull is at half, and its engine %s. Hold R to mend it" % ("is hit" if sk.engine_f < 0.9 else "holds")
+			elif float(step) < 0.5:
+				msg = "The hull can't take much more: hits will go through to you. Mend it (R) or run!"
+			game.ui.toast(msg, Color(1.0, 0.6, 0.45), 4.0)
+			return
+
+# --------------------------------------------------------------- pirates ---
+
+## Out in deep space, now and then, pirates find you: only aboard the skiff, never near a planet, not
+## while you outrun everything under the Starsail, and only once you've a cannon to answer them with
+## (or are far out from the first system).
+func _pirate_chance(focus: Vector2) -> void:
+	var m = game.player
+	if m.aboard == null or game.travelling or (game.testing and not allow_pirates):
+		return
+	_pirate_t -= 1
+	if _pirate_t > 0:
+		return
+	_pirate_t = randi_range(PIRATE_EVERY.x, PIRATE_EVERY.y)
+	if not pirates_ok() or pirate_count() >= 2 or game.skiff.vel.length() > 50.0:
+		return
+	if not near.is_empty() and (focus - centre).length() - float(near["space"]) < PIRATE_CLEAR:
+		return
+	if randf() < 0.55:
+		spawn_pirates(focus)
+
+func pirates_ok() -> bool:
+	return game.items.has("cannon") or Defs.g_rel(player_g(), Defs.planet_g(0)).length() > 150000.0
+
+func pirate_count() -> int:
+	var n := 0
+	for a in rocks:
+		if a.kind == "pirate":
+			n += 1
+	return n
+
+## Pirates come out of the dark round `focus` (from `dir`, or any way): a cutter, a brig, or two
+## cutters (or the class asked for). Returns them.
+func spawn_pirates(focus: Vector2, dir := Vector2.ZERO, cls := "") -> Array:
+	var group := []
+	var roll := randf()
+	if cls != "":
+		group = [cls]
+	elif roll < 0.25:
+		group = ["brig"]
+	elif roll < 0.45:
+		group = ["cutter", "cutter"]
+	else:
+		group = ["cutter"]
+	var d: Vector2 = dir.normalized() if dir != Vector2.ZERO else Vector2.from_angle(randf() * TAU)
+	var made := []
+	for k in group.size():
+		if pirate_count() >= PIRATE_MAX:
+			break
+		var pr = Pirate.make_pirate(randi() & 0xFFFFFF, String(group[k]))
+		pr.pos = focus + d.rotated(float(k) * 0.35) * randf_range(1300.0, 1700.0)
+		pr.sect = "pirate"
+		pr.vel = (focus - pr.pos).normalized() * float(pr.spec()["max_v"]) * 0.6
+		var up: Vector2 = (pr.pos - centre).normalized()
+		var head: Vector2 = (focus - pr.pos).normalized()
+		pr.facing = 1 if head.dot(Vector2(up.y, -up.x)) >= 0.0 else -1
+		pr.ang = (head * float(pr.facing)).angle()
+		rocks.append(pr)
+		made.append(pr)
+		stats["pirates"] += 1
+	if not made.is_empty():
+		var p0 = made[0]
+		var txt := "Pirates! %s, a %s, comes out of the dark" % [String(p0.wname).capitalize(), p0.spec()["name"]]
+		if made.size() > 1:
+			txt = "Pirates! Two cutters come out of the dark, %s leading" % String(p0.wname).capitalize()
+		game.ui.toast(txt, Color(1.0, 0.45, 0.4), 4.0)
+		game.audio.play("rumble", null, 0.8)
+	return made
+
+## (landing or falling: the pirates and their bolts are gone, and anything torn off one that has no
+## sector to keep it)
+func _drop_pirates() -> void:
+	for k in range(rocks.size() - 1, -1, -1):
+		if rocks[k].kind == "pirate" or rocks[k].sect == "pirate":
+			rocks.remove_at(k)
+	foe_shots.clear()
+
+## Each pirate works round you at its range (a ring it circles, now one way, now the other), matching
+## your speed, keeping off rock, each other and any planet's air; it turns its bow on you to fight, and
+## fires its guns (leading you) every so often. Too far off, it has lost you.
+func _update_pirates() -> void:
+	var m = game.player
+	var sk = game.skiff
+	var riding: bool = m.aboard != null and sk != null
+	var tgt: Vector2 = sk.pos if riding else m.pos
+	var tv: Vector2 = sk.vel if riding else vel
+	for k in range(rocks.size() - 1, -1, -1):
+		var pr = rocks[k]
+		if pr.kind != "pirate":
+			continue
+		if pr.hit_t > 0:
+			pr.hit_t -= 1
+		var sp: Dictionary = pr.spec()
+		var to: Vector2 = tgt - pr.pos
+		var d := to.length()
+		if d > PIRATE_LOSE or m.dead:
+			rocks.remove_at(k)
+			if not m.dead:
+				game.ui.toast("You've shaken off %s" % pr.wname, Color(0.8, 0.9, 1.0), 3.0)
+			continue
+		pr.side_t -= 1
+		if pr.side_t <= 0:
+			pr.side_t = randi_range(240, 420)
+			if randf() < 0.4:
+				pr.side = -pr.side
+		var rng_: float = sp["range"]
+		var off: Vector2 = (-to / d if d > 1.0 else Vector2.RIGHT).rotated(0.5 * float(pr.side))
+		# (a ring flattened top to bottom, as the screen is: it fights where you can see it)
+		var vup: Vector2 = (tgt - centre).normalized()
+		var vright := Vector2(vup.y, -vup.x)
+		var want: Vector2 = tgt + (vright * off.dot(vright) + vup * off.dot(vup) * 0.55) * rng_
+		var dv: Vector2 = (want - pr.pos) * 0.035 + tv
+		for o in _rocks_near(pr.pos, 90.0):
+			if o == pr:
+				continue
+			var aw: Vector2 = pr.pos - o.pos
+			var gap: float = aw.length() - o.reach() - pr.reach() * 0.6
+			if gap < 70.0:
+				dv += aw.normalized() * (70.0 - gap) * 0.08
+		if not near.is_empty():
+			var oc: Vector2 = pr.pos - centre
+			if oc.length() < float(near["space"]) + 600.0:
+				dv += oc.normalized() * 6.0
+		dv = dv.limit_length(float(sp["max_v"]))
+		var acc := float(sp["accel"])
+		var dvv: Vector2 = dv - pr.vel
+		pr.thrusting = dvv.length() > acc * 0.5
+		pr.vel += dvv.limit_length(acc)
+		# its bow on you once it's close enough to fight, else the way it goes
+		var head: Vector2 = to / maxf(d, 0.001)
+		if d > rng_ * 2.0 and pr.vel.length() > 0.5:
+			head = pr.vel.normalized()
+		var up: Vector2 = (pr.pos - centre).normalized()
+		var right := Vector2(up.y, -up.x)
+		# (a ship keeps its deck up: it pitches toward you only so far, never stands on its stern)
+		var hx: float = head.dot(right)
+		var elev := clampf(atan2(head.dot(up), absf(hx)), -0.45, 0.45)
+		var hside: float = 1.0 if hx >= 0.0 else -1.0
+		if absf(hx) < 0.3:
+			hside = float(pr.facing)               # (straight above or below: keep the way it faces)
+		head = right * hside * cos(elev) + up * sin(elev)
+		if head.dot(right) * float(pr.facing) < -0.3:
+			pr.facing = -pr.facing
+			pr.ang = (head * float(pr.facing)).angle()
+		else:
+			pr.ang = lerp_angle(pr.ang, (head * float(pr.facing)).angle(), 0.06)
+		if pr.thrusting and game.frame % 2 == 0 and pr.pos.distance_to(game.cam_c) < 1200.0:
+			game._particle(pr.stern_world() + Vector2(randf() - 0.5, randf() - 0.5) * 4.0, -pr.nose() * (1.0 + randf()) + pr.vel * 0.7,
+				12 + randi() % 8, Color8(255, 110, 60), true, 0.0)
+		pr.fire_t -= 1
+		if pr.fire_t <= 0:
+			pr.fire_t = randi_range(int(sp["fire"][0]), int(sp["fire"][1]))
+			if d < rng_ * 2.2 and not m.dead:
+				_pirate_fire(pr, tgt, tv, d)
+
+## a volley from a pirate's guns, led to where you'll be
+func _pirate_fire(pr, tgt: Vector2, tv: Vector2, d: float) -> void:
+	for gk in pr.guns.size():
+		if not pr.gun_ok(gk):
+			continue
+		var from: Vector2 = pr.gun_world(gk)
+		var t := d / PIRATE_BOLT
+		var aim: Vector2 = tgt + (tv - pr.vel) * t * 0.8
+		var dir: Vector2 = (aim - from).normalized().rotated(randf_range(-0.05, 0.05))
+		foe_shots.append([from, pr.vel + dir * PIRATE_BOLT, int(d / PIRATE_BOLT) + 90, pr])
+		stats["pirate_shots"] += 1
+		game.vfx.spawn(Vfx.GLOW, from, pr.vel, 8, Color(1.0, 0.6, 0.35), Color(1.0, 0.3, 0.2, 0.0), 6.0, 2.0)
+		game.vfx.spawn(Vfx.RING, from, pr.vel, 8, Color(1.0, 0.5, 0.3), Color(1.0, 0.3, 0.2, 0.0), 1.0, 7.0)
+	game.audio.play("zap", pr.pos, 0.45, 0.6)
+
+## pirates' bolts fly (2-cell steps) and strike the skiff, a mage on foot, or rock
+func _update_foe_shots() -> void:
+	var m = game.player
+	var sk = game.skiff
+	for k in range(foe_shots.size() - 1, -1, -1):
+		var sh: Array = foe_shots[k]
+		var p: Vector2 = sh[0]
+		var v: Vector2 = sh[1]
+		var src = sh[3]
+		var n := maxi(1, int(ceil(v.length() / 2.0)))
+		var done := false
+		for q in n:
+			p += v / float(n)
+			if sk != null and (sk.pos - p).length() < float(maxi(sk.w, sk.h)) and sk.solid_at(p):
+				stats["pirate_hits"] += 1
+				skiff_hit(sk, p, PIRATE_BOLT_R, PIRATE_HURT)
+				done = true
+				break
+			if m.aboard == null and not m.dead and _hits_mage(m, p):
+				stats["pirate_hits"] += 1
+				game.hurt(m, PIRATE_HURT, v.normalized() * 2.0, true)
+				game.vfx.spawn(Vfx.GLOW, p, vel, 10, Color(1.0, 0.6, 0.35, 0.8), Color(1.0, 0.3, 0.2, 0.0), 6.0, 2.0)
+				done = true
+				break
+			var hr = _rock_at(p, src)
+			if hr != null:
+				if hr.kind != "pirate":
+					_chip(hr, p, 2.0)
+				done = true
+				break
+		sh[0] = p
+		sh[2] = int(sh[2]) - 1
+		if done or int(sh[2]) <= 0:
+			foe_shots.remove_at(k)
+		elif game.frame % 2 == 0:
+			game.vfx.spawn(Vfx.DOT, p, v * 0.1, 10, Color(1.0, 0.6, 0.35), Color(1.0, 0.3, 0.2, 0.0), 1.5, 0.5, true, 0.0, 0.9)
+
+## is world point p in the mage's box?
+func _hits_mage(m, p: Vector2) -> bool:
+	var ua: float = (m.pos - centre).angle()
+	var o: Vector2 = p - m.pos
+	return absf(o.dot(game.basis_r(ua))) < float(m.w) * 0.5 + 1.0 and absf(o.dot(game.basis_d(ua))) < float(m.h) * 0.5 + 1.0
+
+## a bolt chips a rock: a few cells round p knocked off as sparks
+func _chip(a, p: Vector2, r: float) -> void:
+	var b: Vector2 = a.to_body(p) + a.com
+	for j in range(maxi(0, int(b.y - r - 1.0)), mini(a.h, int(b.y + r + 2.0))):
+		for i in range(maxi(0, int(b.x - r - 1.0)), mini(a.w, int(b.x + r + 2.0))):
+			var ck: int = j * a.w + i
+			if a.cells[ck] != 0 and Vector2(i + 0.5, j + 0.5).distance_to(b) <= r and not a.guarded(ck):
+				a.take(ck)
+	game.vfx.spawn(Vfx.GLOW, p, a.vel, 8, Color(1.0, 0.6, 0.35, 0.7), Color(1.0, 0.3, 0.2, 0.0), 5.0, 1.5)
+	_mining = 0
+
+## a cannon bolt strikes a pirate
+func _hurt_pirate(pr, dmg: float, p: Vector2) -> void:
+	if pr.beaten:
+		return
+	pr.hp -= dmg
+	pr.hit_t = 6
+	for k in 8:
+		game.vfx.spawn(Vfx.DOT, p, pr.vel + Vector2.from_angle(randf() * TAU) * randf_range(0.5, 2.0), 18 + randi() % 14,
+			Color(1.0, 0.85, 0.5), Color(1.0, 0.4, 0.2, 0.0), 1.5, 0.5, true, 0.0, 0.93)
+	if pr.hp <= 0.0:
+		_beat_pirate(pr)
+	elif randf() < 0.5:
+		pr.side_t = mini(pr.side_t, 20)           # (hit, it jinks)
+
+## Beaten: it strikes its colours. Its crew flees in a lifeboat, torn plating flies off, and what's left
+## is a wreck like any other (kept with its sector), its strongbox yours to open.
+func _beat_pirate(pr) -> void:
+	pr.beaten = true
+	pr.kind = "wreck"
+	pr.fate = "Her pirate crew took to a lifeboat when you beat her."
+	pr.visited = false
+	pr.touched = true
+	pr.thrusting = false
+	pr.omega = randf_range(-0.0015, 0.0015)
+	pr.vel *= 0.25
+	var g := galaxy_of(pr.pos)
+	var key := Galaxy.key_of(Galaxy.sector_of(g[0], g[1]))
+	pr.sect = key if _loaded.has(key) else "pirate"
+	for k in randi_range(2, 4):
+		var sc = Wreck.scrap(randi() & 0xFFFFFF, randf_range(3.5, 7.0))
+		var dk := Vector2.from_angle(randf() * TAU)
+		sc.pos = pr.pos + dk * (pr.reach() * 0.7 + 12.0)
+		sc.vel = pr.vel + dk * randf_range(0.3, 0.8)
+		sc.sect = pr.sect
+		sc.touched = true
+		rocks.append(sc)
+	game.vfx.blast(pr.pos, 16.0, 2)
+	for k2 in 3:
+		game.vfx.blast(pr.cell_world(randi() % pr.w, randi() % pr.h), 7.0, 2)
+	game.vfx.spawn(Vfx.GLOW, pr.pos, Vector2.from_angle(randf() * TAU) * 3.0 + pr.vel, 160, Color(1.0, 0.6, 0.4, 0.9), Color(1.0, 0.3, 0.2, 0.0), 3.0, 2.0)
+	game.shake = maxf(game.shake, 10.0)
+	game.audio.play("boom", pr.pos, 1.0)
+	stats["pirates_beaten"] += 1
+	game.items["pirates_beaten"] = int(game.items.get("pirates_beaten", 0)) + 1
+	game.ui.toast("%s strikes her colours! Her crew flees in a lifeboat: her strongbox is yours (drift aboard, F)" % String(pr.wname).capitalize(), Color(1.0, 0.85, 0.4), 5.0)
+
+## Fallen out here: back to the planet's own frame (home at the origin), no pirates, nobody aboard
+## (main `_respawn` puts you at home, and the skiff answers you there).
+func reset_after_death() -> void:
+	if not active:
+		return
+	if not at_home():
+		_shift(-home_at())
+		org = Defs.planet_g(home)
+	_drop_pirates()
+	shots.clear()
+	bolts.clear()
+	belt = 0.0
+	beam_to = null
+	_flash = 0.0
+	sail = 0.0
+	sailing = false
+	var sk = game.skiff
+	if sk != null:
+		for k in sk.riders.size():
+			if sk.riders[k] != null:
+				sk.riders[k].aboard = null
+				sk.riders[k] = null
+		sk.vel = Vector2.ZERO
+		sk.centre = Vector2.ZERO
+		sk.pos = sk.pos.normalized() * (Defs.R_SPACE - 30.0)
+	active = false
+	live = true
+	easing = true
+	cooldown = 90
+	visible = false
+	game.view_rect.visible = true
+	game.view_c = Vector2.ZERO

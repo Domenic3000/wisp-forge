@@ -41,6 +41,7 @@ const ITEM_ART := {
 	"drop": ["..#..", "..#..", ".###.", "#w###", "#w###", "#####", ".###."],
 	"bubble": [".###.", "#w..#", "#...#", "#...#", ".###."],
 	"skull": [".###.", "#####", "#.#.#", "#####", ".#.#."],
+	"hull": ["..w..", "..w..", "#####", "c###c", ".###."],
 	"book": ["########.", "#rrrrrr#.", "#ryyyyr##", "#rrrrrr#w", "#ryyyyr#w", "#rrrrrr#w", "#rrrrrr#w", "########w", ".wwwwwwww"],
 }
 ## things you forge or buy that aren't a material, spell or draught (a recipe's or ward's own picture;
@@ -103,6 +104,7 @@ const ITEM_COL := {
 	"drop": {"#": Color(0.4, 0.58, 1.0), "w": Color(0.8, 0.9, 1.0)},
 	"bubble": {"#": Color(0.6, 0.9, 0.95), "w": Color(1, 1, 1)},
 	"skull": {"#": Color(0.95, 0.88, 0.75)},
+	"hull": {"#": Color(0.62, 0.42, 0.26), "c": Color(0.85, 0.55, 0.3), "w": Color(0.75, 0.9, 1.0)},
 	"book": {"#": Color(0.3, 0.12, 0.2), "r": Color(0.6, 0.2, 0.3), "y": Color(1.0, 0.8, 0.3), "w": Color(0.92, 0.88, 0.78)},
 }
 

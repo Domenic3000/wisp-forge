@@ -26,6 +26,9 @@ var hp_bar: ProgressBar
 var mp_bar: ProgressBar
 var br_bar: ProgressBar
 var br_row: Control
+var hull_bar: ProgressBar
+var hull_row: Control
+var hull_lbl: Label
 var hp_lbl: Label
 var mp_lbl: Label
 var info: Label
@@ -439,6 +442,13 @@ func _build_hud() -> void:
 	hp_bar = _bar(Color(0.86, 0.2, 0.26), 9)
 	mp_bar = _bar(Color(0.3, 0.6, 1.0), 9)
 	br_bar = _bar(Color(0.5, 0.85, 0.92), 5)
+	hull_bar = _bar(Color(0.85, 0.55, 0.3), 9)
+	hull_lbl = _label("", 12, Color.WHITE)
+	hull_bar.add_child(hull_lbl)
+	hull_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hull_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hull_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hull_lbl.offset_top = 1
 	hp_lbl = _label("", 12, Color.WHITE)
 	mp_lbl = _label("", 12, Color.WHITE)
 	hp_bar.add_child(hp_lbl)
@@ -449,7 +459,7 @@ func _build_hud() -> void:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		l.offset_top = 1
-	for pair in [["heart", hp_bar], ["drop", mp_bar], ["bubble", br_bar]]:
+	for pair in [["heart", hp_bar], ["drop", mp_bar], ["bubble", br_bar], ["hull", hull_bar]]:
 		var row := _box(false, 3)
 		var ic := _icon(pair[0])
 		ic.custom_minimum_size.x = 11
@@ -458,6 +468,9 @@ func _build_hud() -> void:
 		bars.add_child(row)
 		if pair[0] == "bubble":
 			br_row = row
+		if pair[0] == "hull":
+			hull_row = row
+			row.visible = false
 	bars.add_child(_rule(120))
 	info = _label("", 12, Color(0.86, 0.87, 1))
 	bars.add_child(info)
@@ -1368,6 +1381,13 @@ func update_hud(g) -> void:
 	br_row.visible = g.breath < g.max_breath
 	br_bar.max_value = g.max_breath
 	br_bar.value = g.breath
+	# the skiff's hull, while you ride it and it's hurt (or out in space, where things shoot at it)
+	var sk = g.skiff
+	hull_row.visible = sk != null and g.player.aboard == sk and (sk.hull_f < 0.995 or g.space.active)
+	if hull_row.visible:
+		hull_bar.max_value = 100.0
+		hull_bar.value = sk.hull_f * 100.0
+		hull_lbl.text = "Hull %d%%" % int(round(sk.hull_f * 100.0))
 	if g.frame % 6 == 0:
 		var a := atan2(g.player.pos.y, g.player.pos.x)
 		var rs: float = g.gpu.surf_at(a).x
@@ -1397,6 +1417,8 @@ func update_hud(g) -> void:
 			wn = "Nebula" if g.space.neb > 0.3 else "Clear"
 			if g.space.sailing:
 				wn += " · Starsail"
+		if g.space.active and g.space.pirate_count() > 0:
+			wn = ("" if wn == "Clear" else wn + " · ") + "Pirates!"
 		# (only what matters now: where you are, the time, the weather when there is any, how deep
 		# underground; the staff, relics and coins are in the satchel)
 		var lines := PackedStringArray([where, g.local_time_text() + ("" if wn == "Clear" else " · " + wn)])
