@@ -44,6 +44,8 @@ var _last_flip := false           # (whether `_place_prop` mirrored what it plac
 ## the dungeon wardens: {key ("warden_<seed>_<col>": its foe type), pos (its hall floor's middle),
 ## def (wardens.gd), tether, ceil, ward (the stamp rectangle of the reliquary's warded door), name}
 var warden_list := []
+var mystery := {}                 # a deep ocean world's sunken mystery (`_abyss_mystery`): the song, its stones, the temple
+const Mystery := preload("res://scripts/mystery.gd")
 var _seed := 0
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
 var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
@@ -314,6 +316,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	lair_list.clear()
 	towns.clear()
 	warden_list.clear()
+	mystery = {}
 	lair_why.clear()
 	_lair_cols.clear()
 	_jobs.clear()
@@ -344,10 +347,19 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 			placed += 1
 	plan_times["structures"] = (Time.get_ticks_usec() - pt) / 1000
 	pt = Time.get_ticks_usec()
+	# a deep ocean world: its sunken temple and the tide-stones that tell its song (its own RNG), and no
+	# dungeons (their gatehouses would stand in the sea)
+	var exo := String(planet.get("exotic", ""))
+	if exo == "abyss":
+		var keep := rng
+		rng = RandomNumberGenerator.new()
+		rng.seed = int(planet["seed"]) * 97 + 4241
+		_abyss_mystery(build, String(planet.get("name", "")))
+		rng = keep
 	# dungeons: a gatehouse on the surface over a maze of halls below
 	var dn := 0
 	for tries in 80:
-		if dn >= DUNGEONS:
+		if dn >= DUNGEONS or exo != "":
 			break
 		if _dungeon(rng.randi_range(0, N0 - 1), build):
 			dn += 1
@@ -383,6 +395,8 @@ func _pick(weights: Dictionary) -> String:
 
 func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
 	var b := biome(x)
+	if b == "abyss":
+		return false                  # (a deep ocean world's floor: nothing but the sunken temple, `_abyss_mystery`)
 	var w := {}
 	match b:
 		"forest": w = {"town": 3, "cottage": 3, "tower": 1.5, "mine": 1, "catacomb": 1.5}
@@ -2967,3 +2981,214 @@ func _town_square(x0: int, w: int, ruined: bool, build: bool) -> void:
 	sites.append(Vector2(posmod(x0, N0), posmod(x0, N0) + w))
 	if placed >= 0 or lamps > 0:
 		_finish(bp, build)
+
+
+# ------------------------------------------------------ the sunken mystery ---
+## A deep ocean world's mystery (user, 23 Nov: exotic worlds "with different mysteries to solve"; chose clues and
+## puzzles, optional with big rewards): five TIDE-STONES on the islands and the shelves, each carved with a
+## glyph and as many dots as its place in a song of five notes; on the deepest stretch of the abyss, the
+## TEMPLE OF THE DROWNED CHOIR, its hall dry (you come up into it through a moon pool from a flooded tunnel:
+## water never rises in the simulation), five resonance pillars along it, each with one of the glyphs, and at
+## its end a vault sealed by a ward of runestone. Ring the pillars in the song's order (mystery.gd) and the ward
+## breaks. `mystery`: {order, stones [{pos, glyph, place}], pillars [{pos, glyph}], ward {x0, y0, w, h, ax,
+## aw}, vault (the altar's top, world), hall (its middle, world), name}.
+func _abyss_mystery(build: bool, pname: String) -> void:
+	var gl: Array = range(Mystery.GLYPHS.size())
+	for q in range(gl.size() - 1, 0, -1):
+		var r := rng.randi_range(0, q)
+		var t = gl[q]
+		gl[q] = gl[r]
+		gl[r] = t
+	var order: Array = gl.slice(0, 5)
+	mystery = {"order": order, "stones": [], "pillars": [], "name": "Temple of the Drowned Choir", "planet": pname}
+	# the temple: the deepest stretch of the abyss that's level enough
+	var best := -1
+	var best_s := -1e9
+	for x in range(0, N0, 24):
+		if biome(x) != "abyss" or biome(x - 150) != "abyss" or biome(x + 150) != "abyss":
+			continue
+		var gr := _ground_range(x - TEMPLE_W / 2, TEMPLE_W)
+		var sc := float(gr.x) - 3.0 * float(gr.y - gr.x)
+		if sc > best_s:
+			best_s = sc
+			best = x
+	if best >= 0:
+		_sunken_temple(best, order, build)
+	# the tide-stones: one for each note, on the islands and shelves, well apart
+	var spots := []
+	for tries in 600:
+		if spots.size() >= 5:
+			break
+		var x2 := rng.randi_range(0, N0 - 1)
+		var b2 := biome(x2)
+		if b2 != "jungle" and b2 != "forest" and b2 != "ocean":
+			continue
+		if b2 == "ocean" and spots.size() < 2:
+			continue                  # (the first two on dry land: the islands, where you come down)
+		var far := true
+		for sp in spots:
+			if cdist(int(sp), x2) < 140:
+				far = false
+		if not far or cdist(x2, spawn_col) < 60:
+			continue
+		if _tide_stone(x2, int(order[spots.size()]), spots.size(), build):
+			spots.append(x2)
+
+const TEMPLE_W := 250
+const TEMPLE_HALL := 62
+## The Temple of the Drowned Choir on the sea floor at column x (its middle)
+func _sunken_temple(x: int, order: Array, build: bool) -> void:
+	var W := TEMPLE_W
+	var x0 := x - W / 2
+	var gr := _ground_range(x0, W)
+	var PL := 30
+	var ROOF := 38
+	var top_pl: int = gr.x - PL                 # (the plinth's top row: the hall's floor)
+	var up := PL + TEMPLE_HALL + 6 + ROOF + 4
+	var y0: int = gr.x - up
+	var bp := BP.new(x0, y0, W, (gr.y + 8) - y0)
+	var side := -1 if rng.randf() < 0.5 else 1     # (the tunnel opens out this way; the vault is at the other end)
+	var F := func(i: int) -> int: return i if side < 0 else W - 1 - i
+	var fl := top_pl - y0                       # (local rows from here on)
+	var hx0 := 30
+	var hx1 := W - 31
+	var top := fl - TEMPLE_HALL
+	var noise := FastNoiseLite.new()
+	noise.seed = rng.randi()
+	noise.frequency = 0.08
+	# the plinth: masonry down into the sea floor, stepped at its ends
+	for i in W:
+		var step := mini(mini(i, W - 1 - i) / 4, 4)
+		for j in range(fl + 4 - step, bp.h):
+			var g := ground_row(x0 + i) - y0
+			if j > g + 6:
+				break
+			bp.fg(i, j, Defs.MASONRY, F_ANCHOR if j > g else 0)
+	for i2 in range(hx0 - 6, hx1 + 7):
+		for j2 in range(fl, fl + 4):
+			bp.fg(i2, j2, Defs.RUNESTONE)
+	# the hall's shell (runestone: nothing short of the Core Siphon breaks it, and no sea gets in), its inside
+	# dry air in front of a tiled back wall with a frieze of glowing glyph-lines
+	for i3 in range(hx0 - 6, hx1 + 7):
+		for j3 in range(top - 6, fl):
+			var inside: bool = i3 >= hx0 and i3 <= hx1 and j3 >= top
+			if inside:
+				bp.fg(i3, j3, 0)
+				var nz := noise.get_noise_2d(i3, j3)
+				var wm := Defs.MOSSBLOCK if nz > 0.25 else Defs.TILE
+				if (j3 - top) == 10 and (i3 % 6) < 4:
+					wm = Defs.CRYSTAL
+				bp.bg(i3, j3, wm)
+			else:
+				bp.solid(i3, j3, i3, j3, Defs.RUNESTONE)
+	# lamps of crystal under the roof
+	for i4 in range(hx0 + 10, hx1 - 8, 20):
+		bp.fg(i4, top, Defs.CRYSTAL)
+		bp.fg(i4 + 1, top, Defs.CRYSTAL)
+	# the roof: a stepped pediment of masonry, worn and broken at its outer edge (never through the shell)
+	for k in ROOF:
+		var j5 := top - 7 - k
+		var half := (W / 2 - 14) - k * 2
+		if half < 4:
+			break
+		for i5 in range(W / 2 - half, W / 2 + half):
+			var outer := k > 4 and (i5 < W / 2 - half + 4 or i5 >= W / 2 + half - 4 or k > ROOF - 8)
+			if outer and noise.get_noise_2d(i5 * 1.7, j5 * 1.7) > 0.3:
+				continue
+			bp.solid(i5, j5, i5, j5, Defs.TILE if k % 6 == 0 else Defs.MASONRY)
+	# a colonnade along the plinth outside the walls (background, so the sea moves round it)
+	for c0 in [8, 18, W - 24, W - 14]:
+		for j6 in range(top - 6, fl):
+			for i6 in range(int(c0), int(c0) + 6):
+				if noise.get_noise_2d(i6 * 2.0, j6 * 0.5) < 0.45:
+					bp.bg(i6, j6, Defs.MASONRY)
+		for i6b in range(int(c0) - 1, int(c0) + 7):
+			bp.solid(i6b, top - 7, i6b, top - 7, Defs.MASONRY)
+	# the moon pool: a gap in the floor (a one-way scaffold over it) down into the flooded tunnel that leads
+	# out of the plinth's side into the sea
+	var sx0 := hx0 + 4
+	var sx1 := hx0 + 22
+	for i7 in range(sx0, sx1):
+		for j7 in range(fl, fl + 4):
+			bp.fg(F.call(i7), j7, 0)
+			bp.bg(F.call(i7), j7, Defs.RUNESTONE)
+		bp.fg(F.call(i7), fl, Defs.SCAFFOLD)
+	for i8 in range(0, sx1):
+		for j8 in range(fl + 4, fl + 24):
+			bp.fg(F.call(i8), j8, Defs.WATER)
+			bp.bg(F.call(i8), j8, Defs.RUNESTONE)
+	# the ward of runestone sealing the vault at the far end, and the vault's altar
+	var wx := hx1 - 44
+	for i9 in range(wx, wx + 4):
+		for j9 in range(top, fl):
+			bp.fg(F.call(i9), j9, Defs.RUNESTONE if (i9 + j9) % 6 != 0 else Defs.WISP)
+	var ax := (wx + 4 + hx1) / 2
+	for i10 in range(ax - 6, ax + 7):
+		for j10 in range(fl - 8, fl):
+			bp.bg(F.call(i10), j10, Defs.RUNESTONE if j10 > fl - 7 else Defs.CRYSTAL)
+	for j11 in range(top, fl):
+		bp.bg(F.call(ax), j11, Defs.WISP if (j11 - top) % 4 == 0 else bp.getb(F.call(ax), j11))
+	# five resonance pillars between the moon pool and the ward, each bearing one glyph (not in the song's order)
+	var pg: Array = order.duplicate()
+	for q in range(pg.size() - 1, 0, -1):
+		var r2 := rng.randi_range(0, q)
+		var t2 = pg[q]
+		pg[q] = pg[r2]
+		pg[r2] = t2
+	var p0 := sx1 + 14
+	var p1 := wx - 14
+	var pillars := []
+	for k2 in 5:
+		var pc := p0 + int(float(p1 - p0) * (float(k2) + 0.5) / 5.0)
+		for i12 in range(pc - 3, pc + 3):
+			for j12 in range(fl - 34, fl):
+				bp.bg(F.call(i12), j12, Defs.MASONRY if j12 > fl - 31 else Defs.CRYSTAL)
+		var row := bp.y0 + fl - 10            # (where you stand to ring it; its glyph is drawn over its top)
+		pillars.append({"pos": _bp_at(bp, float(F.call(pc)) + 0.5, row, Defs.R_TOP - float(row) - 0.5), "glyph": int(pg[k2])})
+	# treasure in the hall
+	_chest(bp, F.call(p0 - 10) - (11 if side > 0 else 0), fl, true)
+	var vrow := bp.y0 + fl - 9
+	var hrow := bp.y0 + fl - 20
+	var wfx: int = F.call(wx + 3) if side > 0 else F.call(wx)
+	mystery["pillars"] = pillars
+	mystery["vault"] = _bp_at(bp, float(F.call(ax)) + 0.5, vrow, Defs.R_TOP - float(vrow) - 0.5)
+	mystery["hall"] = _bp_at(bp, float(W) * 0.5, hrow, Defs.R_TOP - float(hrow) - 0.5)
+	mystery["pool"] = _bp_at(bp, float(F.call((sx0 + sx1) / 2)) + 0.5, bp.y0 + fl + 14, Defs.R_TOP - float(bp.y0 + fl + 14) - 0.5)
+	mystery["mouth"] = _bp_at(bp, float(F.call(0)) + 0.5, bp.y0 + fl + 14, Defs.R_TOP - float(bp.y0 + fl + 14) - 0.5)
+	mystery["ward"] = {"x0": posmod(x0 + wfx, N0), "y0": bp.y0 + top, "w": 4, "h": fl - top, "ax": posmod(x0, N0), "aw": W}
+	_claim(x0, W, "Temple of the Drowned Choir", bp.y0, gr.y + 2)
+	_finish(bp, build)
+
+## A tide-stone at column x: a standing stone carved with glyph g (inlaid in glowing crystal) under place + 1
+## dots (wisp), its place in the song. Returns false if the ground there won't take it.
+func _tide_stone(x: int, g: int, place: int, build: bool) -> bool:
+	var W := 15
+	var x0 := x - W / 2
+	if not free_span(x0, W, 10):
+		return false
+	var gr := _ground_range(x0 + 3, 9)
+	if gr.y - gr.x > 5:
+		return false
+	var base: int = gr.x - 1
+	var bp := BP.new(x0, base - 26, W, 34)
+	var fl := 26
+	var art: Array = Mystery.GLYPH_ART[g]
+	for i in range(3, 12):
+		for j in range(fl - 22, fl + 1):
+			var edge := i == 3 or i == 11 or j == fl - 22
+			bp.fg(i, j, Defs.MOSSBLOCK if (edge and j < fl - 18) else Defs.STONE)
+		for j2 in range(fl + 1, fl + 8):
+			bp.fg(i, j2, Defs.STONE, F_FILL | F_ANCHOR)
+	for gy in 7:
+		var line: String = art[gy]
+		for gx in 7:
+			if line[gx] == "#":
+				bp.fg(4 + gx, fl - 16 + gy, Defs.CRYSTAL)
+	for d in place + 1:
+		bp.fg(3 + 2 * d, fl - 19, Defs.WISP)
+	var row := bp.y0 + fl - 12
+	(mystery["stones"] as Array).append({"pos": _bp_at(bp, 7.5, row, Defs.R_TOP - float(row) - 0.5), "glyph": g, "place": place})
+	_claim(x0, W, "Tide-stone", bp.y0, base + 2)
+	_finish(bp, build)
+	return true
+

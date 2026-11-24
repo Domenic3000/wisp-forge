@@ -20,6 +20,7 @@ const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
 const Quest := preload("res://scripts/quest.gd")
+const MysteryCtl := preload("res://scripts/mystery.gd")
 const Workshops := preload("res://scripts/workshops.gd")
 const Summoning := preload("res://scripts/summoning.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
@@ -585,6 +586,7 @@ var pending_place: int:
 	set(v): player.pending_place = v
 var wisp := Vector2.ZERO
 var wisp_t := 0.0
+var mystery                 # a deep ocean world's sunken mystery, as you play it (mystery.gd)
 var quest                   # the main quest (quest.gd): the wisp's guidance, the HUD's line, the journal (L)
 var quest_test := false     # (the test mode runs the quest only in its own check)
 var wisp_ward_t := 0        # Wisp Ward: ticks until it can take a hit again
@@ -634,6 +636,7 @@ func _ready() -> void:
 	space.game = self
 	towns = Towns.new(self)
 	quest = Quest.new(self)
+	mystery = MysteryCtl.new(self)
 	workshops = Workshops.new(self)
 	summoning = Summoning.new(self)
 	pix.add_child(space)
@@ -1538,6 +1541,8 @@ func _interact() -> void:
 	if not _chest_in_reach().is_empty():
 		_try_open_chest()
 		return
+	if mystery.interact(player):          # (a tide-stone, a resonance pillar, the sunken vault)
+		return
 	if towns.talk(player):                # (a villager: a word, or a keeper's shop)
 		return
 	if workshops.interact(player):        # (a workshop station: its panel)
@@ -2318,9 +2323,18 @@ func _tick() -> void:
 	var gl := gear("light")
 	if gl > 0.0 and not player.dead:
 		lights.append([player.pos, gl, Color(1.15, 0.9, 0.55)])          # (the Sun Lantern)
+	# (the deep's own creatures carry their light: a deep ocean world's abyss is dark but for them and you)
+	var nglow := 0
+	for ge in enemies:
+		if nglow >= 6:
+			break
+		if ge.d.has("def") and ge.d["def"].has("glow") and ge.pos.distance_to(player.pos) < 260.0:
+			lights.append([ge.pos, 34.0 + float(ge.d["def"]["w"]) * 2.0, ge.d["def"]["glow"]])
+			nglow += 1
 	_update_chests()
 	workshops.tick()
 	summoning.tick()
+	mystery.tick()
 	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
 		tq = Time.get_ticks_usec()
@@ -2396,7 +2410,7 @@ func _update_player(m: Mage) -> void:
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
 	var fin: bool = m.items.has("tidefin")       # (Thalassor's relic: you swim as fast as you walk)
-	var speed := ((1.5 if fin else 0.9) * gear("swim", m)) if p.in_liquid else 1.5 * gear("speed", m)
+	var speed := ((1.5 if fin else 0.9) * gear("swim", m) * (1.5 if m.items.has("tideheart") else 1.0)) if p.in_liquid else 1.5 * gear("speed", m)
 	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
 	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02:
@@ -2486,7 +2500,7 @@ func _update_player(m: Mage) -> void:
 	if m.local:
 		_hazards(m, p)
 	# under water, or above the air: holding your breath
-	if (Defs.KIND[head_t] == Defs.K_LIQUID and not m.items.has("pearl")) or p.pos.length() > Defs.R_TOP + 4.0:
+	if (Defs.KIND[head_t] == Defs.K_LIQUID and not m.items.has("pearl") and not m.items.has("tideheart")) or p.pos.length() > Defs.R_TOP + 4.0:
 		m.breath -= 1.0
 		if m.breath <= 0:
 			m.breath = 0
@@ -3379,6 +3393,7 @@ func _warden_falls(e: Enemy) -> void:
 ## the wardens of its dungeons, each in its hall
 func _spawn_guardians() -> void:
 	summoning.on_load(planet_state)          # (a guardian called when the world was saved: its sigil back)
+	mystery.load_from(planet_state)
 	var dead_list: Array = planet_state.get("bosses_dead", [])
 	for lr in builds.lair_list:
 		var biome: String = lr["biome"]
@@ -4597,6 +4612,8 @@ func _hazards(m: Mage, p: Body) -> void:
 		var hd: Dictionary = Defs.HAZARDS[hz]
 		if m.items.has(String(hd["ward"])) or m.items.has(String(hd["relic"])):
 			continue
+		if hz == "deep" and m.items.has("tideheart"):
+			continue                         # (the Tide Heart, the sunken temple's prize, bears the deep too)
 		var k := _hazard_level(String(hz), m, p) * lvl
 		if k <= 0.0:
 			continue
@@ -4633,6 +4650,12 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 				return 0.0
 			var under: float = (Defs.RS0 - sea) - p.pos.length()
 			return 0.0 if under < 35.0 else 1.0 + (under - 35.0) / 60.0
+		"crush":
+			var sea2 := float(planet.get("sea", -1.0))
+			if sea2 < 0.0 or not p.in_liquid:
+				return 0.0
+			var under2: float = (Defs.RS0 - sea2) - p.pos.length()
+			return 0.0 if under2 < 160.0 else 1.0 + (under2 - 160.0) / 80.0
 	return 0.0
 
 ## a fire, a torch or lava within about 14 cells (the collision grid round you)
@@ -4694,7 +4717,9 @@ func recipe_done(r: Dictionary) -> bool:
 		"mana": return items.has("mana_crystal") or (max_mana >= 170 and not items.has("circlet"))
 		"ward": return heat_ward
 		"skiff": return items.has("skiff")
-		"drive": return skiff_reach() > int(planet.get("index", 0))
+		"drive": return Defs.is_exotic(int(planet.get("index", 0))) or skiff_reach() > int(planet.get("index", 0))
+		"keel": return items.has("keel")
+		"depthseal": return items.has("depthseal")
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
 		"delve1": return int(items.get("delve", 0)) >= 1
@@ -4706,6 +4731,13 @@ func recipe_done(r: Dictionary) -> bool:
 
 ## the furthest planet (by index) the skiff can fly to: one more for every Core Drive fitted (a planet's
 ## heart, harvested with the Core Siphon, bound in star iron from the asteroids)
+## can the skiff reach exotic world i? (each through its own hazard: a deep ocean world's maelstrom needs the
+## Tempest Keel)
+func exotic_ok(i: int) -> bool:
+	match Defs.exotic_kind(i):
+		"abyss": return items.has("keel")
+	return false
+
 func skiff_reach() -> int:
 	return int(items.get("reach", 0))
 
@@ -4839,6 +4871,10 @@ func ore_found(om: int) -> bool:
 ## ore, which shows (locked) where that ore is found.
 ## (An alloy shows, locked, once you've found either of its ores.)
 func recipe_hidden(r: Dictionary) -> bool:
+	if String(r["id"]) == "drive" and Defs.is_exotic(int(planet.get("index", 0))):
+		return true                  # (an exotic world's core leads nowhere: the Drive is forged on the round's planets)
+	if String(r["id"]) == "keel" and not items.has("skiff"):
+		return true
 	if r.has("part"):
 		# (ship parts: once you have a skiff to fit them to)
 		return not items.has("skiff") and not items.has(String(r["part"]))
@@ -5041,6 +5077,11 @@ func craft(r: Dictionary) -> bool:
 			items[String(r["id"])] = true
 			items.erase(String(r["part"]))
 			ui.toast("Fitted to your skiff: %s" % ("the Wisp Shield takes a lightning strike out there, then charges again" if r["id"] == "shield" else "the Wisp Cannon fires with the cast button while you fly in space (the keys steer)"), Color(1, 0.85, 0.4), 5.0)
+			save_game()
+			return true
+		"keel", "depthseal":
+			items[String(r["id"])] = true
+			ui.toast("%s forged: %s" % [r["name"], "the skiff rides out a maelstrom now" if r["id"] == "keel" else "the abyss of a deep ocean world can't crush you"], Color(1, 0.85, 0.4), 5.0)
 			save_game()
 			return true
 		"drive":
@@ -7568,7 +7609,7 @@ func _apply_save(s: Dictionary) -> void:
 		# (before the GPU's counters moved, digging what the staff couldn't cut counted as star iron)
 		player.inv[Defs.STARIRON] = 0
 	# (how far the skiff reaches: a journey from before the Core Drive keeps every planet it had been to)
-	var rch := maxi(int(items.get("reach", 0)), int(s.get("planet", 0)))
+	var rch := maxi(int(items.get("reach", 0)), int(s.get("planet", 0)) if not Defs.is_exotic(int(s.get("planet", 0))) else 0)
 	for wi in 25:
 		if FileAccess.file_exists(_world_path(wi)):
 			rch = maxi(rch, wi)
@@ -7705,6 +7746,7 @@ func _world_meta(without_skiff: bool) -> String:
 	planet_state["chests"] = cs
 	workshops.save_to(planet_state)
 	summoning.on_save(planet_state)
+	mystery.save_to(planet_state)
 	var ast = space.rocks_state(int(planet["index"]))
 	if ast != null:
 		planet_state["asteroids"] = ast

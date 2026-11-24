@@ -657,7 +657,12 @@ void main() {
 		if (t == 0u) { col = bg; flag = bgf; }
 		else {
 			vec3 mc = fgColor(t, c, w, cu, cd, cl, cr);
-			if (ALPHA[t] < 1.0) { col = mix(bg, mc, ALPHA[t]); flag = SELFL[t] == 1u ? 1 : bgf; }
+			if (t == M_WATER && bgf == 2) {
+				// open water over the sky: no sky through the sea, and lit like everything else, so a sea grows
+				// dark with depth (light.comp) and at night (user, 23 Nov: deep ocean worlds)
+				col = mc * 0.82; flag = 0;
+			}
+			else if (ALPHA[t] < 1.0) { col = mix(bg, mc, ALPHA[t]); flag = SELFL[t] == 1u ? 1 : bgf; }
 			else { col = mc; flag = int(SELFL[t]); }
 		}
 	}

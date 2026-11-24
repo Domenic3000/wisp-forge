@@ -45,13 +45,23 @@ void main() {
 			sky *= max(0.45, 1.0 - leaves * 0.07);
 		}
 	}
+	// under a sea, daylight fades with the depth of the water over you (a deep ocean world's abyss is dark
+	// but for what glows and your own light), and turns blue-green
+	float uw = 0.0;
+	if (r > R_IN && r < R_TOP) {
+		float wl = surfB(angleOf(pos)).y;
+		if (wl > 0.0 && r < wl) {
+			uw = clamp((wl - r) / 60.0, 0.0, 1.0);
+			sky *= exp(-(wl - r) / 110.0);
+		}
+	}
 	vec2 sd = sunDir();
 	float sdot = dot(up, sd);
 	float day = clamp(sdot * 1.6 + 0.15, 0.025, 1.0);
 	float dusk = clamp(1.0 - abs(sdot) * 4.0, 0.0, 1.0);
 	vec3 sunCol = vec3(1.0, 0.97 - dusk * 0.25, 0.9 - dusk * 0.45);
 	float rain = clamp(P.p[3].z, 0.0, 1.0) * 0.25;   // eased between biomes, so the light never snaps
-	vec3 L = sunCol * sky * day * (1.0 - rain) + vec3(P.p[3].w);
+	vec3 L = sunCol * mix(vec3(1.0), vec3(0.55, 0.82, 1.0), uw) * sky * day * (1.0 - rain) + vec3(P.p[3].w);
 	// rooms of buildings above ground: daylight leaks in through doors and windows
 	if (sky < 0.6 && r > R_IN) {
 		int pi = idxAt(pos);

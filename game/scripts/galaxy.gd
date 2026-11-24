@@ -105,8 +105,8 @@ static func nebula(gx: float, gy: float) -> Array:
 ## True if (gx, gy) is too near a planet for anything to be grown there.
 static func _near_planet(gx: float, gy: float) -> bool:
 	for r in systems_near(gx, gy, 140000.0):
-		for k in Defs.SYSTEM.size():
-			var g: PackedFloat64Array = Defs.planet_g(r * Defs.SYSTEM.size() + k)
+		for pi in Defs.planets_of(r):
+			var g: PackedFloat64Array = Defs.planet_g(pi)
 			var dx: float = g[0] - gx
 			var dy: float = g[1] - gy
 			if dx * dx + dy * dy < NEAR_PLANET * NEAR_PLANET:
@@ -327,8 +327,8 @@ static func outpost_name(r: int) -> String:
 
 static func _near_planet_r(gx: float, gy: float, r: float) -> bool:
 	for sr in systems_near(gx, gy, 140000.0):
-		for k in Defs.SYSTEM.size():
-			var g: PackedFloat64Array = Defs.planet_g(sr * Defs.SYSTEM.size() + k)
+		for pi in Defs.planets_of(sr):
+			var g: PackedFloat64Array = Defs.planet_g(pi)
 			if (g[0] - gx) * (g[0] - gx) + (g[1] - gy) * (g[1] - gy) < r * r:
 				return true
 	return false

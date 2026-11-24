@@ -253,7 +253,7 @@ func _draw_space() -> void:
 	# the star systems: every star; a charted one named, with its planets close in
 	var c0 := Vector2i(int(floor(g0[0] / Defs.SYS_GAP)) - 1, int(floor(g0[1] / Defs.SYS_GAP)) - 1)
 	var c1 := Vector2i(int(ceil(g1[0] / Defs.SYS_GAP)) + 1, int(ceil(g1[1] / Defs.SYS_GAP)) + 1)
-	var here_sys: int = int(g.space.home) / Defs.SYSTEM.size() if g.space.active else int(g.planet.get("index", 0)) / Defs.SYSTEM.size()
+	var here_sys: int = Defs.system_of(int(g.space.home)) if g.space.active else Defs.system_of(int(g.planet.get("index", 0)))
 	for cy in range(c0.y, c1.y + 1):
 		for cx in range(c0.x, c1.x + 1):
 			var r: int = Defs.spiral_index(Vector2i(cx, cy))
@@ -290,8 +290,7 @@ func _draw_space() -> void:
 			draw_rect(Rect2(dsp2 + Vector2(-2, -1), Vector2(2, 2)), Color(0.65, 1.0, 0.45))
 			if gz < 900.0:
 				_label(dsp2 + Vector2(0, -7), "Derelict " + Galaxy.station_name(r), Color(0.8, 0.65, 1.0))
-			for k in Defs.SYSTEM.size():
-				var i := r * Defs.SYSTEM.size() + k
+			for i in Defs.planets_of(r):
 				var psp := to_screen(Defs.planet_g(i))
 				var pl: Dictionary = Defs.make_planet(i)
 				var rad := clampf((float(pl["radius"]) + Defs.ATMO) / gz, 2.5, 14.0)
@@ -303,7 +302,7 @@ func _draw_space() -> void:
 				var tc := Color(0.6, 1.0, 0.7) if here else (Color(0.9, 0.9, 1.0) if visited else Color(0.6, 0.62, 0.75))
 				if here:
 					draw_arc(psp, dr + 3.0, 0.0, TAU, 32, tc, 1.0)
-				var walled: bool = i > g.skiff_reach() and i != int(g.planet.get("index", -1))
+				var walled: bool = not g.space.reachable(i) and i != int(g.planet.get("index", -1))
 				if walled:
 					var bc: Color = Defs.climate(pl)["belt"]
 					for q2 in 16:

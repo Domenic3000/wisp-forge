@@ -12,6 +12,7 @@
 extends RefCounted
 
 const Vfx := preload("res://scripts/vfx.gd")
+const MysteryArt := preload("res://scripts/mystery.gd")
 
 const SAY_TICKS := 60 * 8
 const POWERS := {
@@ -53,6 +54,9 @@ func tick() -> void:
 	var ch := int(q.get("ch", 0))
 	# (a world further on than the chapter: its own chapter begins)
 	var here := int(game.planet.get("index", 0))
+	_mystery_tick(here)
+	if Defs.is_exotic(here):
+		here = ch                    # (an exotic world has no chapter of its own: its mystery is its quest)
 	if here > ch:
 		ch = here
 		q = {"ch": ch, "at": 0}
@@ -73,8 +77,12 @@ func tick() -> void:
 	elif moved:
 		_announce()
 
-## the HUD's line: what to do now ("" when the chapter's done)
+## the HUD's line: what to do now ("" when the chapter's done); on an exotic world, its mystery's next step
 func hud_line() -> String:
+	if Defs.is_exotic(int(game.planet.get("index", 0))) and not game.space.active:
+		for ms in mystery_steps():
+			if not bool(ms["done"]):
+				return String(ms["title"])
 	if at >= steps.size():
 		return ""
 	return String(steps[at]["title"])
@@ -132,7 +140,9 @@ func _holds(c: Array) -> bool:
 		"tier": return int(game.tier) >= int(c[1])
 		"item": return game.items.has(String(c[1]))
 		"reach": return game.skiff_reach() >= int(c[1])
-		"landed": return int(game.planet.get("index", 0)) >= int(c[1])
+		"landed":
+			var li := int(game.planet.get("index", 0))
+			return not Defs.is_exotic(li) and li >= int(c[1])
 		"station":
 			if game.items.has("st_" + String(c[1])):
 				return true
@@ -153,6 +163,15 @@ func chapter_steps(ch: int) -> Array:
 	if ch == 0:
 		return _first_chapter()
 	return _world_chapter(ch)
+
+## (the chapter read from the save, if no tick has done it yet: the journal can open first)
+func ensure() -> void:
+	if chapter >= 0:
+		return
+	var q: Dictionary = game.items.get("quest", {})
+	chapter = int(q.get("ch", 0))
+	steps = chapter_steps(chapter)
+	at = int(q.get("at", 0))
 
 func chapter_title(ch: int) -> String:
 	if ch == 0:
@@ -260,3 +279,70 @@ func _recipe_name(id: String) -> String:
 		if String(r["id"]) == id:
 			return String(r["name"])
 	return id.capitalize()
+
+# ----------------------------------------------------------- mysteries ---
+## The deep ocean world of the system you're in (its exotic), or -1
+func mystery_world() -> int:
+	var here := int(game.planet.get("index", 0))
+	if Defs.is_exotic(here):
+		return here
+	var sys := Defs.system_of(int(game.space.home) if game.space.active else here)
+	for i in Defs.exotics_of(sys):
+		if Defs.exotic_kind(int(i)) == "abyss":
+			return int(i)
+	return -1
+
+## its steps: [{title, how, done}]
+func mystery_steps() -> Array:
+	var wi := mystery_world()
+	if wi < 0:
+		return []
+	var nm := String(Defs.make_planet(wi)["name"])
+	var md: Dictionary = (game.items.get("myst", {}) as Dictionary).get(str(wi), {})
+	var notes: Array = md.get("notes", [-1, -1, -1, -1, -1])
+	var nk := 0
+	for nv in notes:
+		if int(nv) >= 0:
+			nk += 1
+	var solved := bool(md.get("solved", false))
+	var claimed := bool(md.get("claimed", false))
+	var been := not md.is_empty() or int(game.planet.get("index", 0)) == wi
+	return [
+		{"title": "Forge the Tempest Keel", "done": game.items.has("keel") or been,
+			"how": "A maelstrom spins round %s and hurls ships back out. Abyss pearls lie in an ocean world's seabed; with star iron and hull plating (salvage from wrecks) the Wisp Forge makes a Tempest Keel that rides it out." % nm},
+		{"title": "Fly to %s" % nm, "done": been,
+			"how": "Through the maelstrom (its marker at the screen's edge) and down onto one of its islands. Its sea is hundreds of cells deep: below 160 the abyss crushes you without the Depth Seal (Wards, from abyss pearls), and it's dark: bring light."},
+		{"title": "Read the tide-stones (%d/5)" % nk, "done": nk >= 5 or solved,
+			"how": "Standing stones on the islands and the shallow shelves, each carved with a glyph and with dots for its place in a song of five notes. F beside one reads it."},
+		{"title": "Sing the Drowned Choir's song", "done": solved,
+			"how": "The Temple of the Drowned Choir stands on the deepest floor of the abyss. Its hall is dry: swim into the tunnel in its plinth and come up through the moon pool. F rings a pillar; ring them in the song's order (a wrong note starts it again)."},
+		{"title": "Claim what the Choir sealed away", "done": claimed,
+			"how": "The ward is broken: F at the altar in the vault."},
+	]
+
+## the notes of the song you know, in order ("?" for one you don't)
+func mystery_notes() -> String:
+	var wi := mystery_world()
+	if wi < 0:
+		return ""
+	var md: Dictionary = (game.items.get("myst", {}) as Dictionary).get(str(wi), {})
+	var notes: Array = md.get("notes", [-1, -1, -1, -1, -1])
+	var out := []
+	for nv in notes:
+		out.append("?" if int(nv) < 0 else String(MysteryArt.GLYPHS[int(nv)]))
+	return " · ".join(out)
+
+## the wisp's word as you first come near a maelstrom, and as you first land on a deep ocean world
+func _mystery_tick(here: int) -> void:
+	var it: Dictionary = game.items
+	if Defs.is_exotic(here) and not game.space.active and not it.has("myst_landed_%d" % here):
+		it["myst_landed_%d" % here] = true
+		say("This world sings under its waters. Five tide-stones on its islands and shelves hold a song; on the deepest floor a temple waits to hear it. L shows what we know.")
+		return
+	if game.space.active and not it.has("myst_heard") and not it.has("keel"):
+		for b in game.space.bodies:
+			if String(b.get("exotic", "")) == "abyss" and (game.player.pos - (b["pos"] as Vector2)).length() < float(b["space"]) + 7000.0:
+				it["myst_heard"] = true
+				say("That storm spins round a deep ocean world, %s. Something old sleeps on its sea floor. A Tempest Keel would ride the maelstrom out." % String(b["name"]))
+				return
+

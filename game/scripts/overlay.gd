@@ -1,5 +1,6 @@
 extends Node2D
 
+const MysteryArt := preload("res://scripts/mystery.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
 ## Draws everything that isn't terrain, in screen pixels on top of the GPU
@@ -209,6 +210,37 @@ func _draw_sense() -> void:
 		var q := sp.floor()
 		draw_rect(Rect2(q - Vector2(1, 1), Vector2(z + 2.0, z + 2.0)), Color(c.r, c.g, c.b, (0.18 + 0.3 * flash) * fade))
 		draw_rect(Rect2(q, Vector2(z, z)), Color(minf(1.0, c.r + flash * 0.4), minf(1.0, c.g + flash * 0.4), minf(1.0, c.b + flash * 0.4), (0.65 + 0.35 * flash) * fade))
+
+## the resonance pillars' glyphs over them: dim, lit (rung in turn, or all once the song is sung), or a red
+## flash for a wrong note
+func _draw_mystery() -> void:
+	var md: Dictionary = game.mystery.data()
+	var view := Rect2(-12.0, -12.0, float(game.VW) + 24.0, float(game.VH) + 24.0)
+	var pil: Array = md.get("pillars", [])
+	for k in pil.size():
+		var pw: Vector2 = pil[k]["pos"]
+		var sp: Vector2 = game.world_to_screen(pw - game.basis_d(atan2(pw.y, pw.x)) * 31.0)
+		if not view.has_point(sp):
+			continue
+		var col := Color(0.45, 0.55, 0.75, 0.55)
+		if game.mystery.flash.has(k):
+			col = Color(1.0, 0.35, 0.3, 0.9)
+		elif game.mystery.lit.has(k):
+			var pulse := 0.8 + 0.2 * sin(float(game.frame) * 0.1 + float(k))
+			col = Color(0.6 * pulse, 0.95 * pulse, 1.0, 1.0)
+			for q in 10:
+				var a := float(q) / 10.0 * TAU + float(game.frame) * 0.02
+				draw_rect(Rect2((sp + Vector2(cos(a), sin(a)) * 7.0).floor(), Vector2.ONE), Color(0.6, 0.9, 1.0, 0.4))
+		_glyph(sp, int(pil[k]["glyph"]), col)
+
+func _glyph(sp: Vector2, g: int, col: Color) -> void:
+	var art: Array = MysteryArt.GLYPH_ART[g]
+	var o := (sp - Vector2(3.5, 3.5)).floor()
+	for y in 7:
+		var line: String = art[y]
+		for x in 7:
+			if line[x] == "#":
+				draw_rect(Rect2(o + Vector2(x, y), Vector2.ONE), col)
 
 ## creatures killed by others (ecology.gd): on their backs, darkened, fading as they go
 func _draw_carcasses() -> void:
@@ -801,6 +833,19 @@ func _draw_all() -> void:
 			_folk_mark(v2)
 
 	_draw_carcasses()
+	# a deep ocean world's mystery: the pillars' glyphs, and what F would do in reach
+	if game.mystery != null and not game.mystery.data().is_empty():
+		_draw_mystery()
+		var mp: String = game.mystery.prompt()
+		if mp != "":
+			var nr: Dictionary = game.mystery.near
+			var md: Dictionary = game.mystery.data()
+			var at: Vector2 = game.player.pos
+			match String(nr["kind"]):
+				"stone": at = md["stones"][int(nr["i"])]["pos"]
+				"pillar": at = md["pillars"][int(nr["i"])]["pos"]
+				"vault": at = md["vault"]
+			bubbles.append([at - game.basis_d(atan2(at.y, at.x)) * 6.0, mp, 0.85])
 	tq = _part("draw: words, carcasses", tq)
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	var vr := Rect2(-120.0, -120.0, float(game.VW) + 240.0, float(game.VH) + 240.0)

@@ -262,7 +262,7 @@ func try_enter() -> void:
 	vel += m.pos.normalized() * 0.6          # (a nudge out, so you don't drop straight back in)
 	home = int(game.planet["index"])
 	org = Defs.planet_g(home)
-	charted[home / Defs.SYSTEM.size()] = true
+	charted[Defs.system_of(home)] = true
 	pictures[home] = game.capture_planet()
 	sun_ang = game.sun_angle()
 	_make_bodies(true)
@@ -579,6 +579,12 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		belt_dir = n
 		belt_col = b["belt"]
 		var t := Vector2(-n.y, n.x)
+		var mael: bool = String(b.get("exotic", "")) == "abyss"
+		if mael:
+			# (a maelstrom: it spins you round the world as much as it throws you out, so the gale streaks
+			# swirl; user, 23 Nov: "different hazards to traverse to get to different types of planets")
+			v += t * (0.25 + 1.1 * f)
+			belt_dir = (n + t * 1.4).normalized()
 		v += n * (0.03 + 0.85 * f * f)
 		var vin := -v.dot(n)
 		if vin > 0.0:
@@ -597,7 +603,10 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		_belt_warn -= 1
 		if _belt_warn <= 0:
 			_belt_warn = 420
-			game.ui.toast("%s is wrapped in a storm belt that throws you back. A Core Drive (forged at the Wisp Forge from this world's Planet Core and star iron) carries the skiff through." % b["name"], col.lightened(0.4), 4.5)
+			if mael:
+				game.ui.toast("%s spins inside a maelstrom that hurls you round and out. A Tempest Keel (abyss pearls, star iron and hull plating, at the Wisp Forge) rides it out." % b["name"], col.lightened(0.4), 4.5)
+			else:
+				game.ui.toast("%s is wrapped in a storm belt that throws you back. A Core Drive (forged at the Wisp Forge from this world's Planet Core and star iron) carries the skiff through." % b["name"], col.lightened(0.4), 4.5)
 	return v
 
 ## lightning out of the belt onto whoever is at p: it hurts, shakes the view and lights it up
@@ -645,8 +654,15 @@ func _beam(m, sk) -> void:
 	_mine_at(m, p, m.dig_r * 1.2)
 
 ## can the skiff go to planet i? (home and any planet up to its reach; on foot, only home)
+## (an exotic world is reached through its own hazard instead: main `exotic_ok`)
 func reachable(i: int) -> bool:
+	if Defs.is_exotic(i):
+		return i == home or game.exotic_ok(i)
 	return i == home or i <= game.skiff_reach()
+
+## what keeps planet i out of reach, for its marker
+func barrier_name(i: int) -> String:
+	return "maelstrom" if Defs.is_exotic(i) else "storm belt"
 
 ## Clearly nearer to another planet than to home: make it in the background, then move over to it.
 func _maybe_travel(p: Vector2) -> void:
@@ -672,7 +688,7 @@ func fuel() -> int:
 
 ## what a journey to planet i burns: JOURNEY_CELLS in home's system, twice that into another
 func journey_cost(i: int) -> int:
-	var same: bool = i / Defs.SYSTEM.size() == home / Defs.SYSTEM.size()
+	var same: bool = Defs.system_of(i) == Defs.system_of(home)
 	return JOURNEY_CELLS if same else JOURNEY_CELLS * 2
 
 func _fuel_note(txt: String) -> void:
@@ -694,7 +710,7 @@ func travel(index: int) -> void:
 	_reanchor(-Defs.g_rel(Defs.planet_g(index), org))
 	home = index
 	org = Defs.planet_g(index)
-	charted[index / Defs.SYSTEM.size()] = true
+	charted[Defs.system_of(index)] = true
 	target = -1
 	_make_bodies(true)
 	_find_near(game.skiff.pos if riding else game.player.pos)
@@ -1155,7 +1171,7 @@ func planet_tick() -> void:
 	if game.frame % 600 == 0 and game.planet.has("index"):
 		# (the planet you're on and the sky round it are on the map)
 		_scan_quiet(Defs.planet_g(int(game.planet["index"])))
-		charted[int(game.planet["index"]) / Defs.SYSTEM.size()] = true
+		charted[Defs.system_of(int(game.planet["index"]))] = true
 	if not easing:
 		return
 	var zt: float = game.zoom_levels[game.zoom_i]
@@ -1295,7 +1311,7 @@ func _draw_space() -> void:
 		var bi := int(b2["index"])
 		if not reachable(bi):
 			hc = Color(0.62, 0.6, 0.66)
-		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · storm belt"), hc)
+		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · " + barrier_name(bi)), hc)
 	# the nearest other systems, by their stars (at most three)
 	for k3 in mini(3, others.size()):
 		var o3: Array = others[k3]
@@ -1416,6 +1432,20 @@ func _draw_belts(xf: Transform2D) -> void:
 			var deep1 := xf * (c + d1 * r_in)
 			var ch := Color(col.r, col.g, col.b, 0.05 + 0.03 * i0)
 			draw_polygon(PackedVector2Array([deep0, in0, in1, deep1]), PackedColorArray([Color(col.r, col.g, col.b, 0.13), ch, ch, Color(col.r, col.g, col.b, 0.13)]))
+		if String(b.get("exotic", "")) == "abyss":
+			# a maelstrom: spiral arms of cloud wheeling through the belt
+			for arm in 7:
+				var pts := PackedVector2Array()
+				var a0 := float(arm) / 7.0 * TAU + tt * 0.004
+				for q in 24:
+					var s := float(q) / 23.0
+					var rr := r_out + 160.0 - s * (r_out + 160.0 - r_in)
+					var aa := a0 + s * 1.6
+					if absf(angle_difference(aa, ac)) > span + 0.2:
+						continue
+					pts.append(xf * (c + Vector2(cos(aa), sin(aa)) * rr))
+				if pts.size() >= 2:
+					draw_polyline(pts, Color(col.r * 1.2, col.g * 1.2, col.b * 1.3, 0.3), 3.0)
 
 ## inside a storm belt: streaks of its wind racing past outward (more and brighter the deeper you are),
 ## and a tint of its colour over the view
@@ -1559,8 +1589,8 @@ func _make_bodies(force := false) -> void:
 	# the systems within Galaxy.BODY_R of you (home's always, while you're near it)
 	var g := player_g() if active else Defs.planet_g(home)
 	var sys: Array = Galaxy.systems_near(g[0], g[1], Galaxy.BODY_R)
-	if not sys.has(home / Defs.SYSTEM.size()) and at_home():
-		sys.append(home / Defs.SYSTEM.size())
+	if not sys.has(Defs.system_of(home)) and at_home():
+		sys.append(Defs.system_of(home))
 	sys.sort()
 	var key := str(sys) + ":" + str(home)
 	if key == _body_key and not force:
@@ -1568,10 +1598,9 @@ func _make_bodies(force := false) -> void:
 	_body_key = key
 	_bodies_for = home
 	bodies.clear()
-	var n: int = Defs.SYSTEM.size()
 	var sun_dir := Vector2(cos(sun_ang), sin(sun_ang))
 	for r in sys:
-		for i in range(r * n, r * n + n):
+		for i in Defs.planets_of(r):
 			var pl: Dictionary = Defs.make_planet(i)
 			var top: float = float(pl["radius"]) + Defs.ATMO
 			# (a disc is ~17 ms of script: kept until the sun has moved well round, and a new system's
@@ -1580,7 +1609,7 @@ func _make_bodies(force := false) -> void:
 			var dc: Array = _discs.get(dk, [])
 			var tex = null
 			if dc.is_empty() or absf(angle_difference(float(dc[1]), sun_ang)) > 0.5:
-				if r == home / n and dc.is_empty():
+				if r == Defs.system_of(home) and dc.is_empty():
 					dc = [ImageTexture.create_from_image(_disc_image(pl, sun_dir)), sun_ang]
 					_discs[dk] = dc
 					tex = dc[0]
@@ -1593,6 +1622,7 @@ func _make_bodies(force := false) -> void:
 				tex = dc[0]
 			bodies.append({"index": i, "pos": local_of(Defs.planet_g(i)), "top": top, "sys": r,
 				"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": tex, "belt": Defs.climate(pl)["belt"],
+				"exotic": String(pl.get("exotic", "")),
 				"col": Defs.COLOR[int(Defs.BIOMES[pl["biomes"][0]]["top"])]})
 
 ## one planet disc grown a tick (a system coming into view)
@@ -1625,7 +1655,7 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 	noise.frequency = 0.045
 	var cols := []
 	for b in pl["biomes"]:
-		cols.append(Defs.COLOR[int(Defs.BIOMES[b]["top"])])
+		cols.append(Color(0.07, 0.2, 0.46) if b == "abyss" else (Color(0.14, 0.4, 0.66) if b == "ocean" and pl.has("exotic") else Defs.COLOR[int(Defs.BIOMES[b]["top"])]))
 	var sea := float(pl["sea"]) > 0.0
 	var sky: Color = pl["sky"]
 	var haze := Color(0.45, 0.65, 1.0) * sky

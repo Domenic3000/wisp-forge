@@ -592,6 +592,37 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 		float hr = h2(ivec2(col, 81), SEED);
 		if (hr < 0.2 && dy < 4.0 + floor(hr * 50.0)) return M_LEAF;
 	}
+	if (floraType == 10 && inWater) {
+		// a deep ocean world's sea floor: kelp forests on the upper slopes; in the dark below, glowing coral
+		// fans, tube worms with lit tips and pale glowcaps (the only light down there but yours)
+		float wcol = surfB(th).y - floor(sa.x);
+		float hr = h2(ivec2(col, 82), SEED);
+		if (wcol < 170.0) {
+			if (hr < 0.28 && dy < 6.0 + floor(hr * 150.0)) return M_LEAF;
+		} else {
+			float bw5 = 9.0;
+			int b5 = int(floor(arc / bw5));
+			for (int k = -1; k <= 1; k++) {
+				int bb = b5 + k;
+				float hb = h2(ivec2(bb, 93), SEED);
+				if (hb > 0.42) continue;
+				float cx = (float(bb) + 0.5) * bw5;
+				float dx = arc - cx;
+				float by = r - floor(surfA(cx / RS0).x);
+				float hs = 3.0 + floor(hb * 30.0);
+				if (by < 0.0 || by >= hs) continue;
+				if (hb < 0.09) {
+					// a coral fan, widening upward, lacy
+					if (abs(dx) < (by / hs) * (2.0 + hb * 40.0) + 0.6 && h2(ivec2(int(arc * 2.0), int(r * 2.0)), SEED + 94) < 0.7) return M_CRYSTAL;
+				} else if (hb < 0.24) {
+					// tube worms: thin stalks with glowing tips
+					if (abs(dx - sin(by * 0.4 + hb * 20.0)) < 0.6) return by > hs - 2.0 ? M_SHROOM : M_STALK;
+				} else if (by < 2.0 + hb * 5.0 && abs(dx) < 1.0 + hb * 2.0) {
+					return M_SHROOM;
+				}
+			}
+		}
+	}
 	return 0u;
 }
 

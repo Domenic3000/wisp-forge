@@ -495,6 +495,48 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   saving, back home and landing; pictures `galaxy_*.png`. The wild-life checks (`_test_creatures`,
   `_test_ecology`) pass alone but now and then fail in the full run (what earlier checks leave near the start).
 
+## Exotic worlds: the deep ocean world first (user, 23 Nov: "are there super deep ocean worlds? also different types of planets would be nice with different mysteries to solve, along with different hazards to traverse to get to" them; chose: the deep ocean first, clues and puzzles, optional with big rewards; gas giants, stars and black holes later)
+- Indices: `Defs.EXOTIC` (100000) + system x `EXO_SLOTS` (8) + k; `is_exotic`, `system_of(i)` (never `i / 5` for a
+  planet index any more), `exotics_of(r)` (system 0 always one, others half the time), `planets_of(r)` (the round
+  of five plus its exotics: space `_make_bodies`, galaxy `_near_planet`, the map), `exotic_kind(i)`,
+  `_exotic_local` (92-118k from the first planet on the bearing farthest from the others), `_exotic_planet`
+  (kind "abyss", "exotic": "abyss", a name + " Deep", biomes mostly "abyss" with two "ocean" shelves and two narrow
+  islands (jungle, forest: where you come down), sea 8-12, "guardians" ["ocean"]). Not on the Core Drive's path:
+  space `reachable(i)` asks main `exotic_ok(i)` (abyss: `items["keel"]`); the Core Drive is hidden on an exotic world
+  and a save on one never raises `items["reach"]`; quest chapters ignore exotic indices ("landed" too).
+- THE MAELSTROM: an unreachable exotic's storm belt (`body["exotic"]`): `_storm` spins you round it (0.25 + 1.1 f a
+  tick along it, more than it throws you out) and swirls the gale; `_draw_belts` adds wheeling spiral arms; markers
+  say "maelstrom" (`barrier_name`). The TEMPEST KEEL (recipe "keel", Travel: 12 Abyss Pearl, 6 Star Iron, 10 Hull
+  Plating; learned on finding pearls, hidden until the skiff) lets you through.
+- The ABYSS biome (`BIOMES["abyss"]`: off 430, amp 26, gravel over sand, flora 10, ug 1): its floor 400-480 under
+  the sea. gen.comp flora 10: kelp where the sea is under 170 deep, below that glowing coral fans (CRYSTAL), tube
+  worms (STALK, lit SHROOM tips) and glowcaps. light.comp: under a sea the daylight fades as exp(-depth / 110) and
+  turns blue-green (`uw`); render.comp draws open water over the sky LIT and opaque (`col = mc * 0.82; flag 0`), so
+  every sea darkens with depth and at night. Hazards: "deep" (Tide Charm) and "crush" (`HAZARDS["crush"]`, 160+
+  under the sea, ward "depthseal": the DEPTH SEAL, Wards, abyss pearls), climate `CLIMATES["abyss"]`; KIND_ORES and
+  KIND_TRADE "abyss" (island shops sell both wards). Creatures "lanterneel", "abyssjelly", "gulper" ("glow": main gives
+  up to 6 near you a light). buildings `_try_place` puts nothing on the abyss floor; no dungeons on an exotic world.
+- THE MYSTERY (buildings `_abyss_mystery`, its own RNG; scripts/mystery.gd, main `mystery`): five of six glyphs
+  (`Mystery.GLYPHS`, 7 x 7 `GLYPH_ART`) in an order; five TIDE-STONES (`_tide_stone`: a slab carved with its glyph in
+  CRYSTAL and place + 1 WISP dots; islands first, then shelves, 140+ apart); the TEMPLE OF THE DROWNED CHOIR
+  (`_sunken_temple`, `TEMPLE_W` 250, on the deepest level stretch): a masonry plinth, a RUNESTONE hall 62 high written
+  as AIR (dry: water never rises in the simulation) entered by a MOON POOL (a scaffold over a gap in the floor) from a
+  WATER-filled tunnel out of the plinth's side, five resonance pillars (background; glyph shuffled), a ward of
+  RUNESTONE before the vault's altar, crystal lamps, a pediment roof, a chest. `mystery` dict: order, stones [{pos,
+  glyph, place}], pillars [{pos (where you stand), glyph}], ward {x0, y0, w, h, ax, aw}, vault, hall, pool, mouth.
+  mystery.gd: `tick` (what's in reach), F `interact` -> `read` (the note into `st["known"]`, a wisp line), `ring` (the
+  right note lights it; a wrong one silences them all: `rung` cleared, a red flash), `_solve` (an air stamp over the
+  ward, like a warden's), `claim` (the TIDE HEART `items["tideheart"]`: no breath lost under water, bears "deep" and
+  "crush", swim x1.5; 30 pearls, 8 star iron, 220 coins, 2 draughts). Saved in `planet_state["mystery"]`; a summary
+  in `items["myst"][index]`. Overlay `_draw_mystery` (glyphs over the pillars: dim, lit, red) and the "[F] ..."
+  prompt bubble. quest.gd `mystery_world`, `mystery_steps` (keel, fly there, read the stones n/5, sing the song,
+  claim), `mystery_notes`, `_mystery_tick` (the wisp speaks on first coming near a maelstrom and on landing); the HUD
+  line on an exotic world is its next mystery step; the journal (L) has "A mystery" with the song so far.
+- Test: `_test_abyss` ("abyss"; in the full run after `_test_far_biomes`): placement, the maelstrom's spin and the
+  keel, the sea 380+ deep, the light at depth, the crushing deep and the Depth Seal, every stone read, the hall dry
+  and the pool flooded, a wrong note then the song, the ward's cells gone, the Tide Heart; pictures `abyss_deep.png`,
+  `abyss_stone.png`, `abyss_temple.png`, `abyss_vault.png`, `abyss_journal.png`.
+
 ## The main quest (scripts/quest.gd; user, 23 Nov: "add a main quest system to guide the player through the main progressions"; chose: the wisp companion speaks it, a HUD line + journal, and the wisp's own powers as rewards)
 - main `quest` (a RefCounted), `quest.tick()` from `_tick` on the planet and in space; every 30 frames it ticks off
   steps whose condition holds (`need`: a list of conditions, ANY one does: "held" mat n, "found" ore, "spell",
@@ -1253,7 +1295,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

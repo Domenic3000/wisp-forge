@@ -1225,6 +1225,7 @@ func toggle_journal(g) -> void:
 	var v: VBoxContainer = journal.get_meta("box")
 	v.add_theme_constant_override("separation", 3)
 	var q = g.quest
+	q.ensure()
 	var hd := _head("Journal", 24, CREAM)
 	hd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(hd)
@@ -1254,6 +1255,25 @@ func toggle_journal(g) -> void:
 			list.add_child(_label("· " + String(st["title"]), 12, Color(0.62, 0.6, 0.8)))
 	if q.at >= steps.size():
 		list.add_child(_label("✦ This chapter is done. Land on the next world and the wisp will speak again.", 12, GOLD))
+	# a mystery heard of (a deep ocean world in this system): its steps and the song so far
+	var mw: int = q.mystery_world()
+	if mw >= 0 and (g.items.has("myst_heard") or g.items.has("keel") or (g.items.get("myst", {}) as Dictionary).has(str(mw)) or Defs.is_exotic(int(g.planet.get("index", 0)))):
+		list.add_child(_rule(200))
+		list.add_child(_label("A mystery: %s" % String(Defs.make_planet(mw)["name"]), 12, CREAM))
+		var mfirst := true
+		for ms in q.mystery_steps():
+			if bool(ms["done"]):
+				list.add_child(_label("✓ " + String(ms["title"]), 12, Color(0.55, 0.6, 0.72)))
+			elif mfirst:
+				mfirst = false
+				list.add_child(_label("✦ " + String(ms["title"]), 12, MANA))
+				var mh := _label(String(ms["how"]), 12, CREAM)
+				mh.autowrap_mode = TextServer.AUTOWRAP_WORD
+				mh.custom_minimum_size = Vector2(380, 0)
+				list.add_child(mh)
+			else:
+				list.add_child(_label("· " + String(ms["title"]), 12, Color(0.62, 0.6, 0.8)))
+		list.add_child(_label("The song: " + q.mystery_notes(), 12, Color(0.7, 0.85, 1.0)))
 	list.add_child(_rule(200))
 	list.add_child(_label("The wisp's gifts", 12, CREAM))
 	for pw in QuestScript.POWERS:
