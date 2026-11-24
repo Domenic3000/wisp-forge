@@ -315,8 +315,11 @@ func _test_ui() -> void:
 	g.ui.hide_forge()
 	ui.settings_panel.visible = true
 	ui._refresh_settings()
+	var t_menu: float = g.time
 	await _frames(10)
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_settings.png"))
+	if g.state == "play" and absf(g.time - t_menu) > 0.0001:
+		bad.append("the Esc menu doesn't pause the game (time went on %.3f)" % (g.time - t_menu))
 	ui.settings_panel.visible = false
 	# a shop, if a keeper is about
 	var shop_shot := false

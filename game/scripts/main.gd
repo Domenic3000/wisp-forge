@@ -809,7 +809,8 @@ func _process(delta: float) -> void:
 		_take_gpu_results()
 		prof_add("GPU results", Time.get_ticks_usec() - tp)
 	var steps := 1
-	if state == "play" or state == "dead":
+	var menu_up := menu_paused()
+	if (state == "play" or state == "dead") and not menu_up:
 		played += delta
 		_tick_acc += minf(delta, 0.1)
 		steps = mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
@@ -836,7 +837,7 @@ func _process(delta: float) -> void:
 			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
 			lights.clear()
 		else:
-			_gpu_frame(state == "forge" or state == "shop" or state == "station", steps)
+			_gpu_frame(state == "forge" or state == "shop" or state == "station" or menu_up, steps)
 		prof_add("GPU submit", Time.get_ticks_usec() - tp)
 		tp = Time.get_ticks_usec()
 		ui.update_hud(self)
@@ -4937,7 +4938,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_ESCAPE and state == "play":
 			ui.toggle_settings()
 			return
-		if state != "play":
+		if state != "play" or menu_paused():
 			return
 		if k == KEY_SPACE or k == KEY_W or k == KEY_UP:
 			jump_buf = 8   # catch even the quickest tap
@@ -4985,7 +4986,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			ui.toast("Creative stock: +200 of every material, and every recipe", Color(0.6, 1, 0.6))
 	elif state == "map" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
 		_map_mouse(ev)
-	elif ev is InputEventMouseButton and ev.pressed and state == "play":
+	elif ev is InputEventMouseButton and ev.pressed and state == "play" and not menu_paused():
 		var wheel: bool = ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN
 		if wheel and ui.mouse_over_ui(false):
 			return                  # scrolling the satchel (past its end, too) never changes the spell
@@ -6467,6 +6468,11 @@ func quit_to_title() -> void:
 	if ui.settings_panel.visible:
 		ui.toggle_settings()
 	ui.show_title(true)
+
+## The Esc menu (settings) is open over play: the world waits (user, 23 Nov: "escape menu doesnt pause")
+func menu_paused() -> bool:
+	return (state == "play" or state == "dead") and ui != null and ui.settings_panel != null \
+		and ui.settings_panel.visible
 
 func start_game(use_save: bool) -> void:
 	state = "loading"

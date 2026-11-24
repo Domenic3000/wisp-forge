@@ -1033,6 +1033,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
   thickness. `Build.shape_cells` / `shape_stamp`; one material per cell; blocks skip cells where someone stands.
+- The Esc menu pauses (user, 23 Nov: "escape menu doesnt pause"): main `menu_paused()` (state play/dead with
+  ui.settings_panel showing): `_process` runs no ticks and the GPU frame as paused, keys and clicks do nothing
+  but Esc. Checked in `_test_ui` (the game's `time` stands still while it's open).
 - Each spell has its own cooldown (user, 23 Nov: "healing cooldown locks other spells"): `Mage.spell_cd` (id ->
   ticks), main `spell_ready(m, id)` / `spell_used(m, id, cd)` / `tick_spell_cds(m)` (space.gd's tick too); `cast_cd`
   is now only the short gap after any cast (`SPELL_GAP` 10). The spell bar darkens each slot by its own.
