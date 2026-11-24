@@ -1033,6 +1033,14 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
   thickness. `Build.shape_cells` / `shape_stamp`; one material per cell; blocks skip cells where someone stands.
+- One satchel for everything carried (user, 23 Nov: "its a little convoluted ... i can have a bed in my
+  inventory, but not a kiln and i cant place a bed from my inventory"): ui.gd `_update_satchel`, open, is
+  sections (`satchel` a VBox; `_sat_section`, `_sat_slot`, `SAT_COLS` 8, `satchel_slots` for the tests): Blocks,
+  Nature, Ores & ingots (`_sat_group`; click a placeable one: Conjure places it), To set down (torches, doors,
+  furniture, workshops taken up (`items["st_<kind>"]`, `Icons.station`): click = main `hold_carried(what, idx,
+  sk)`: build mode opens on that piece), Draughts & sigils; the name of what you point at under it (`_sat_name`).
+  Build's Satchel tab lists carried workshops too (`Build.carried_pieces(furn, items)`). Checked in
+  `_test_workshops`.
 - The Esc menu pauses (user, 23 Nov: "escape menu doesnt pause"): main `menu_paused()` (state play/dead with
   ui.settings_panel showing): `_process` runs no ticks and the GPU frame as paused, keys and clicks do nothing
   but Esc. Checked in `_test_ui` (the game's `time` stands still while it's open).

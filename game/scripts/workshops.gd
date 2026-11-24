@@ -182,7 +182,7 @@ func take_at(m, p: Vector2) -> bool:
 		list.remove_at(k)
 		if open_st == st:
 			close()
-		game.ui.toast("%s taken up: set it down again from build mode (Workshops)" % Defs.STATIONS[st.kind]["name"], Color(1, 0.85, 0.5), 2.5)
+		game.ui.toast("%s taken up: it's in your satchel (I), click it there to set it down again" % Defs.STATIONS[st.kind]["name"], Color(1, 0.85, 0.5), 2.5)
 		game.audio.play("dig", st.pos, 0.6)
 		return true
 	return false

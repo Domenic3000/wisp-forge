@@ -38,8 +38,11 @@ var _hot_slots := []           # the slots' controls (their cooldown shading is 
 var build_bar: PanelContainer      # build mode: categories, pieces and what the chosen one costs
 var build_box: VBoxContainer
 var _build_key := ""
-var satchel: GridContainer
+var satchel: VBoxContainer         # the open satchel: a heading and a grid per section
+var satchel_slots := 0             # (slots in it, for the tests)
+var _sat_name: Label               # the name of what the pointer's over
 var satchel_panel: PanelContainer
+const SAT_COLS := 8                # the open satchel's columns
 var satchel_open := false          # (I or Tab) the whole satchel; closed, a pouch
 var pouch: HBoxContainer
 var pouch_hint: Label
@@ -531,20 +534,23 @@ func _build_hud() -> void:
 	var sh := _head("Satchel", 12)
 	sh.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sv.add_child(sh)
-	var srule := _rule(136)
+	var srule := _rule(SAT_COLS * 27 + 2)
 	sv.add_child(srule)
 	_satchel_full = [sh, srule]
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.custom_minimum_size = Vector2(140, 0)
+	scroll.custom_minimum_size = Vector2(SAT_COLS * 27 + 6, 0)
 	sv.add_child(scroll)
 	_satchel_scroll = scroll
-	satchel = GridContainer.new()
-	satchel.columns = 5
-	satchel.add_theme_constant_override("h_separation", 1)
-	satchel.add_theme_constant_override("v_separation", 1)
+	satchel = VBoxContainer.new()
+	satchel.add_theme_constant_override("separation", 2)
 	scroll.add_child(satchel)
 	_satchel_full.append(scroll)
+	_sat_name = _label(" ", 11, CREAM)
+	_sat_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sat_name.custom_minimum_size.x = SAT_COLS * 27
+	sv.add_child(_sat_name)
+	_satchel_full.append(_sat_name)
 	# closed (the usual), the satchel is a pouch: what Conjure places, your draughts and coins
 	pouch = _box(false, 3)
 	pouch.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -1313,7 +1319,7 @@ func _update_build_bar(g) -> void:
 		var txt: String = ("%d %s" % [k + 1, pc["name"]]) if k < 9 else String(pc["name"])
 		row.add_child(_head(txt, 12, col) if on else _label(txt, 12, col))
 	if lst.is_empty() and g.build_cat == Build.CAT_SATCHEL:
-		var el := _label("Nothing carried. Shift + right-click a piece of furniture to take it whole, or forge some (C).", 12, CREAM)
+		var el := _label("Nothing carried. Shift + right-click furniture or a workshop to take it whole, or forge furniture (C).", 12, CREAM)
 		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		build_box.add_child(el)
 	if not piece.is_empty():
@@ -1597,12 +1603,13 @@ func _update_satchel(g) -> void:
 	for did0 in Defs.DRAUGHTS:
 		ik += "%s%d%s" % [did0, int(g.items.get(did0, 0)), "*" if g.player.buffs.has(did0) else ""]
 	for sk0 in g.items.keys():
-		if String(sk0).begins_with("sigil_"):
+		if String(sk0).begins_with("sigil_") or String(sk0).begins_with("st_"):
 			ik += "%s%d" % [sk0, int(g.items[sk0])]
 	if ik == _inv_key:
 		return
 	_inv_key = ik
 	for c in satchel.get_children():
+		satchel.remove_child(c)
 		c.queue_free()
 	for c2 in pouch.get_children():
 		pouch.remove_child(c2)
@@ -1632,55 +1639,128 @@ func _update_satchel(g) -> void:
 		pouch_hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		pouch.add_child(pouch_hint)
 		return
-	var n := 0
+	# open: sections, each sorted by name (user, 23 Nov: "its a little convoluted with everything"): what
+	# Conjure lays, what grows, ores and ingots, what you set down whole (click: in your hand, build mode on
+	# it), draughts and sigils. The name of what the pointer's over shows under it.
+	var groups := [[], [], [], [], []]
 	for m in Defs.NM:
-		if g.player.inv[m] <= 0:
+		if g.player.inv[m] <= 0 or Defs.KIND[m] == Defs.K_EMPTY or m == Defs.TORCH or m == Defs.WOODDOOR:
+			continue                     # (torches and doors are set down whole: below)
+		groups[_sat_group(m)].append(m)
+	for gi in 3:
+		(groups[gi] as Array).sort_custom(func(x, y): return String(Defs.NAMES[x]) < String(Defs.NAMES[y]))
+	var n := 0
+	for gi2 in 3:
+		if (groups[gi2] as Array).is_empty():
 			continue
-		var sl := _slot(Icons.mat(m), _count(g.player.inv[m]), m == g.mat, "%s  ×%d\nClick: Conjure places it" % [Defs.NAMES[m], g.player.inv[m]])
-		sl.gui_input.connect(_on_mat_input.bind(m))
-		satchel.add_child(sl)
-		n += 1
-	var np := int(g.items.get("potion", 0))
-	if np > 0:
-		satchel.add_child(_slot(Icons.item("potion"), str(np), false, "Healing Draught  ×%d\nH to drink" % np))
-		n += 1
-	for did in Defs.DRAUGHTS:
-		var nd := int(g.items.get(did, 0))
-		if nd <= 0:
-			continue
-		var dsl := _slot(Icons.draught(did), str(nd), g.player.buffs.has(did), "%s  ×%d\n%s\nClick to drink" % [Defs.DRAUGHTS[did]["name"], nd, Defs.DRAUGHTS[did]["desc"]])
-		dsl.gui_input.connect(func(ev: InputEvent):
-			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-				game.drink_draught(game.player, did)
-				_inv_key = "")
-		satchel.add_child(dsl)
-		n += 1
-	# guardians' sigils (summoning.gd): lay one on a Summoning Altar in its biome
-	for sk in g.items.keys():
-		if String(sk).begins_with("sigil_") and int(g.items[sk]) > 0 and Defs.BOSSES.has(String(sk).substr(6)):
-			var sb2: String = String(sk).substr(6)
-			satchel.add_child(_slot(Icons.thing(String(sk)), str(int(g.items[sk])), false, "%s  ×%d\nLay it on a Summoning Altar in the %s (F) to call %s" % [Defs.sigil_name(sb2), int(g.items[sk]), String(Defs.BIOMES[sb2]["name"]) if Defs.BIOMES.has(sb2) else sb2, Defs.BOSSES[sb2]["name"]]))
+		var gr := _sat_section(["Blocks", "Nature", "Ores & ingots"][gi2])
+		for m2 in groups[gi2]:
+			var can: bool = Defs.PLACE[m2] != 0
+			var tip := "%s  ×%d\n%s" % [Defs.NAMES[m2], g.player.inv[m2], "Click: Conjure places it" if can else "Kept for forging and trade"]
+			var sl := _sat_slot(gr, Icons.mat(m2), _count(g.player.inv[m2]), m2 == g.mat, tip, String(Defs.NAMES[m2]))
+			if can:
+				sl.gui_input.connect(_on_mat_input.bind(m2))
 			n += 1
-	# furniture carried whole, one slot per kind
+	# set down whole: torches, doors, furniture, workshops
+	var placing := []
+	if g.player.inv[Defs.TORCH] > 0:
+		placing.append(["torch", -1, "", Icons.mat(Defs.TORCH), g.player.inv[Defs.TORCH], "Torch"])
+	if g.player.inv[Defs.WOODDOOR] > 0:
+		placing.append(["door", -1, "", Icons.mat(Defs.WOODDOOR), g.player.inv[Defs.WOODDOOR], "Door"])
 	var fc := {}
+	var ffirst := {}
 	var frows := {}
 	var forder := []
-	for it in g.player.furn:
+	for fk in g.player.furn.size():
+		var it: Dictionary = g.player.furn[fk]
 		var fn: String = it["name"]
 		if not fc.has(fn):
 			fc[fn] = 0
+			ffirst[fn] = fk
 			forder.append(fn)
 			frows[fn] = it.get("rows", [])
 		fc[fn] = int(fc[fn]) + 1
+	forder.sort()
 	for fn2 in forder:
 		var fic: Texture2D = Icons.prop_rows(frows[fn2]) if not (frows[fn2] as Array).is_empty() else Icons.item("chair")
-		satchel.add_child(_slot(fic, str(fc[fn2]), false, "%s  ×%d\nB, the Satchel tab, to set it down" % [fn2, fc[fn2]]))
-		n += 1
+		placing.append(["furn", int(ffirst[fn2]), "", fic, int(fc[fn2]), fn2])
+	for sk0 in Defs.STATIONS:
+		var ns := int(g.items.get("st_" + String(sk0), 0))
+		if ns > 0:
+			placing.append(["station", -1, String(sk0), Icons.station(String(sk0)), ns, String(Defs.STATIONS[sk0]["name"])])
+	if not placing.is_empty():
+		var gp := _sat_section("To set down")
+		for pl in placing:
+			var psl := _sat_slot(gp, pl[3], str(pl[4]), false, "%s  ×%d\nClick: in your hand, to set down" % [pl[5], pl[4]], String(pl[5]))
+			psl.gui_input.connect(func(ev: InputEvent):
+				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+					game.hold_carried(String(pl[0]), int(pl[1]), String(pl[2])))
+			n += 1
+	# draughts and sigils
+	var used := []
+	var np := int(g.items.get("potion", 0))
+	if np > 0:
+		used.append([Icons.item("potion"), np, "Healing Draught  ×%d\nH to drink" % np, "Healing Draught", ""])
+	for did in Defs.DRAUGHTS:
+		var nd := int(g.items.get(did, 0))
+		if nd > 0:
+			used.append([Icons.draught(did), nd, "%s  ×%d\n%s\nClick to drink" % [Defs.DRAUGHTS[did]["name"], nd, Defs.DRAUGHTS[did]["desc"]], String(Defs.DRAUGHTS[did]["name"]), String(did)])
+	for sk in g.items.keys():
+		if String(sk).begins_with("sigil_") and int(g.items[sk]) > 0 and Defs.BOSSES.has(String(sk).substr(6)):
+			var sb2: String = String(sk).substr(6)
+			used.append([Icons.thing(String(sk)), int(g.items[sk]), "%s  ×%d\nLay it on a Summoning Altar in the %s (F) to call %s" % [Defs.sigil_name(sb2), int(g.items[sk]), String(Defs.BIOMES[sb2]["name"]) if Defs.BIOMES.has(sb2) else sb2, Defs.BOSSES[sb2]["name"]], Defs.sigil_name(sb2), ""])
+	if not used.is_empty():
+		var gu := _sat_section("Draughts & sigils")
+		for u in used:
+			var usl := _sat_slot(gu, u[0], str(u[1]), String(u[4]) != "" and g.player.buffs.has(String(u[4])), u[2], String(u[3]))
+			if String(u[4]) != "":
+				usl.gui_input.connect(func(ev: InputEvent):
+					if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+						game.drink_draught(game.player, String(u[4]))
+						_inv_key = "")
+			n += 1
+	satchel_slots = n
 	if n == 0:
-		var e := _label("Right-click\nto dig", 11, DIM)
-		satchel.add_child(e)
-	var rows := int(ceil(float(maxi(n, 1)) / 5.0))
-	_satchel_scroll.custom_minimum_size.y = minf(float(rows) * 27.0, maxf(80.0, root.size.y - 120.0))
+		satchel.add_child(_label("Right-click to dig", 11, DIM))
+	var hh := 0.0
+	for ch in satchel.get_children():
+		if ch is GridContainer:
+			hh += ceilf(float((ch as GridContainer).get_child_count()) / float(SAT_COLS)) * 27.0 + 2.0
+		else:
+			hh += 13.0
+	_satchel_scroll.custom_minimum_size.y = minf(maxf(hh, 20.0), maxf(80.0, root.size.y - 140.0))
+
+## which section of the open satchel a material goes in: 0 blocks, 1 nature, 2 ores and ingots
+func _sat_group(m: int) -> int:
+	if m in [Defs.WOOD, Defs.LEAF, Defs.SHROOM, Defs.CACTUS, Defs.TIMBER, Defs.LITTER, Defs.CAP, Defs.STALK,
+			Defs.DRYGRASS, Defs.ROOT, Defs.GRASS]:
+		return 1
+	if m in [Defs.COPPER, Defs.COAL, Defs.WISP, Defs.EMBER, Defs.FROST, Defs.CRYSTAL, Defs.STARIRON, Defs.CORE,
+			Defs.COPPERBAR, Defs.WISPBAR, Defs.XENITE, Defs.WISPCELL, Defs.VOIDESS, Defs.TREASURE] \
+			or (m >= Defs.FIREOPAL and m <= Defs.SILVER):
+		return 2
+	return 0
+
+## a section of the open satchel: its heading and its grid
+func _sat_section(title: String) -> GridContainer:
+	var h := _label(title, 11, Color(0.95, 0.8, 0.5))
+	satchel.add_child(h)
+	var gr := GridContainer.new()
+	gr.columns = SAT_COLS
+	gr.add_theme_constant_override("h_separation", 1)
+	gr.add_theme_constant_override("v_separation", 1)
+	satchel.add_child(gr)
+	return gr
+
+## a slot in the open satchel: its name shows under the satchel while the pointer's over it
+func _sat_slot(gr: GridContainer, t: Texture2D, count: String, chosen: bool, tip: String, nm: String) -> PanelContainer:
+	var sl := _slot(t, count, chosen, tip)
+	sl.mouse_entered.connect(func(): _sat_name.text = nm)
+	sl.mouse_exited.connect(func():
+		if _sat_name.text == nm:
+			_sat_name.text = " ")
+	gr.add_child(sl)
+	return sl
 
 # ------------------------------------------------------------------ forge --
 func _render_forge() -> void:

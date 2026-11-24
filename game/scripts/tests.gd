@@ -294,8 +294,18 @@ func _test_ui() -> void:
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_hud_pouch.png"))
 	g.ui.satchel_open = true
 	g.ui._inv_key = ""
+	# (something of each section: a carried kiln and a door for the "To set down" row)
+	var ui_st0: int = int(g.items.get("st_kiln", 0))
+	var ui_dr0: int = g.player.inv[Defs.WOODDOOR]
+	g.items["st_kiln"] = 1
+	g.player.inv[Defs.WOODDOOR] = maxi(ui_dr0, 2)
 	await _frames(20)
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_hud.png"))
+	if ui_st0 > 0:
+		g.items["st_kiln"] = ui_st0
+	else:
+		g.items.erase("st_kiln")
+	g.player.inv[Defs.WOODDOOR] = ui_dr0
 	var sr: Rect2 = ui._on_screen(ui.satchel_panel)
 	var hr: Rect2 = ui._on_screen(ui.hotbar)
 	var vs: Vector2 = g.get_viewport().get_visible_rect().size
@@ -303,7 +313,7 @@ func _test_ui() -> void:
 		bad.append("the satchel is off the screen (%s)" % sr)
 	if hr.size.x < 50 or not Rect2(Vector2.ZERO, vs).encloses(hr):
 		bad.append("the spell bar is off the screen (%s)" % hr)
-	var slots: int = ui.satchel.get_child_count()
+	var slots: int = ui.satchel_slots
 	g.ui.satchel_open = false
 	g.ui._inv_key = ""
 	g.ui.show_forge()
@@ -7584,6 +7594,16 @@ func _test_workshops() -> void:
 	var wk_ok11: bool = wk_took and int(g.items.get("st_kiln", 0)) >= 1 and g.player.inv[Defs.SAND] > wk_sand0
 	wk_rows.append("%staken up: %s, kilns carried %d, sand back %d" % ["" if wk_ok11 else "(!) ", wk_took, int(g.items.get("st_kiln", 0)), g.player.inv[Defs.SAND] - wk_sand0])
 	wk_ok = wk_ok and wk_ok11
+	# it's in the satchel with the furniture, and a click there puts it in your hand (user, 23 Nov)
+	var wk_listed := false
+	var wk_was_build: bool = g.build_on
+	g.hold_carried("station", -1, "kiln")
+	var wk_pc: Dictionary = g.build_piece()
+	wk_listed = g.build_on and g.build_cat == 5 and String(wk_pc.get("kind", "")) == "station" and String(wk_pc.get("station", "")) == "kiln"
+	if g.build_on and not wk_was_build:
+		g._toggle_build()
+	wk_rows.append("%sthe kiln taken up is in the satchel and goes in your hand from it: %s" % ["" if wk_listed else "(!) ", wk_listed])
+	wk_ok = wk_ok and wk_listed
 	var wk_h0 := 0
 	for wk_k3 in g.items:
 		if String(wk_k3).begins_with("hint_"):

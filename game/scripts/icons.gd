@@ -7,6 +7,7 @@ extends RefCounted
 
 const INK := Color(0.03, 0.02, 0.06)
 const _PROPS := preload("res://scripts/props.gd")
+const _WART := preload("res://scripts/workshop_art.gd")
 
 ## what a material's icon looks like (by id; the rest: a block, or a pile for powders, a drop for liquids)
 const MAT_STYLE := {
@@ -214,6 +215,34 @@ static func prop_rows(rows: Array) -> ImageTexture:
 				img.set_pixel(x, y, Color(String(_PROPS.PALETTE[int(_PROPS.CHARS[ch])])))
 			elif ch == "t":
 				img.set_pixel(x, y, Color(1.0, 0.7, 0.2))
+	var tex := _outlined(img)
+	_cache[k] = tex
+	return tex
+
+## a workshop carried in the satchel: its own picture shrunk to an icon (the first filled pixel of each block)
+static func station(kind: String) -> ImageTexture:
+	var k := "st_" + kind
+	if _cache.has(k):
+		return _cache[k]
+	var src: Image = _WART.frames(kind)["body"]
+	var w := src.get_width()
+	var h := src.get_height()
+	var stp := maxi(1, int(ceil(float(maxi(w, h)) / 13.0)))
+	var ow := maxi(1, (w + stp - 1) / stp)
+	var oh := maxi(1, (h + stp - 1) / stp)
+	var img := Image.create(ow, oh, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in oh:
+		for x in ow:
+			var c := Color(0, 0, 0, 0)
+			for dy in stp:
+				for dx in stp:
+					var yy := y * stp + dy
+					var xx := x * stp + dx
+					if c.a < 0.5 and yy < h and xx < w:
+						c = src.get_pixel(xx, yy)
+			if c.a >= 0.5:
+				img.set_pixel(x, y, Color(c.r, c.g, c.b, 1.0))
 	var tex := _outlined(img)
 	_cache[k] = tex
 	return tex

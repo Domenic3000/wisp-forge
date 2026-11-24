@@ -2886,7 +2886,7 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 	for q2 in 12:
 		_particle(mid + Vector2(randf() - 0.5, randf() - 0.5) * Vector2(w, h) * 0.8, Vector2(randf() - 0.5, -randf()) * 0.5, 18 + randi() % 14, Color(0.95, 0.8, 0.5), true, -0.01)
 	if m.local:
-		ui.toast("+ %s (set it down in build mode, B: Satchel tab)" % item["name"], Color(0.95, 0.8, 0.5), 2.5)
+		ui.toast("+ %s (in your satchel: click it there, I, to set it down)" % item["name"], Color(0.95, 0.8, 0.5), 2.5)
 	return true
 
 ## The nearest bed around `pos` (a piece whose cells are of kind Props.BED): its box of cells
@@ -5031,7 +5031,7 @@ func _toggle_build() -> void:
 ## the pieces of the chosen category, and the chosen one
 func build_list() -> Array:
 	if build_cat == Build.CAT_SATCHEL:
-		return Build.carried_pieces(player.furn)
+		return Build.carried_pieces(player.furn, items)
 	return Build.in_cat(build_pieces, build_cat)
 
 func build_piece() -> Dictionary:
@@ -5039,6 +5039,40 @@ func build_piece() -> Dictionary:
 	if l.is_empty():
 		return {}
 	return l[clampi(int(build_idx[build_cat]), 0, l.size() - 1)]
+
+## Something carried, put in your hand from the satchel (user, 23 Nov: a bed went in the satchel but
+## couldn't be set down from it, and a kiln taken up went nowhere you could see): build mode opens on it,
+## ready to set down. what: "furn" (Mage.furn index `idx`), "station" (a kind taken up), "torch", "door".
+func hold_carried(what: String, idx := -1, sk := "") -> void:
+	if player.aboard != null:
+		ui.toast("Step off the ship to set that down", Color(1, 0.8, 0.6), 2.0)
+		return
+	if not build_on:
+		_toggle_build()
+	while build_idx.size() < Build.CATS.size():
+		build_idx.append(0)
+	var want := ""
+	match what:
+		"furn", "station":
+			build_cat = Build.CAT_SATCHEL
+			var l := build_list()
+			for k in l.size():
+				var pc: Dictionary = l[k]
+				if (what == "furn" and String(pc["kind"]) == "carried" and int(pc["item"]) == idx) \
+						or (what == "station" and String(pc["kind"]) == "station" and String(pc["station"]) == sk):
+					build_idx[build_cat] = k
+					want = String(pc["name"])
+		"torch", "door":
+			var pname := "Torch" if what == "torch" else "Wooden Door"
+			for pc2 in build_pieces:
+				if String(pc2["name"]) == pname:
+					build_cat = int(pc2["cat"])
+					build_idx[build_cat] = Build.in_cat(build_pieces, build_cat).find(pc2)
+					want = pname
+	build_prev = {}
+	build_drag = false
+	if want != "":
+		ui.toast("%s in hand: click to set it down · B puts it away" % want, Color(0.95, 0.85, 0.55), 2.5)
 
 func _build_step(dir: int) -> void:
 	var n := build_list().size()

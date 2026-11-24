@@ -153,12 +153,19 @@ static func pieces() -> Array:
 
 ## The pieces you carry (Mage.furn: picked up whole with Shift + right-click, or forged at the Wisp
 ## Forge), as build pieces: each keeps its exact pixels and costs nothing to set down.
-static func carried_pieces(furn: Array) -> Array:
+static func carried_pieces(furn: Array, items: Dictionary = {}) -> Array:
 	var out := []
 	for k in furn.size():
 		var it: Dictionary = furn[k]
 		out.append({"cat": CAT_SATCHEL, "name": it["name"], "kind": "carried", "item": k, "rows": it["rows"],
 			"wall": bool(it.get("wall", false)), "kid": int(it.get("kind", 0)), "cost": {}})
+	# workshops taken up (items "st_<kind>"): set down again for nothing (user, 23 Nov: a kiln taken up
+	# went nowhere you could see, while a bed went in the satchel)
+	for sk in Defs.STATIONS:
+		var n := int(items.get("st_" + String(sk), 0))
+		if n > 0:
+			out.append({"cat": CAT_SATCHEL, "name": String(Defs.STATIONS[sk]["name"]), "kind": "station",
+				"station": String(sk), "carried": n, "cost": {}})
 	return out
 
 ## Furniture recipes for the Wisp Forge, from the same catalogue (the indoor pieces): forging one
@@ -168,7 +175,7 @@ static func furniture_recipes() -> Array:
 	for p in pieces():
 		if int(p["cat"]) == 2 and p.has("prop"):
 			out.append({"id": "furn_" + String(p["prop"]), "cat": "Furniture", "name": p["name"], "cost": p["cost"],
-				"furniture": p["prop"], "desc": "Carried in your satchel; set it down from build mode's Satchel tab."})
+				"furniture": p["prop"], "desc": "Carried in your satchel: click it there (I) to set it down."})
 	return out
 
 ## a carried piece for a satchel: a design of this piece (forged) or the pixels picked up
