@@ -1140,6 +1140,22 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_golem_reach`) now works too: `FoeAI.can_reach` says yes with no graph, and nothing asked for his class's graph
   until Pursuit did. Test: `_test_pursuit` ("pursuit"; in the full run after `_test_nav`; pictures
   `pursuit_tell.png`, `pursuit_came.png`).
+- BOSSES HUNT YOU DOWN (user, 24 Nov: "make them break walls chase and summon enemies aggresively"):
+  CHASE: `Pursuit` also comes when it has had no way to you for `KEPT_AT` (300) frames with you within `KEPT_R`,
+  struck or not (`Enemy.kept_t`, looked at twice a second); a summoned guardian's leash is 520 (summoning
+  `LEASH`, 230 before); a boss gives up only past main `GIVE_UP_D` (520) for `GIVE_UP_T` (420) frames (300 / 200
+  before). BREAK WALLS: boss_ai `tick`: any WALKING guardian (not wardens), kept from you `BREACH_AFTER` (75)
+  frames within `BREACH_R` (200) on its level, charges through (its own charge, else a plain "charge"), up to
+  `BREACH_HOLES` (4) holes, then `BREACH_CD` (240); Vulkhar held at a wall with no way to you blasts it (power 3,
+  every 28 frames). SUMMON: a guardian with no summoning of its own gets `CALL` ("summon9") among its moves:
+  its biome's fighters (`_call_type`: predators, then territorial, then any not prey; swimmers only for a swimmer;
+  never burrowers; cached in `static var _calls`): 2, at most 3; every summon calls one more and keeps two more
+  about it when enraged; what's called comes awake, provoked and after you. Vulkhar calls imps every
+  `GOLEM_CALL_EVERY` (600, 420 enraged) while you're within 260 (`_golem_imps`), not only when kept off. Coming
+  to you, a boss's next move is its summoning (`Enemy.call_next`, boss_ai `_begin`; Vulkhar calls imps as he
+  lands). Checked in `_test_pursuit` (hidden and unstruck it gets to you; the Mycelord, with no charge, smashes
+  into a brick hut; Bramblehorn calls boars, roused; Vulkhar calls imps in reach). Since bosses break in, a test
+  that expects one to "come" accepts it getting to you either way.
 - Digging speed grows (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it"): main
   `dig_speed(m)` = `DIG_TIER` by staff tier (0.55, 0.55, 0.9, 1.3, 1.8) x `DELVE` (1.3) per Delver's Rune
   (`items["delve"]`, recipes delve1-3: copper ingots, then wisp ingots and obsidian, then star iron and core;

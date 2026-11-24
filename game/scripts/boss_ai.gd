@@ -32,6 +32,14 @@ const SLAM_H := 34.0
 const HOP_H := 20.0
 const BREACH_H := 50.0
 const CLIMB := 24.0            # the tallest thing it jumps over; anything taller it smashes through
+# breaking in (see `tick`): kept from you this many frames within BREACH_R, it smashes through
+const BREACH_AFTER := 75
+const BREACH_R := 200.0
+const BREACH_HOLES := 4
+const BREACH_CD := 240
+# a guardian without a summoning move of its own calls the fighters of its biome (`_call_type`)
+const CALL := "summon9"
+static var _calls := {}
 
 static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow_f: float) -> void:
 	var bd: Dictionary = e.d["def"]
@@ -79,16 +87,22 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 	var spd: float = float(bd["speed"]) * (1.25 if e.raged else 1.0) * slow_f
 	# out of its reach a while (in a building, behind a wall) and close: a guardian that charges
 	# smashes its way in, a hole as big as itself, in one go
-	if e.boss and not e.d.get("warden", false) and e.act == "" and go == "walk" and e.unreach_t > 150 and dist < 110.0 and absf(dy) < 40.0 and e.on_ground:
+	# (user, 24 Nov: "make them break walls chase and summon enemies aggresively"): any walking guardian,
+	# kept from you a second and a quarter within BREACH_R, lowers its head and smashes through (a charge
+	# of its own if it has one, else a plain one), up to BREACH_HOLES holes, then BREACH_CD before the next
+	if e.breach_cd > 0:
+		e.breach_cd -= 1
+	if e.boss and not e.d.get("warden", false) and e.act == "" and go == "walk" and e.unreach_t > BREACH_AFTER and e.breach_cd <= 0 and dist < BREACH_R and absf(dy) < 40.0 and e.on_ground:
 		var cm := _move_of_kind(e, "charge")
-		if cm != "":
-			e.move = cm
-			e.breach = true
-			e.breach_hits = 0
-			e.unreach_t = 0
-			e.hit_done = false
-			e.spot = tgt.pos
-			FoeAI.start(e, "windup", 40)
+		e.move = cm if cm != "" else "charge"
+		e.breach = true
+		e.breach_hits = 0
+		e.breach_cd = BREACH_CD
+		e.unreach_t = 0
+		e.hit_done = false
+		e.spot = tgt.pos
+		FoeAI.start(e, "windup", 32)
+		g.audio.play("roar", e.pos, 0.9)
 	# struck from where it can't follow, it comes to you (pursuit.gd); a burrower already does, a
 	# swimmer keeps to its water
 	if e.boss and go != "burrow" and go != "swim" and not bd.get("swim", false):
@@ -418,10 +432,43 @@ static func _moves(e) -> Array:
 	var out: Array = bd["moves"].keys()
 	if e.raged:
 		out.append_array(bd.get("rage", {}).keys())
+	if e.boss and _call_type(e) != "":
+		out.append(CALL)
 	return out
+
+## What a guardian with no summoning of its own calls to its side: the fighters of its biome (predators,
+## then the territorial, then anything that isn't prey; swimmers only for a swimmer, never burrowers);
+## "" for one that summons already, or a warden.
+static func _call_type(e) -> String:
+	var bd: Dictionary = e.d["def"]
+	if bd.get("warden", false) or e.d.get("warden", false):
+		return ""
+	for mv in bd["moves"].keys() + bd.get("rage", {}).keys():
+		if kind_of(mv) == "summon":
+			return ""
+	var biome: String = e.d.get("biome", "")
+	var swims: bool = bool(bd.get("swim", false))
+	var key := biome + ("/swim" if swims else "")
+	if _calls.has(key):
+		return _calls[key]
+	var best := ""
+	var rank := 9
+	for id in Defs.creatures_of(biome):
+		var c: Dictionary = Defs.CREATURES[id]
+		var t: String = c.get("temper", "predator")
+		if t == "prey" or c["go"] == "burrow" or bool(c.get("swim", false)) != swims:
+			continue
+		var r: int = {"predator": 0, "territorial": 1}.get(t, 2)
+		if r < rank:
+			rank = r
+			best = "c_" + String(id)
+	_calls[key] = best
+	return best
 
 static func _params(e, mv: String) -> Dictionary:
 	var bd: Dictionary = e.d["def"]
+	if mv == CALL:
+		return {"type": _call_type(e), "n": 2, "max": 3}
 	if bd["moves"].has(mv):
 		return bd["moves"][mv]
 	return bd.get("rage", {}).get(mv, {})
@@ -435,6 +482,11 @@ static func _begin(g, e, tgt, dx: float, dy: float, dist: float) -> void:
 	var ms := _moves(e)
 	if ms.is_empty():
 		return
+	if e.call_next:
+		e.call_next = false
+		var sm := _move_of_kind(e, "summon")
+		if sm != "":
+			e.mi = posmod(ms.find(sm) - 1, ms.size())   # (the loop below steps on to it)
 	for k in ms.size():
 		e.mi = (e.mi + 1) % ms.size()
 		var mv: String = ms[e.mi]
@@ -585,7 +637,8 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 			for o in g.enemies:
 				if o.summoner == e and not o.dead:
 					mine += 1
-			var want: int = mini(int(pr.get("n", 2)), int(pr.get("max", 4)) - mine)
+			# (enraged it calls one more each time, and keeps two more about it)
+			var want: int = mini(int(pr.get("n", 2)) + (1 if e.raged else 0), int(pr.get("max", 4)) + (2 if e.raged else 0) - mine)
 			for s in want:
 				# on the floor below it, near it (a flier up by the ceiling mustn't call them into the
 				# room above through the stone)
@@ -595,6 +648,13 @@ static func _strike(g, e, tgt, dx: float, dy: float, dist: float, k: String, pr:
 				var at: Vector2 = foot + up * (float(mdef["h"]) * 0.5 + 1.0)
 				var m = g.spawn_enemy(mt, g.free_spot(at, float(mdef["w"]), float(mdef["h"]), 6))
 				m.summoner = e
+				# (called to fight: awake, roused and after you at once, whatever its temper)
+				m.awake = true
+				m.provoked = true
+				m.asleep = false
+				m.see = true
+				m.alert_t = 600
+				m.seen_pos = tgt.pos
 				FoeAI.puff(g, m.pos, e.d["def"]["col"])
 			FoeAI.start(e, "recover", 30)
 		"cloud":
@@ -647,7 +707,7 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				# not warded stone or obsidian), then on through it; twice and still blocked, it gives up
 				e.vx = dirx * 0.5
 				if g.frame - e.smash_f > 16:
-					if e.breach_hits >= 2:
+					if e.breach_hits >= BREACH_HOLES:
 						e.breach = false
 						FoeAI.start(e, "recover", 50)
 						return

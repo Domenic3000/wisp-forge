@@ -4,6 +4,7 @@ const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
 const Ecology := preload("res://scripts/ecology.gd")
 const Skiff := preload("res://scripts/skiff.gd")
+const BossAI := preload("res://scripts/boss_ai.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important
 ## things still work, writes saves/test_report.txt and quits.
@@ -7581,30 +7582,131 @@ func _test_pursuit() -> void:
 	await _frames(30)
 	var e5 = g.spawn_enemy("golem", pu_at.call(60, 80))
 	e5.awake = true
-	for f5 in 300:
+	var near5 := 1e9
+	var smash5 := false
+	for f5 in 420:
 		await _frames(1)
-		if e5.surges > 0:
+		near5 = minf(near5, e5.pos.distance_to(g.player.pos))
+		smash5 = smash5 or e5.smash_f > 0
+		if e5.surges > 0 or near5 < 50.0:
 			break
-	pu_good = pu_good and e5.surges > 0
-	pu_lines.append("Vulkhar kept from you: %s" % ("his surge answers" if e5.surges > 0 else "(!) no surge (reach %s, unreachable %d)" % [e5.reach_ok, e5.unreach_t]))
+	# (since 24 Nov he smashes through what's between you, so he may break in before his surge)
+	var ok5: bool = e5.surges > 0 or near5 < 50.0
+	pu_good = pu_good and ok5
+	pu_lines.append("Vulkhar kept from you: %s" % (("his surge answers" if e5.surges > 0 else "he smashed his way in to you") if ok5 else "(!) no surge and not in (reach %s, unreachable %d, nearest %.0f)" % [e5.reach_ok, e5.unreach_t, near5]))
 	g.enemies.erase(e5)
 	for o5 in g.enemies.duplicate():
 		if o5.type == "imp":
 			g.enemies.erase(o5)
-	# 5. Vulkhar struck through the slot: he comes
+	# 5. Vulkhar struck through the slot: he comes (the bunker whole again first)
+	pu_course.call()
+	await _frames(10)
 	var r4: Dictionary = await pu_run.call("golem", pu_at.call(169, 46), pu_at.call(200, 46), 300, "")
 	var e4 = r4["e"]
-	var ok4: bool = e4.came_n == 1 and float(r4["d"]) < 80.0 and bool(r4["free"])
+	# (he may smash his way in before the second hit is weighed: either way he gets to you)
+	var ok4: bool = (e4.came_n == 1 and float(r4["d"]) < 80.0 and bool(r4["free"])) or float(r4["d"]) < 40.0
 	pu_good = pu_good and ok4
-	pu_lines.append("Vulkhar through the slot: %s" % (("he came for you after %.1f s (%s), %.0f from you" % [float(r4["came_f"]) / 60.0, e4.come_why, r4["d"]]) if ok4 else "(!) came %d (%s), %.0f from you, clear %s, grudge %d" % [e4.came_n, e4.come_why, r4["d"], r4["free"], e4.grudge]))
+	pu_lines.append("Vulkhar through the slot: %s" % (("he got to you (%s), %.0f from you" % [("came, " + e4.come_why) if e4.came_n > 0 else "smashed in", r4["d"]]) if ok4 else "(!) came %d (%s), %.0f from you, clear %s, grudge %d" % [e4.came_n, e4.come_why, r4["d"], r4["free"], e4.grudge]))
 	for o in g.enemies.duplicate():
 		if o == e4 or o.type == "imp":
 			g.enemies.erase(o)
+	# ---- 24 Nov (user: "make them break walls chase and summon enemies aggresively") ----
+	# 6. hidden in the tunnel and never struck: it comes anyway once it has had no way to you a while
+	pu_course.call()
+	_go(pu_at.call(200, 46))
+	await _frames(30)
+	var e6 = g.spawn_enemy("boss_forest", pu_at.call(60, 80))
+	e6.awake = true
+	var f6 := -1
+	var near6 := 1e9
+	for k6 in 700:
+		await _frames(1)
+		e6.act_cd = maxi(e6.act_cd, 40)
+		near6 = minf(near6, e6.pos.distance_to(g.player.pos))
+		if e6.came_n > 0 or near6 < 40.0:
+			f6 = k6
+			await _frames(20)
+			break
+	# (it comes for you, or smashes its way in first: either way it gets to you)
+	var ok6: bool = f6 >= 0 and e6.pos.distance_to(g.player.pos) < 90.0
+	pu_good = pu_good and ok6
+	pu_lines.append("hidden, never struck: %s" % (("it got to you after %.1f s (%s, %d holes smashed)" % [float(f6) / 60.0, e6.come_why if e6.came_n > 0 else "broke in", e6.breach_hits]) if ok6 else "(!) it never came (came %d, kept %d, why '%s', nearest %.0f)" % [e6.came_n, e6.kept_t, e6.come_why, near6]))
+	g.enemies.erase(e6)
+	# 7. a walking guardian with no charge of its own (the Mycelord) at a brick hut: it smashes its way in
+	pu_course.call()
+	var HW := 33
+	var HH := 30
+	var hd := PackedInt32Array()
+	hd.resize(HW * HH)
+	for hj in HH:
+		for hi in HW:
+			var wall: bool = hi < 3 or hi >= HW - 3 or hj < 3
+			hd[hj * HW + hi] = (Defs.BRICK | 0xFF00 | 0x20000) if wall else (Defs.AIR | 0xFF00)
+	g.stamps.append({"x0": pu_c.x + 20, "y0": pu_c.y + 66, "w": HW, "h": HH, "data": hd, "ax": pu_c.x, "aw": PW})
+	_go(pu_at.call(36, 86))
+	await _frames(30)
+	var e7 = g.spawn_enemy("boss_grove", pu_at.call(100, 80))
+	e7.awake = true
+	var in7 := -1
+	var holes7 := 0
+	for k7 in 900:
+		await _frames(1)
+		holes7 = maxi(holes7, e7.breach_hits)
+		if e7.pos.distance_to(g.player.pos) < 26.0:
+			in7 = k7
+			break
+	var ok7: bool = in7 >= 0 and holes7 > 0
+	pu_good = pu_good and ok7
+	pu_lines.append("the Mycelord at a brick hut: %s" % (("smashed in to you in %.1f s, %d holes" % [float(in7) / 60.0, holes7]) if ok7 else "(!) in %d, holes %d, came %d (%s), unreachable %d" % [in7, holes7, e7.came_n, e7.come_why, e7.unreach_t]))
+	g.enemies.erase(e7)
+	# 8. a guardian with no summoning of its own calls its biome's fighters, roused
+	var calls := []
+	for cb in ["forest", "jungle", "marsh", "tundra", "mountain", "savanna", "desert", "grove", "ashland", "ocean"]:
+		var ce = g.spawn_enemy("boss_" + cb, pu_at.call(60, 40))
+		calls.append("%s %s" % [cb, BossAI._call_type(ce) if BossAI._call_type(ce) != "" else "(its own)"])
+		g.enemies.erase(ce)
+	print("[pursuit] calls: " + ", ".join(calls))
+	pu_course.call()
+	_go(pu_at.call(90, 86))
+	await _frames(20)
+	var e8 = g.spawn_enemy("boss_forest", pu_at.call(60, 80))
+	e8.awake = true
+	var called := []
+	for k8 in 1500:
+		await _frames(1)
+		for o8 in g.enemies:
+			if o8.summoner == e8 and not called.has(o8):
+				called.append(o8)
+		if called.size() > 0:
+			break
+	var roused := true
+	for o8b in called:
+		roused = roused and o8b.provoked and o8b.awake
+	var ok8: bool = called.size() > 0 and roused and BossAI._call_type(e8) != ""
+	pu_good = pu_good and ok8
+	pu_lines.append("Bramblehorn calls %s: %s" % [BossAI._call_type(e8), ("%d came, roused" % called.size()) if ok8 else "(!) %d came, roused %s" % [called.size(), roused]])
+	for o8c in g.enemies.duplicate():
+		if o8c == e8 or called.has(o8c):
+			g.enemies.erase(o8c)
+	# 9. Vulkhar calls imps while he fights, not only when he's kept from you
+	var e9 = g.spawn_enemy("golem", pu_at.call(60, 80))
+	e9.awake = true
+	var imps9 := 0
+	for k9 in 120:
+		await _frames(1)
+	for o9 in g.enemies:
+		if o9.type == "imp":
+			imps9 += 1
+	pu_good = pu_good and imps9 > 0
+	pu_lines.append("Vulkhar in reach: %s" % (("%d imps called" % imps9) if imps9 > 0 else "(!) no imps"))
+	for o9b in g.enemies.duplicate():
+		if o9b == e9 or o9b.type == "imp":
+			g.enemies.erase(o9b)
 	g.stamps.append({"x0": pu_c.x, "y0": pu_c.y, "w": PW, "h": PH, "data": pu_mk.call(true), "ax": pu_c.x, "aw": PW})
 	g.test_god = pu_god0
 	_go(pu_orig)
 	await _frames(20)
-	_ok("a boss struck from where it can't follow comes to you: onto a ledge, or blasting in beside you; Vulkhar too", pu_good, "; ".join(pu_lines))
+	_ok("a boss struck from where it can't follow comes to you: onto a ledge, or blasting in beside you; Vulkhar too; and they hunt you down, smash in and call help", pu_good, "; ".join(pu_lines))
 
 func _sha(d: PackedByteArray) -> String:
 	var h := HashingContext.new()

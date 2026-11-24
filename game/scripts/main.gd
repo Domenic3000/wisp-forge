@@ -227,6 +227,10 @@ class Enemy extends Body:
 	var roam := 0.0            # (a creature out of reach: where it roams to, cells along the ground from itself)
 	var breach := false        # this charge smashes through walls
 	var breach_hits := 0       # (how many holes this breach has blasted)
+	var breach_cd := 0         # frames before it may smash its way in again
+	var call_t := 0            # Vulkhar: frames to his next call of imps (he calls them while he fights, too)
+	var kept_t := 0            # frames a boss has had no way to you (pursuit.gd: past KEPT_AT it comes)
+	var call_next := false     # (it has just come to you: its next move is its summoning)
 	var nav_dx := 0.0          # (grid cells across to the next point of its way)
 	var arena := 0.0           # a guardian's arena: how far either side of its middle (it wakes when you come in)
 	# its life in the world (scripts/ecology.gd)
@@ -3501,6 +3505,10 @@ func _flier_steer(e: Enemy, want: Vector2) -> Vector2:
 	e.avoid_t = 30
 	return -w
 
+## how far you must get from a boss, and for how long, before it gives up the fight (300 and 200 before)
+const GIVE_UP_D := 520.0
+const GIVE_UP_T := 420
+
 func _update_enemies() -> void:
 	for k in range(enemies.size() - 1, -1, -1):
 		var e: Enemy = enemies[k]
@@ -3514,13 +3522,14 @@ func _update_enemies() -> void:
 			# a boss nobody is fighting recovers: after a few seconds alone it is back at full
 			# health, asleep where it started, so it has to be beaten in one fight (one called at an altar
 			# goes back where it came from, and you have its sigil again)
-			if dist > 300.0 or tgt.dead:
+			# (user, 24 Nov: chase aggressively: it gives up only past GIVE_UP_D for GIVE_UP_T frames)
+			if dist > GIVE_UP_D or tgt.dead:
 				e.leash_t += 1
-				if e.leash_t > 200 and e.summoned != "":
+				if e.leash_t > GIVE_UP_T and e.summoned != "":
 					summoning.dismiss(e)
 					enemies.remove_at(k)
 					continue
-				if e.leash_t > 200 and (e.hp < e.max_hp or e.awake):
+				if e.leash_t > GIVE_UP_T and (e.hp < e.max_hp or e.awake):
 					e.hp = e.max_hp
 					e.awake = false
 					e.leaping = false
@@ -3720,6 +3729,21 @@ func _update_enemies() -> void:
 					var enraged := e.hp < e.max_hp * 0.4
 					_golem_reach(e, tgt, dist, g, enraged)
 					var gd2 := _walker_nav(e, dx, dist, 0.5, 5.2, g)
+					# (user, 24 Nov: aggressive) held at a wall with no way to you, he smashes through it
+					# (obsidian too, never runestone); and he calls imps while he fights, not only when kept off
+					if e.hit_wall and not e.reach_ok and dist < 240.0 and frame - e.smash_f > 28:
+						e.smash_f = frame
+						var fa := atan2(e.pos.y, e.pos.x)
+						_explode(e.pos + basis_r(fa) * signf(dx) * (e.w * 0.5 + 2.0), maxf(e.w, e.h) * 0.6 + 3.0, 3, 0, 0.0)
+						shake = maxf(shake, 10.0)
+						e.nav_dir = signf(dx)
+						e.wander_t = 0
+						gd2 = e.nav_dir
+					e.call_t -= 1
+					if e.call_t <= 0:
+						e.call_t = GOLEM_CALL_EVERY - (180 if enraged else 0)
+						if dist < 260.0:
+							_golem_imps(e)
 					if e.on_ground:
 						e.vx += (gd2 * (0.75 if enraged else 0.5) * slow_f - e.vx) * 0.1
 					e.t -= 1
@@ -3846,6 +3870,11 @@ func _golem_reach(e: Enemy, tgt: Mage, dist: float, g: float, enraged: bool) -> 
 	shake = maxf(shake, 6.0)
 	audio.play("roar", e.pos, 0.8)
 	vfx.blast(e.pos, 14.0, 0)
+	_golem_imps(e)
+
+const GOLEM_CALL_EVERY := 600
+## two imps called up out of the heart's fire beside him (at most 4 about him)
+func _golem_imps(e: Enemy) -> void:
 	var imps := 0
 	for o in enemies:
 		if o.type == "imp" and o.pos.distance_to(e.pos) < 300.0:

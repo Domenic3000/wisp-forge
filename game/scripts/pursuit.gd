@@ -12,7 +12,10 @@
 ## the graph where its whole body stands, from RMIN to RMAX of you, with a way from there to you
 ## (`Nav.meet_spots`; a flier: `Nav.fly_spots`). With none (you in a tunnel narrower than it) it blasts a
 ## pocket of its own size beside you (`_pocket`, only through what its blast can cut: `power`, never
-## warded stone; cut out exactly, `_carve`) and comes out of that. Guardians keep to their leash, wardens to their hall.
+## warded stone; cut out exactly, `_carve`) and comes out of that. Guardians keep to their leash, wardens
+## to their hall. It comes too when it has had no way to you for KEPT_AT frames with you near, struck or
+## not (user, 24 Nov: "chase ... aggresively"), and calls its help as it lands (`call_next`, boss_ai
+## `_begin`; Vulkhar's imps).
 extends RefCounted
 
 const VFX := preload("res://scripts/vfx.gd")
@@ -25,6 +28,8 @@ const CARVE_AT := 22       # (frames before it comes out that its pocket is blas
 const WAIT := 30           # (frames it may wait for that pocket to clear)
 const COOLDOWN := 420      # frames before it may come again
 const RMAX := 130.0        # how far from you it may come out (cells)
+const KEPT_AT := 300       # frames with no way to you (and you within KEPT_R) before it comes unhit
+const KEPT_R := 260.0
 
 ## (main `_hurt_enemy`: a hit on a great foe, weighed on its next tick)
 static func struck(e) -> void:
@@ -55,7 +60,13 @@ static func tick(g, e, tgt, key: String, power: int, fly: bool) -> bool:
 			e.grudge_f = g.frame
 	if e.grudge > 0 and g.frame - e.grudge_f > FORGET:
 		e.grudge = 0
-	if e.grudge >= GRUDGE_AT and e.come_cd <= 0 and (e.act == "" or e.act == "recover") and g.frame % 6 == 0:
+	# kept from you with no hits at all (hiding where it can't follow): looked at twice a second
+	if g.frame % 30 == 0:
+		if not tgt.dead and nav.has(key) and e.pos.distance_to(tgt.pos) < KEPT_R and not reach_now(g, e, tgt, key, fly):
+			e.kept_t += 30
+		else:
+			e.kept_t = 0
+	if (e.grudge >= GRUDGE_AT or e.kept_t >= KEPT_AT) and e.come_cd <= 0 and (e.act == "" or e.act == "recover") and g.frame % 6 == 0:
 		_begin(g, e, tgt, key, power, fly)
 		return e.come_t > 0
 	return false
@@ -163,8 +174,13 @@ static func _coming(g, e, tgt) -> void:
 	e.unreach_t = 0
 	e.reach_ok = true
 	e.grudge = 0
+	e.kept_t = 0
 	e.come_cd = COOLDOWN
 	e.came_n += 1
+	# (and it comes with help: a guardian's or warden's next move is its summoning, Vulkhar calls imps)
+	e.call_next = true
+	if e.type == "golem":
+		g._golem_imps(e)
 	e.awake = true
 	e.see = true
 	g.vfx.blast(to, maxf(e.w, e.h) * 0.55, 0)

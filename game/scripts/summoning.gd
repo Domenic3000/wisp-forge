@@ -16,7 +16,7 @@ const Ecology := preload("res://scripts/ecology.gd")
 
 const RITUAL := 180          # ticks from the sigil laid to the guardian's coming
 const ARENA := 170.0         # how far either side of where it came it fights
-const LEASH := 230.0         # and how far it follows you out
+const LEASH := 520.0         # and how far it follows you out (230 till 24 Nov: "chase aggressively")
 const CEIL := 110.0          # how high a flier goes
 const NEAR_ALTAR := 60.0     # (how far from the altar it comes: room for both of you)
 
