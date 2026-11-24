@@ -485,6 +485,30 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   saving, back home and landing; pictures `galaxy_*.png`. The wild-life checks (`_test_creatures`,
   `_test_ecology`) pass alone but now and then fail in the full run (what earlier checks leave near the start).
 
+## The main quest (scripts/quest.gd; user, 23 Nov: "add a main quest system to guide the player through the main progressions"; chose: the wisp companion speaks it, a HUD line + journal, and the wisp's own powers as rewards)
+- main `quest` (a RefCounted), `quest.tick()` from `_tick` on the planet and in space; every 30 frames it ticks off
+  steps whose condition holds (`need`: a list of conditions, ANY one does: "held" mat n, "found" ore, "spell",
+  "tier", "item", "reach", "landed" planet index, "station" kind (set down or carried), "learned" recipe, "heat").
+  Chapter 0 (`_first_chapter`, 17 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, the skiff's recipe,
+  the skiff, star iron, Obsidian Focus, Heat Ward, Vulkhar, Core Siphon, 30 core, Core Drive, 3 Wisp Cells, voyage);
+  a later planet you land on gets `_world_chapter(i)` (its ore, a ward per hazard of its climate, the Heat Ward
+  on a hot one, core, Drive, cells (3, or 6 into the next system), voyage). Each step: "title" (the HUD's gold
+  line, ui `quest_lbl`), "say" (the wisp, overlay `_bubble` over `main.wisp`; a toast instead out in space),
+  "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at}; a game with
+  none catches up QUIETLY (no rewards, the powers earned granted), so old saves are fine. `quest.reset()` on
+  `start_game`. In the test mode it only runs while `quest_test` is set.
+- The journal: L (ui `toggle_journal`, `journal_open`; Esc or L closes; `menu_paused` includes it, so the world
+  waits): the chapter, every step (done, now with its "how", to come), the wisp's gifts.
+- The wisp's powers (`items["wisp_<id>"]`, `Quest.POWERS`): LANTERN (Copper Focus: `_update_wisp` light 92, not
+  46), SENSE (the skiff: `_wisp_powers` every `SENSE_EVERY` 480 ticks on the planet `gpu.request_rect`s 260 x 170
+  cells round you, `_sense_take` keeps up to `SENSE_MAX` ore cells of `SENSE_ORES` as world points; overlay
+  `_draw_sense` shows them over rock and fog as a wave spreads, `SENSE_SHOW` ticks), WARD (Vulkhar: `hurt`'s
+  first hit of 1+ on the local mage is taken, `wisp_ward_t` = `WARD_RECHARGE` 1800; a faint ring round the wisp
+  while ready), HANDS (the Core Drive: `_reach` x1.5, voidlife's mote reach x2).
+- Test: `_test_quest` ("quest"; in the full run after `_test_start`): a bare start, every step made true in turn
+  ticks off in order with its rewards and powers, each power works, the journal pauses, an old journey catches
+  up quietly, chapters 2-8 well formed; pictures `quest_wisp.png`, `quest_sense.png`, `quest_journal.png`.
+
 ## Progression and climate (user, 20 Nov: fewer towns unless it's that kind of planet; the progression pass)
 - Settlement: `Defs.CLIMATES[kind]` "settle" scales buildings.gd's structure count (26 per 8192 columns x settle:
   Verdance 0.5, a "realm" world of kingdoms 1.35), "towns" multiplies town and castle weights in `_try_place` (and
@@ -1219,7 +1243,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
