@@ -1127,7 +1127,7 @@ const LEARN := {
 	"glacier": {"find": [RIMECORE]}, "thorns": {"find": [WILDCORE]}, "sovereign": {"find": [CROWNCORE]}, "leviathan": {"find": [ABYSSCORE]},
 	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
-	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
+	"skiff": {"guardians": PLAN_HALVES},     # (user, 24 Nov: a quest, sure to come: two guardians' halves of its plans)
 	"hearth": {"shop": "shop", "kind": "frozen", "price": 45, "hoard": true},
 	"sunveil": {"shop": "shop", "kind": "desert", "price": 45, "hoard": true},
 	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
@@ -1158,6 +1158,7 @@ func learn_of(r: Dictionary) -> Dictionary:
 		return {"hoard": true}
 	return {"start": true}
 
+const PLAN_HALVES := 2      # the Wisp Skiff's plans: a half from each guardian beaten, two halves teach it
 const LEARN_WHO := {"smithy": "smiths", "shop": "shopkeepers", "tavern": "tavern keepers", "inn": "innkeepers"}
 ## where a recipe you don't know yet is learned, for the recipe book
 func learn_hint(r: Dictionary) -> String:
@@ -1175,6 +1176,8 @@ func learn_hint(r: Dictionary) -> String:
 		ways.append("sold by village %s%s" % [LEARN_WHO.get(String(L["shop"]), "keepers"), (" on %s worlds" % kd) if kd != "" else ""])
 	if L.has("hoard"):
 		ways.append("in a guardian's hoard or a crypt's reliquary")
+	if L.has("guardians"):
+		ways.append("its plans are torn in halves that the guardians keep: summon and beat %d of them" % int(L["guardians"]))
 	var t := "; or ".join(ways)
 	return t.substr(0, 1).to_upper() + t.substr(1)
 

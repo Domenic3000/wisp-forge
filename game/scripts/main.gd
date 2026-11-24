@@ -3386,6 +3386,7 @@ func _guardian_falls(e: Enemy) -> void:
 	var loot: Dictionary = bd["loot"]
 	for mt in loot:
 		player.inv[int(mt)] += int(loot[mt])
+	skiff_plan_found()
 	_hoard_ore(16)
 	_hoard_recipe()
 	items["coins"] = int(items.get("coins", 0)) + 60
@@ -3396,6 +3397,21 @@ func _guardian_falls(e: Enemy) -> void:
 		if o.summoner == e:
 			o.summoner = null
 	save_game()
+
+## The Wisp Skiff's plans (user, 24 Nov: "make the skiff recipe a little more gauranteed and feel more like a
+## quest ... summoning and killing a gaurdian or some gaurdians"): every guardian keeps half of an old wisp
+## shipwright's plans; the first Defs.PLAN_HALVES beaten teach the skiff (`items["skiff_plans"]`).
+func skiff_plan_found() -> void:
+	var r := recipe_by_id("skiff")
+	if r.is_empty() or knows(r):
+		return
+	var n := int(items.get("skiff_plans", 0)) + 1
+	items["skiff_plans"] = n
+	if n >= Defs.PLAN_HALVES:
+		learn("skiff", "its plans whole at last: the halves the guardians kept")
+		ui.toast("The torn halves fit together: a wisp shipwright's plans for a skiff. Build it round a Core Drive.", Color(1.0, 0.88, 0.45), 7.0)
+	else:
+		ui.toast("Among the guardian's hoard: half of an old wisp shipwright's plans for a skiff. Another guardian keeps the rest (%d of %d)." % [n, Defs.PLAN_HALVES], Color(1.0, 0.88, 0.45), 7.0)
 
 ## A boss's hoard holds some of this world's own ore (Defs.KIND_ORES): a guardian's most of what a Core
 ## Drive wants, so beating one is a step on the way to the next planet.

@@ -57,7 +57,7 @@ func tick() -> void:
 	var first := q.is_empty()
 	# (a journey from before the barriers, 24 Nov: its chapters were laid out by index, so it catches up
 	# again from the top, quietly)
-	var quiet := first or int(q.get("v", 1)) < 2
+	var quiet := first or int(q.get("v", 1)) < 3
 	if quiet and not first:
 		q = {"ch": int(q.get("ch", 0)), "at": 0}
 	var ch := int(q.get("ch", 0))
@@ -84,7 +84,7 @@ func tick() -> void:
 		if not game.items.has("qfin"):
 			game.items["qfin"] = {}
 		(game.items["qfin"] as Dictionary)[str(chapter)] = true
-	game.items["quest"] = {"ch": chapter, "at": at, "v": 2}
+	game.items["quest"] = {"ch": chapter, "at": at, "v": 3}
 	if first:
 		say(("I'm your wisp. I'll guide you from here. " + String(steps[at]["say"])) if at < steps.size() else "I'm your wisp. I'll light your way.")
 	elif moved:
@@ -158,6 +158,7 @@ func _holds(c: Array) -> bool:
 	var inv: PackedInt32Array = game.player.inv
 	match String(c[0]):
 		"held": return inv[int(c[1])] >= int(c[2])
+		"count": return int(game.items.get(String(c[1]), 0)) >= int(c[2])
 		"found": return game.ore_found(int(c[1]))
 		"spell": return game.known.has(String(c[1]))
 		"tier": return int(game.tier) >= int(c[1])
@@ -237,6 +238,15 @@ func _first_chapter() -> Array:
 		{"id": "obsidian", "title": "Forge the Obsidian Focus", "need": [["tier", 3]], "reward": {"coins": 20},
 			"say": "Deeper still you'll need the Obsidian Focus: obsidian (or ash and sand fired in a kiln), ember crystals and two wisp ingots.",
 			"how": "Obsidian forms where lava meets water deep down, or fire ash and sand together in a Kiln. Ember crystals glow red in the deep. Forge the Obsidian Focus (C, Staff & Body): it cuts obsidian and magma rock."},
+		{"id": "altar", "title": "Build a Summoning Altar", "need": [["station", "altar"], ["count", "skiff_plans", 1], ["learned", "skiff"]], "reward": {"coins": 15},
+			"say": "Listen: the guardians of this world keep a wisp shipwright's plans for a skiff, torn in halves. To face one, build a Summoning Altar where it rules.",
+			"how": "Build mode (B), Workshops tab: the Summoning Altar (masonry, stone and two prism crystals). Villagers know which guardians answer here and where their altar must stand."},
+		{"id": "guardian1", "title": "Summon a guardian and beat it", "need": [["count", "skiff_plans", 1], ["learned", "skiff"]], "reward": {"potion": 1},
+			"say": "Forge a guardian's sigil at the Wisp Forge, lay it on the altar in its own land (F), and beat what comes. It keeps half the plans.",
+			"how": "The Wisp Forge's Summoning tab has a sigil for each guardian of this world you can call. Set the altar down in that guardian's biome, then F at it with the sigil. Healing Draughts help; it comes for you if you hide."},
+		{"id": "guardian2", "title": "Beat a second guardian: the skiff's plans", "need": [["learned", "skiff"]], "power": "sense", "reward": {"coins": 40},
+			"say": "Half the plans! Another guardian keeps the rest. Summon a second one and the skiff's plans are whole.",
+			"how": "Any other guardian of this world: forge its sigil and call it at an altar in its biome. With both halves you know the Wisp Skiff's recipe; it's built round a Core Drive from the planet's heart."},
 		{"id": "heat", "title": "Forge the Heat Ward", "need": [["heat"], ["item", "heart"]], "reward": {"potion": 1},
 			"say": "The deep mantle's heat would cook you. Forge the Heat Ward: ember crystals, frost and obsidian.",
 			"how": "The Heat Ward (C, Staff & Body) lets you bear the mantle's heat near the planet's heart. Frost crystals lie in cold caves, ember crystals glow red in the deep."},
@@ -252,10 +262,7 @@ func _first_chapter() -> Array:
 		{"id": "drive", "title": "Forge the Core Drive", "need": [["item", "drive"]], "power": "hands", "reward": {"coins": 30},
 			"say": "Bind the world's heart into a Core Drive: thirty core, ten wisp ore and four copper ingots. A ship is built round it.",
 			"how": "At the Wisp Forge, Travel: the Core Drive. The Wisp Skiff can't be forged without one."},
-		{"id": "skiff_recipe", "title": "Learn the Wisp Skiff's recipe", "need": [["learned", "skiff"], ["item", "skiff"]], "reward": {"coins": 25},
-			"say": "A village smith sells the Wisp Skiff's recipe for 90 coins. Find a village: sell them what you gather, or help its folk.",
-			"how": "Villages are on the surface; a smithy is one of their shops (F beside the smith). Coins come from chests, from selling ore and goods to the keepers, and from villagers' requests (the gold \"!\"). A recipe scroll in a better chest can teach it too."},
-		{"id": "skiff", "title": "Forge the Wisp Skiff", "need": [["item", "skiff"]], "power": "sense",
+		{"id": "skiff", "title": "Forge the Wisp Skiff", "need": [["item", "skiff"]], "reward": {"coins": 25},
 			"say": "Forty planks, twelve glass from the kiln, four wisp ingots and three copper ingots round the Core Drive: the Wisp Skiff. K calls it to you, F boards.",
 			"how": "At the Wisp Forge, Travel: the Wisp Skiff (it needs the Core Drive). K calls it beside you, F boards or steps out. Steer with the movement keys (W up), or hold cast toward the cursor."},
 		{"id": "star", "title": "Mine Star Iron from an asteroid", "need": [["found", Defs.STARIRON], ["landed_other", 0]], "reward": {"potion": 1},

@@ -579,9 +579,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   steps whose condition holds (`need`: a list of conditions, ANY one does: "held" mat n, "found" ore, "spell",
   "tier", "item", "landed" planet index (main `landed_on`: `items["landed"]`, set by `_make_world`'s `note_landed`;
   a save from before gets every planet it has a world file for), "landed_other" (any round planet but c[1]),
-  "landed_sys" (any planet of another system than c[1]), "station" kind (set down or carried), "learned", "heat").
-  Chapter 0 (`_first_chapter`, 16 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, Obsidian Focus,
-  Heat Ward, Vulkhar, Core Siphon, 30 core, Core Drive, the skiff's recipe, the skiff, star iron, the voyage to
+  "landed_sys" (any planet of another system than c[1]), "count" items key n, "station" kind (set down or carried), "learned", "heat").
+  Chapter 0 (`_first_chapter`, 18 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, Obsidian Focus,
+  a Summoning Altar, a guardian beaten (half the skiff's plans), a second (the plans whole: the skiff's recipe),
+  Heat Ward, Vulkhar, Core Siphon, 30 core, Core Drive, the skiff, star iron, the voyage to
   `open_target(0)`: the round's first world with no barrier); a later planet you land on gets `_world_chapter(i)`
   (its ore, a ward per hazard of its climate, the Heat Ward on a hot one, then `next_target(sys, i)`: the next
   world of the round not landed on, one in reach first, with "key_<item>" (forge its barrier's key) when it's
@@ -589,14 +590,14 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Chapters follow the planet you're on in any order: one not finished (`items["qfin"]`) is taken up when you land
   there; a step done once (`items["qdone"]` "ch:id") stays done and never pays twice. Each step: "title" (the
   HUD's gold line, ui `quest_lbl`), "say" (the wisp, overlay `_bubble` over `main.wisp`; a toast instead out in
-  space), "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at, v: 2};
-  a game with none, or from before the barriers (no "v"), catches up QUIETLY from the top (no rewards, the powers
+  space), "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at, v: 3};
+  a game with none, or with an older "v" (the steps moved), catches up QUIETLY from the top (no rewards, the powers
   earned granted), so old saves are fine. `quest.reset()` on
   `start_game`. In the test mode it only runs while `quest_test` is set.
 - The journal: L (ui `toggle_journal`, `journal_open`; Esc or L closes; `menu_paused` includes it, so the world
   waits): the chapter, every step (done, now with its "how", to come), the wisp's gifts.
 - The wisp's powers (`items["wisp_<id>"]`, `Quest.POWERS`): LANTERN (Copper Focus: `_update_wisp` light 92, not
-  46), SENSE (the skiff: `_wisp_powers` every `SENSE_EVERY` 480 ticks on the planet `gpu.request_rect`s 260 x 170
+  46), SENSE (the second guardian: `_wisp_powers` every `SENSE_EVERY` 480 ticks on the planet `gpu.request_rect`s 260 x 170
   cells round you, `_sense_take` keeps up to `SENSE_MAX` ore cells of `SENSE_ORES` as world points; overlay
   `_draw_sense` shows them over rock and fog as a wave spreads, `SENSE_SHOW` ticks), WARD (Vulkhar: `hurt`'s
   first hit of 1+ on the local mage is taken, `wisp_ward_t` = `WARD_RECHARGE` 1800; a faint ring round the wisp
@@ -614,7 +615,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Getting off the first planet (user, 24 Nov: "Core drive is required to craft the wisp skiff"): the Core Drive
   (recipe "drive": 30 Planet Core, 10 Wisp, 4 Copper Ingots; needs the Core Siphon, tier 4, which needs Vulkhar's
   Ember Heart) is `items["drive"]`, and the skiff can't be forged without it (`recipe_unlocked` "skiff"). A save with
-  a skiff counts as having one. (`items["reach"]`, `skiff_reach` and the per-planet drive are gone.)
+  a skiff counts as having one. (`items["reach"]`, `skiff_reach` and the per-planet drive are gone.) The skiff's
+  RECIPE (user, 24 Nov: "more gauranteed and feel more like a quest ... summoning and killing a gaurdian or some
+  gaurdians"): no shop or scroll; every guardian beaten (`_guardian_falls` -> main `skiff_plan_found`) gives half of
+  a wisp shipwright's plans (`items["skiff_plans"]`), and `Defs.PLAN_HALVES` (2) teach it (LEARN "guardians").
 - BARRIERS BY KIND (user, 24 Nov: "only gate the planets in types not individually ... if you have the item to
   traverse storms it u locks all storm covered planets"; chose: by planet kind, procedural and thematic):
   `Defs.BARRIERS` (storm: Storm Lattice "lattice"; radiation: Radiation Ward "radward"; shards: Rime Prow

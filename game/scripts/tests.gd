@@ -6309,19 +6309,20 @@ func _test_recipes() -> void:
 	var rc_chest: bool = g._chest_recipe(1)
 	var rc_hoard: bool = g._hoard_recipe()
 	var rc_shop: Array = g.shop_recipes("smithy")
-	var rc_skiff := false
+	# (the skiff isn't sold any more: two guardians' halves of its plans teach it, 24 Nov)
+	var rc_skiff := true
 	for rr in rc_shop:
 		if String(rr["id"]) == "skiff":
-			rc_skiff = true
-	g.towns.grant({"recipe": "skiff"})
-	var rc_ok3: bool = rc_chest and rc_hoard and rc_skiff and g.knows(g.recipe_by_id("skiff")) and g.learned.size() >= rc_n0 + 3
-	rc_rows.append("%sa chest's scroll %s, a hoard's %s, the skiff sold at a smithy %s and bought %s" % ["" if rc_ok3 else "(!) ", rc_chest, rc_hoard, rc_skiff, g.knows(g.recipe_by_id("skiff"))])
+			rc_skiff = false
+	g.towns.grant({"recipe": "hearth"})
+	var rc_ok3: bool = rc_chest and rc_hoard and rc_skiff and g.knows(g.recipe_by_id("hearth")) and g.learned.size() >= rc_n0 + 3
+	rc_rows.append("%sa chest's scroll %s, a hoard's %s, a keeper's Hearth Charm bought %s; the skiff not sold %s" % ["" if rc_ok3 else "(!) ", rc_chest, rc_hoard, g.knows(g.recipe_by_id("hearth")), rc_skiff])
 	rc_ok = rc_ok and rc_ok3
 	# every recipe has a way to be learned, and the book says where
 	var rc_noway := []
 	for rr2 in g.recipes:
 		var rl: Dictionary = Defs.learn_of(rr2)
-		if not (rl.get("start", false) or rl.has("find") or rl.has("scroll") or rl.has("shop") or rl.get("hoard", false)):
+		if not (rl.get("start", false) or rl.has("find") or rl.has("scroll") or rl.has("shop") or rl.get("hoard", false) or rl.has("guardians")):
 			rc_noway.append(String(rr2["id"]))
 		elif not rl.get("start", false) and Defs.learn_hint(rr2) == "":
 			rc_noway.append(String(rr2["id"]))
@@ -6339,8 +6340,8 @@ func _test_recipes() -> void:
 	g.save_game()
 	var rc_saved = JSON.parse_string(FileAccess.get_file_as_string(g._save_path()))
 	var rc_sl: Array = rc_saved.get("learned", []) if typeof(rc_saved) == TYPE_DICTIONARY else []
-	var rc_ok4: bool = rc_book and rc_sl.has("sandstone") and rc_sl.has("skiff") and not rc_sl.has("plank")
-	rc_rows.append("%sthe book shows %s; saved: %d learned (sandstone %s, skiff %s)" % ["" if rc_ok4 else "(!) ", rc_book, rc_sl.size(), rc_sl.has("sandstone"), rc_sl.has("skiff")])
+	var rc_ok4: bool = rc_book and rc_sl.has("sandstone") and rc_sl.has("hearth") and not rc_sl.has("plank")
+	rc_rows.append("%sthe book shows %s; saved: %d learned (sandstone %s, hearth %s)" % ["" if rc_ok4 else "(!) ", rc_book, rc_sl.size(), rc_sl.has("sandstone"), rc_sl.has("hearth")])
 	rc_ok = rc_ok and rc_ok4
 	g.player.inv = rc_inv
 	g.learned = rc_learned
@@ -10440,7 +10441,7 @@ func _test_quest() -> void:
 	g.workshops.list = []
 	g.quest_test = true
 	# ---- a bare start
-	for key in ["skiff", "drive", "levitate", "heart", "quest", "qdone", "qfin", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
+	for key in ["skiff", "drive", "skiff_plans", "st_altar", "levitate", "heart", "quest", "qdone", "qfin", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
 		g.items.erase(key)
 	g.items["landed"] = {"0": true}
 	for key2 in g.items.keys():
@@ -10451,7 +10452,7 @@ func _test_quest() -> void:
 	g.tier = 1
 	g.known.erase("spark")
 	g.heat_ward = false
-	g.items["quest"] = {"ch": 0, "at": 0, "v": 2}
+	g.items["quest"] = {"ch": 0, "at": 0, "v": 3}
 	g.items["coins"] = 0
 	q.reset()
 	await _frames(31)
@@ -10479,6 +10480,7 @@ func _test_quest() -> void:
 			"tier": g.tier = maxi(g.tier, int(c[1]))
 			"item": g.items[String(c[1])] = true
 			"station": g.items["st_" + String(c[1])] = true
+			"count": g.items[String(c[1])] = int(c[2])
 			"learned": g.learn(String(c[1]))
 			"heat": g.heat_ward = true
 		for w in 40:
@@ -10549,6 +10551,20 @@ func _test_quest() -> void:
 	_shot("quest_sense.png")
 	rows.append("%sOre Sense: pulsed %s, %d ore cells marked round you" % ["" if pulsed else "(!) ", pulsed, n_ore])
 	ok = ok and pulsed
+	# ---- the skiff's plans: a half from each guardian beaten, the second teaches the recipe
+	var pl_learned: bool = g.learned.has("skiff")
+	g.learned.erase("skiff")
+	g.items.erase("skiff_plans")
+	g.skiff_plan_found()
+	var pl_half: bool = int(g.items.get("skiff_plans", 0)) == 1 and not g.learned.has("skiff")
+	g.skiff_plan_found()
+	var pl_whole: bool = g.learned.has("skiff")
+	var pl_hint: String = Defs.learn_hint(g.recipe_by_id("skiff"))
+	if pl_learned:
+		g.learned["skiff"] = true
+	var ok_pl: bool = pl_half and pl_whole and pl_hint.contains("guardians")
+	rows.append("%sthe skiff's plans: one guardian gave half %s, the second made them whole %s; the book says \"%s\"" % ["" if ok_pl else "(!) ", pl_half, pl_whole, pl_hint])
+	ok = ok and ok_pl
 	# ---- the journal: opens, the world waits, closes
 	g.ui.toggle_journal(g)
 	await _frames(5)
@@ -10572,7 +10588,7 @@ func _test_quest() -> void:
 	q.reset()
 	await _frames(31)
 	var cid: String = String(q.steps[q.at]["id"]) if q.at < q.steps.size() else "-"
-	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 2
+	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 3
 	rows.append("%san old journey (skiff, Obsidian Focus, a quest from before the barriers) caught up to \"%s\", lantern %s, ward %s, %d coins given" % ["" if ok5 else "(!) ", cid, g.items.has("wisp_lantern"), g.items.has("wisp_ward"), int(g.items.get("coins", 0))])
 	ok = ok and ok5
 	# ---- a later world's chapter leads to the next world of the round, and the key to its barrier first
