@@ -9315,18 +9315,36 @@ func _test_stations() -> void:
 	_shot("station_outside.png")
 	g.space.zoom_i = 0
 	await _frames(30)
+	# ---- flown in through the dock's mouth (user, 23 Nov: docking "needs work"): the skiff fits, docks
+	# without a crash, and you step out onto its floor
+	var fly_b := Vector2(float(int(dm["x0"]) - 70) if st.dock_side < 0 else float(int(dm["x1"]) + 70), float(int(dm["y1"])) - float(sk.h) * 0.5 - 3.0)
+	sk.pos = st.to_world(fly_b - st.com)
+	sk.vel = Vector2.ZERO
+	await _frames(20)
+	var in_dock := false
+	for k2b in 240:
+		var bnow: Vector2 = st.to_body(sk.pos) + st.com
+		in_dock = st.module_at(bnow) == st.dock and absf(bnow.x - float(int(dm["x0"]) + int(dm["x1"])) * 0.5) < float(st.MW) * 0.5 - float(sk.w) * 0.5 - 2.0
+		if in_dock:
+			break
+		sk.vel = -st.axis_x() * float(st.dock_side) * 2.0
+		await _frames(1)
+	sk.vel = Vector2.ZERO
+	await _frames(40)
+	var docked_ok: bool = g.space.docked_st == st
+	_shot("station_docked.png")
 	g._skiff_interact(g.player)
-	await _frames(4)
-	sk.pos += st.axis_x() * float(st.dock_side) * 80.0
-	# drifted in through the dock's mouth: inside it now, its floor "down"
-	_st_put(st, mouth_b)
-	g.space.vel = -st.axis_x() * float(st.dock_side) * 1.2
 	var got_in := false
 	for k2 in 120:
 		await _frames(1)
 		if g.space.in_station == st:
 			got_in = true
 			break
+	var ok_dock: bool = in_dock and docked_ok and got_in
+	rows.append("%sflown in through the docking bay's mouth (%d high): in the bay %s, docked %s, stepped out aboard %s" % ["" if ok_dock else "(!) ", st.MOUTH, in_dock, docked_ok, got_in])
+	ok = ok and ok_dock
+	# (the skiff out of the way of the checks in the rooms: back out beyond the mouth)
+	sk.pos = st.to_world(fly_b - st.com) + st.axis_x() * float(st.dock_side) * 120.0
 	g.space.vel = Vector2.ZERO
 	await _frames(40)
 	var framed: bool = g.space.frame_st == st and absf(wrapf(g.space.view_ang - (g.cam_c - g.space.centre).angle(), -PI, PI)) < 0.2
@@ -9602,11 +9620,21 @@ func _test_stations() -> void:
 	_shot("station_map.png")
 	g.close_map()
 	await _frames(4)
-	# home again, and down
+	# home again, and down: first back aboard from wherever you are, by the wisp (K; user, 23 Nov: "losing
+	# the skiff in space was a little hard maybe someway to teleport to the skiff")
 	calm.call()
-	g.player.pos = sk.pos
-	g.space.vel = Vector2.ZERO
-	g._skiff_interact(g.player)
+	var rc_from: float = g.player.pos.distance_to(sk.pos)
+	g.player.mana = maxf(g.player.mana, 40.0)
+	var mana_rc: float = g.player.mana
+	var rc_ok: bool = g.recall_skiff()
+	await _frames(6)
+	var rc_good: bool = rc_ok and g.player.aboard == sk and g.player.pos.distance_to(sk.pos) < 40.0 and g.space.in_station == null and g.player.mana < mana_rc
+	rows.append("%scarried back aboard the skiff from %.0f away by the wisp %s (mana %.0f -> %.0f)" % ["" if rc_good else "(!) ", rc_from, rc_good, mana_rc, g.player.mana])
+	ok = ok and rc_good
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g.space.vel = Vector2.ZERO
+		g._skiff_interact(g.player)
 	await _frames(4)
 	sk.pos = g.space.home_at() + (sl - g.space.home_at()).normalized() * (Defs.R_SPACE + 150.0)
 	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0

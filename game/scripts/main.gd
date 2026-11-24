@@ -5138,7 +5138,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif k == KEY_X:
 			deck_toggle(player)
 		elif k == KEY_K:
-			call_skiff()
+			if space.active:
+				recall_skiff()
+			else:
+				call_skiff()
 		elif k == KEY_I or k == KEY_TAB:
 			ui.toggle_satchel()
 		elif k == KEY_M:
@@ -7339,6 +7342,34 @@ func call_skiff() -> bool:
 	return true
 
 ## F by the skiff: board it, or step out of it
+## Out in space K takes you back aboard your skiff wherever it is, for a little mana (user, 23 Nov: "losing
+## the skiff in space was a little hard maybe someway to teleport to the skiff would be good")
+const RECALL_MANA := 12.0
+func recall_skiff() -> bool:
+	if skiff == null or not items.has("skiff"):
+		ui.toast("You have no skiff out here", Color(1, 0.7, 0.5), 2.0)
+		return false
+	if player.aboard == skiff or player.dead:
+		return false
+	if player.mana < RECALL_MANA:
+		ui.toast("Not enough mana for the wisp to carry you back to the skiff (%d)" % int(RECALL_MANA), Color(1, 0.7, 0.5), 2.5)
+		vfx.fizzle(player.pos)
+		return false
+	if not skiff.board(player):
+		ui.toast("The skiff is full", Color(1, 0.7, 0.5), 1.5)
+		return false
+	player.mana -= RECALL_MANA
+	var from := player.pos
+	player.aboard = skiff
+	player.deck = false
+	player.vx = 0.0
+	player.vy = 0.0
+	vfx.blink(from, skiff.pos)
+	audio.play("blink", skiff.pos, 0.9)
+	ui.toast("The wisp carries you back aboard your skiff", Color(0.7, 0.85, 1.0), 2.5)
+	space.recalled()
+	return true
+
 func _skiff_interact(m: Mage) -> bool:
 	if skiff == null:
 		return false
@@ -7351,7 +7382,10 @@ func _skiff_interact(m: Mage) -> bool:
 		m.deck = false
 		# out beside it, behind the cockpit (on top of it if that's blocked)
 		var out: Vector2 = skiff.to_world(Vector2(-skiff.com.x - 6.0, float(skiff.h) - skiff.com.y - m.h * 0.5 - 1.0))
-		if space.active:
+		var bay: Array = space.bay_spots(m, skiff) if space.active else []
+		if not bay.is_empty():
+			out = bay[0]                 # (docked in a derelict's bay: onto its floor)
+		elif space.active:
 			# (out there: clear of every hull and rock: behind, on top, in front, under it)
 			out = space.clear_spot(m, [out, skiff.to_world(Vector2(0.0, -skiff.com.y - m.h * 0.5 - 2.0)),
 				skiff.to_world(Vector2(float(skiff.w) - skiff.com.x + 6.0, 0.0)), skiff.to_world(Vector2(-skiff.com.x - 8.0, 0.0)),

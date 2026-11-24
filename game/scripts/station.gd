@@ -18,15 +18,17 @@
 ## `spawns` lists the aliens that live here (alien.gd), `caches` the crates (wreck.gd's), `mods` the rooms.
 extends "res://scripts/wreck.gd"
 
-const MW := 80            # a room's inside: width, height (cells)
-const MH := 44
+const MW := 112           # a room's inside: width, height (cells; user, 23 Nov: "they didnt have very much room
+const MH := 64            # for the player or enemies to move around": 80 x 44 before)
 const T := 4              # walls
 const PX := MW + T        # (room pitch)
 const PY := MH + T
 const OX := 44            # margins round the grid: the docking arm and wings at the sides,
 const OY := 36            # masts on top, trusses under it
-const DOOR_H := 26
-const HATCH_W := 22
+const DOOR_H := 34
+const HATCH_W := 28
+const MOUTH := 56         # the dock's open mouth, cells high from its floor: room for the skiff to fly in
+const LEDGES := [22, 44]  # scaffold ledges under a hatch, this far down from the room's roof, to climb by
 const VAULT_CRATE := "vault"
 
 const ST_A := ["Halcyon", "Meridian", "Concord", "Aurora", "Bastion", "Vigil", "Zenith", "Solace", "Tessera",
@@ -128,6 +130,22 @@ func _build_station(sd: int) -> void:
 	dock = low[rng.randi_range(0, low.size() - 1)]
 	var dv := Vector2i(int(mods[dock]["c"]), int(mods[dock]["r"]))
 	dock_side = -1 if not grid.has(dv + Vector2i(-1, 0)) else 1
+	# (no hatch into the bay: its ledges would be in the skiff's way. The bay joins the room beside it by a
+	# doorway instead, unless that would cut the station in two)
+	var inner_v := dv + Vector2i(-dock_side, 0)
+	var above_v := dv + Vector2i(0, -1)
+	if grid.has(inner_v) and grid.has(above_v) and edges.has(_ekey(dock, int(grid[above_v]))):
+		var ek_up := _ekey(dock, int(grid[above_v]))
+		var ek_in := _ekey(dock, int(grid[inner_v]))
+		var had_in: bool = edges.has(ek_in)
+		edges.erase(ek_up)
+		edges[ek_in] = true
+		_link(edges)
+		var dd0 := _bfs(dock)
+		if dd0.has(9999):
+			edges[ek_up] = true
+			if not had_in:
+				edges.erase(ek_in)
 	# ---- the vault: the farthest room from the dock, reached only through the nest before it
 	_link(edges)
 	var dist := _bfs(dock)
@@ -168,6 +186,7 @@ func _build_station(sd: int) -> void:
 		mods[i7]["powered"] = true
 		npw += 1
 	mods[vault]["powered"] = true
+	mods[dock]["powered"] = true       # (the docking cradle still holds: you come aboard on your feet)
 	mods[nest]["powered"] = false
 	# ---- every other room's role
 	var pool := ["hydro", "quarters", "lab", "stores", "stores", "hall", "quarters", "hydro", "lab", "hall"]
@@ -206,25 +225,31 @@ func _build_station(sd: int) -> void:
 			var dn: Dictionary = mb if int(ma["r"]) < int(mb["r"]) else ma
 			var hx: int = (int(up["x0"]) + int(up["x1"])) / 2 + rng.randi_range(-16, 16)
 			_hatch(hx, int(up["y1"]), int(dn["y0"]), ab[0] == vault or ab[1] == vault)
-	# ---- the dock's mouth and arm
+	# ---- the dock's mouth (big enough to fly the skiff in: user, 23 Nov: "docking to the derelict space
+	# stations needs work") and a landing apron with a lip over it
 	var dm: Dictionary = mods[dock]
 	var wx0: int = int(dm["x0"]) - T if dock_side < 0 else int(dm["x1"])
-	ways.append(Rect2i(wx0, int(dm["y1"]) - 30, T, 30))
-	for j3 in range(int(dm["y1"]) - 30, int(dm["y1"])):
+	ways.append(Rect2i(wx0, int(dm["y1"]) - MOUTH, T, MOUTH))
+	for j3 in range(int(dm["y1"]) - MOUTH, int(dm["y1"])):
 		for i10 in range(wx0, wx0 + T):
 			cells[j3 * w + i10] = 0
-	var arm0: int = wx0 - 32 if dock_side < 0 else wx0 + T
-	for i11 in range(arm0, arm0 + 32):
+	var arm0: int = wx0 - 36 if dock_side < 0 else wx0 + T
+	for i11 in range(arm0, arm0 + 36):
 		for j4 in range(int(dm["y1"]), int(dm["y1"]) + T):
 			_plate(i11, j4)
-		for j5 in range(int(dm["y1"]) - 34, int(dm["y1"]) - 30):
-			_plate(i11, j5)
-		if (i11 - arm0) % 8 == 3:
+		if (i11 - arm0) % 6 == 2:
 			put(i11, int(dm["y1"]), Defs.CRYSTAL, 0)
-	for i12 in range(mini(arm0, wx0), maxi(arm0 + 32, wx0 + T)):
-		for jj in [int(dm["y1"]) - 31, int(dm["y1"])]:
+	var lip0: int = wx0 - 10 if dock_side < 0 else wx0 + T
+	for i11b in range(lip0, lip0 + 10):
+		for j5 in range(int(dm["y1"]) - MOUTH - T, int(dm["y1"]) - MOUTH):
+			_plate(i11b, j5)
+	for i12 in range(mini(arm0, wx0), maxi(arm0 + 36, wx0 + T)):
+		for jj in [int(dm["y1"]) - MOUTH - 1, int(dm["y1"]) + T - 1]:
 			if at(i12, int(jj)) != 0:
 				put(i12, int(jj), Defs.COAL if ((i12 + int(jj)) / 3) % 2 == 0 else Defs.SUNSTONE, 0)
+	for bj in [int(dm["y1"]) - MOUTH - T - 2, int(dm["y1"]) + T + 1]:
+		var bx: int = wx0 - 3 if dock_side < 0 else wx0 + T + 2
+		put(bx, int(bj), Defs.EMBER, 1)
 	# ---- each room dressed for its role and its power
 	for k in mods.size():
 		_dress(k, rng, noise)
@@ -315,7 +340,7 @@ func _doorway(wx: int, y1: int, sealed: bool) -> void:
 ## a hatch at column hx through the floor of the room above (its floor row y1a) into the one below (its
 ## top row y0b): a one-way scaffold floor, and a scaffold ledge halfway down the room below to climb by
 func _hatch(hx: int, y1a: int, y0b: int, sealed: bool) -> void:
-	ways.append(Rect2i(hx - HATCH_W / 2 - 3, y1a - 4, HATCH_W + 6, y0b + 24 - y1a + 4))
+	ways.append(Rect2i(hx - HATCH_W / 2 - 3, y1a - 4, HATCH_W + 6, y0b + int(LEDGES[LEDGES.size() - 1]) + 2 - y1a + 4))
 	for j in range(y1a, y0b):
 		for i in range(hx - HATCH_W / 2, hx + HATCH_W / 2):
 			cells[j * w + i] = 0
@@ -327,8 +352,12 @@ func _hatch(hx: int, y1a: int, y0b: int, sealed: bool) -> void:
 	if not sealed:
 		for i2 in range(hx - HATCH_W / 2, hx + HATCH_W / 2):
 			put(i2, y1a, Defs.SCAFFOLD, 0)
-	for i3 in range(hx - HATCH_W / 2 - 3, hx + HATCH_W / 2 + 3):
-		put(i3, y0b + 22, Defs.SCAFFOLD, 0)
+	# (ledges to climb by, staggered so each hop is about 22 cells: rooms are 64 high)
+	for li in LEDGES.size():
+		var off := (HATCH_W / 2 + 4) * (1 if li % 2 == 0 else -1)
+		for i3 in range(hx - HATCH_W / 2 - 3, hx + HATCH_W / 2 + 3):
+			put(i3 + (0 if li == 0 else off), y0b + int(LEDGES[li]), Defs.SCAFFOLD, 0)
+		ways.append(Rect2i(hx - HATCH_W / 2 - 3 + (0 if li == 0 else off), y0b + int(LEDGES[li]) - 18, HATCH_W + 6, 20))
 	for side in [hx - HATCH_W / 2 - 1, hx + HATCH_W / 2]:
 		put(int(side), y1a, Defs.SUNSTONE, 0)
 

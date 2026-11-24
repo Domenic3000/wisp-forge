@@ -193,6 +193,7 @@ var near_folk = null            # a spacer you're beside in an outpost (F talks)
 var folk := []                  # the spacers of the outposts streamed in (Spacer)
 var _cast_note := 0
 var docked = null               # the outpost whose hangar the skiff is in, or null
+var docked_st = null            # the derelict station whose docking bay the skiff is in, or null
 var near_wreck = null
 # derelict stations (station.gd) and their aliens (alien.gd)
 const VIEW_NEAR := 4000.0       # "down" turns to the nearest planet within this of its air, and holds still further out
@@ -1332,7 +1333,7 @@ func _draw_space() -> void:
 	# your own ship, while you're off it (it waits where you left it)
 	var own = game.skiff
 	if own != null and game.player.aboard != own and own.pos.length() > Defs.R_SPACE - 9.5:
-		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff", Color(0.55, 0.9, 1.0), 1)
+		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff [K]", Color(0.55, 0.9, 1.0), 1)
 	vl.draw_markers(xf)
 	_flush_marks()
 	_top.queue_redraw()
@@ -2790,6 +2791,38 @@ func clear_spot(m, spots: Array) -> Vector2:
 			return p
 	return spots[0]
 
+## the wisp has carried you back aboard (main `recall_skiff`): off any station's floor, moving with the skiff
+func recalled() -> void:
+	in_station = null
+	st_room = -1
+	vel = Vector2.ZERO
+	stats["recalls"] = int(stats.get("recalls", 0)) + 1
+
+## Stepping off the skiff docked in a derelict's bay: spots on the bay's floor beside it, nearest first, so you
+## step out aboard (not out of the mouth into space)
+func bay_spots(m, sk) -> Array:
+	var st = docked_st
+	if st == null:
+		return []
+	var md: Dictionary = st.mods[st.dock]
+	var fy: float = float(int(md["y1"])) - float(m.h) * 0.5 - 1.0
+	var sb: Vector2 = st.to_body(sk.pos) + st.com
+	var out := []
+	for x in range(int(md["x0"]) + 6, int(md["x1"]) - 6, 3):
+		var b := Vector2(float(x), fy)
+		var p: Vector2 = st.to_world(b - st.com)
+		var kb: Vector2 = sk.to_body(p) + sk.com
+		if kb.x > -6.0 and kb.y > -12.0 and kb.x < float(sk.w) + 6.0 and kb.y < float(sk.h) + 12.0:
+			continue                    # (not inside or against the skiff)
+		if not st.box_free(b, float(m.w) * 0.5 + 0.5, float(m.h) * 0.5 + 0.5):
+			continue
+		out.append([absf(b.x - sb.x), p])
+	out.sort_custom(func(a, c): return a[0] < c[0])
+	var pts := []
+	for e in out:
+		pts.append(e[1])
+	return pts
+
 ## A game loaded, or begun (main `start_game`): out of space altogether, with nothing of the galaxy kept out here
 ## (user, 23 Nov: reloaded by a derelict station, he came down at home and the station came down with him: going
 ## back to the title and on again never left space, so what was streamed in out there stayed). What was saved
@@ -2819,6 +2852,7 @@ func reset_for_load() -> void:
 	in_station = null
 	frame_st = null
 	docked = null
+	docked_st = null
 	near_cache = null
 	near_wreck = null
 	near_trader = null
@@ -2894,7 +2928,17 @@ func _trader_near(m) -> void:
 func _dock_check(sk) -> void:
 	if sk == null:
 		docked = null
+		docked_st = null
 		return
+	# (a derelict's docking bay: its mouth is big enough to fly the skiff in since 23 Nov)
+	var now_st = null
+	for a in _rocks_near(sk.pos, 60.0):
+		if a.kind == "station" and a.dock >= 0 and a.module_at(a.to_body(sk.pos) + a.com) == a.dock:
+			now_st = a
+	if now_st != null and now_st != docked_st:
+		game.ui.toast("Docked in %s's bay. Step out (F): its cradle still holds, so you'll stand" % now_st.wname, Color(0.8, 0.7, 1.0), 4.5)
+		game.audio.play("creak", sk.pos, 0.6)
+	docked_st = now_st
 	var op = nearest_outpost(sk.pos, 1200.0)
 	var now = op if op != null and op.in_hangar(sk.pos) else null
 	if now != null and now != docked:
@@ -3170,7 +3214,7 @@ func _station_frame(focus: Vector2) -> void:
 		frame_st = a
 		if m.aboard != null and a.kind == "station" and not _dock_hint.has(a.seed_):
 			_dock_hint[a.seed_] = true
-			game.ui.toast("A derelict's dock is too small for the skiff: step out (F) and drift in through its open mouth", Color(0.8, 0.7, 1.0), 5.0)
+			game.ui.toast("%s: fly the skiff in through its docking bay's mouth (marked by its lights)" % a.wname, Color(0.8, 0.7, 1.0), 5.0)
 		if m.aboard == null and not m.dead and a.inside(b):
 			in_station = a
 			var op: bool = a.kind == "outpost"

@@ -408,6 +408,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   it, a drifter spits, the Broodmother lays and falls, the seal breaks, the vault's Scanner Lens, kept after streaming
   out and in; pictures `station_layout_0..2.png` (whole layouts, aliens marked), `station_outside/dock/powered/
   dead_room/fight/drifter/brood/vault/map.png`.
+- ROOMIER STATIONS, A REAL DOCK, BACK TO THE SKIFF (user, 23 Nov: "docking to the derelict space stations needs work,
+  and also they didnt have very much room for the player or enemies to move around"; "losing the skiff in space was a
+  little hard maybe someway to teleport to the skiff"): station.gd rooms `MW` 112 x `MH` 64 (80 x 44 before; outposts
+  extend it, so theirs grew too: about 900 x 280), `DOOR_H` 34, `HATCH_W` 28, two staggered scaffold ledges under a
+  hatch (`LEDGES` 22 and 44 under the roof). The dock is always powered, its mouth `MOUTH` 56 high with an apron and a
+  lip, and no hatch drops into it (its link above becomes a doorway to the room beside it unless that would cut the
+  station in two): the skiff flies in. space.gd `docked_st` (`_dock_check`: the skiff in a station's dock room, a
+  toast), `bay_spots(m, sk)` (stepping off there puts you on the bay's floor, main `_skiff_interact`). K in space:
+  main `recall_skiff()` (`RECALL_MANA` 12, `vfx.blink`, aboard at once; space `recalled()`); the "Your skiff [K]"
+  marker. Checked in `_test_stations` (flown in, docked, stepped out aboard; carried back aboard from the vault).
 - WISP FUEL (user, 23 Nov: "Only the long hauls"): WISPCELL (material 62, NM 63, "Wisp Cell"): smelter `s_cell`
   (2 wisp ore + 1 coal -> 2), outposts sell 10 for 28. space.gd: the Starsail burns one every `SAIL_BURN` (150) ticks
   under sail with a heading (`_burn`; none left, it won't unfurl), a journey (`_maybe_travel`) costs `journey_cost(i)`
