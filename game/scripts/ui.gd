@@ -1826,7 +1826,7 @@ func _sat_group(m: int) -> int:
 		return 1
 	if m in [Defs.COPPER, Defs.COAL, Defs.WISP, Defs.EMBER, Defs.FROST, Defs.CRYSTAL, Defs.STARIRON, Defs.CORE,
 			Defs.COPPERBAR, Defs.WISPBAR, Defs.XENITE, Defs.WISPCELL, Defs.VOIDESS, Defs.TREASURE] \
-			or (m >= Defs.FIREOPAL and m <= Defs.SILVER):
+			or (m >= Defs.FIREOPAL and m <= Defs.SILVER) or Defs.is_kind_core(m):
 		return 2
 	return 0
 

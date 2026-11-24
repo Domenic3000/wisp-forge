@@ -96,7 +96,7 @@ func _init(game) -> void:
 	for hx in Props.PALETTE:
 		_decor.append(Color.html(hx))
 	_solid.resize(64)
-	for t in Defs.NM:
+	for t in mini(Defs.NM, 64):           # (the collision grid holds a cell's type in 6 bits: the world's own materials are all under 64)
 		var k: int = Defs.KIND[t]
 		_solid[t] = 1 if (k == Defs.K_SOLID or k == Defs.K_POWDER) and t != Defs.TREASURE and t != Defs.SCAFFOLD else 0
 

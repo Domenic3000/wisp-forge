@@ -15,11 +15,15 @@ const MAT_STYLE := {
 	18: "orb", 20: "glassy", 21: "speckle", 22: "orb", 23: "shroom", 25: "brick", 26: "pane", 28: "gem", 30: "plank",
 	31: "cactus", 32: "plank", 34: "masonry", 35: "masonry", 36: "masonry", 37: "grass", 39: "torch", 42: "rune",
 	44: "door", 7: "log", 8: "leaf", 49: "log", 50: "ingot", 51: "gem", 52: "pearl", 53: "gem", 54: "ore",
-	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 61: "gem", 62: "orb", 63: "gem", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
+	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 61: "gem", 62: "orb", 63: "gem",
+	64: "orb", 65: "orb", 66: "orb", 67: "orb", 68: "orb", 69: "orb", 70: "orb", 71: "orb", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
 }
 
 ## spell glyphs, 11 x 11: "#" the spell's colour, "o" its light, "w" white-hot
 const SPELL_ART := {
+	"mire": ["...........", "...........", "...........", ".#.....#...", "#o#...#o#..", "#o#.#.#o#.#", ".#o#o#o#.#o", "..#owwwo#o#", ".#owwwwwo#.", "#ooooooooo#", ".#########."],
+	"thorns": ["#.........#", ".#o.....o#.", "..#o...o#..", "...#o.o#...", "#oo##w##oo#", "...owwwo...", "#oo##w##oo#", "...#o.o#...", "..#o...o#..", ".#o.....o#.", "#.........#"],
+	"sovereign": ["...........", "#....#....#", "#o..#o#..o#", "#oo#owo#oo#", "#owoowoowo#", "#ooooooooo#", "#owwwwwwwo#", "###########", "...........", "...........", "..........."],
 	"mote": ["...........", "...........", "....#.#....", "...#o#o#...", "..#owwwo#..", "...#www#...", "..#owwwo#..", "...#o#o#...", "....#.#....", "...........", "..........."],
 	"spark": ["......#o#..", ".....#o#...", "....#o#....", "...#ow#....", "..#owwww#..", "....#ow#...", "...#o#.....", "..#o#......", ".#o#.......", "#o#........", "#.........."],
 	"conjure": ["...........", "..o.....o..", "...........", "...#####...", "..#ooooo#..", "..#o###o#..", "..#o#w#o#..", "..#o###o#..", "..#ooooo#..", "...#####...", ".o.......o."],
@@ -165,7 +169,7 @@ static func spell(id: String) -> ImageTexture:
 	if _cache.has(key):
 		return _cache[key]
 	var c: Color = Defs.SPELLS.get(id, {}).get("color", Color(0.8, 0.8, 1.0))
-	var rows: Array = SPELL_ART.get(id, SPELL_ART["spark"])
+	var rows: Array = SPELL_ART.get(String(Defs.SPELLS.get(id, {}).get("art", id)), SPELL_ART["spark"])
 	var tex := _outlined(_art(rows, {"#": c.darkened(0.25), "o": c.lightened(0.25), "w": Color(1, 1, 0.95)}))
 	_cache[key] = tex
 	return tex

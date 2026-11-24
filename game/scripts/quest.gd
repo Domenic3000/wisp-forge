@@ -290,6 +290,13 @@ func _world_chapter(ch: int) -> Array:
 			out.append({"id": "ward_" + String(hz), "title": "Forge the %s" % wn, "need": [["item", String(hd["ward"])], ["item", String(hd["relic"])]], "reward": {"potion": 1},
 				"say": "%s of %s will wear you down. The %s bears it; a village keeper sells it, or forge it." % [String(hd["name"]), nm, wn],
 				"how": "%s: the %s (Wards, at the Wisp Forge, or bought from a keeper here) bears it, and so does the relic of the guardian who knows it." % [String(hd["name"]), wn]})
+	# (its heart: each kind of world's core is its own, for the Core Arts; user, 24 Nov)
+	var kc: int = Defs.kind_core(pl)
+	if kc != Defs.CORE:
+		var kn: String = Defs.NAMES[kc]
+		out.append({"id": "core", "title": "Harvest 10 %s" % kn, "need": [["held", kc, 10]], "reward": {"coins": 30},
+			"say": "The heart of %s is its own: %s. Siphon it, and the Core Arts at the Wisp Forge make a spell and a piece of gear from it." % [nm, kn],
+			"how": "Dig to the middle of %s with the Core Siphon: its heart gives %s. The Wisp Forge's Core Arts turn it into a spell and a piece of gear found nowhere else; rarer worlds have rarer cores." % [nm, kn]})
 	var sys := Defs.system_of(ch)
 	var tg := next_target(sys, ch)
 	if tg >= 0:

@@ -1602,6 +1602,10 @@ func run() -> void:
 			await _test_abyss()
 		elif only == "giant":
 			await _test_giant()
+		elif only == "cores":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_cores()
 		elif only == "worlds":
 			await _test_worlds()
 		elif only == "stampdiag":
@@ -4458,6 +4462,7 @@ func run() -> void:
 	await _test_far_biomes()
 	await _test_abyss()
 	await _test_giant()
+	await _test_cores()
 	await _test_worlds()
 	await _test_bench()
 
@@ -10638,6 +10643,122 @@ func _test_quest() -> void:
 ## cloud deck and the Depth Seal, the Eye's inscription, beacons lit (one left to go out), all five as one
 ## breaking the ward, the Storm Crown (the air under the clouds can't crush you with it). Pictures
 ## `giant_landing.png`, `giant_beacon.png`, `giant_eye.png`, `giant_vault.png`, `giant_journal.png`.
+## Each kind of world's own core (user, 24 Nov: "Different types of cores for different types of planet allow
+## crafting powerful spells and gear ... Rare planet types have rarer core materials"): every kind's core, this
+## world's; the first one held teaches its spell and gear; each core spell flies (a fan where it should) and
+## lands; the Sunlance hurts what it strikes; the gear forged does what it says.
+func _test_cores() -> void:
+	var rows := []
+	var ok := true
+	var kinds_ok := true
+	var seen := {}
+	for kd in ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss", "giant"]:
+		var kc: int = Defs.kind_core({"kind": kd})
+		if (kd == "temperate" or kd == "giant") != (kc == Defs.CORE):
+			kinds_ok = false
+		if kc != Defs.CORE:
+			if seen.has(kc):
+				kinds_ok = false
+			seen[kc] = true
+	var ok1: bool = kinds_ok and seen.size() == 8 and g.core_mat == Defs.kind_core(g.planet) and Defs.kind_core(Defs.make_planet(1)) == Defs.EMBERCORE
+	rows.append("%s8 kinds of core, each its own %s; here (%s) the heart gives %s; Cindrel's %s" % ["" if ok1 else "(!) ", kinds_ok, g.planet["name"], Defs.NAMES[g.core_mat], Defs.NAMES[Defs.kind_core(Defs.make_planet(1))]])
+	ok = ok and ok1
+	# ---- a first core teaches its spell and its gear
+	var inv0: PackedInt32Array = g.player.inv.duplicate()
+	var known0: Array = g.known.duplicate()
+	var learned0: Dictionary = g.learned.duplicate()
+	var items0: Dictionary = g.items.duplicate(true)
+	for lid in ["cinder", "cindercrown", "leviathan", "abyssheart"]:
+		g.learned.erase(lid)
+	g.player.inv[Defs.EMBERCORE] = 1
+	g.player.inv[Defs.ABYSSCORE] = 0
+	g._learn_from_finds()
+	var ok2: bool = g.learned.has("cinder") and g.learned.has("cindercrown") and not g.learned.has("leviathan")
+	rows.append("%san Ember Core taught Cinderstorm %s and the Cinder Crown %s (not the Abyss Core's: %s)" % ["" if ok2 else "(!) ", g.learned.has("cinder"), g.learned.has("cindercrown"), not g.learned.has("leviathan")])
+	ok = ok and ok2
+	# ---- every core spell flies and lands
+	var god0: bool = g.test_god
+	g.test_god = true
+	var side: Vector2 = g.player.pos.normalized().orthogonal()
+	var flew := []
+	var bad := []
+	for sid in ["cinder", "tidal", "sunlance", "mire", "glacier", "thorns", "sovereign", "leviathan"]:
+		if not g.known.has(sid):
+			g.known.append(sid)
+		g.player.mana = g.player.max_mana
+		g.player.cast_cd = 0
+		g.player.spell_cd.clear()
+		var n0 := 0
+		for pr in g.projs:
+			if String(pr["type"]) == sid:
+				n0 += 1
+		g._cast(g.player, sid, g.player.pos + side * 80.0 + g.player.pos.normalized() * 10.0)
+		var n1 := 0
+		for pr2 in g.projs:
+			if String(pr2["type"]) == sid:
+				n1 += 1
+		var want := int(Defs.PROJ[sid].get("multi", 1))
+		flew.append("%s %d" % [sid, n1 - n0])
+		if n1 - n0 != want:
+			bad.append(sid)
+		for w in 170:
+			await _frames(1)
+			var left := 0
+			for pr3 in g.projs:
+				if String(pr3["type"]) == sid:
+					left += 1
+			if left == 0:
+				break
+		for pr4 in g.projs:
+			if String(pr4["type"]) == sid:
+				bad.append(sid + " (still flying)")
+				break
+	var ok3: bool = bad.is_empty()
+	rows.append("%severy core spell flew and landed: %s%s" % ["" if ok3 else "(!) ", ", ".join(flew), (" bad: " + str(bad)) if not bad.is_empty() else ""])
+	ok = ok and ok3
+	_shot("core_spells.png")
+	# ---- the Sunlance strikes hard, and the Sovereign Bolt heals you as it strikes
+	var foe = g.spawn_enemy("slime", g.player.pos + side * 46.0 + g.player.pos.normalized() * 4.0)
+	foe.max_hp = 500.0
+	foe.hp = 500.0
+	await _frames(20)
+	g.player.mana = g.player.max_mana
+	g.player.spell_cd.clear()
+	g.player.cast_cd = 0
+	g._cast(g.player, "sunlance", foe.pos)
+	for w2 in 40:
+		await _frames(1)
+	var lost: float = 500.0 - foe.hp
+	g.player.heal_left = 0.0
+	g.hp = g.max_hp - 40.0
+	var hp_before: float = g.hp
+	g.player.mana = g.player.max_mana
+	g.player.spell_cd.clear()
+	g.player.cast_cd = 0
+	g._cast(g.player, "sovereign", foe.pos)
+	for w3 in 60:
+		await _frames(1)
+	var healed: float = g.hp - hp_before
+	g.hp = g.max_hp
+	if not foe.dead:
+		g.enemies.erase(foe)
+	var ok4: bool = lost >= 50.0 and healed > 0.0
+	rows.append("%sthe Sunlance took %.0f health off a foe; the Sovereign Bolt struck and healed you %.0f" % ["" if ok4 else "(!) ", lost, healed])
+	ok = ok and ok4
+	# ---- the gear: the Cinder Crown makes Fireball half again as strong
+	var fb0: float = g.gear("spell_fireball")
+	g.items["cindercrown"] = true
+	var fb1: float = g.gear("spell_fireball")
+	var ok5: bool = absf(fb1 / maxf(fb0, 0.01) - 1.5) < 0.01
+	rows.append("%sthe Cinder Crown: Fireball x%.2f" % ["" if ok5 else "(!) ", fb1 / maxf(fb0, 0.01)])
+	ok = ok and ok5
+	g.player.inv = inv0
+	g.known = known0
+	g.learned = learned0
+	g.items = items0
+	g.test_god = god0
+	_ok("each kind of world's core: its own material, its spell and gear taught on finding it, the core spells fly and strike", ok, "; ".join(rows))
+
 func _test_giant() -> void:
 	var rows := []
 	var ok := true

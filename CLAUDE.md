@@ -635,6 +635,21 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   in. A toast names the key. `_hold` is only for a reachable planet still being made. Markers and the map's
   system chart say "<barrier>: needs a <key>". STAR IRON (material 50) is only in asteroids (asteroid.gd: metallic rocks' hearts, a speck in stony
   ones).
+- CORES BY KIND (user, 24 Nov: "Different types of cores for different types of planet allow crafting powerful
+  spells and gear ... Rare planet types have rarer core materials"): materials 64-71 (NM 72): EMBERCORE volcanic,
+  TIDECORE ocean, SUNCORE desert, MIRECORE marsh, RIMECORE frozen, WILDCORE wild, CROWNCORE realm, ABYSSCORE (the deep
+  ocean world: the rarest); `Defs.KIND_CORE`, `kind_core(pl)` (a temperate world's, and a giant's, is CORE),
+  `is_kind_core`. Never in the world: every heart is CORE cells, and main `_apply_counts` puts what the siphon takes
+  into `core_mat` (set in `_make_world`). The collision grid keeps a cell's type in 6 bits: world materials must
+  stay under 64 (chunks.gd `_solid`). The forge's "Core Arts": a spell and a gear piece per core, learned on
+  finding it (LEARN "find"). The spells are DATA: SPELLS ("art" the glyph they share, "snd"), SPELL_FX, PROJ with
+  "multi"/"spread" (a fan: main `_cast`, space `_space_cast`) and "arts" (hit, blast/bkind/bdmg/bpow, splat+sr,
+  freeze, area/area_r/knock, slow/slow_r, heal, chip), done by main `_arts_impact` (and space `_sbolt_impact` on
+  aliens): Cinderstorm (cinder: three fireballs), Tidal Surge (tidal: "surge" is a guardian's shot), Sunlance,
+  Mire Grasp, Glacier Nova, Thornburst (five thorns), Sovereign Bolt (heals you), Leviathan's Wrath. The gear is
+  GEAR entries with "core" (cinder crown, tidewalker's greaves, sunforged diadem, bogheart plate, rimeglass lens
+  "rimelens2", heart of the wild, crown of ages, abyssal heart). A later world's quest chapter asks for 10 of its
+  core. Test: `_test_cores` ("cores"; in the full run after `_test_giant`; picture `core_spells.png`).
 - GPU counters: `Defs.CNT` (128) per player, one per material below `C_HARD` (112), then `C_HARD`, `C_PLACED`,
   `C_FALL_N`/`C_FALL_MAX`, `C_CHEST_OPEN`, `C_CHEST`, `C_CREAK_N`/`C_CREAK`, `C_FOG`, `C_FELL_N`/`C_FELL`,
   `C_TREASURE` (also #defines in every shader). They used to start at 50, so digging what the staff couldn't cut
@@ -1381,7 +1396,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

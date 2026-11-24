@@ -3497,14 +3497,17 @@ func _space_cast(m, st) -> void:
 	m.mana -= cost
 	game.spell_used(m, id, int(s["cd"]))
 	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
-	game.audio.play(snd.get(id, "spark"), m.pos, 0.8)
+	game.audio.play(String(s.get("snd", snd.get(id, "spark"))), m.pos, 0.8)
 	var hand: Vector2 = m.pos + st.axis_x() * (float(m.facing) * 6.0) - st.axis_y() * 0.5
 	var dir: Vector2 = (m.input.aim - hand).normalized()
 	if dir == Vector2.ZERO:
 		dir = st.axis_x() * float(m.facing)
 	var pd: Dictionary = Defs.PROJ[id]
 	var at: Vector2 = hand + dir * 10.0
-	sbolts.append({"type": id, "pos": at, "vel": dir * float(pd["speed"]), "life": int(pd["life"]), "st": st, "owner": "player"})
+	var nmul := int(pd.get("multi", 1))
+	for mk in nmul:
+		var ma := (float(mk) - float(nmul - 1) * 0.5) * float(pd.get("spread", 0.0))
+		sbolts.append({"type": id, "pos": at, "vel": dir.rotated(ma) * float(pd["speed"]), "life": int(pd["life"]), "st": st, "owner": "player"})
 	game.vfx.cast(id, at, dir, m)
 	stats["spells"] = int(stats.get("spells", 0)) + 1
 
@@ -3578,6 +3581,26 @@ func _sbolt_impact(pr: Dictionary, hit: bool, al) -> void:
 	var p: Vector2 = pr["pos"]
 	var type: String = pr["type"]
 	var pd: Dictionary = Defs.PROJ[type]
+	if pd.has("arts"):
+		# (a core spell, by its data: main `_arts_impact` on a planet)
+		var a: Dictionary = pd["arts"]
+		if al != null and a.has("hit"):
+			_hurt_alien(al, float(a["hit"]), p, 1.2)
+			if a.has("heal"):
+				game.player.heal_left += float(a["heal"])
+		if a.has("blast"):
+			_alien_blast(p, float(a["blast"]), float(a["bdmg"]))
+			game.vfx.blast(p, float(a["blast"]), int(a.get("bkind", 1)))
+		for o in aliens:
+			if o.dead:
+				continue
+			var od: float = o.world().distance_to(p)
+			if a.has("area") and od < float(a["area_r"]) + o.hw:
+				_hurt_alien(o, float(a["area"]) * (1.0 - 0.5 * clampf(od / float(a["area_r"]), 0.0, 1.0)), p, float(a.get("knock", 1.0)))
+			if a.has("slow") and od < float(a["slow_r"]) + o.hw:
+				o.slow = maxi(o.slow, int(a["slow"]))
+		game.vfx.impact(type, p, hit)
+		return
 	match type:
 		"mote":
 			if al != null:

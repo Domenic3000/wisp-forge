@@ -1186,7 +1186,8 @@ func _apply_counts(m: Mage) -> void:
 	var spent := 0.0
 	for t in Defs.NM:
 		if cn[t] > 0:
-			m.inv[t] += cn[t]
+			# (a world's heart is CORE cells everywhere; what the siphon takes is that world's kind of core)
+			m.inv[core_mat if t == Defs.CORE else t] += cn[t]
 			total += cn[t]
 			if t != Defs.TREASURE:
 				spent += float(cn[t]) * dig_mana(t)
@@ -2656,10 +2657,14 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	m.mana -= cost
 	spell_used(m, id, int(s["cd"]))
 	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
-	audio.play(snd.get(id, "spark"), m.pos, 0.8)
+	audio.play(String(s.get("snd", snd.get(id, "spark"))), m.pos, 0.8)
 	var st := _staff(m, aim)
 	var pd: Dictionary = Defs.PROJ[id]
-	_spawn_proj(id, st[0], st[1] * float(pd["speed"]), "player")
+	# (a core spell may fly as a fan of several: "multi", "spread" radians apart)
+	var nmul := int(pd.get("multi", 1))
+	for mk in nmul:
+		var ma := (float(mk) - float(nmul - 1) * 0.5) * float(pd.get("spread", 0.0))
+		_spawn_proj(id, st[0], (st[1] as Vector2).rotated(ma) * float(pd["speed"]), "player")
 	vfx.cast(id, st[0], st[1], m)
 
 ## step through space to the cursor (up to 48 cells), stopping at the last free spot along the way
@@ -3140,6 +3145,11 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 	var type: String = pr["type"]
 	var pd: Dictionary = Defs.PROJ[type]
 	var kb := 1.2
+	if pd.has("arts"):
+		_arts_impact(pd["arts"], p, hit, e)
+		if Defs.SPELL_FX.has(type):
+			vfx.impact(type, p, hit)
+		return
 	match type:
 		"mote":
 			# (the first spell: it stings, and moves nothing; stone and earth shrug it off)
@@ -3202,6 +3212,30 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 	var col: Color = Defs.SPELLS[type]["color"] if Defs.SPELLS.has(type) else pd.get("col", Color(1, 0.35, 0.12))
 	for k in 10:
 		_particle(p, Vector2(randf() - 0.5, randf() - 0.8) * 1.5, 14 + randi() % 10, col, true, 0.05)
+
+## where a core spell lands (Defs.PROJ "arts"): what it does, by its data
+func _arts_impact(a: Dictionary, p: Vector2, hit: bool, e) -> void:
+	if e != null and a.has("hit"):
+		_hurt_enemy(e, float(a["hit"]), 1.4, -0.6)
+		if a.has("heal"):
+			player.heal_left += float(a["heal"])
+	if a.has("blast"):
+		_explode(p, float(a["blast"]), clampi(tier + int(a.get("bpow", 0)), 1, 3), int(a.get("bkind", 1)), float(a["bdmg"]))
+	if a.has("splat"):
+		brushes.append([p, float(a["sr"]), 3, int(a["splat"]), 0, 0, 0])
+	if a.has("freeze"):
+		brushes.append([p, float(a["freeze"]), 4, 0, 0, 0, 0])
+	if a.has("chip") and hit and e == null:
+		brushes.append([p, float(a["chip"]), 6, 0, tier, 0, 0])
+	if a.has("area") or a.has("slow"):
+		for en in enemies:
+			if en.dead or en.under:
+				continue
+			var dd: float = en.pos.distance_to(p)
+			if a.has("area") and dd < float(a["area_r"]):
+				_hurt_enemy(en, float(a["area"]) * (1.0 - 0.5 * dd / float(a["area_r"])), float(a.get("knock", 1.0)), -0.8)
+			if a.has("slow") and dd < float(a["slow_r"]):
+				en.slow = maxi(en.slow, int(a["slow"]))
 
 func _explode(p: Vector2, r: float, power: int, kind: int, dmg: float) -> void:
 	brushes.append([p, r, 2, kind, power, 0, 0])
@@ -4737,6 +4771,8 @@ func sleep_till_morning() -> void:
 
 ## the planets you've made landfall on (`items["landed"]`: index -> true; the quest's chapters and the
 ## markers use it)
+var core_mat := Defs.CORE      # what this world's heart gives the siphon (Defs.KIND_CORE)
+
 func note_landed(i: int) -> void:
 	if not items.has("landed"):
 		items["landed"] = {}
@@ -6916,6 +6952,7 @@ func _make_world(index: int, arriving: bool) -> void:
 	planet = Defs.make_planet(index)
 	clim = Defs.climate(planet)
 	note_landed(index)
+	core_mat = Defs.kind_core(planet)
 	end_sky_event()
 	sky_fx.clear()
 	if towns != null:

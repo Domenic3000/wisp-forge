@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 64
+const NM := 72
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -79,6 +79,18 @@ const HULL := 60          # Hull Plating: salvaged from derelict wrecks in deep 
 const XENITE := 61        # Xenite: the glowing chitin of the aliens in derelict stations (alien.gd)
 const WISPCELL := 62      # Wisp Cell: the skiff's fuel for the long hauls (the Starsail, journeys between planets)
 const VOIDESS := 63       # Void Essence: what space's own life is made of (voidlife.gd: mantas, eels, jellies, wells, monoliths)
+# each kind of planet's own core (user, 24 Nov: "Different types of cores for different types of planet allow
+# crafting powerful spells and gear ... Rare planet types have rarer core materials"): the heart of a world is
+# CORE cells everywhere, and what the Core Siphon takes from it counts as that world's kind of core (main
+# `_apply_counts`, KIND_CORE); a temperate world's is the plain Planet Core. The Wisp Forge's "Core Arts".
+const EMBERCORE := 64     # volcanic
+const TIDECORE := 65      # ocean
+const SUNCORE := 66       # desert
+const MIRECORE := 67      # marsh
+const RIMECORE := 68      # frozen
+const WILDCORE := 69      # wild
+const CROWNCORE := 70     # realm
+const ABYSSCORE := 71     # the deep ocean world: the rarest
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -106,6 +118,7 @@ const MAT_NAMES := {
 	30: "PLANK", 31: "CACTUS", 32: "TIMBER", 33: "LITTER", 34: "MASONRY", 35: "SANDSTONE", 36: "TILE",
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
 	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE", 62: "WISPCELL", 63: "VOIDESS",
+	64: "EMBERCORE", 65: "TIDECORE", 66: "SUNCORE", 67: "MIRECORE", 68: "RIMECORE", 69: "WILDCORE", 70: "CROWNCORE", 71: "ABYSSCORE",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -261,6 +274,16 @@ func _init() -> void:
 	PLACE[WISPCELL] = 0
 	_def(VOIDESS, "Void Essence", K_SOLID, ["#5a2a9a", "#b070ff", "#2c1466", "#f2dcff"], {"hard": 1, "self": 1, "glow": Vector3(0.6, 0.35, 1.0)})
 	PLACE[VOIDESS] = 0
+	for kc in [[EMBERCORE, "Ember Core", ["#ff6a2a", "#ffb347", "#d23a10", "#fff0c0"], Vector3(1.0, 0.45, 0.15)],
+			[TIDECORE, "Tide Core", ["#2a8cff", "#7ac8ff", "#1450c8", "#e0f6ff"], Vector3(0.25, 0.6, 1.0)],
+			[SUNCORE, "Sun Core", ["#ffd23a", "#fff07a", "#e0a010", "#ffffff"], Vector3(1.0, 0.9, 0.4)],
+			[MIRECORE, "Mire Core", ["#4a8a3a", "#8ad060", "#2a5a22", "#d8ffb0"], Vector3(0.4, 0.85, 0.3)],
+			[RIMECORE, "Rime Core", ["#9ae8ff", "#d8faff", "#5ab8e0", "#ffffff"], Vector3(0.6, 0.9, 1.0)],
+			[WILDCORE, "Wild Core", ["#e08a2a", "#ffd070", "#a85a14", "#fff2c8"], Vector3(0.95, 0.65, 0.25)],
+			[CROWNCORE, "Crown Core", ["#c0c8e0", "#f0f4ff", "#8890b0", "#ffffff"], Vector3(0.85, 0.88, 1.0)],
+			[ABYSSCORE, "Abyss Core", ["#3a2a8a", "#7a5aff", "#1a1050", "#e8deff"], Vector3(0.45, 0.3, 1.0)]]:
+		_def(int(kc[0]), String(kc[1]), K_SOLID, kc[2], {"hard": 4, "self": 1, "glow": kc[3]})
+		PLACE[int(kc[0])] = 0
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -997,6 +1020,15 @@ const FOLK_LAST := ["Miller", "Thatcher", "Brook", "Ashdown", "Fletcher", "Coope
 ## Each kind of planet's own ore: where gen.comp lays it (`hosts`: the ground it forms in, `depth`: cells
 ## under the surface, `thr`: the vein noise's threshold, higher = rarer; `sea`: only in the seabed, well
 ## under the sea). The gear made from it needs it.
+## each kind of planet's core (what its heart gives the Core Siphon; a kind not listed: the plain Planet Core)
+const KIND_CORE := {"volcanic": EMBERCORE, "ocean": TIDECORE, "desert": SUNCORE, "marsh": MIRECORE, "frozen": RIMECORE,
+	"wild": WILDCORE, "realm": CROWNCORE, "abyss": ABYSSCORE}
+func kind_core(pl: Dictionary) -> int:
+	return int(KIND_CORE.get(String(pl.get("kind", "temperate")), CORE))
+
+func is_kind_core(m: int) -> bool:
+	return m >= EMBERCORE and m <= ABYSSCORE
+
 const KIND_ORES := {
 	"volcanic": {"mat": FIREOPAL, "hosts": [MAGMAROCK, OBSIDIAN, STONE, DEEPSTONE], "depth": [6.0, 900.0], "thr": 0.80},
 	"ocean": {"mat": ABYSSPEARL, "hosts": [SAND, GRAVEL, STONE, MUD], "depth": [0.0, 70.0], "thr": 0.77, "sea": true},
@@ -1041,6 +1073,15 @@ const GEAR := {
 	"silverthread": {"name": "Silver-Thread Cloak", "ore": SILVER, "cost": {SILVER: 12, LEAF: 10, PLANK: 4}, "mods": {"jump": 1.2}, "desc": "You jump higher."},
 	# space's own: Void Essence, from the creatures and anomalies between the stars (voidlife.gd)
 	"voidmantle": {"name": "Mantle of the Void", "ore": VOIDESS, "cost": {VOIDESS: 18, XENITE: 4, CRYSTAL: 4}, "mods": {"max_mana": 40.0, "space_mana": 2.0}, "desc": "+40 max mana, and out in space your mana comes back twice as fast."},
+	# core gear: a world's heart ("core": the forge's "Core Arts", next to the core spells; user, 24 Nov)
+	"cindercrown": {"name": "Cinder Crown", "ore": EMBERCORE, "core": true, "cost": {EMBERCORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"spell_fireball": 1.5, "lava_dmg": 0.25, "fire_dmg": 0.5}, "desc": "Fireballs half again as strong; lava and fire barely touch you."},
+	"tidegreaves": {"name": "Tidewalker's Greaves", "ore": TIDECORE, "core": true, "cost": {TIDECORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"swim": 1.6, "breath": 2.5, "draught_heal": 1.3}, "desc": "Swim far faster, hold your breath two and a half times as long, and draughts heal more."},
+	"sundiadem": {"name": "Sunforged Diadem", "ore": SUNCORE, "core": true, "cost": {SUNCORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"max_mana": 100.0, "light": 30.0, "spell_spark": 1.4}, "desc": "+100 max mana, a sun's glow about you, and Spark Bolts hit harder."},
+	"bogheart": {"name": "Bogheart Plate", "ore": MIRECORE, "core": true, "cost": {MIRECORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"dmg_taken": 0.7, "knock": 0.5}, "desc": "You take less damage, and blows barely move you."},
+	"rimelens2": {"name": "Rimeglass Lens", "ore": RIMECORE, "core": true, "cost": {RIMECORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"dig_rate": 1.5, "spell_frost": 1.5, "levitate": 0.7}, "desc": "Dig half again as fast, Frostbite half again as strong, and levitating costs less."},
+	"wildheart": {"name": "Heart of the Wild", "ore": WILDCORE, "core": true, "cost": {WILDCORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"max_hp": 60.0, "speed": 1.15, "jump": 1.1}, "desc": "+60 max health, and you run and jump further."},
+	"crownages": {"name": "Crown of Ages", "ore": CROWNCORE, "core": true, "cost": {CROWNCORE: 12, STARIRON: 4, WISPBAR: 4}, "mods": {"mana_cost": 0.75, "max_mana": 60.0, "undead_dmg": 1.5}, "desc": "Spells cost a quarter less, +60 max mana, and the dead fear you."},
+	"abyssheart": {"name": "Abyssal Heart", "ore": ABYSSCORE, "core": true, "cost": {ABYSSCORE: 10, STARIRON: 6, WISPBAR: 6}, "mods": {"max_hp": 80.0, "dmg_taken": 0.8, "breath": 3.0, "mana_regen": 0.1}, "desc": "The rarest heart: +80 max health, less damage taken, three times your breath, and faster mana."},
 	# alloys: two worlds' ores bound in star iron ("ore" is then a list; the forge's "Alloys")
 	"steamheart": {"name": "Steamheart Focus", "ore": [FIREOPAL, RIMECRYSTAL], "cost": {FIREOPAL: 10, RIMECRYSTAL: 10, STARIRON: 6}, "mods": {"spell_fireball": 1.3, "spell_frost": 1.3, "mana_cost": 0.9}, "desc": "Fire and frost in one stone: Fireball and Frostbite a third stronger, every spell a tenth cheaper."},
 	"solarlens": {"name": "Solar Forge Lens", "ore": [FIREOPAL, SUNSTONE], "cost": {FIREOPAL: 10, SUNSTONE: 10, STARIRON: 6}, "mods": {"dig_rate": 1.35, "spell_spark": 1.3, "light": 24.0}, "desc": "Your staff digs faster, your Spark Bolts hit harder, and its tip glows."},
@@ -1063,7 +1104,7 @@ func gear_recipes() -> Array:
 	for id in GEAR:
 		var gd: Dictionary = GEAR[id]
 		var ores := gear_ores(id)
-		out.append({"id": id, "cat": "Ore Gear" if ores.size() == 1 else "Alloys", "name": gd["name"], "cost": gd["cost"], "ore": ores[0], "ores": ores, "desc": gd["desc"], "gear": true})
+		out.append({"id": id, "cat": "Core Arts" if gd.has("core") else ("Ore Gear" if ores.size() == 1 else "Alloys"), "name": gd["name"], "cost": gd["cost"], "ore": ores[0], "ores": ores, "desc": gd["desc"], "gear": true})
 	return out
 
 # ------------------------------------------------------- learning recipes ---
@@ -1082,6 +1123,8 @@ const LEARN := {
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
 	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "radward": {"find": [HULL]}, "rimeprow": {"find": [XENITE]}, "beam": {"find": [STARIRON]}, "delve1": {"find": [COPPERBAR]}, "delve2": {"find": [WISPBAR]}, "delve3": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
+	"cinder": {"find": [EMBERCORE]}, "tidal": {"find": [TIDECORE]}, "sunlance": {"find": [SUNCORE]}, "mire": {"find": [MIRECORE]},
+	"glacier": {"find": [RIMECORE]}, "thorns": {"find": [WILDCORE]}, "sovereign": {"find": [CROWNCORE]}, "leviathan": {"find": [ABYSSCORE]},
 	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
 	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
@@ -1425,7 +1468,8 @@ func biome_index_at(pl: Dictionary, a: float) -> int:
 	return bi
 
 # ---------------------------------------------------------------- spells ----
-const SPELL_ORDER := ["mote", "spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend"]
+const SPELL_ORDER := ["mote", "spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend",
+	"cinder", "tidal", "sunlance", "mire", "glacier", "thorns", "sovereign", "leviathan"]
 ## "single": one cast a click (let go and click again; holding the button doesn't repeat it: main `cast_latch`)
 const SPELLS := {
 	"mote": {"name": "Wisp Mote", "mana": 8.0, "cd": 34, "single": true, "color": Color(0.62, 0.9, 1.0), "desc": "A little drifting light a click. Stings foes; too weak to chip stone."},
@@ -1438,6 +1482,15 @@ const SPELLS := {
 	"blink": {"name": "Blink", "mana": 22.0, "cd": 30, "color": Color(0.55, 0.95, 1.0), "desc": "Step through space to the cursor."},
 	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "A falling star: a huge fiery blast."},
 	"mend": {"name": "Mending", "mana": 60.0, "cd": 600, "color": Color(0.55, 1.0, 0.62), "desc": "Knit your wounds: 30 health over a second. Ten seconds to recover."},
+	# the core spells ("art": the glyph they share; "snd": their sound)
+	"cinder": {"name": "Cinderstorm", "mana": 30.0, "cd": 40, "single": true, "color": Color(1.0, 0.45, 0.12), "art": "fireball", "snd": "fire", "desc": "Three fireballs in a fan, each bursting into flame."},
+	"tidal": {"name": "Tidal Surge", "mana": 28.0, "cd": 45, "single": true, "color": Color(0.25, 0.6, 1.0), "art": "tide", "snd": "water", "desc": "A great wave: floods where it lands and hurls every foe near it back."},
+	"sunlance": {"name": "Sunlance", "mana": 24.0, "cd": 26, "single": true, "color": Color(1.0, 0.88, 0.35), "art": "spark", "snd": "spark", "desc": "A lance of sunlight, fast and straight: a heavy blow, and fire where it strikes."},
+	"mire": {"name": "Mire Grasp", "mana": 22.0, "cd": 40, "single": true, "color": Color(0.45, 0.75, 0.3), "art": "mire", "snd": "water", "desc": "A bog wells up where it lands: every foe near it is mired and slowed."},
+	"glacier": {"name": "Glacier Nova", "mana": 32.0, "cd": 50, "single": true, "color": Color(0.65, 0.92, 1.0), "art": "frost", "snd": "frost", "desc": "A burst of deep cold: freezes water and lava wide around and slows every foe in it a long while."},
+	"thorns": {"name": "Thornburst", "mana": 20.0, "cd": 30, "single": true, "color": Color(0.6, 0.85, 0.3), "art": "thorns", "snd": "spark", "desc": "Five thorns in a wide fan: deadly up close."},
+	"sovereign": {"name": "Sovereign Bolt", "mana": 30.0, "cd": 36, "single": true, "color": Color(0.85, 0.88, 1.0), "art": "sovereign", "snd": "rare", "desc": "A silver bolt of royal will: a heavy blow that heals you as it strikes."},
+	"leviathan": {"name": "Leviathan's Wrath", "mana": 55.0, "cd": 80, "single": true, "color": Color(0.5, 0.35, 1.0), "art": "quake", "snd": "boom", "desc": "The abyss in an orb: a crushing blast that tears the ground and floods it."},
 }
 ## How each spell LOOKS (scripts/vfx.gd): "core" its white-hot heart, "glow" its halo and light, "glow_r" the
 ## halo's size, and a style for each part: "trail" (spark, flame, frost, water, rocks, star, ember: what it leaves
@@ -1456,6 +1509,14 @@ const SPELL_FX := {
 	"efire": {"core": Color(1.0, 0.85, 0.5), "glow": Color(1.0, 0.4, 0.15), "glow_r": 7.0, "trail": "ember"},
 	"lavabomb": {"core": Color(1.0, 0.8, 0.4), "glow": Color(1.0, 0.35, 0.05), "glow_r": 9.0, "trail": "flame"},
 	"meteor": {"core": Color(1.0, 0.95, 0.8), "glow": Color(1.0, 0.55, 0.2), "glow_r": 12.0, "trail": "star"},
+	"cinder": {"core": Color(1.0, 0.95, 0.7), "glow": Color(1.0, 0.45, 0.12), "glow_r": 9.0, "trail": "flame", "impact": "", "cast": "rune"},
+	"tidal": {"core": Color(0.8, 0.95, 1.0), "glow": Color(0.2, 0.55, 1.0), "glow_r": 12.0, "trail": "water", "impact": "splash", "cast": "rune"},
+	"sunlance": {"core": Color(1.0, 1.0, 0.9), "glow": Color(1.0, 0.82, 0.3), "glow_r": 9.0, "trail": "star", "impact": "nova", "cast": "rune"},
+	"mire": {"core": Color(0.75, 0.9, 0.6), "glow": Color(0.35, 0.65, 0.25), "glow_r": 9.0, "trail": "water", "impact": "splash", "cast": "rune"},
+	"glacier": {"core": Color(0.95, 1.0, 1.0), "glow": Color(0.5, 0.85, 1.0), "glow_r": 11.0, "trail": "frost", "impact": "shatter", "cast": "rune"},
+	"thorns": {"core": Color(0.9, 1.0, 0.7), "glow": Color(0.5, 0.8, 0.25), "glow_r": 5.0, "trail": "spark", "impact": "zap", "cast": "rune"},
+	"sovereign": {"core": Color(1.0, 1.0, 1.0), "glow": Color(0.8, 0.85, 1.0), "glow_r": 9.0, "trail": "star", "impact": "nova", "cast": "rune"},
+	"leviathan": {"core": Color(0.9, 0.85, 1.0), "glow": Color(0.45, 0.3, 1.0), "glow_r": 15.0, "trail": "rocks", "impact": "quake", "cast": "rune"},
 }
 
 ## Health doesn't come back by itself: Healing Draughts (H to drink; forged, or found in chests) and
@@ -1473,6 +1534,19 @@ const PROJ := {
 	"quake": {"speed": 3.0, "g": 0.09, "life": 160, "dmg": 0.0, "light": 28.6},
 	"starfall": {"speed": 3.4, "g": 0.02, "life": 160, "dmg": 0.0, "light": 41.6},
 	"efire": {"speed": 2.2, "g": 0.0, "life": 200, "dmg": 12.0, "light": 18.2},
+	# the core spells: "arts" is what one does where it lands (main `_arts_impact`, space.gd `_sbolt_impact`):
+	# "hit" damage to what it struck, "blast" r / "bkind" / "bdmg" / "bpow" (+ the staff's tier) an explosion,
+	# "splat" + "sr" matter laid there, "freeze" r frozen, "area" damage to every foe within "area_r" (thrown
+	# back by "knock"), "slow" ticks to every foe within "slow_r", "heal" health back to you, "chip" r of rock
+	# chipped; "multi" n of them in a fan "spread" (radians apart)
+	"cinder": {"speed": 4.2, "g": 0.03, "life": 130, "dmg": 0.0, "light": 30.0, "multi": 3, "spread": 0.16, "arts": {"blast": 8.0, "bkind": 1, "bdmg": 32.0, "bpow": 0}},
+	"tidal": {"speed": 3.6, "g": 0.05, "life": 130, "dmg": 0.0, "light": 22.0, "arts": {"splat": WATER, "sr": 14.0, "area": 22.0, "area_r": 22.0, "knock": 4.0}},
+	"sunlance": {"speed": 9.0, "g": 0.0, "life": 60, "dmg": 0.0, "light": 36.0, "arts": {"hit": 60.0, "splat": FIRE, "sr": 2.5, "chip": 2.6}},
+	"mire": {"speed": 3.4, "g": 0.06, "life": 130, "dmg": 0.0, "light": 14.0, "arts": {"splat": MUD, "sr": 9.0, "area": 14.0, "area_r": 20.0, "knock": 0.5, "slow": 320, "slow_r": 22.0}},
+	"glacier": {"speed": 4.0, "g": 0.0, "life": 90, "dmg": 0.0, "light": 26.0, "arts": {"freeze": 16.0, "area": 34.0, "area_r": 24.0, "knock": 1.0, "slow": 420, "slow_r": 26.0}},
+	"thorns": {"speed": 5.0, "g": 0.02, "life": 45, "dmg": 0.0, "light": 8.0, "multi": 5, "spread": 0.18, "arts": {"hit": 16.0, "chip": 1.6}},
+	"sovereign": {"speed": 6.0, "g": 0.0, "life": 70, "dmg": 0.0, "light": 28.0, "arts": {"hit": 48.0, "heal": 10.0}},
+	"leviathan": {"speed": 3.2, "g": 0.06, "life": 160, "dmg": 0.0, "light": 40.0, "arts": {"blast": 20.0, "bkind": 2, "bdmg": 95.0, "bpow": 1, "splat": WATER, "sr": 12.0}},
 	"arrow": {"speed": 4.4, "g": 0.05, "life": 130, "dmg": 10.0, "light": 9.0, "col": Color(0.45, 1.0, 0.5)},   # (spectral: a faint green light)
 	# the biome guardians' (scripts/boss_ai.gd): "col" their glow, "splat" what they leave where they land
 	"venom": {"speed": 3.0, "g": 0.05, "life": 160, "dmg": 11.0, "light": 14.0, "col": Color(0.55, 1.0, 0.3)},
@@ -1506,6 +1580,15 @@ const RECIPES := [
 	{"id": "mend", "cat": "Spells", "name": "Mending", "cost": {WISP: 8, SHROOM: 12, CRYSTAL: 4}, "spell": "mend", "scroll": "scroll_mend"},
 	{"id": "potion", "cat": "Potions", "name": "Healing Draught", "cost": {CRYSTAL: 2, SHROOM: 6, GLASS: 2}, "potion": 1, "desc": "Drink with H: 35 health over a moment."},
 	{"id": "starfall", "cat": "Spells", "name": "Starfall", "cost": {EMBER: 12, OBSIDIAN: 6, COAL: 10}, "spell": "starfall", "scroll": "scroll_starfall"},
+	# core spells: each kind of world's heart (the forge's "Core Arts"; learned on finding that core)
+	{"id": "cinder", "cat": "Core Arts", "name": "Cinderstorm", "cost": {EMBERCORE: 10, EMBER: 8, COAL: 10}, "spell": "cinder"},
+	{"id": "tidal", "cat": "Core Arts", "name": "Tidal Surge", "cost": {TIDECORE: 10, ABYSSPEARL: 4, GLASS: 6}, "spell": "tidal"},
+	{"id": "sunlance", "cat": "Core Arts", "name": "Sunlance", "cost": {SUNCORE: 10, CRYSTAL: 6, GLASS: 6}, "spell": "sunlance"},
+	{"id": "mire", "cat": "Core Arts", "name": "Mire Grasp", "cost": {MIRECORE: 10, MUD: 20, SHROOM: 8}, "spell": "mire"},
+	{"id": "glacier", "cat": "Core Arts", "name": "Glacier Nova", "cost": {RIMECORE: 10, FROST: 10, ICE: 10}, "spell": "glacier"},
+	{"id": "thorns", "cat": "Core Arts", "name": "Thornburst", "cost": {WILDCORE: 10, WOOD: 12, LEAF: 12}, "spell": "thorns"},
+	{"id": "sovereign", "cat": "Core Arts", "name": "Sovereign Bolt", "cost": {CROWNCORE: 10, CRYSTAL: 6, WISPBAR: 4}, "spell": "sovereign"},
+	{"id": "leviathan", "cat": "Core Arts", "name": "Leviathan's Wrath", "cost": {ABYSSCORE: 10, ABYSSPEARL: 10, STARIRON: 6}, "spell": "leviathan"},
 	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava, and you dig faster. Copper ingots come from a Smelter (build mode, Workshops)."},
 	# Delver's Runes (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it ... slow is fine in the
 	# beggining but should get more powerful through progression"): each digs 30% faster (main `dig_speed`), the
