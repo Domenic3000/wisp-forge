@@ -1193,7 +1193,7 @@ func _apply_counts(m: Mage) -> void:
 			if t >= Defs.FIREOPAL and t <= Defs.SILVER and not m.items.has("found_%d" % t):
 				m.items["found_%d" % t] = true
 				if m.local:
-					ui.toast("%s: this world's own ore. The Wisp Forge (C) has gear for it, and the Core Drive wants some." % Defs.NAMES[t], Color(1.0, 0.85, 0.5), 5.0)
+					ui.toast("%s: this world's own ore. The Wisp Forge (C) has gear for it." % Defs.NAMES[t], Color(1.0, 0.85, 0.5), 5.0)
 			if randf() < 0.6 and m.local:
 				_spawn_suck_particles(t, mini(cn[t], 3))
 	if cn[Defs.TREASURE] > 0 and m.local:
@@ -4735,19 +4735,15 @@ func sleep_till_morning() -> void:
 	time += fposmod(want - now, DAY_LEN)
 	ui.toast("You sleep soundly, and wake with the sun.", Color(1, 0.9, 0.6), 3.0)
 
-## The Core Drive that leaves this planet wants some of its own ore (if it has one): its recipe is
-## rewritten for each planet.
-func _refresh_recipes() -> void:
-	var ko := Defs.kind_ore(planet)
-	for i in recipes.size():
-		if String(recipes[i]["id"]) != "drive":
-			continue
-		var r: Dictionary = (recipes[i] as Dictionary).duplicate(true)
-		var cost := {Defs.CORE: 30, Defs.STARIRON: 12, Defs.WISP: 10}
-		if ko >= 0:
-			cost[ko] = Defs.DRIVE_ORE
-		r["cost"] = cost
-		recipes[i] = r
+## the planets you've made landfall on (`items["landed"]`: index -> true; the quest's chapters and the
+## markers use it)
+func note_landed(i: int) -> void:
+	if not items.has("landed"):
+		items["landed"] = {}
+	(items["landed"] as Dictionary)[str(i)] = true
+
+func landed_on(i: int) -> bool:
+	return (items.get("landed", {}) as Dictionary).has(str(i))
 
 # ============================================================= crafting ====
 ## How fast you dig (the ground, and asteroids out in space; not the Remove tool), 1 = the old Stone staff's
@@ -4771,9 +4767,11 @@ func recipe_done(r: Dictionary) -> bool:
 		"mana": return items.has("mana_crystal") or (max_mana >= 170 and not items.has("circlet"))
 		"ward": return heat_ward
 		"skiff": return items.has("skiff")
-		"drive": return Defs.is_exotic(int(planet.get("index", 0))) or skiff_reach() > int(planet.get("index", 0))
+		"drive": return items.has("drive") or items.has("skiff")
 		"keel": return items.has("keel")
 		"lattice": return items.has("lattice")
+		"radward": return items.has("radward")
+		"rimeprow": return items.has("rimeprow")
 		"depthseal": return items.has("depthseal")
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
@@ -4784,18 +4782,15 @@ func recipe_done(r: Dictionary) -> bool:
 		return items.has(String(r["id"]))
 	return false
 
-## the furthest planet (by index) the skiff can fly to: one more for every Core Drive fitted (a planet's
-## heart, harvested with the Core Siphon, bound in star iron from the asteroids)
-## can the skiff reach exotic world i? (each through its own hazard: a deep ocean world's maelstrom needs the
-## Tempest Keel)
-func exotic_ok(i: int) -> bool:
-	match Defs.exotic_kind(i):
-		"abyss": return items.has("keel")
-		"giant": return items.has("lattice")
-	return false
+## can you pass the barrier round planet i? (user, 24 Nov: barriers by kind, Defs.BARRIERS: none, or its
+## key forged once opens every planet behind that kind of barrier)
+func barrier_ok(i: int) -> bool:
+	var b := Defs.barrier_of(i)
+	return b == "" or items.has(String(Defs.BARRIERS[b]["key"]))
 
-func skiff_reach() -> int:
-	return int(items.get("reach", 0))
+## (an exotic world's barrier: the deep ocean world's maelstrom, the gas giant's Thunderhead)
+func exotic_ok(i: int) -> bool:
+	return barrier_ok(i)
 
 func recipe_unlocked(r: Dictionary) -> bool:
 	if r.has("scroll") and not items.has(r["scroll"]):
@@ -4808,7 +4803,8 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier4": return tier == 3 and items.has("heart")
 		"delve2": return int(items.get("delve", 0)) >= 1
 		"delve3": return int(items.get("delve", 0)) >= 2
-		"drive": return tier >= 4 and items.has("skiff")
+		"drive": return tier >= 4
+		"skiff": return items.has("drive") or items.has("skiff")
 		"engine", "beam", "sail", "shield", "cannon", "scanner": return items.has("skiff")
 	if r.has("gear"):
 		# (gear from a planet kind's own ore: once you've found some, and what it builds on)
@@ -4927,9 +4923,7 @@ func ore_found(om: int) -> bool:
 ## ore, which shows (locked) where that ore is found.
 ## (An alloy shows, locked, once you've found either of its ores.)
 func recipe_hidden(r: Dictionary) -> bool:
-	if String(r["id"]) == "drive" and Defs.is_exotic(int(planet.get("index", 0))):
-		return true                  # (an exotic world's core leads nowhere: the Drive is forged on the round's planets)
-	if (String(r["id"]) == "keel" or String(r["id"]) == "lattice") and not items.has("skiff"):
+	if String(r["id"]) in ["keel", "lattice", "radward", "rimeprow"] and not items.has("skiff"):
 		return true
 	if r.has("part"):
 		# (ship parts: once you have a skiff to fit them to)
@@ -5018,7 +5012,8 @@ func recipe_lock_text(r: Dictionary) -> String:
 	match r["id"]:
 		"tier3": return "Needs Copper Focus"
 		"tier4": return "Needs Obsidian Focus + the Ember Heart"
-		"drive": return "Needs the Core Siphon and the Wisp Skiff"
+		"drive": return "Needs the Core Siphon (to harvest the Planet Core)"
+		"skiff": return "Needs a Core Drive: harvest the planet's core with the Core Siphon"
 		"engine", "beam", "sail": return "Needs the Wisp Skiff"
 		"shield", "cannon":
 			if not items.has(String(r["part"])):
@@ -5135,17 +5130,17 @@ func craft(r: Dictionary) -> bool:
 			ui.toast("Fitted to your skiff: %s" % ("the Wisp Shield takes a lightning strike out there, then charges again" if r["id"] == "shield" else "the Wisp Cannon fires with the cast button while you fly in space (the keys steer)"), Color(1, 0.85, 0.4), 5.0)
 			save_game()
 			return true
-		"keel", "depthseal", "lattice":
+		"keel", "depthseal", "lattice", "radward", "rimeprow":
 			items[String(r["id"])] = true
-			var what := {"keel": "the skiff rides out a maelstrom now", "lattice": "the skiff grounds the Thunderhead's lightning now",
+			var what := {"keel": "the skiff rides out every maelstrom now", "lattice": "the skiff grounds the lightning of every storm belt now",
+				"radward": "the skiff passes every radiation belt now", "rimeprow": "the skiff shoulders through every shard ring now",
 				"depthseal": "the abyss of a deep ocean world, or the air under a gas giant's clouds, can't crush you"}
 			ui.toast("%s forged: %s" % [r["name"], what[String(r["id"])]], Color(1, 0.85, 0.4), 5.0)
 			save_game()
 			return true
 		"drive":
-			items["reach"] = maxi(skiff_reach(), int(planet.get("index", 0)) + 1)
-			var nxt := String(Defs.make_planet(int(items["reach"]))["name"])
-			ui.toast("Core Drive fitted: your skiff can reach %s now. Fly up out of the sky and head for it." % nxt, Color(1, 0.85, 0.4), 6.0)
+			items["drive"] = true
+			ui.toast("Core Drive forged: the world's heart, ready for a ship. The Wisp Skiff (Travel) is built round it.", Color(1, 0.85, 0.4), 6.0)
 			save_game()
 			return true
 	if r.has("gear"):
@@ -6920,7 +6915,7 @@ func _make_world(index: int, arriving: bool) -> void:
 	_gt0 = Time.get_ticks_usec()
 	planet = Defs.make_planet(index)
 	clim = Defs.climate(planet)
-	_refresh_recipes()
+	note_landed(index)
 	end_sky_event()
 	sky_fx.clear()
 	if towns != null:
@@ -7668,12 +7663,14 @@ func _apply_save(s: Dictionary) -> void:
 	if int(s.get("cnt", 0)) < 2:
 		# (before the GPU's counters moved, digging what the staff couldn't cut counted as star iron)
 		player.inv[Defs.STARIRON] = 0
-	# (how far the skiff reaches: a journey from before the Core Drive keeps every planet it had been to)
-	var rch := maxi(int(items.get("reach", 0)), int(s.get("planet", 0)) if not Defs.is_exotic(int(s.get("planet", 0))) else 0)
+	# (barriers by kind replaced the Core Drive's reach, 24 Nov: a journey from before keeps its skiff, which
+	# counts as built round a drive, and knows every planet it has a world file for as landed on)
+	items.erase("reach")
+	if items.has("skiff"):
+		items["drive"] = true
 	for wi in 25:
 		if FileAccess.file_exists(_world_path(wi)):
-			rch = maxi(rch, wi)
-	items["reach"] = rch
+			note_landed(wi)
 	mat = int(s.get("mat", Defs.DIRT))
 	played = float(s.get("played", 0.0))
 	player.furn = []

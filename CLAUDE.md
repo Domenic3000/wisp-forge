@@ -192,8 +192,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   coming back from space it sheds its speed to 8 a tick, and glows coming down fast through the air.
 
 ## The galaxy (scripts/galaxy.gd, space.gd, map_view.gd; user, 22 Nov: "eventually i want space to be infinite with content in space"; "there is no space map")
-- Systems: every round of five planets is a star system; system r holds planets 5r..5r+4 (so a Core Drive's
-  reach, index + 1, leads on to the next system out). `Defs.system_g(r)`: grid cell `spiral_cell(r)` (a square
+- Systems: every round of five planets is a star system; system r holds planets 5r..5r+4. `Defs.system_g(r)`: grid cell `spiral_cell(r)` (a square
   spiral from (0, 0); `spiral_index` is its inverse) times `SYS_GAP` (600000) plus a seeded jitter; system 0 is
   at (0, 0), so the first system's planets are where they always were. Galaxy positions are DOUBLES
   (PackedFloat64Array [x, y]): `planet_g`, `system_g`, `g_rel(a, b)` (exact a - b as a Vector2); `planet_pos` is
@@ -420,10 +419,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   marker. Checked in `_test_stations` (flown in, docked, stepped out aboard; carried back aboard from the vault).
 - WISP FUEL (user, 23 Nov: "Only the long hauls"): WISPCELL (material 62, NM 63, "Wisp Cell"): smelter `s_cell`
   (2 wisp ore + 1 coal -> 2), outposts sell 10 for 28. space.gd: the Starsail burns one every `SAIL_BURN` (150) ticks
-  under sail with a heading (`_burn`; none left, it won't unfurl), a journey (`_maybe_travel`) costs `journey_cost(i)`
-  (`JOURNEY_CELLS` 3 in home's system, 6 into another), paid as it begins; without them it doesn't begin and `_hold`
-  keeps you off the planet's edge (`_fuel_note` says why). Home and ordinary flying are free: never stranded. HUD
-  in space: "N wisp cells". main `free_fuel` (the test mode; tests.gd sets it). Test: `_test_fuel` ("fuel").
+  under sail with a heading (`_burn`; none left, it won't unfurl, `_fuel_note` says why). A landfall costs nothing
+  (user, 24 Nov: fuel only for the fast crossing between star systems; the journey cost and its hold at the planet's
+  edge are gone). HUD in space: "N wisp cells". main `free_fuel` (the test mode; tests.gd sets it). Test: `_test_fuel` ("fuel").
 - YOUR OWN HULL (user, 23 Nov: "Design your own hull"): build mode's Ship tab (`Build.CAT_SHIP` 9, `HULL_KINDS`
   hull/cut/helm/seat), used aboard (main `_update_cabin` -> `_update_hull`; on foot it says to board): paint hull
   cells (Hull Plating, Planking, Log Frame, Glass Hull, Copper Trim, Rune Deck (RUNESTONE, paid in masonry), One-way
@@ -501,9 +499,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   of five plus its exotics: space `_make_bodies`, galaxy `_near_planet`, the map), `exotic_kind(i)`,
   `_exotic_local` (92-118k from the first planet on the bearing farthest from the others), `_exotic_planet`
   (kind "abyss", "exotic": "abyss", a name + " Deep", biomes mostly "abyss" with two "ocean" shelves and two narrow
-  islands (jungle, forest: where you come down), sea 8-12, "guardians" ["ocean"]). Not on the Core Drive's path:
-  space `reachable(i)` asks main `exotic_ok(i)` (abyss: `items["keel"]`); the Core Drive is hidden on an exotic world
-  and a save on one never raises `items["reach"]`; quest chapters ignore exotic indices ("landed" too).
+  islands (jungle, forest: where you come down), sea 8-12, "guardians" ["ocean"]). Reached through its barrier like
+  any planet (abyss: the maelstrom, `items["keel"]`; giant: a storm belt, the lattice); quest chapters ignore
+  exotic indices.
 - THE MAELSTROM: an unreachable exotic's storm belt (`body["exotic"]`): `_storm` spins you round it (0.25 + 1.1 f a
   tick along it, more than it throws you out) and swirls the gale; `_draw_belts` adds wheeling spiral arms; markers
   say "maelstrom" (`barrier_name`). The TEMPEST KEEL (recipe "keel", Travel: 12 Abyss Pearl, 6 Star Iron, 10 Hull
@@ -546,8 +544,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   "Gale", ... (`GIANT_NAMES`), sky tint amber. CLIMATES "giant": storm 2.2, wind 1.0, "pressure", settle 0.
 - THE THUNDERHEAD: its storm belt (space.gd `_storm`, `thunder`) strikes four times as often; `_draw_belts`
   flickers forks of lightning through it; `barrier_name` "thunderhead". The STORM LATTICE (recipe "lattice",
-  Travel: 8 Void Essence, 6 Star Iron, 12 Copper Ingots; learned on finding void essence, hidden until the skiff;
-  main `exotic_ok`) grounds it. Its disc is banded amber and rust with a storm's eye (`_disc_image`).
+  Travel: 12 Copper Ingots, 6 Star Iron, 8 Glass; learned on finding star iron, hidden until the skiff) grounds it,
+  and every storm belt (the giant's barrier is "storm", BARRIERS). Its disc is banded amber and rust with a storm's eye (`_disc_image`).
 - THE CLOUD DECK: main sets P.p[125].x to -1 on a giant (it's a frozen world's icing chance otherwise);
   clouds.comp `cloudDeck` (from about 40 under the mean surface down, a billowing top drifting with the wind) is
   part of `cloudDensity`; render.comp bands it amber and rust and makes it opaque deep in (nothing under it shows),
@@ -579,14 +577,21 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 ## The main quest (scripts/quest.gd; user, 23 Nov: "add a main quest system to guide the player through the main progressions"; chose: the wisp companion speaks it, a HUD line + journal, and the wisp's own powers as rewards)
 - main `quest` (a RefCounted), `quest.tick()` from `_tick` on the planet and in space; every 30 frames it ticks off
   steps whose condition holds (`need`: a list of conditions, ANY one does: "held" mat n, "found" ore, "spell",
-  "tier", "item", "reach", "landed" planet index, "station" kind (set down or carried), "learned" recipe, "heat").
-  Chapter 0 (`_first_chapter`, 17 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, the skiff's recipe,
-  the skiff, star iron, Obsidian Focus, Heat Ward, Vulkhar, Core Siphon, 30 core, Core Drive, 3 Wisp Cells, voyage);
-  a later planet you land on gets `_world_chapter(i)` (its ore, a ward per hazard of its climate, the Heat Ward
-  on a hot one, core, Drive, cells (3, or 6 into the next system), voyage). Each step: "title" (the HUD's gold
-  line, ui `quest_lbl`), "say" (the wisp, overlay `_bubble` over `main.wisp`; a toast instead out in space),
-  "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at}; a game with
-  none catches up QUIETLY (no rewards, the powers earned granted), so old saves are fine. `quest.reset()` on
+  "tier", "item", "landed" planet index (main `landed_on`: `items["landed"]`, set by `_make_world`'s `note_landed`;
+  a save from before gets every planet it has a world file for), "landed_other" (any round planet but c[1]),
+  "landed_sys" (any planet of another system than c[1]), "station" kind (set down or carried), "learned", "heat").
+  Chapter 0 (`_first_chapter`, 16 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, Obsidian Focus,
+  Heat Ward, Vulkhar, Core Siphon, 30 core, Core Drive, the skiff's recipe, the skiff, star iron, the voyage to
+  `open_target(0)`: the round's first world with no barrier); a later planet you land on gets `_world_chapter(i)`
+  (its ore, a ward per hazard of its climate, the Heat Ward on a hot one, then `next_target(sys, i)`: the next
+  world of the round not landed on, one in reach first, with "key_<item>" (forge its barrier's key) when it's
+  walled, then "voyage_<i>"; with all of them landed on: the Starsail, 15 Wisp Cells, "stars" (another system)).
+  Chapters follow the planet you're on in any order: one not finished (`items["qfin"]`) is taken up when you land
+  there; a step done once (`items["qdone"]` "ch:id") stays done and never pays twice. Each step: "title" (the
+  HUD's gold line, ui `quest_lbl`), "say" (the wisp, overlay `_bubble` over `main.wisp`; a toast instead out in
+  space), "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at, v: 2};
+  a game with none, or from before the barriers (no "v"), catches up QUIETLY from the top (no rewards, the powers
+  earned granted), so old saves are fine. `quest.reset()` on
   `start_game`. In the test mode it only runs while `quest_test` is set.
 - The journal: L (ui `toggle_journal`, `journal_open`; Esc or L closes; `menu_paused` includes it, so the world
   waits): the chapter, every step (done, now with its "how", to come), the wisp's gifts.
@@ -606,18 +611,29 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   gives a realm towns in biomes that had none), "ruin" shifts how many lie in ruins. `Defs.climate(pl)` fills every
   key (buildings `_clim`, main `clim`). Planet kinds: `PLANET_ORDER` (volcanic, ocean, desert, marsh, frozen,
   wild, realm); the classic five are temperate, volcanic, ocean, desert, marsh.
-- Travel is gated: `main.skiff_reach()` (`items["reach"]`, saved; a save from before keeps every planet it has a
-  world file for) is the highest planet index the skiff can fly to. The Core Drive (recipe "drive": 30 Planet
-  Core, 12 Star Iron, 10 Wisp, plus `Defs.DRIVE_ORE` of this planet's own ore if it has one: `main._refresh_recipes`
-  rewrites its cost in `_make_world`; needs the Core Siphon, tier 4, which needs Vulkhar's Ember Heart, and the skiff)
-  raises it to this planet's index + 1. space.gd `reachable(i)`: `_maybe_travel` never starts for a planet out of
-  reach. NO INVISIBLE WALL (user, 20 Nov): such a planet is wrapped in a STORM BELT (`_storm`, `BELT_IN`..`BELT_OUT`
-  above its orbit band, coloured by its kind's `CLIMATES` "belt"): `_draw_belts` shows a shimmering curtain at its
-  outer edge and a haze inside; in it the wind pushes outward (0.03 + 0.85 f^2 a tick, f = how deep, 0..1), takes
-  speed coming in, gusts sideways, blows sparks past, and lightning strikes (`_strike`: hurts, knocks out, flash,
-  shake, "zap"; at f >= 1 a great bolt throws you clear). Full thrust stalls about halfway in. `_hold` is only for
-  a reachable planet still being made. Markers and the map's system chart (a dashed ring) say "storm belt: needs a
-  Core Drive". STAR IRON (material 50) is only in asteroids (asteroid.gd: metallic rocks' hearts, a speck in stony
+- Getting off the first planet (user, 24 Nov: "Core drive is required to craft the wisp skiff"): the Core Drive
+  (recipe "drive": 30 Planet Core, 10 Wisp, 4 Copper Ingots; needs the Core Siphon, tier 4, which needs Vulkhar's
+  Ember Heart) is `items["drive"]`, and the skiff can't be forged without it (`recipe_unlocked` "skiff"). A save with
+  a skiff counts as having one. (`items["reach"]`, `skiff_reach` and the per-planet drive are gone.)
+- BARRIERS BY KIND (user, 24 Nov: "only gate the planets in types not individually ... if you have the item to
+  traverse storms it u locks all storm covered planets"; chose: by planet kind, procedural and thematic):
+  `Defs.BARRIERS` (storm: Storm Lattice "lattice"; radiation: Radiation Ward "radward"; shards: Rime Prow
+  "rimeprow"; maelstrom: Tempest Keel "keel"; each with name, key, key_name, col, tell), `KIND_BARRIER` (temperate,
+  wild, realm, marsh: none; ocean and giant: storm; volcanic and desert: radiation; frozen: shards; abyss:
+  maelstrom), `Defs.planet_kind(i)` / `barrier_of(i)`. A first system always has one of `OPEN_KINDS` (`_planet_kind`
+  swaps one in; the classic system's is Fenhollow). main `barrier_ok(i)` (`exotic_ok` is the same); space.gd
+  `reachable(i)` = home or barrier_ok, `barrier_name`, `barrier_key_name`; bodies carry "barrier" and its colour.
+  Keys: lattice (copper ingots, star iron, glass; learned on star iron), radward (hull plating, wisp ingots,
+  crystal, star iron; on hull plating), rimeprow (xenite, star iron, hull plating; on xenite), keel (as before);
+  all hidden until the skiff. NO INVISIBLE WALL (user, 20 Nov): a walled planet's barrier (`_storm`,
+  `BELT_IN`..`BELT_OUT` above its orbit band): `_draw_belts` shows a shimmering curtain at its outer edge and a haze
+  inside, plus per kind: radiation's rippling bands and flaring motes, a shard ring's tumbling slivers, the
+  maelstrom's spiral arms, a Thunderhead's forks; in it the wind pushes outward (0.03 + 0.85 f^2 a tick, f = how
+  deep, 0..1), takes speed coming in, gusts sideways, blows sparks past, and it hurts its own way: storms and
+  maelstroms strike (`_strike`, a Thunderhead x4), radiation burns through the hull onto you (`_irradiate`),
+  shards hole the hull (`_shard` -> `skiff_hit`); at f >= 1 you're thrown clear. Full thrust stalls about halfway
+  in. A toast names the key. `_hold` is only for a reachable planet still being made. Markers and the map's
+  system chart say "<barrier>: needs a <key>". STAR IRON (material 50) is only in asteroids (asteroid.gd: metallic rocks' hearts, a speck in stony
   ones).
 - GPU counters: `Defs.CNT` (128) per player, one per material below `C_HARD` (112), then `C_HARD`, `C_PLACED`,
   `C_FALL_N`/`C_FALL_MAX`, `C_CHEST_OPEN`, `C_CHEST`, `C_CREAK_N`/`C_CREAK`, `C_FOG`, `C_FELL_N`/`C_FELL`,

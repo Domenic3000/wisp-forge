@@ -1494,6 +1494,7 @@ func run() -> void:
 	g.player.inv.fill(0)
 	g.known = ["spark", "conjure"]
 	g.items["levitate"] = true        # (forged in a real game: the checks fly as they always have)
+	g.items["drive"] = true           # (the skiff is built round a Core Drive: the checks forge skiffs as they always have)
 	g.free_fuel = true                # (the Starsail and journeys burn no Wisp Cells, but in _test_fuel)
 	g.learn_all()                     # (every recipe known: learning them is _test_recipes's)
 	var t0 := Time.get_ticks_msec()
@@ -4323,11 +4324,12 @@ func run() -> void:
 	_ok("the Prospector's Beam mines an asteroid from the skiff", bm_got >= 30 and bm_inv1 - bm_inv0 >= 30,
 		"%d cells taken from the rock, %d into the satchel" % [bm_got, bm_inv1 - bm_inv0])
 	var tv_to: Vector2 = Defs.planet_pos(1) - Defs.planet_pos(0)
-	# ---- first with no Core Drive: Cindrel is beyond the skiff's reach, wrapped in a storm belt that
-	# throws you back (no invisible wall: the wind and lightning you see); then the drive is forged (a
-	# Planet Core bound in star iron), and the belt lets you through ----
-	var tv_reach0: int = g.skiff_reach()
-	g.items["reach"] = 0
+	# ---- first with no Radiation Ward: Cindrel (a volcanic world) is wrapped in a radiation belt that
+	# throws you back and burns (no invisible wall: you see it); then the ward is forged, and every radiation
+	# belt lets you through (barriers by kind, 24 Nov) ----
+	var tv_had: bool = g.items.has("radward")
+	g.items.erase("radward")
+	var tv_bar: String = Defs.barrier_of(1)
 	var tv_space: float = float(Defs.make_planet(1)["radius"]) + Defs.ATMO + Defs.ORBIT_ROWS
 	var tv_lim: float = tv_space + g.space.BELT_IN
 	sf_sk.pos = tv_to - tv_to.normalized() * (tv_space + g.space.BELT_OUT + 300.0)
@@ -4349,7 +4351,7 @@ func run() -> void:
 		if not tv_bshot and g.space.belt > 0.35:
 			tv_bshot = true
 			await _frames(2)
-			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("storm_belt.png"))
+			g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("belt_radiation.png"))
 		if tvl > 360:
 			tv_bk = maxf(tv_bk, -sf_sk.vel.dot(tv_to.normalized()))
 	g.test_god = tv_god0
@@ -4357,18 +4359,18 @@ func run() -> void:
 	var tv_hull: float = sf_sk.hull_f
 	sf_sk.mend(100000)
 	print("[travel] the storm belt left the hull at %.0f%%; mended" % (tv_hull * 100.0))
-	var tv_locked: bool = not tv_lk_travel and tv_lk_min > tv_lim and g.space.belt_max > 0.2
-	g.tier = 4
-	g.items["heart"] = true
+	var tv_locked: bool = not tv_lk_travel and tv_lk_min > tv_lim and g.space.belt_max > 0.2 and g.space.belt_hits > 0
 	var tv_rec: Dictionary = {}
 	for tv_r in g.recipes:
-		if tv_r["id"] == "drive":
+		if tv_r["id"] == "radward":
 			tv_rec = tv_r
 	for tv_k in tv_rec.get("cost", {}):
 		g.player.inv[int(tv_k)] += int(tv_rec["cost"][tv_k])
-	var tv_drive: bool = not tv_rec.is_empty() and g.craft(tv_rec) and g.skiff_reach() == 1
-	_ok("without a Core Drive the skiff can't reach the next planet; with one it can", tv_locked and tv_drive,
-		"held off Cindrel by its storm belt %s (closest %.0f from its centre, the belt's inner edge %.0f, deepest in it %.2f, %d lightning strikes, thrown back at up to %.1f a tick near the end, travel started %s); Core Drive forged %s (reach %d, was %d)" % [not tv_lk_travel, tv_lk_min, tv_lim, g.space.belt_max, g.space.belt_hits, tv_bk, tv_lk_travel, tv_drive, g.skiff_reach(), tv_reach0])
+	var tv_drive: bool = not tv_rec.is_empty() and g.craft(tv_rec) and g.space.reachable(1) and g.space.reachable(3)
+	if not tv_had and not tv_drive:
+		g.items["radward"] = true          # (so the journey's checks below still run)
+	_ok("Cindrel's radiation belt keeps the skiff out; the Radiation Ward opens every radiation belt", tv_locked and tv_drive and tv_bar == "radiation",
+		"Cindrel's barrier: %s; held off %s (closest %.0f from its centre, the belt's inner edge %.0f, deepest in it %.2f, %d burns, thrown back at up to %.1f a tick near the end, travel started %s); the Radiation Ward forged %s (Cindrel and Sere in reach)" % [tv_bar, not tv_lk_travel, tv_lk_min, tv_lim, g.space.belt_max, g.space.belt_hits, tv_bk, tv_lk_travel, tv_drive])
 	# (most of the way there at once: the planet is made as you cover the rest)
 	sf_sk.pos = tv_to * 0.7
 	sf_sk.vel = tv_to.normalized() * 35.0
@@ -6539,12 +6541,8 @@ func _test_far_biomes() -> void:
 			fo_cells += 1
 			if (fo_v & 255) == Defs.FIREOPAL:
 				fo_n += 1
-	var fo_cost: Dictionary = {}
-	for fo_rec in g.recipes:
-		if fo_rec["id"] == "drive":
-			fo_cost = fo_rec["cost"]
-	_ok("each kind of planet has its own ore: Fire Opal in Cindrel's ground, wanted by its Core Drive", fo_n >= 20 and int(fo_cost.get(Defs.FIREOPAL, 0)) == Defs.DRIVE_ORE,
-		"%d Fire Opal cells in %d read under you; the Core Drive here costs %s" % [fo_n, fo_cells, str(fo_cost)])
+	_ok("each kind of planet has its own ore: Fire Opal in Cindrel's ground", fo_n >= 20,
+		"%d Fire Opal cells in %d read under you" % [fo_n, fo_cells])
 	g._enter_planet(2)
 	g.ui.title.visible = false
 	await _frames(60)
@@ -10001,10 +9999,8 @@ func _test_fuel() -> void:
 	for it in Defs.SHOPS["shipwright"]["sell"]:
 		if (it.get("give", {}) as Dictionary).has(Defs.WISPCELL):
 			sold = true
-	var c_near: int = g.space.journey_cost(1)
-	var c_far: int = g.space.journey_cost(Defs.SYSTEM.size() + 1)
-	var ok1: bool = smelt and sold and c_near == 3 and c_far == 6
-	rows.append("%sWisp Cells smelted %s, sold at outposts %s; a journey costs %d in the home system, %d into another" % ["" if ok1 else "(!) ", smelt, sold, c_near, c_far])
+	var ok1: bool = smelt and sold
+	rows.append("%sWisp Cells smelted %s, sold at outposts %s" % ["" if ok1 else "(!) ", smelt, sold])
 	ok = ok and ok1
 	# ---- up in the skiff
 	g.player.dead = false
@@ -10085,30 +10081,16 @@ func _test_fuel() -> void:
 	ok = ok and ok2
 	sk.vel = Vector2.ZERO
 	await _frames(30)
-	# ---- a journey with no cells: held off at the planet's edge, no journey begun
-	var reach0: int = g.skiff_reach()
-	g.items["reach"] = maxi(reach0, 1)
+	# ---- a landfall burns no cells (only the Starsail does, since 24 Nov): with none, an open world (no
+	# barrier) is still in reach
 	g.player.inv[Defs.WISPCELL] = 0
-	var p1: Vector2 = g.space.local_of(Defs.planet_g(1))
-	var pl1: Dictionary = Defs.make_planet(1)
-	var top1: float = float(pl1["radius"]) + float(Defs.ATMO) + 256.0
-	var dir1: Vector2 = (g.space.home_at() - p1).normalized()
-	sk.pos = p1 + dir1 * (top1 + 9000.0)
-	sk.vel = Vector2.ZERO
-	var closest := 1e9
-	var began := false
-	for k4 in 240:
-		sk.vel = -dir1 * 20.0
-		await _frames(1)
-		closest = minf(closest, (sk.pos - p1).length())
-		if g.space.target >= 0 or g.travelling:
-			began = true
-			break
-	sk.vel = Vector2.ZERO
-	var ok3: bool = not began and closest > top1 + 3000.0 - 300.0
-	rows.append("%swith no cells, flown at %s: no journey begun %s, held off %.0f from its middle (its band's top %.0f)" % ["" if ok3 else "(!) ", pl1["name"], not began, closest, top1])
+	var open_i := -1
+	for oi in range(1, Defs.SYSTEM.size()):
+		if Defs.barrier_of(oi) == "":
+			open_i = oi
+	var ok3: bool = open_i >= 0 and g.space.reachable(open_i) and not g.space.has_method("journey_cost")
+	rows.append("%swith no cells, %s (no barrier) is in reach %s; a landfall costs nothing" % ["" if ok3 else "(!) ", Defs.make_planet(maxi(open_i, 0))["name"], open_i >= 0 and g.space.reachable(open_i)])
 	ok = ok and ok3
-	g.items["reach"] = reach0
 	g.player.inv[Defs.WISPCELL] = cells0
 	g.free_fuel = true
 	if not had_sail:
@@ -10135,7 +10117,7 @@ func _test_fuel() -> void:
 		g._skiff_interact(g.player)
 		await _frames(10)
 	print("[fuel] " + "\n[fuel] ".join(rows))
-	_ok("wisp fuel: the Starsail and journeys burn Wisp Cells, none means furled and held off", ok, "; ".join(rows))
+	_ok("wisp fuel: the Starsail burns Wisp Cells, none means furled; a landfall costs none", ok, "; ".join(rows))
 
 ## (user, 23 Nov: "Design your own hull": the skiff grown into a ship laid out cell by cell from the Ship tab,
 ## walked about inside)
@@ -10453,8 +10435,9 @@ func _test_quest() -> void:
 	g.workshops.list = []
 	g.quest_test = true
 	# ---- a bare start
-	for key in ["skiff", "levitate", "heart", "reach", "quest", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
+	for key in ["skiff", "drive", "levitate", "heart", "quest", "qdone", "qfin", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
 		g.items.erase(key)
+	g.items["landed"] = {"0": true}
 	for key2 in g.items.keys():
 		if String(key2).begins_with("found_"):
 			g.items.erase(key2)
@@ -10463,7 +10446,7 @@ func _test_quest() -> void:
 	g.tier = 1
 	g.known.erase("spark")
 	g.heat_ward = false
-	g.items["quest"] = {"ch": 0, "at": 0}
+	g.items["quest"] = {"ch": 0, "at": 0, "v": 2}
 	g.items["coins"] = 0
 	q.reset()
 	await _frames(31)
@@ -10490,7 +10473,6 @@ func _test_quest() -> void:
 					g.known.append(String(c[1]))
 			"tier": g.tier = maxi(g.tier, int(c[1]))
 			"item": g.items[String(c[1])] = true
-			"reach": g.items["reach"] = int(c[1])
 			"station": g.items["st_" + String(c[1])] = true
 			"learned": g.learn(String(c[1]))
 			"heat": g.heat_ward = true
@@ -10508,7 +10490,8 @@ func _test_quest() -> void:
 			powers.append(pw)
 	var at_voyage: bool = q.at < steps.size() and String(steps[q.at]["id"]) == "voyage"
 	var coins: int = int(g.items.get("coins", 0))
-	var ok1: bool = order_ok and at_voyage and powers.size() == 4 and coins > 0 and q.hud_line().begins_with("Fly to")
+	# (the first voyage is to the round's world with no barrier: Fenhollow, a marsh world, in the classic system)
+	var ok1: bool = order_ok and at_voyage and powers.size() == 4 and coins > 0 and q.hud_line() == "Fly to %s" % Defs.make_planet(q.open_target(0))["name"] and Defs.barrier_of(q.open_target(0)) == ""
 	rows.append("%severy step ticked off in order %s%s, now at \"%s\"; powers %s; %d coins in rewards; %d steps done, %d rewards, said %d times" % ["" if ok1 else "(!) ", order_ok, (" (stuck at " + stuck + ")") if stuck != "" else "", q.hud_line(), ",".join(powers), coins, int(q.stats["done"]), int(q.stats["rewards"]), int(q.stats["said"])])
 	ok = ok and ok1
 	var ql: bool = g.ui.quest_lbl.visible and String(g.ui.quest_lbl.text).contains(q.hud_line())
@@ -10574,24 +10557,55 @@ func _test_quest() -> void:
 	rows.append("%sthe journal opened, the world waited %s, it closed %s" % ["" if ok4 else "(!) ", waited, not g.ui.journal_open()])
 	ok = ok and ok4
 	# ---- a journey from before the quest: caught up quietly, with the powers it earned and no rewards
-	for key3 in ["quest", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "heart", "reach"]:
+	# (and one from before the barriers: its "quest" has no "v", so it catches up from the top, quietly too)
+	for key3 in ["quest", "qdone", "qfin", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "heart", "drive"]:
 		g.items.erase(key3)
 	g.items["skiff"] = true
 	g.tier = 3
 	g.items["coins"] = 0
+	g.items["quest"] = {"ch": 0, "at": 9}
 	q.reset()
 	await _frames(31)
 	var cid: String = String(q.steps[q.at]["id"]) if q.at < q.steps.size() else "-"
-	var ok5: bool = g.items.has("wisp_lantern") and g.items.has("wisp_sense") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "star" or cid == "heat" or cid == "vulkhar")
-	rows.append("%san old journey (skiff, Obsidian Focus) caught up to \"%s\", lantern %s, sense %s, ward %s, %d coins given" % ["" if ok5 else "(!) ", cid, g.items.has("wisp_lantern"), g.items.has("wisp_sense"), g.items.has("wisp_ward"), int(g.items.get("coins", 0))])
+	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 2
+	rows.append("%san old journey (skiff, Obsidian Focus, a quest from before the barriers) caught up to \"%s\", lantern %s, ward %s, %d coins given" % ["" if ok5 else "(!) ", cid, g.items.has("wisp_lantern"), g.items.has("wisp_ward"), int(g.items.get("coins", 0))])
 	ok = ok and ok5
+	# ---- a later world's chapter leads to the next world of the round, and the key to its barrier first
+	var land0: Dictionary = (g.items.get("landed", {}) as Dictionary).duplicate()
+	var keys0 := {}
+	for kk in ["lattice", "radward", "rimeprow", "keel"]:
+		keys0[kk] = g.items.has(kk)
+		g.items.erase(kk)
+	g.items["landed"] = {"0": true, "4": true}
+	var cs4: Array = q.chapter_steps(4)
+	var ids4 := []
+	for st4 in cs4:
+		ids4.append(String(st4["id"]))
+	g.items["radward"] = true
+	var cs4b: Array = q.chapter_steps(4)
+	var ids4b := []
+	for st4b in cs4b:
+		ids4b.append(String(st4b["id"]))
+	g.items["landed"] = {"0": true, "1": true, "2": true, "3": true, "4": true}
+	var cs4c: Array = q.chapter_steps(4)
+	var last4c := String(cs4c[cs4c.size() - 1]["id"])
+	g.items["landed"] = land0
+	for kk2 in keys0:
+		if bool(keys0[kk2]):
+			g.items[kk2] = true
+		else:
+			g.items.erase(kk2)
+	var ok5b: bool = ids4.has("key_radward") and ids4.has("voyage_1") and not ids4b.has("key_radward") and ids4b.has("voyage_1") and last4c == "stars"
+	rows.append("%son Fenhollow: %s; with the Radiation Ward: %s; with every world seen it ends at \"%s\"" % ["" if ok5b else "(!) ", ",".join(ids4), ",".join(ids4b), last4c])
+	ok = ok and ok5b
 	# ---- the later chapters
 	var bad := []
 	var sizes := []
 	for ch in range(1, 8):
 		var cs: Array = q.chapter_steps(ch)
 		sizes.append(cs.size())
-		if cs.size() < 4 or String(cs[cs.size() - 1]["id"]) != "voyage":
+		var last_id := String(cs[cs.size() - 1]["id"]) if not cs.is_empty() else ""
+		if cs.size() < 1 or not (last_id.begins_with("voyage") or last_id == "stars"):
 			bad.append(ch)
 		for st2 in cs:
 			if String(st2.get("title", "")) == "" or String(st2.get("say", "")) == "" or String(st2.get("how", "")) == "" or (st2.get("need", []) as Array).is_empty():
@@ -10653,7 +10667,7 @@ func _test_giant() -> void:
 		var bi := int(b["index"])
 		if bi == GX:
 			gb = b
-		elif not Defs.is_exotic(bi) and bi != g.space.home and not g.space.reachable(bi) and ob.is_empty():
+		elif not Defs.is_exotic(bi) and bi != g.space.home and not g.space.reachable(bi) and ob.is_empty() and String(b.get("barrier", "")) == "storm":
 			ob = b
 	var reach_no: bool = g.space.reachable(GX)
 	var hits := func(hb: Dictionary) -> int:

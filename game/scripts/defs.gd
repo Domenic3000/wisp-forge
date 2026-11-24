@@ -63,8 +63,8 @@ const MYCELIUM := 47      # fungal ground (the Mirecap Grove)
 const DRYGRASS := 48      # golden savanna grass: the ground's top and the tall tufts on it
 const ROOT := 49          # a tree's roots (background): they give way to every other part of a tree, and
                           # building over them is fine (it can't fell the tree); dug up they give Wood
-const STARIRON := 50      # star iron: found only in asteroids (the metallic ones, deep in), for the Core Drive
-# each kind of planet's own ore (KIND_ORES): found only on planets of that kind, for its gear and the Core Drive
+const STARIRON := 50      # star iron: found only in asteroids (the metallic ones, deep in), for the skiff's fittings
+# each kind of planet's own ore (KIND_ORES): found only on planets of that kind, for its gear
 const FIREOPAL := 51      # volcanic
 const ABYSSPEARL := 52    # ocean: in the seabed, deep under the sea
 const SUNSTONE := 53      # desert
@@ -633,8 +633,7 @@ func system_g(r: int) -> PackedFloat64Array:
 ## ---- exotic worlds (user, 23 Nov: "different types of planets ... with different mysteries to solve, along
 ## with different hazards to traverse to get to" them; chose: optional, big rewards). A system's exotics are
 ## planets beside its round of five, numbered EXOTIC + r * EXO_SLOTS + k (so `index / 5` means nothing for
-## them: use `system_of`). Each is reached through a hazard of its own, not the Core Drive (space.gd
-## `reachable`). The first kind: the deep ocean world ("abyss": a sea hundreds of cells deep, a maelstrom round
+## them: use `system_of`). Each is reached through its barrier (BARRIERS, space.gd `reachable`). The first kind: the deep ocean world ("abyss": a sea hundreds of cells deep, a maelstrom round
 ## it that only the Tempest Keel rides out, and a sunken mystery at the bottom). Every system's first has one;
 ## the others half the time. The second (user, 24 Nov: "maybe some gas giants with no ground or only clouds"):
 ## the gas giant ("giant": slot 1; islands of rock floating over a sea of cloud with no ground to be found, the
@@ -642,6 +641,39 @@ func system_g(r: int) -> PackedFloat64Array:
 ## light at once). Every system's first has one; the others two times in five.
 const EXOTIC := 100000
 const EXO_SLOTS := 8
+
+## ---- BARRIERS round the planets (user, 24 Nov: "only gate the planets in types not individually ... if you
+## have the item to traverse storms it unlocks all storm covered planets"; chose: by planet kind, keep it
+## procedural and thematic). A kind with none ("") is open to the skiff alone. Each barrier's key is a Travel
+## recipe (an `items` key): forged once, it opens every planet behind that kind of barrier, in every system.
+## space.gd `_storm` gives each its own way of keeping you out (all of them throw you back; a storm belt
+## strikes with lightning, a radiation belt burns through the hull, a shard ring holes it, a maelstrom spins
+## you round and out) and `_draw_belts` its own look. A new kind of planet names its barrier in KIND_BARRIER.
+const BARRIERS := {
+	"storm": {"name": "storm belt", "key": "lattice", "key_name": "Storm Lattice", "col": Color(0.55, 0.75, 1.0),
+		"tell": "is wrapped in a storm belt of lightning and gales"},
+	"radiation": {"name": "radiation belt", "key": "radward", "key_name": "Radiation Ward", "col": Color(0.72, 1.0, 0.42),
+		"tell": "is wrapped in a radiation belt whose light burns through a hull"},
+	"shards": {"name": "shard ring", "key": "rimeprow", "key_name": "Rime Prow", "col": Color(0.82, 0.92, 1.0),
+		"tell": "is ringed by tumbling shards of ice and rock that hole a hull"},
+	"maelstrom": {"name": "maelstrom", "key": "keel", "key_name": "Tempest Keel", "col": Color(0.3, 0.7, 0.8),
+		"tell": "spins inside a maelstrom that hurls you round and out"},
+}
+const KIND_BARRIER := {"temperate": "", "wild": "", "realm": "", "marsh": "", "ocean": "storm", "giant": "storm",
+	"volcanic": "radiation", "desert": "radiation", "frozen": "shards", "abyss": "maelstrom"}
+const OPEN_KINDS := ["wild", "realm", "marsh"]      # (the kinds a first system always has one of: `_planet_kind`)
+
+## what kind planet i of this journey's world is (no planet is made for it)
+func planet_kind(i: int) -> String:
+	if i >= EXOTIC:
+		return exotic_kind(i)
+	if world_seed == 0:
+		return ["temperate", "volcanic", "ocean", "desert", "marsh"][i % 5]
+	return _planet_kind(world_seed, i)
+
+## the barrier round planet i ("" none)
+func barrier_of(i: int) -> String:
+	return String(KIND_BARRIER.get(planet_kind(i), ""))
 func is_exotic(i: int) -> bool:
 	return i >= EXOTIC
 
@@ -964,8 +996,7 @@ const FOLK_LAST := ["Miller", "Thatcher", "Brook", "Ashdown", "Fletcher", "Coope
 
 ## Each kind of planet's own ore: where gen.comp lays it (`hosts`: the ground it forms in, `depth`: cells
 ## under the surface, `thr`: the vein noise's threshold, higher = rarer; `sea`: only in the seabed, well
-## under the sea). The Core Drive that leaves a planet needs some of its ore (`drive_ore`), and so does the
-## gear made from it.
+## under the sea). The gear made from it needs it.
 const KIND_ORES := {
 	"volcanic": {"mat": FIREOPAL, "hosts": [MAGMAROCK, OBSIDIAN, STONE, DEEPSTONE], "depth": [6.0, 900.0], "thr": 0.80},
 	"ocean": {"mat": ABYSSPEARL, "hosts": [SAND, GRAVEL, STONE, MUD], "depth": [0.0, 70.0], "thr": 0.77, "sea": true},
@@ -976,7 +1007,6 @@ const KIND_ORES := {
 	"wild": {"mat": AMBER, "hosts": [DIRT, STONE, MOSSBLOCK, MYCELIUM], "depth": [4.0, 260.0], "thr": 0.80},
 	"realm": {"mat": SILVER, "hosts": [STONE, DEEPSTONE, GRAVEL, SANDSTONE], "depth": [20.0, 700.0], "thr": 0.81},
 }
-const DRIVE_ORE := 12
 
 ## Gear forged from each kind of planet's own ore (the Wisp Forge's "Ore Gear"; `gear_recipes`). What a
 ## piece does is its "mods": stat -> a multiplier, or for the stats in GEAR_ADD an amount added; main
@@ -1051,7 +1081,7 @@ const LEARN := {
 	"sandstone": {"find": [SAND]},
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
-	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]}, "delve1": {"find": [COPPERBAR]}, "delve2": {"find": [WISPBAR]}, "delve3": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
+	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "radward": {"find": [HULL]}, "rimeprow": {"find": [XENITE]}, "beam": {"find": [STARIRON]}, "delve1": {"find": [COPPERBAR]}, "delve2": {"find": [WISPBAR]}, "delve3": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
 	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
 	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
@@ -1059,7 +1089,7 @@ const LEARN := {
 	"sunveil": {"shop": "shop", "kind": "desert", "price": 45, "hoard": true},
 	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
 	"tidecharm": {"shop": "shop", "kind": "ocean", "price": 45, "hoard": true},
-	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]}, "lattice": {"find": [VOIDESS]},
+	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]}, "lattice": {"find": [STARIRON]},
 	"engine": {"hoard": true},
 }
 
@@ -1204,6 +1234,18 @@ func _planet_kind(ws: int, i: int) -> String:
 		order[q] = order[r]
 		order[r] = t
 	if i < 5:
+		# (the first system always has a planet the skiff alone can reach: user, 24 Nov)
+		var open_one := false
+		for q0 in 4:
+			if OPEN_KINDS.has(order[q0]):
+				open_one = true
+		if not open_one:
+			for q1 in range(4, order.size()):
+				if OPEN_KINDS.has(order[q1]):
+					var t1 = order[3]
+					order[3] = order[q1]
+					order[q1] = t1
+					break
 		return order[(i - 1) % order.size()]
 	# later rounds: any kind, a temperate one now and then
 	return "temperate" if i % 5 == 0 else order[(i % 5 - 1) % order.size()]
@@ -1483,14 +1525,16 @@ const RECIPES := [
 	{"id": "fenmask", "cat": "Wards", "name": "Fen Mask", "cost": {SHROOM: 10, LEAF: 10, GLASS: 4}, "desc": "Lets you breathe a marsh world's choking fog."},
 	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISPBAR: 3, GLASS: 6, COPPERBAR: 3}, "desc": "Bears the crushing deep of an ocean world's sea."},
 	{"id": "depthseal", "cat": "Wards", "name": "Depth Seal", "cost": {ABYSSPEARL: 8, GLASS: 6, WISPBAR: 2}, "desc": "Bears the abyss of a deep ocean world, far below where the Tide Charm holds (wear both)."},
-	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISPBAR: 4, COPPERBAR: 3}, "desc": "A small ship for two. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and back."},
-	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, STARIRON: 12, WISP: 10}, "desc": "This planet's heart, bound in star iron and fitted to your skiff: it carries the skiff through the next planet's storm belt. Needs the Core Siphon (for the Planet Core) and the skiff; star iron is only found in asteroids, and a world with an ore of its own wants some of that too."},
+	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, WISP: 10, COPPERBAR: 4}, "desc": "Your world's heart, bound in copper and wisp ore: the engine a ship is built round. Forge it before the Wisp Skiff. Needs the Core Siphon (to harvest the Planet Core)."},
+	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISPBAR: 4, COPPERBAR: 3}, "desc": "A small ship for two, built round a Core Drive. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and on to other worlds: any without a barrier round it."},
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
 	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},
 	{"id": "scanner", "cat": "Travel", "name": "Wisp Scanner", "part": "part_scanner", "cost": {XENITE: 12, CRYSTAL: 10, WISPBAR: 6, HULL: 10}, "desc": "A lens of alien glass fitted to your skiff, built round a Scanner Lens from a derelict station's vault: what you see round you reaches three times as far, systems are charted from farther off, and the nearest wreck and derelict station within reach are marked at the edge of the screen."},
-	{"id": "keel", "cat": "Travel", "name": "Tempest Keel", "cost": {ABYSSPEARL: 12, STARIRON: 6, HULL: 10}, "desc": "A keel of pearl and star iron that rides out a maelstrom: the skiff can pass the storm that spins round a deep ocean world. Needs the skiff."},
-	{"id": "lattice", "cat": "Travel", "name": "Storm Lattice", "cost": {VOIDESS: 8, STARIRON: 6, COPPERBAR: 12}, "desc": "A cage of copper and star iron strung with void essence round the skiff: it grounds the lightning of the Thunderhead round a gas giant, so the skiff can pass. Needs the skiff."},
+	{"id": "keel", "cat": "Travel", "name": "Tempest Keel", "cost": {ABYSSPEARL: 12, STARIRON: 6, HULL: 10}, "desc": "A keel of pearl and star iron that rides out a maelstrom: the skiff passes every maelstrom (round the deep ocean worlds). Needs the skiff."},
+	{"id": "lattice", "cat": "Travel", "name": "Storm Lattice", "cost": {COPPERBAR: 12, STARIRON: 6, GLASS: 8}, "desc": "A cage of copper and star iron round the skiff that grounds lightning: it carries the skiff through every storm belt (ocean worlds, and the Thunderhead round a gas giant). Needs the skiff."},
+	{"id": "radward", "cat": "Travel", "name": "Radiation Ward", "cost": {HULL: 12, WISPBAR: 8, CRYSTAL: 6, STARIRON: 4}, "desc": "Hull plating salvaged from wrecks, lined with wisp and crystal: it turns the burning light of every radiation belt (desert and volcanic worlds) from the skiff. Needs the skiff."},
+	{"id": "rimeprow", "cat": "Travel", "name": "Rime Prow", "cost": {XENITE: 8, STARIRON: 10, HULL: 16}, "desc": "A ram of star iron and alien chitin on the skiff's bow: it shoulders through every shard ring (frozen worlds) without holing the hull. Needs the skiff."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars; it burns a Wisp Cell every few seconds (refined at a smelter from wisp ore and coal, or bought at an outpost). Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 	{"id": "harness", "cat": "Travel", "name": "Void Harness", "cost": {VOIDESS: 16, STARIRON: 6, WISPBAR: 4}, "desc": "Bands of void essence round your skiff's keel: a gravity well can never drag it past its edge, and skimming one flings you out much faster. Needs the skiff."},

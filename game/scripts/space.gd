@@ -49,7 +49,7 @@ const SAIL_SPEED := 320.0         # the Starsail: top speed in open space (cells
 const SAIL_ACCEL := 2.5
 const SAIL_CLEAR := 22.0
 const SAIL_BURN := 150.0        # wisp fuel (user, 23 Nov: "Only the long hauls"): the Starsail burns a Wisp Cell this
-const JOURNEY_CELLS := 3        # many ticks; a journey to another planet costs this many (twice into another system)
+                                # many ticks (a landfall burns none since 24 Nov)
 const SKIFF_MAX := 40.0              # (skiff.gd MAX_SPEED)          # it slows to keep this many ticks from anything ahead
 const ROCK_SCRAP := 10          # a piece smaller than this (cells) crumbles to dust
 const ROCK_DRAG := 0.9995
@@ -90,7 +90,7 @@ const SUN_R := 9000.0
 const HOLD := 3000.0             # a planet still being made: you're held this far above its orbit band
 const BELT_IN := 1400.0         # a planet out of the skiff's reach is wrapped in a storm belt: from this far
 const BELT_OUT := 4400.0        # above its orbit band out to this. Its wind throws you back, harder the deeper
-                                # you go, and lightning strikes; a Core Drive carries the skiff through.
+                                # you go, and each kind hurts its own way; its key (Defs.BARRIERS) carries the skiff through.
 const BEAM_REACH := 150.0       # the Prospector's Beam: how far from the skiff it mines
 const CANNON_MANA := 6.0        # the Wisp Cannon: mana a shot, ticks between shots, speed, blast radius
 const CANNON_CD := 16
@@ -579,7 +579,8 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		belt_dir = n
 		belt_col = b["belt"]
 		var t := Vector2(-n.y, n.x)
-		var mael: bool = String(b.get("exotic", "")) == "abyss"
+		var bar := String(b.get("barrier", "storm"))
+		var mael: bool = bar == "maelstrom"
 		var thunder: bool = String(b.get("exotic", "")) == "giant"
 		if mael:
 			# (a maelstrom: it spins you round the world as much as it throws you out, so the gale streaks
@@ -596,22 +597,75 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		for k in int(f * 3.0) + (1 if randf() < f * 3.0 - floorf(f * 3.0) else 0):
 			var off: Vector2 = Vector2(randf() - 0.5, randf() - 0.5) * Vector2(game.VW, game.VH).length() * float(game.zoom)
 			game._particle(p + off, n * (3.0 + randf() * 4.0) + t * (randf() - 0.5) * 3.0, 16 + randi() % 12, col.lightened(0.3), true, 0.0)
-		# (a Thunderhead strikes four times as often, and harder: user, 24 Nov)
-		if f >= 1.0 or randf() < (0.004 + 0.035 * f) * (4.0 if thunder else 1.0):
-			v += n * (2.0 + 4.0 * f)
-			_strike(p, n, f, col)
-			if f >= 1.0:
-				v = n * 14.0                       # (a great bolt at the inner edge throws you clear)
+		# what the barrier does to you besides (user, 24 Nov: barriers by kind, each its own way): a storm belt
+		# and a maelstrom strike with lightning (a Thunderhead four times as often), a radiation belt burns
+		# through the hull, a shard ring's tumbling ice and rock hole it; at the inner edge each throws you clear
+		var rate := (0.004 + 0.035 * f) * (4.0 if thunder else 1.0)
+		match bar:
+			"radiation":
+				if f >= 1.0 or randf() < rate * 1.6:
+					v += n * (1.0 + 3.0 * f)
+					_irradiate(p, f, col)
+					if f >= 1.0:
+						v = n * 14.0
+			"shards":
+				if f >= 1.0 or randf() < rate * 2.2:
+					v += n * (1.5 + 3.0 * f)
+					_shard(p, n, f, col)
+					if f >= 1.0:
+						v = n * 14.0
+			_:
+				if f >= 1.0 or randf() < rate:
+					v += n * (2.0 + 4.0 * f)
+					_strike(p, n, f, col)
+					if f >= 1.0:
+						v = n * 14.0                       # (a great bolt at the inner edge throws you clear)
 		_belt_warn -= 1
 		if _belt_warn <= 0:
 			_belt_warn = 420
-			if thunder:
-				game.ui.toast("%s is wrapped in a Thunderhead of endless lightning. A Storm Lattice (void essence, star iron and copper ingots, at the Wisp Forge) grounds it." % b["name"], col.lightened(0.4), 4.5)
-			elif mael:
-				game.ui.toast("%s spins inside a maelstrom that hurls you round and out. A Tempest Keel (abyss pearls, star iron and hull plating, at the Wisp Forge) rides it out." % b["name"], col.lightened(0.4), 4.5)
-			else:
-				game.ui.toast("%s is wrapped in a storm belt that throws you back. A Core Drive (forged at the Wisp Forge from this world's Planet Core and star iron) carries the skiff through." % b["name"], col.lightened(0.4), 4.5)
+			var bi2 := int(b["index"])
+			var bd: Dictionary = Defs.BARRIERS.get(bar, Defs.BARRIERS["storm"])
+			var tell: String = "is wrapped in a Thunderhead of endless lightning" if thunder else String(bd["tell"])
+			game.ui.toast("%s %s. The %s (Wisp Forge, Travel) carries the skiff through every %s." % [b["name"], tell, String(bd["key_name"]), barrier_name(bi2) if not thunder else "storm belt"], col.lightened(0.4), 5.0)
 	return v
+
+## a radiation belt's light burning through the hull onto whoever is at p: it hurts aboard or not (a hull
+## doesn't stop it), and the view flares its colour
+func _irradiate(p: Vector2, f: float, col: Color) -> void:
+	if p.distance_to(game.cam_c) < 500.0:
+		_flash = maxf(_flash, 0.12 + 0.18 * f)
+		belt_hits += 1
+		game.shake = maxf(game.shake, 2.0 + 3.0 * f)
+		game.audio.play("zap", null, 0.4)
+	for k in 10:
+		var a := randf() * TAU
+		game._particle(p + Vector2(cos(a), sin(a)) * randf_range(6.0, 30.0), Vector2(cos(a), sin(a)) * randf_range(0.5, 2.0), 20 + randi() % 14, col.lightened(0.3), true, 0.0)
+	for m in game.players:
+		if not m.dead and m.pos.distance_to(p) < 60.0:
+			game.hurt(m, 2.0 + 5.0 * f, Vector2.ZERO, true)
+
+## a shard of ice or rock out of a shard ring: it holes the skiff's hull (or hurts you on foot) and bursts
+func _shard(p: Vector2, n: Vector2, f: float, col: Color) -> void:
+	var from := p + n.rotated(randf_range(-1.0, 1.0)) * randf_range(80.0, 160.0)
+	var dir := (p - from).normalized()
+	for k in 6:
+		game._particle(from.lerp(p, float(k) / 6.0), dir * 6.0, 6 + k, col, true, 0.0)
+	if p.distance_to(game.cam_c) < 500.0:
+		belt_hits += 1
+		game.shake = maxf(game.shake, 4.0 + 6.0 * f)
+		game.audio.play("crack", null, 0.7)
+	var struck := {}
+	for m in game.players:
+		if not m.dead and m.pos.distance_to(p) < 60.0:
+			if m.aboard != null:
+				if not struck.has(m.aboard):
+					struck[m.aboard] = true
+					skiff_hit(m.aboard, _first_cell(m.aboard, from, m.aboard.pos), 2.5, 2.0 + 5.0 * f)
+				continue
+			game.hurt(m, 3.0 + 5.0 * f, dir * 2.0, true)
+	for k2 in 8:
+		var a2 := randf() * TAU
+		game._particle(p + Vector2(cos(a2), sin(a2)) * 3.0, Vector2(cos(a2), sin(a2)) * randf_range(1.0, 3.0), 14 + randi() % 10, col.darkened(0.2), true, 0.05)
 
 ## lightning out of the belt onto whoever is at p: it hurts, shakes the view and lights it up
 func _strike(p: Vector2, n: Vector2, f: float, col: Color) -> void:
@@ -657,19 +711,21 @@ func _beam(m, sk) -> void:
 	beam_to = p
 	_mine_at(m, p, m.dig_r * 1.2)
 
-## can the skiff go to planet i? (home and any planet up to its reach; on foot, only home)
-## (an exotic world is reached through its own hazard instead: main `exotic_ok`)
+## can you go to planet i? (home, and any planet whose barrier you can pass: Defs.BARRIERS, main `barrier_ok`)
 func reachable(i: int) -> bool:
-	if Defs.is_exotic(i):
-		return i == home or game.exotic_ok(i)
-	return i == home or i <= game.skiff_reach()
+	return i == home or game.barrier_ok(i)
 
-## what keeps planet i out of reach, for its marker
+## what keeps planet i out of reach, for its marker ("" none)
 func barrier_name(i: int) -> String:
-	match Defs.exotic_kind(i):
-		"abyss": return "maelstrom"
-		"giant": return "thunderhead"
-	return "storm belt"
+	if Defs.exotic_kind(i) == "giant":
+		return "thunderhead"
+	var b := Defs.barrier_of(i)
+	return String(Defs.BARRIERS[b]["name"]) if b != "" else ""
+
+## what opens it ("" none): the key's name
+func barrier_key_name(i: int) -> String:
+	var b := Defs.barrier_of(i)
+	return String(Defs.BARRIERS[b]["key_name"]) if b != "" else ""
 
 ## Clearly nearer to another planet than to home: make it in the background, then move over to it.
 func _maybe_travel(p: Vector2) -> void:
@@ -678,25 +734,12 @@ func _maybe_travel(p: Vector2) -> void:
 	# (and close to it: far out in the dark, which planet is "nearer" means nothing, and making one is work)
 	var dn := (p - (near["pos"] as Vector2)).length()
 	if dn < NEARER * (p - home_at()).length() and dn < TRAVEL_R:
-		# (a journey to another planet burns Wisp Cells: without them it holds you off at its edge, `_hold`)
-		var cost := journey_cost(int(near["index"]))
-		if not game.free_fuel:
-			if fuel() < cost:
-				_fuel_note("Not enough Wisp Cells to make landfall on %s: %d needed, you have %d" % [near["name"], cost, fuel()])
-				return
-			game.player.inv[Defs.WISPCELL] -= cost
-			stats["cells_burned"] = int(stats.get("cells_burned", 0)) + cost
-			game.ui.toast("%d Wisp Cells burned for the landfall on %s" % [cost, near["name"]], Color(0.6, 0.85, 1.0), 3.0)
+		# (a landfall costs nothing since 24 Nov: only the Starsail burns Wisp Cells)
 		travel(int(near["index"]))
 
 ## the skiff's fuel for the long hauls: the Wisp Cells you carry
 func fuel() -> int:
 	return int(game.player.inv[Defs.WISPCELL])
-
-## what a journey to planet i burns: JOURNEY_CELLS in home's system, twice that into another
-func journey_cost(i: int) -> int:
-	var same: bool = Defs.system_of(i) == Defs.system_of(home)
-	return JOURNEY_CELLS if same else JOURNEY_CELLS * 2
 
 func _fuel_note(txt: String) -> void:
 	if game.frame >= _fuel_warn:
@@ -1318,7 +1361,7 @@ func _draw_space() -> void:
 		var bi := int(b2["index"])
 		if not reachable(bi):
 			hc = Color(0.62, 0.6, 0.66)
-		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · " + barrier_name(bi)), hc)
+		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · %s: needs a %s" % [barrier_name(bi), barrier_key_name(bi)]), hc)
 	# the nearest other systems, by their stars (at most three)
 	for k3 in mini(3, others.size()):
 		var o3: Array = others[k3]
@@ -1449,6 +1492,40 @@ func _draw_belts(xf: Transform2D) -> void:
 				f0 += fd * randf_range(30.0, 70.0) + fd.orthogonal() * randf_range(-25.0, 25.0)
 				fpts.append(xf * f0)
 			draw_polyline(fpts, Color(1.0, 0.95, 0.8, 0.8), 2.0)
+		var bar := String(b.get("barrier", ""))
+		if bar == "radiation":
+			# a radiation belt: slow rippling bands of burning light through it, and motes that flare and die
+			for band in 3:
+				var rr0 := r_in + (r_out - r_in) * (0.25 + 0.3 * float(band))
+				var bpts := PackedVector2Array()
+				for rq in 48:
+					var ra := ac - span + 2.0 * span * float(rq) / 47.0
+					var wob := sin(ra * 90.0 + tt * 0.03 + float(band) * 2.0) * 40.0 + sin(ra * 37.0 - tt * 0.017) * 25.0
+					bpts.append(xf * (c + Vector2(cos(ra), sin(ra)) * (rr0 + wob)))
+				draw_polyline(bpts, Color(col.r, col.g, col.b, 0.16 + 0.1 * sin(tt * 0.05 + float(band))), 6.0)
+			for rq2 in 26:
+				var hs := float((rq2 * 7919 + int(tt / 40.0) * 131) % 1000) / 1000.0
+				var aa2 := ac - span + 2.0 * span * hs
+				var rr2 := r_in + (r_out + 80.0 - r_in) * float((rq2 * 104729) % 1000) / 1000.0
+				var life := fposmod(tt / 40.0 + float(rq2) * 0.37, 1.0)
+				var sp2 := xf * (c + Vector2(cos(aa2), sin(aa2)) * rr2)
+				draw_rect(Rect2(sp2 - Vector2(2, 2), Vector2(4, 4)), Color(col.r * 1.2, col.g * 1.2, col.b, 0.7 * (1.0 - life)))
+		elif bar == "shards":
+			# a shard ring: tumbling slivers of ice and rock drifting round the planet
+			for q3 in 60:
+				var h1 := float((q3 * 7919) % 1000) / 1000.0
+				var h2 := float((q3 * 104729) % 1000) / 1000.0
+				var aa3 := ac - span + fposmod(2.0 * span * h1 + tt * 0.00004 * (0.5 + h2), 2.0 * span)
+				var rr3 := r_in + (r_out + 60.0 - r_in) * h2
+				var sp3 := xf * (c + Vector2(cos(aa3), sin(aa3)) * rr3)
+				var sz := 3.0 + 7.0 * float((q3 * 31) % 7) / 6.0
+				var rot := tt * 0.02 * (0.5 + h1) + h2 * TAU
+				var sh := PackedVector2Array()
+				for v3 in 4:
+					var av := rot + float(v3) * TAU / 4.0
+					sh.append(sp3 + Vector2(cos(av), sin(av)) * sz * (1.0 if v3 % 2 == 0 else 0.45))
+				var shade := col.darkened(0.45) if q3 % 3 == 0 else col
+				draw_colored_polygon(sh, Color(shade.r, shade.g, shade.b, 0.85))
 		if String(b.get("exotic", "")) == "abyss":
 			# a maelstrom: spiral arms of cloud wheeling through the belt
 			for arm in 7:
@@ -1637,8 +1714,12 @@ func _make_bodies(force := false) -> void:
 						tex = dc[0]
 			else:
 				tex = dc[0]
+			var bar := Defs.barrier_of(i)
+			var bcol: Color = Defs.climate(pl)["belt"]
+			if bar != "" and String(pl.get("exotic", "")) != "giant":
+				bcol = Defs.BARRIERS[bar]["col"]       # (a barrier's own colour, so its kind reads; a Thunderhead stays amber)
 			bodies.append({"index": i, "pos": local_of(Defs.planet_g(i)), "top": top, "sys": r,
-				"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": tex, "belt": Defs.climate(pl)["belt"],
+				"space": top + Defs.ORBIT_ROWS, "name": pl["name"], "tex": tex, "belt": bcol, "barrier": bar,
 				"exotic": String(pl.get("exotic", "")),
 				"col": Defs.COLOR[int(Defs.BIOMES[pl["biomes"][0]]["top"])]})
 
@@ -3079,7 +3160,7 @@ func _folk_lines(f) -> Array:
 	var op = f.op
 	var out := ["%s, they call me. Welcome to %s." % [f.name, op.wname],
 		"The board in the cantina has work, if you've a hold to fill.",
-		"Long hauls burn Wisp Cells. The shipwright sells them by the ten.",
+		"The Starsail burns Wisp Cells between the stars. The shipwright sells them by the ten.",
 		"Pirates hunt the dark between the stars. They never come near our guns."]
 	if op.sys >= 0:
 		var sg: PackedFloat64Array = Galaxy.system_station(op.sys)

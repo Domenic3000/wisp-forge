@@ -305,12 +305,14 @@ func _draw_space() -> void:
 				var walled: bool = not g.space.reachable(i) and i != int(g.planet.get("index", -1))
 				if walled:
 					var bc: Color = Defs.climate(pl)["belt"]
+					if Defs.barrier_of(i) != "" and Defs.exotic_kind(i) != "giant":
+						bc = Defs.BARRIERS[Defs.barrier_of(i)]["col"]
 					for q2 in 16:
 						var a0 := TAU * float(q2) / 16.0 + tt * 0.4
 						draw_arc(psp, dr + 5.0, a0, a0 + TAU / 32.0, 4, Color(bc.r, bc.g, bc.b, 0.75), 1.0)
 				if gz < 900.0:
 					_label(psp + Vector2(0, dr + 9.0), String(pl["name"]), tc)
-					_label(psp + Vector2(0, dr + 15.0), ("you are here" if here else String(pl.get("kind", "")) + ("" if visited else " · unexplored") + (" · storm belt: needs a Core Drive" if walled else "")), Color(tc.r, tc.g, tc.b, 0.7))
+					_label(psp + Vector2(0, dr + 15.0), ("you are here" if here else String(pl.get("kind", "")) + ("" if visited else " · unexplored") + ((" · %s: needs a %s" % [g.space.barrier_name(i), g.space.barrier_key_name(i)]) if walled else "")), Color(tc.r, tc.g, tc.b, 0.7))
 	# the rifts you know of: each end a tear, a line to its twin once you know both
 	for pk in g.space.vl.known:
 		var rp: Dictionary = Galaxy.rift_pair(int(pk))

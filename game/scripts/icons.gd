@@ -70,6 +70,8 @@ const THING_ART := {
 	"sigil": ["..#####..", ".#ooooo#.", "#oo#w#oo#", "#o#ooo#o#", "#owoooow#", "#o#ooo#o#", "#oo#w#oo#", ".#ooooo#.", "..#####.."],
 	"cloak": ["...###...", "..#ooo#..", ".#owwwo#.", ".#ooooo#.", "#oo#o#oo#", "#o#ooo#o#", "#ooo#ooo#", "#o#ooo#o#", ".#.#.#.#."],
 	"keel": ["....c....", "...cwc...", "#########", "#ccc#ccc#", ".#bbbbb#.", "..#bbb#..", "...#c#...", "....c....", "........."],
+	"lattice": ["#.#.#.#.#", "#########", "#.c.#.c.#", "#########", "#.#.w.#.#", "#########", "#.c.#.c.#", "#########", "#.#.#.#.#"],
+	"prow": ["........w", "......##i", ".....#iii", "....#iiii", "..##iiiii", "##iiwiiii", "..##iiiii", "....#iiii", ".....##.."],
 	"scroll": ["yyyyyyyy.", "ywwwwwwy.", ".wkkkkw..", ".wwwwww..", ".wkkkw...", ".wwwwww..", ".wkkkkw..", "ywwwwwwy.", "yyyyyyyy."],
 }
 ## id -> [art, {char: colour}]
@@ -102,6 +104,10 @@ const THINGS := {
 	"gear:wispband": ["band", {"#": Color(0.15, 0.25, 0.35), "o": Color(0.5, 0.85, 0.95), "w": Color(1, 1, 1)}],
 	"gear:staredge": ["blade", {"w": Color(0.95, 0.95, 1.0), "o": Color(0.6, 0.65, 0.8), "#": Color(0.85, 0.7, 0.3), "b": Color(0.45, 0.3, 0.18)}],
 	"voidmantle": ["cloak", {"#": Color(0.12, 0.06, 0.25), "o": Color(0.4, 0.22, 0.72), "w": Color(0.85, 0.7, 1.0)}],
+	"keel": ["keel", {"#": Color(0.2, 0.18, 0.25), "c": Color(0.85, 0.95, 1.0), "w": Color(1, 1, 1), "b": Color(0.35, 0.6, 0.7)}],
+	"lattice": ["lattice", {"#": Color(0.85, 0.5, 0.25), "c": Color(0.6, 0.8, 1.0), "w": Color(1, 1, 1)}],
+	"radward": ["shield", {"#": Color(0.15, 0.25, 0.1), "s": Color(0.6, 0.66, 0.6), "S": Color(0.4, 0.46, 0.4), "f": Color(0.6, 1.0, 0.35), "w": Color(0.95, 1.0, 0.75)}],
+	"rimeprow": ["prow", {"#": Color(0.25, 0.3, 0.4), "i": Color(0.68, 0.74, 0.86), "w": Color(0.85, 1.0, 0.75)}],
 	"harness": ["keel", {"#": Color(0.15, 0.08, 0.28), "c": Color(0.75, 0.5, 1.0), "w": Color(0.95, 0.9, 1.0), "b": Color(0.5, 0.32, 0.18)}],
 	"recipe": ["scroll", {"y": Color(0.75, 0.55, 0.3), "w": Color(0.95, 0.9, 0.75), "k": Color(0.45, 0.35, 0.3)}],
 }
