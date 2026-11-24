@@ -1628,6 +1628,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_start()
+		elif only == "quest":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_quest()
 		elif only == "bench":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3797,6 +3801,7 @@ func run() -> void:
 	await _test_towns()
 	await _test_vfx()
 	await _test_start()
+	await _test_quest()
 	await _test_recipes()
 	await _test_ui()
 	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
@@ -10131,3 +10136,181 @@ func _test_cargo() -> void:
 	g.items["coins"] = coins0
 	print("[cargo] " + "\n[cargo] ".join(rows))
 	_ok("the cargo hold: trade goods bought and sold at outposts, as many as the hull's room holds", ok, "; ".join(rows))
+
+
+## The main quest (user, 23 Nov: guidance through the main progression, spoken by the wisp, a HUD line and a
+## journal, and the wisp's own powers as rewards): from a bare start every step of the first chapter ticks off
+## in order as its condition comes true, with its rewards and the four powers; each power does what it says; the
+## journal opens and the world waits; a journey from before the quest catches up quietly; every later chapter
+## is well formed.
+func _test_quest() -> void:
+	var rows := []
+	var ok := true
+	var q = g.quest
+	var items0: Dictionary = g.items.duplicate(true)
+	var inv0: PackedInt32Array = g.player.inv.duplicate()
+	var tier0: int = g.tier
+	var known0: Array = g.known.duplicate()
+	var hw0: bool = g.heat_ward
+	var st0: Array = g.workshops.list
+	g.workshops.list = []
+	g.quest_test = true
+	# ---- a bare start
+	for key in ["skiff", "levitate", "heart", "reach", "quest", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
+		g.items.erase(key)
+	for key2 in g.items.keys():
+		if String(key2).begins_with("found_"):
+			g.items.erase(key2)
+	for mt in [Defs.STONE, Defs.COPPERBAR, Defs.STARIRON, Defs.CORE, Defs.WISPCELL, Defs.COPPER]:
+		g.player.inv[mt] = 0
+	g.tier = 1
+	g.known.erase("spark")
+	g.heat_ward = false
+	g.items["quest"] = {"ch": 0, "at": 0}
+	g.items["coins"] = 0
+	q.reset()
+	await _frames(31)
+	var steps: Array = q.steps
+	var hud0: String = q.hud_line()
+	var ok0: bool = steps.size() >= 15 and q.at == 0 and hud0 == String(steps[0]["title"]) and q.say_t > 0
+	rows.append("%sa bare start: %d steps, at step %d, the HUD says \"%s\", the wisp speaking %s" % ["" if ok0 else "(!) ", steps.size(), q.at, hud0, q.say_t > 0])
+	ok = ok and ok0
+	await _frames(20)
+	_shot("quest_wisp.png")
+	# ---- every step, made true in turn (the voyage can't be: it needs another planet)
+	var order_ok := true
+	var stuck := ""
+	for i in steps.size():
+		var st: Dictionary = steps[i]
+		if String(st["id"]) == "voyage":
+			break
+		var c: Array = st["need"][0]
+		match String(c[0]):
+			"held": g.player.inv[int(c[1])] = maxi(g.player.inv[int(c[1])], int(c[2]))
+			"found": g.player.inv[int(c[1])] += 1
+			"spell":
+				if not g.known.has(String(c[1])):
+					g.known.append(String(c[1]))
+			"tier": g.tier = maxi(g.tier, int(c[1]))
+			"item": g.items[String(c[1])] = true
+			"reach": g.items["reach"] = int(c[1])
+			"station": g.items["st_" + String(c[1])] = true
+			"learned": g.learn(String(c[1]))
+			"heat": g.heat_ward = true
+		for w in 40:
+			await _frames(1)
+			if q.at > i:
+				break
+		if q.at <= i:
+			order_ok = false
+			stuck = String(st["id"])
+			break
+	var powers := []
+	for pw in ["lantern", "sense", "ward", "hands"]:
+		if g.items.has("wisp_" + pw):
+			powers.append(pw)
+	var at_voyage: bool = q.at < steps.size() and String(steps[q.at]["id"]) == "voyage"
+	var coins: int = int(g.items.get("coins", 0))
+	var ok1: bool = order_ok and at_voyage and powers.size() == 4 and coins > 0 and q.hud_line().begins_with("Fly to")
+	rows.append("%severy step ticked off in order %s%s, now at \"%s\"; powers %s; %d coins in rewards; %d steps done, %d rewards, said %d times" % ["" if ok1 else "(!) ", order_ok, (" (stuck at " + stuck + ")") if stuck != "" else "", q.hud_line(), ",".join(powers), coins, int(q.stats["done"]), int(q.stats["rewards"]), int(q.stats["said"])])
+	ok = ok and ok1
+	var ql: bool = g.ui.quest_lbl.visible and String(g.ui.quest_lbl.text).contains(q.hud_line())
+	rows.append("%sthe HUD's quest line shows it %s" % ["" if ql else "(!) ", ql])
+	ok = ok and ql
+	# ---- the powers
+	var far: Vector2 = g.player.pos + Vector2(900.0, 0.0)
+	var r_with: float = (g._reach(g.player, far) - g.player.pos).length()
+	g.items.erase("wisp_hands")
+	var r_without: float = (g._reach(g.player, far) - g.player.pos).length()
+	g.items["wisp_hands"] = true
+	var ok2: bool = absf(r_with / maxf(r_without, 0.01) - 1.5) < 0.01
+	rows.append("%sWisp Hands: reach %.0f (%.0f without)" % ["" if ok2 else "(!) ", r_with, r_without])
+	ok = ok and ok2
+	var god0: bool = g.test_god
+	g.test_god = false
+	g.wisp_ward_t = 0
+	g.player.iframes = 0
+	var hp0: float = g.hp
+	g.hurt(g.player, 10.0, Vector2.ZERO, true)
+	var hp1: float = g.hp
+	var charging: int = g.wisp_ward_t
+	g.player.iframes = 0
+	g.hurt(g.player, 10.0, Vector2.ZERO, true)
+	var hp2: float = g.hp
+	g.hp = hp0
+	g.player.iframes = 0
+	g.test_god = god0
+	var ok3: bool = absf(hp1 - hp0) < 0.01 and charging > 1000 and hp2 < hp1 - 5.0
+	rows.append("%sWisp Ward: the first blow taken (%.0f -> %.0f), recharging %d ticks, the next one hurts (-> %.0f)" % ["" if ok3 else "(!) ", hp0, hp1, charging, hp2])
+	ok = ok and ok3
+	g.lights.clear()
+	g._update_wisp()
+	var lantern := false
+	for lt in g.lights:
+		if absf(float(lt[1]) - 92.0) < 0.1:
+			lantern = true
+	rows.append("%sWisp Lantern: the wisp's light reaches 92 %s" % ["" if lantern else "(!) ", lantern])
+	ok = ok and lantern
+	g.sense_t = 0
+	g._sense_next = 1
+	var pulsed := false
+	for w2 in 30:
+		await _frames(1)
+		if g.sense_t > 0:
+			pulsed = true
+			break
+	var n_ore: int = g.sense_pts.size()
+	await _frames(40)
+	_shot("quest_sense.png")
+	rows.append("%sOre Sense: pulsed %s, %d ore cells marked round you" % ["" if pulsed else "(!) ", pulsed, n_ore])
+	ok = ok and pulsed
+	# ---- the journal: opens, the world waits, closes
+	g.ui.toggle_journal(g)
+	await _frames(5)
+	var t0: float = g.time
+	await _frames(20)
+	var waited: bool = g.menu_paused() and absf(g.time - t0) < 0.5
+	_shot("quest_journal.png")
+	g.ui.toggle_journal(g)
+	await _frames(5)
+	var ok4: bool = waited and not g.ui.journal_open() and not g.menu_paused()
+	rows.append("%sthe journal opened, the world waited %s, it closed %s" % ["" if ok4 else "(!) ", waited, not g.ui.journal_open()])
+	ok = ok and ok4
+	# ---- a journey from before the quest: caught up quietly, with the powers it earned and no rewards
+	for key3 in ["quest", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "heart", "reach"]:
+		g.items.erase(key3)
+	g.items["skiff"] = true
+	g.tier = 3
+	g.items["coins"] = 0
+	q.reset()
+	await _frames(31)
+	var cid: String = String(q.steps[q.at]["id"]) if q.at < q.steps.size() else "-"
+	var ok5: bool = g.items.has("wisp_lantern") and g.items.has("wisp_sense") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "star" or cid == "heat" or cid == "vulkhar")
+	rows.append("%san old journey (skiff, Obsidian Focus) caught up to \"%s\", lantern %s, sense %s, ward %s, %d coins given" % ["" if ok5 else "(!) ", cid, g.items.has("wisp_lantern"), g.items.has("wisp_sense"), g.items.has("wisp_ward"), int(g.items.get("coins", 0))])
+	ok = ok and ok5
+	# ---- the later chapters
+	var bad := []
+	var sizes := []
+	for ch in range(1, 8):
+		var cs: Array = q.chapter_steps(ch)
+		sizes.append(cs.size())
+		if cs.size() < 4 or String(cs[cs.size() - 1]["id"]) != "voyage":
+			bad.append(ch)
+		for st2 in cs:
+			if String(st2.get("title", "")) == "" or String(st2.get("say", "")) == "" or String(st2.get("how", "")) == "" or (st2.get("need", []) as Array).is_empty():
+				bad.append(ch)
+	var ok6: bool = bad.is_empty()
+	rows.append("%schapters 2-8 well formed (steps %s)%s" % ["" if ok6 else "(!) ", str(sizes), (" bad: " + str(bad)) if not bad.is_empty() else ""])
+	ok = ok and ok6
+	# ---- put everything back
+	g.items = items0
+	g.player.inv = inv0
+	g.tier = tier0
+	g.known = known0
+	g.heat_ward = hw0
+	g.workshops.list = st0
+	g.quest_test = false
+	q.reset()
+	print("[quest] " + "\n[quest] ".join(rows))
+	_ok("the main quest: the wisp's guidance step by step, the HUD line, the journal, the four powers", ok, "; ".join(rows))
+

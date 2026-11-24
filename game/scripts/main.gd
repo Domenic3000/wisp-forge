@@ -19,6 +19,7 @@ const FoeAI := preload("res://scripts/foe_ai.gd")
 const Nav := preload("res://scripts/nav.gd")
 const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
+const Quest := preload("res://scripts/quest.gd")
 const Workshops := preload("res://scripts/workshops.gd")
 const Summoning := preload("res://scripts/summoning.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
@@ -584,6 +585,15 @@ var pending_place: int:
 	set(v): player.pending_place = v
 var wisp := Vector2.ZERO
 var wisp_t := 0.0
+var quest                   # the main quest (quest.gd): the wisp's guidance, the HUD's line, the journal (L)
+var quest_test := false     # (the test mode runs the quest only in its own check)
+var wisp_ward_t := 0        # Wisp Ward: ticks until it can take a hit again
+var sense_pts := PackedVector2Array()   # Ore Sense: the ore cells the last pulse found (world points)
+var sense_cols := PackedColorArray()
+var sense_t := 0                        # ticks the pulse still shows
+var sense_at := Vector2.ZERO            # where it pulsed from
+var _sense_next := 240
+var _sense_req := {}
 var spawn_timer := 0
 
 # weather
@@ -623,6 +633,7 @@ func _ready() -> void:
 	space = Space.new()
 	space.game = self
 	towns = Towns.new(self)
+	quest = Quest.new(self)
 	workshops = Workshops.new(self)
 	summoning = Summoning.new(self)
 	pix.add_child(space)
@@ -2265,6 +2276,7 @@ func _tick() -> void:
 		_update_particles()
 		vfx.tick()
 		_update_wisp()
+		quest.tick()
 		shake *= 0.88
 		hurt_flash *= 0.9
 		return
@@ -2334,6 +2346,7 @@ func _tick() -> void:
 	_update_guards()
 	_check_chest_hint()
 	_update_wisp()
+	quest.tick()
 	_cloud_wisps()
 	space.planet_tick()
 	_update_camera(aim)
@@ -2497,6 +2510,15 @@ func _update_player(m: Mage) -> void:
 func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 	if m.dead or test_god:
 		return
+	# (the Wisp Ward, the quest's gift for beating Vulkhar: the wisp takes one blow, then gathers itself again)
+	if hit and m.local and m.items.has("wisp_ward") and wisp_ward_t <= 0 and m.iframes <= 0 and dmg >= 1.0:
+		wisp_ward_t = WARD_RECHARGE
+		m.iframes = 40
+		vfx.spawn(Vfx.RING, m.pos, Vector2.ZERO, 30, Color(0.75, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 4.0, 22.0)
+		vfx.light(m.pos, 40.0, Color(0.6, 0.85, 1.2), 20)
+		audio.play("blink", m.pos, 0.8)
+		ui.toast("The wisp takes the blow", Color(0.62, 0.86, 1.0))
+		return
 	if m.items.has("ironbark"):
 		dmg *= 0.75
 	dmg *= gear("dmg_taken", m)
@@ -2633,7 +2655,7 @@ func _spawn_proj(type: String, p: Vector2, v: Vector2, owner: String) -> void:
 func _reach(m: Mage, aim: Vector2) -> Vector2:
 	var c := m.pos
 	var d := aim - c
-	var rl := REACH * gear("reach", m)
+	var rl := REACH * gear("reach", m) * (1.5 if m.items.has("wisp_hands") else 1.0)
 	if d.length() > rl:
 		d = d.normalized() * rl
 	return c + d
@@ -4109,7 +4131,83 @@ func _update_wisp() -> void:
 	wisp = wisp.lerp(target, 0.08)
 	if randf() < 0.3:
 		_particle(wisp + Vector2(randf(), randf()) * 2.0, Vector2(randf() - 0.5, randf() - 0.5) * 0.2, 20, Color8(120, 200, 255), true, -0.005)
-	lights.append([wisp, 46.0, Color(0.95, 1.0, 1.1)])
+	# (the Wisp Lantern, the quest's first gift: twice the reach, a little brighter, so the fog lifts sooner)
+	if player.items.has("wisp_lantern"):
+		lights.append([wisp, 92.0, Color(1.1, 1.15, 1.25)])
+	else:
+		lights.append([wisp, 46.0, Color(0.95, 1.0, 1.1)])
+	_wisp_powers()
+
+## Wisp Ward and Ore Sense, the quest's gifts (`items["wisp_ward"]`, `["wisp_sense"]`): the ward charges; every
+## SENSE_EVERY ticks on the planet the wisp pulses, asks for the cells round you (`gpu.request_rect`, a frame or
+## two later) and marks the ore in them, drawn by overlay `_draw_sense` through rock and fog for SENSE_SHOW ticks.
+const SENSE_EVERY := 480
+const SENSE_SHOW := 210
+const SENSE_W := 260
+const SENSE_H := 170
+const SENSE_MAX := 700
+const WARD_RECHARGE := 1800
+var SENSE_ORES: Array = [Defs.COPPER, Defs.COAL, Defs.EMBER, Defs.FROST, Defs.WISP, Defs.CRYSTAL, Defs.CORE, Defs.STARIRON, 51, 52, 53, 54, 55, 56, 57]
+func _wisp_powers() -> void:
+	if wisp_ward_t > 0:
+		wisp_ward_t -= 1
+		if wisp_ward_t == 0 and player.items.has("wisp_ward"):
+			vfx.spawn(Vfx.RING, wisp, Vector2.ZERO, 26, Color(0.7, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 2.0, 14.0)
+	if sense_t > 0:
+		sense_t -= 1
+	if not player.items.has("wisp_sense") or space.active or player.dead or travelling:
+		_sense_req = {}
+		return
+	if not _sense_req.is_empty():
+		var rr: Dictionary = gpu.take_rect(int(_sense_req["id"]))
+		if rr.is_empty():
+			if frame - int(_sense_req["t"]) > 30:
+				_sense_req = {}
+			return
+		_sense_take(rr)
+		_sense_req = {}
+		return
+	_sense_next -= 1
+	if _sense_next > 0:
+		return
+	_sense_next = SENSE_EVERY
+	var pc := Build.cell_of(player.pos)
+	var c0 := pc.x - SENSE_W / 2
+	var r0 := pc.y - SENSE_H / 2
+	_sense_req = {"id": gpu.request_rect(posmod(c0, Defs.NS), r0, SENSE_W, SENSE_H, Defs.anchor_c), "c0": c0, "r0": r0,
+		"ax": Defs.anchor_c, "t": frame}
+
+func _sense_take(rr: Dictionary) -> void:
+	var fgs: PackedInt32Array = rr["fg"]
+	var is_ore := PackedByteArray()
+	is_ore.resize(Defs.NM)
+	for om in SENSE_ORES:
+		if om < Defs.NM:
+			is_ore[om] = 1
+	var found := []
+	for k in fgs.size():
+		if is_ore[fgs[k] & 255] == 1:
+			found.append(k)
+	sense_pts = PackedVector2Array()
+	sense_cols = PackedColorArray()
+	var stride := maxi(1, int(ceil(float(found.size()) / float(SENSE_MAX))))
+	var c0: int = _sense_req["c0"]
+	var r0: int = _sense_req["r0"]
+	var ax: int = _sense_req["ax"]
+	for q in range(0, found.size(), stride):
+		var k2: int = found[q]
+		var col := c0 + k2 % SENSE_W
+		var row := r0 + k2 / SENSE_W
+		var p: Vector2
+		if row >= Defs.SURF_Y0 and row < Defs.SURF_Y1:
+			p = Build.cell_pos(col, row)
+		else:
+			p = Defs.stamp_pos(row, ax, 1, Defs.k_of(col, ax))
+		sense_pts.append(p)
+		sense_cols.append(Defs.COLOR[fgs[k2] & 255].lightened(0.35))
+	sense_t = SENSE_SHOW
+	sense_at = player.pos
+	vfx.spawn(Vfx.RING, player.pos, Vector2.ZERO, 50, Color(0.6, 0.9, 1.0, 0.7), Color(0.4, 0.7, 1.0, 0.0), 6.0, 120.0)
 
 # =============================================================== weather ===
 func _update_weather() -> void:
@@ -5004,6 +5102,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if state == "station":
 			if k == KEY_ESCAPE or k == KEY_F:
 				workshops.close()
+			return
+		if state == "play" and ui.journal_open():
+			if k == KEY_ESCAPE or k == KEY_L:
+				ui.toggle_journal(self)
+			return
+		if k == KEY_L and state == "play" and not menu_paused():
+			ui.toggle_journal(self)
 			return
 		if k == KEY_ESCAPE and state == "play":
 			ui.toggle_settings()
@@ -6571,12 +6676,14 @@ func quit_to_title() -> void:
 	ui.hud.visible = false
 	if ui.settings_panel.visible:
 		ui.toggle_settings()
+	if ui.journal_open():
+		ui.toggle_journal(self)
 	ui.show_title(true)
 
 ## The Esc menu (settings) is open over play: the world waits (user, 23 Nov: "escape menu doesnt pause")
 func menu_paused() -> bool:
-	return (state == "play" or state == "dead") and ui != null and ui.settings_panel != null \
-		and ui.settings_panel.visible
+	return (state == "play" or state == "dead") and ui != null and ((ui.settings_panel != null \
+		and ui.settings_panel.visible) or ui.journal_open())
 
 func start_game(use_save: bool) -> void:
 	state = "loading"
@@ -6584,6 +6691,9 @@ func start_game(use_save: bool) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	space.reset_for_load()                 # (nothing of space kept from the game before: user, 23 Nov)
+	quest.reset()
+	if ui.journal_open():
+		ui.toggle_journal(self)
 	var s = _load_save() if use_save else null
 	if s != null:
 		_apply_save(s)

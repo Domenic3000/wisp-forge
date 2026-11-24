@@ -32,6 +32,9 @@ var hull_lbl: Label
 var hp_lbl: Label
 var mp_lbl: Label
 var info: Label
+const QuestScript := preload("res://scripts/quest.gd")
+var quest_lbl: Label        # the main quest's step now (quest.gd), gold, under the bars
+var journal: Control        # L: the main quest's journal
 var hotbar: HBoxContainer
 var hot_name: Label            # the chosen spell's name and cost, over the spell bar
 var _hot_slots := []           # the slots' controls (their cooldown shading is drawn each frame)
@@ -475,6 +478,11 @@ func _build_hud() -> void:
 			hull_row = row
 			row.visible = false
 	bars.add_child(_rule(120))
+	quest_lbl = _label("", 12, GOLD)
+	quest_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	quest_lbl.custom_minimum_size = Vector2(150, 0)
+	quest_lbl.visible = false
+	bars.add_child(quest_lbl)
 	info = _label("", 12, Color(0.86, 0.87, 1))
 	bars.add_child(info)
 	# the mana bar shines while mana goes on shaping the world (digging, taking away, building)
@@ -1202,6 +1210,63 @@ func _refresh_settings() -> void:
 		var on: bool = str(game.settings.get(it[1], "")) == str(it[2])
 		_set_chosen(b, on)
 
+## The journal (L): the main quest's chapter, every step (done, now with how to do it, still to come), and the
+## wisp's gifts. The world waits while it's open (main `menu_paused`).
+func journal_open() -> bool:
+	return journal != null and journal.visible
+
+func toggle_journal(g) -> void:
+	if journal_open():
+		journal.queue_free()
+		journal = null
+		_sfx("ui_click")
+		return
+	journal = _screen()
+	var v: VBoxContainer = journal.get_meta("box")
+	v.add_theme_constant_override("separation", 3)
+	var q = g.quest
+	var hd := _head("Journal", 24, CREAM)
+	hd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(hd)
+	var ct := _label(q.chapter_title(q.chapter), 12, GOLD)
+	ct.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(ct)
+	v.add_child(_center(_rule(300)))
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(400, mini(330, int(root.size.y) - 150))
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(sc)
+	var list := _box(true, 2)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(list)
+	var steps: Array = q.steps
+	for k in steps.size():
+		var st: Dictionary = steps[k]
+		if k < q.at:
+			list.add_child(_label("✓ " + String(st["title"]), 12, Color(0.55, 0.6, 0.72)))
+		elif k == q.at:
+			list.add_child(_label("✦ " + String(st["title"]), 12, GOLD))
+			var how := _label(String(st["how"]), 12, CREAM)
+			how.autowrap_mode = TextServer.AUTOWRAP_WORD
+			how.custom_minimum_size = Vector2(380, 0)
+			list.add_child(how)
+		else:
+			list.add_child(_label("· " + String(st["title"]), 12, Color(0.62, 0.6, 0.8)))
+	if q.at >= steps.size():
+		list.add_child(_label("✦ This chapter is done. Land on the next world and the wisp will speak again.", 12, GOLD))
+	list.add_child(_rule(200))
+	list.add_child(_label("The wisp's gifts", 12, CREAM))
+	for pw in QuestScript.POWERS:
+		var have: bool = g.items.has("wisp_" + String(pw))
+		var pl := _label(("✦ %s: %s" % [QuestScript.POWERS[pw]["name"], QuestScript.POWERS[pw]["desc"]]) if have else "· ? (a gift still to come)", 12, MANA if have else Color(0.5, 0.5, 0.66))
+		pl.autowrap_mode = TextServer.AUTOWRAP_WORD
+		pl.custom_minimum_size = Vector2(380, 0)
+		list.add_child(pl)
+	var ft := _label("L or Esc to close", 12, Color(0.6, 0.6, 0.78))
+	ft.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(ft)
+	_sfx("ui_click")
+
 func toggle_settings() -> void:
 	settings_panel.visible = not settings_panel.visible
 	if settings_panel.visible:
@@ -1489,6 +1554,10 @@ func update_hud(g) -> void:
 			if g.cargo_count() > 0:
 				lines[1] += " · hold %d/%d" % [g.cargo_count(), g.hold_cap()]
 		info.text = "\n".join(lines)
+		var ql: String = g.quest.hud_line() if g.quest != null else ""
+		quest_lbl.visible = ql != ""
+		if ql != "" and quest_lbl.text != "✦ " + ql:
+			quest_lbl.text = "✦ " + ql
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
 			info.text += "\n%d FPS · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [Engine.get_frames_per_second(), g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.quality() + (" (auto)" if g.settings["quality"] == "auto" else ""), g.prof_text(6, "\n")]

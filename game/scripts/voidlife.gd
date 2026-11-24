@@ -619,7 +619,7 @@ func _drop(p: Vector2, v: Vector2, _n: int) -> void:
 func _update_motes() -> void:
 	var m = game.player
 	var at: Vector2 = game.skiff.pos if m.aboard != null and game.skiff != null else m.pos
-	var reach: float = MOTE_REACH + (float(maxi(game.skiff.w, game.skiff.h)) * 0.5 if m.aboard != null and game.skiff != null else 0.0)
+	var reach: float = MOTE_REACH * (2.0 if m.items.has("wisp_hands") else 1.0) + (float(maxi(game.skiff.w, game.skiff.h)) * 0.5 if m.aboard != null and game.skiff != null else 0.0)
 	for k in range(motes.size() - 1, -1, -1):
 		var mo: Array = motes[k]
 		var p: Vector2 = mo[0]

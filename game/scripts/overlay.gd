@@ -184,6 +184,32 @@ func _eco_marks(e) -> void:
 			draw_string(fb, Vector2.ZERO, "z", HORIZONTAL_ALIGNMENT_LEFT, -1, PixelFont.SIZE * u, Color(0.85, 0.9, 1.0, sin(ph * PI) * 0.7 * _lit(zp).a))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+## Ore Sense (the quest's gift for the skiff): the ore the wisp's last pulse found, drawn over rock and fog as a
+## wave spreads from where it pulsed, then fading. Each ore cell a pixel of its own colour with a faint halo.
+func _draw_sense() -> void:
+	if game.sense_t <= 0 or game.sense_pts.is_empty():
+		return
+	var age := float(210 - int(game.sense_t))       # (main SENSE_SHOW)
+	var wave := age * 3.0
+	var fade := clampf(float(game.sense_t) / 60.0, 0.0, 1.0)
+	var z: float = maxf(1.0, floorf(1.0 / float(game.zoom)))
+	var view := Rect2(-4.0, -4.0, float(game.VW) + 8.0, float(game.VH) + 8.0)
+	var pts: PackedVector2Array = game.sense_pts
+	var cols: PackedColorArray = game.sense_cols
+	var at: Vector2 = game.sense_at
+	for k in pts.size():
+		var d := pts[k].distance_to(at)
+		if d > wave:
+			continue
+		var sp: Vector2 = game.world_to_screen(pts[k])
+		if not view.has_point(sp):
+			continue
+		var flash := clampf(1.0 - (wave - d) / 40.0, 0.0, 1.0)
+		var c: Color = cols[k]
+		var q := sp.floor()
+		draw_rect(Rect2(q - Vector2(1, 1), Vector2(z + 2.0, z + 2.0)), Color(c.r, c.g, c.b, (0.18 + 0.3 * flash) * fade))
+		draw_rect(Rect2(q, Vector2(z, z)), Color(minf(1.0, c.r + flash * 0.4), minf(1.0, c.g + flash * 0.4), minf(1.0, c.b + flash * 0.4), (0.65 + 0.35 * flash) * fade))
+
 ## creatures killed by others (ecology.gd): on their backs, darkened, fading as they go
 func _draw_carcasses() -> void:
 	for cc in game.eco_carcasses:
@@ -864,6 +890,15 @@ func _draw_all() -> void:
 	draw_rect(Rect2(wf - Vector2(1, 0), Vector2(3, 1)), Color8(90, 170, 255, 200))
 	draw_rect(Rect2(wf - Vector2(0, 1), Vector2(1, 3)), Color8(90, 170, 255, 200))
 	draw_rect(Rect2(wf, Vector2.ONE), Color8(245, 252, 255))
+	if game.wisp_ward_t <= 0 and game.player.items.has("wisp_ward"):
+		# (the Wisp Ward ready: a faint ring round the wisp)
+		var wr := 3.0 + 0.5 * sin(float(game.frame) * 0.08)
+		for k in 12:
+			var wa := float(k) / 12.0 * TAU
+			draw_rect(Rect2((ws + Vector2(cos(wa), sin(wa)) * wr).floor(), Vector2.ONE), Color(0.7, 0.92, 1.0, 0.35))
+	_draw_sense()
+	if game.quest != null and game.quest.say_t > 0 and game.quest.say_text != "":
+		_bubble(game.wisp + game.basis_d(atan2(game.wisp.y, game.wisp.x)) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0))
 	# particles (the light read where each is in the picture: near enough, the light is soft)
 	var pxf: Transform2D = game.screen_xf()
 	var paff: bool = game.screen_xf_ok()
