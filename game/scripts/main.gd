@@ -21,6 +21,7 @@ const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
 const Quest := preload("res://scripts/quest.gd")
 const MysteryCtl := preload("res://scripts/mystery.gd")
+const Pursuit := preload("res://scripts/pursuit.gd")
 const Workshops := preload("res://scripts/workshops.gd")
 const Summoning := preload("res://scripts/summoning.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
@@ -210,6 +211,19 @@ class Enemy extends Body:
 	var reach_ok := true       # (it can get to you: looked at now and then)
 	var surge_t := 0           # Vulkhar out of reach: frames to his next surge (a stream of fire, imps called up)
 	var surge_n := 0           # (the surge's shots still to come)
+	var surges := 0            # (how many surges: the tests look)
+	# struck from where it can't follow, a great foe comes to you (pursuit.gd)
+	var struck_n := 0          # hits not yet weighed
+	var grudge := 0            # hits taken from where it had no way to you
+	var grudge_f := -99999     # (the frame of the last)
+	var come_t := 0            # frames of warning left before it bursts out at `come_to`
+	var come_to := Vector2.ZERO
+	var come_carve := false    # (it cuts a pocket there first: `come_box`, its corners in the world)
+	var come_box := PackedVector2Array()
+	var come_wait := 0
+	var come_cd := 0
+	var came_n := 0            # (how often it has come: the tests look)
+	var come_why := ""
 	var roam := 0.0            # (a creature out of reach: where it roams to, cells along the ground from itself)
 	var breach := false        # this charge smashes through walls
 	var breach_hits := 0       # (how many holes this breach has blasted)
@@ -3253,6 +3267,8 @@ func _hurt_enemy(e: Enemy, dmg: float, kx: float, ky: float) -> void:
 	if e.type == "skeleton" or e.type == "archer" or e.d.get("warden", false):
 		dmg *= gear("undead_dmg")                       # (the Silverbane Charm)
 	e.provoked = true
+	if e.boss:
+		Pursuit.struck(e)          # (struck from where it can't follow, it comes to you)
 	e.hp -= dmg
 	e.flash = 6
 	audio.play("hit", e.pos, 0.7)
@@ -3700,7 +3716,7 @@ func _update_enemies() -> void:
 					ui.toast("VULKHAR, THE EMBER GOLEM awakens!", Color(1, 0.48, 0.16), 4.0)
 					audio.play("roar", e.pos, 1.2)
 					shake = 10.0
-				if e.awake and not tgt.dead:
+				if e.awake and not tgt.dead and not Pursuit.tick(self, e, tgt, Pursuit.walk_key(e, 5.2, g), 3, false):
 					var enraged := e.hp < e.max_hp * 0.4
 					_golem_reach(e, tgt, dist, g, enraged)
 					var gd2 := _walker_nav(e, dx, dist, 0.5, 5.2, g)
@@ -3826,6 +3842,7 @@ func _golem_reach(e: Enemy, tgt: Mage, dist: float, g: float, enraged: bool) -> 
 		return
 	e.surge_t = GOLEM_SURGE_EVERY - (60 if enraged else 0)
 	e.surge_n = 8 if enraged else 6
+	e.surges += 1
 	shake = maxf(shake, 6.0)
 	audio.play("roar", e.pos, 0.8)
 	vfx.blast(e.pos, 14.0, 0)

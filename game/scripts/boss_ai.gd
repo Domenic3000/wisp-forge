@@ -24,6 +24,7 @@ extends RefCounted
 
 const FoeAI := preload("res://scripts/foe_ai.gd")
 const Ecology := preload("res://scripts/ecology.gd")
+const Pursuit := preload("res://scripts/pursuit.gd")
 const WAKE := 110.0            # (you have to come into its lair to wake it)
 # how high it leaps (cells), whatever the planet's pull: the jump speed is worked out from it, so a
 # leap always stays on screen
@@ -88,6 +89,13 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 			e.hit_done = false
 			e.spot = tgt.pos
 			FoeAI.start(e, "windup", 40)
+	# struck from where it can't follow, it comes to you (pursuit.gd); a burrower already does, a
+	# swimmer keeps to its water
+	if e.boss and go != "burrow" and go != "swim" and not bd.get("swim", false):
+		var fl := go == "fly" or go == "slither"
+		var pk: String = Pursuit.fly_key(e) if fl else Pursuit.walk_key(e, sqrt(2.0 * gacc * (CLIMB + 6.0)), gacc)
+		if Pursuit.tick(g, e, tgt, pk, 2, fl):
+			return
 	if e.act != "":
 		_run(g, e, tgt, dx, dy, dist, gacc, spd)
 	else:

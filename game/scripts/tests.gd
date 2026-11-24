@@ -1518,6 +1518,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_nav()
+		elif only == "pursuit":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_pursuit()
 		elif only == "guardians":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3973,6 +3977,7 @@ func run() -> void:
 
 	await _test_climb()
 	await _test_nav()
+	await _test_pursuit()
 
 	# ---- save and load give back the same world ----
 	# (pieces still tumbling are set down first: saving would set them down anyway)
@@ -7454,6 +7459,152 @@ func _test_nav() -> void:
 	_go(nv_orig)
 	await _frames(20)
 	_ok("foes find their way round to you: up stairs the other way, round a walkway, never pushing at a wall; a guardian breaks in", nv_good, "; ".join(nv_lines))
+
+## A boss struck from where it can't follow comes to you (pursuit.gd; user, 24 Nov: shot Vulkhar through a
+## hole and stepped back, again and again). On a course in open air (an obsidian floor; a stone ledge 62 up
+## with nothing leading to it; a stone bunker with a tunnel too low for a boss and a slot down into the
+## arena): hit from where it can reach you, it doesn't come; hit from the ledge, it comes out on the ledge
+## (a spot of its own graph with a way to you); hit through the slot from the tunnel and stepped back, it
+## blasts a pocket beside you and comes out in it; Vulkhar the same, and his surge now answers too (his
+## reach was never really looked at: no graph was built for his size). Pictures `pursuit_tell.png`,
+## `pursuit_came.png`.
+func _test_pursuit() -> void:
+	var pu_god0: bool = g.test_god
+	g.test_god = true
+	var pu_orig: Vector2 = g.player.pos
+	var pu_a := atan2(pu_orig.y, pu_orig.x) + 0.12
+	var pu_up := Vector2(cos(pu_a), sin(pu_a))
+	var pu_c: Vector2i = Build.cell_of(pu_up * (g.gpu.surf_at(pu_a).x + 200.0))
+	var PW := 230
+	var PH := 100
+	var pu_mk := func(clear: bool) -> PackedInt32Array:
+		var dd := PackedInt32Array()
+		dd.resize(PW * PH)
+		dd.fill(0xFFFF)
+		for nj in PH:
+			for ni in PW:
+				var m := Defs.AIR
+				if nj >= 96 or ni < 3 or ni >= PW - 3:
+					m = Defs.OBSIDIAN                                  # floor and end walls
+				elif nj >= 30 and nj <= 33 and ni >= 3 and ni <= 100:
+					m = Defs.STONE                                     # the ledge, 62 up, reached by nothing
+				elif nj >= 16 and nj <= 66 and ni >= 130 and ni < PW - 3:
+					m = Defs.STONE                                     # the bunker
+					if nj >= 36 and nj <= 54 and ni >= 140 and ni <= 215:
+						m = Defs.AIR                                   # its tunnel, 19 high
+					elif nj >= 55 and ni >= 160 and ni <= 165:
+						m = Defs.AIR                                   # the slot down into the arena
+				if clear:
+					dd[nj * PW + ni] = Defs.AIR | 0xFF00
+				else:
+					dd[nj * PW + ni] = m | 0xFF00 | (0x20000 if m != Defs.AIR else 0)
+		return dd
+	var pu_course := func() -> void:
+		g.stamps.append({"x0": pu_c.x, "y0": pu_c.y, "w": PW, "h": PH, "data": pu_mk.call(false), "ax": pu_c.x, "aw": PW})
+	pu_course.call()
+	var pu_floor_r: float = Defs.R_TOP - float(pu_c.y + 96)
+	var pu_at := func(ci: int, cj: int) -> Vector2:
+		return _cell_pos(pu_c.x + ci, pu_c.y + cj, pu_c.x, PW)
+	var pu_feet := func(pe) -> float:
+		return pe.pos.length() - float(pe.h) * 0.5 - pu_floor_r
+	var pu_free := func(pe) -> bool:
+		var pl: Vector2 = g.to_grid(pe.pos)
+		return not g.box_solid(pl.x - pe.w * 0.5, pl.y - pe.h * 0.5, pe.w, pe.h)
+	var pu_lines := []
+	var pu_good := true
+	# one boss in the arena, struck twice from `stand` (stepping back to `back` between), then watched
+	var pu_run := func(kind: String, stand: Vector2, back: Vector2, frames: int, shot: String) -> Dictionary:
+		_go(stand)
+		await _frames(30)
+		var pe = g.spawn_enemy(kind, pu_at.call(60, 80))
+		pe.awake = true
+		pe.act_cd = 9999
+		var pr := {"e": pe, "surge": false, "tell": false, "came_f": -1}
+		await _frames(50)                       # (its graph is built)
+		for k in 2:
+			_go(stand)
+			await _frames(4)
+			g._hurt_enemy(pe, 4.0, 0.0, 0.0)
+			await _frames(6)
+			_go(back)
+			await _frames(40)
+		for f in frames:
+			await _frames(1)
+			pe.act_cd = maxi(pe.act_cd, 40)     # (no moves of its own: what it does is come or not)
+			if f % 30 == 0:
+				var pc: Vector2i = Build.cell_of(pe.pos)
+				var tc: Vector2i = Build.cell_of(pe.come_to)
+				var pl: Vector2 = g.to_grid(pe.come_to)
+				print("[pursuit] %s f%d at %d,%d come_t %d why '%s' carve %s to %d,%d to-blocked %s grudge %d struck %d reach %s unreach %d surges %d dist %.0f" % [kind, f, pc.x - pu_c.x, pc.y - pu_c.y, pe.come_t, pe.come_why, pe.come_carve,
+					tc.x - pu_c.x, tc.y - pu_c.y, g.box_solid(pl.x - pe.w * 0.5, pl.y - pe.h * 0.5, pe.w, pe.h), pe.grudge, pe.struck_n, pe.reach_ok, pe.unreach_t, pe.surges, pe.pos.distance_to(g.player.pos)])
+			if pe.surge_n > 0:
+				pr["surge"] = true
+			if pe.come_t > 0 and not pr["tell"]:
+				pr["tell"] = true
+				if shot != "":
+					await _frames(30)
+					_shot(shot)
+			if pe.came_n > 0 and int(pr["came_f"]) < 0:
+				pr["came_f"] = f
+				await _frames(20)
+				break
+		pr["d"] = pe.pos.distance_to(g.player.pos)
+		pr["up"] = pu_feet.call(pe)
+		pr["free"] = pu_free.call(pe)
+		return pr
+	# 1. struck from where it can reach you: nothing
+	var r1: Dictionary = await pu_run.call("boss_forest", pu_at.call(90, 86), pu_at.call(100, 86), 200, "")
+	var ok1: bool = r1["e"].came_n == 0 and r1["e"].grudge == 0
+	pu_good = pu_good and ok1
+	pu_lines.append("hit where it can reach you: %s" % ("it stays (grudge 0)" if ok1 else "(!) it came anyway (grudge %d, %s)" % [r1["e"].grudge, r1["e"].come_why]))
+	g.enemies.erase(r1["e"])
+	# 2. struck from the ledge: it comes out on the ledge
+	var r2: Dictionary = await pu_run.call("boss_forest", pu_at.call(40, 20), pu_at.call(20, 20), 240, "")
+	var e2 = r2["e"]
+	var ok2: bool = e2.came_n == 1 and e2.come_why == "spot" and float(r2["up"]) > 55.0 and float(r2["d"]) < 140.0 and bool(r2["free"])
+	pu_good = pu_good and ok2
+	pu_lines.append("hit from the ledge: %s" % (("it came out on the ledge after %.1f s, %.0f from you" % [float(r2["came_f"]) / 60.0, r2["d"]]) if ok2 else "(!) came %d (%s), %.0f up, %.0f from you, clear %s, grudge %d" % [e2.came_n, e2.come_why, r2["up"], r2["d"], r2["free"], e2.grudge]))
+	g.enemies.erase(e2)
+	# 3. struck through the slot from the tunnel, stepping back each time: it blasts a pocket by you
+	var r3: Dictionary = await pu_run.call("boss_forest", pu_at.call(169, 46), pu_at.call(200, 46), 260, "pursuit_tell.png")
+	var e3 = r3["e"]
+	var ok3: bool = e3.came_n == 1 and float(r3["d"]) < 70.0 and bool(r3["free"]) and bool(r3["tell"])
+	if ok3:
+		_shot("pursuit_came.png")
+	pu_good = pu_good and ok3
+	pu_lines.append("hit through a slot, stepping back: %s" % (("it came in beside you after %.1f s (%s), %.0f from you" % [float(r3["came_f"]) / 60.0, e3.come_why, r3["d"]]) if ok3 else "(!) came %d (%s), %.0f from you, clear %s, grudge %d, tell %s" % [e3.came_n, e3.come_why, r3["d"], r3["free"], e3.grudge, r3["tell"]]))
+	g.enemies.erase(e3)
+	# 4. Vulkhar kept from you (in the tunnel, not struck): his surge answers (his reach was never really
+	# looked at before: no graph was built for his size)
+	pu_course.call()
+	_go(pu_at.call(200, 46))
+	await _frames(30)
+	var e5 = g.spawn_enemy("golem", pu_at.call(60, 80))
+	e5.awake = true
+	for f5 in 300:
+		await _frames(1)
+		if e5.surges > 0:
+			break
+	pu_good = pu_good and e5.surges > 0
+	pu_lines.append("Vulkhar kept from you: %s" % ("his surge answers" if e5.surges > 0 else "(!) no surge (reach %s, unreachable %d)" % [e5.reach_ok, e5.unreach_t]))
+	g.enemies.erase(e5)
+	for o5 in g.enemies.duplicate():
+		if o5.type == "imp":
+			g.enemies.erase(o5)
+	# 5. Vulkhar struck through the slot: he comes
+	var r4: Dictionary = await pu_run.call("golem", pu_at.call(169, 46), pu_at.call(200, 46), 300, "")
+	var e4 = r4["e"]
+	var ok4: bool = e4.came_n == 1 and float(r4["d"]) < 80.0 and bool(r4["free"])
+	pu_good = pu_good and ok4
+	pu_lines.append("Vulkhar through the slot: %s" % (("he came for you after %.1f s (%s), %.0f from you" % [float(r4["came_f"]) / 60.0, e4.come_why, r4["d"]]) if ok4 else "(!) came %d (%s), %.0f from you, clear %s, grudge %d" % [e4.came_n, e4.come_why, r4["d"], r4["free"], e4.grudge]))
+	for o in g.enemies.duplicate():
+		if o == e4 or o.type == "imp":
+			g.enemies.erase(o)
+	g.stamps.append({"x0": pu_c.x, "y0": pu_c.y, "w": PW, "h": PH, "data": pu_mk.call(true), "ax": pu_c.x, "aw": PW})
+	g.test_god = pu_god0
+	_go(pu_orig)
+	await _frames(20)
+	_ok("a boss struck from where it can't follow comes to you: onto a ledge, or blasting in beside you; Vulkhar too", pu_good, "; ".join(pu_lines))
 
 func _sha(d: PackedByteArray) -> String:
 	var h := HashingContext.new()

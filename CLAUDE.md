@@ -1125,6 +1125,21 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   to you (`FoeAI.can_reach`) every 30 frames; kept from you `GOLEM_SURGE_AFTER` he surges every
   `GOLEM_SURGE_EVERY` (a tight stream of efire straight at you, two imps called up, at most 4), and past
   `GOLEM_MEND_AFTER` he mends 9 health a second.
+- A BOSS COMES TO YOU (scripts/pursuit.gd; user, 24 Nov: shot Vulkhar through a hole and stepped back, again and
+  again; chose "it comes to you"): main `_hurt_enemy` -> `Pursuit.struck` on any boss; on its next tick (`Pursuit.tick`,
+  from boss_ai `tick` for walkers, hoppers, fliers and serpents (not burrowers or swimmers), and from the "golem" branch)
+  the hit is weighed by its OWN nav graph (`reach_now`: its size, its jump; `Pursuit.walk_key`/`fly_key`, asked every
+  tick): no way to you = a `grudge` that stepping back or out of sight doesn't wipe (only `FORGET` frames without
+  another). `GRUDGE_AT` (2) and it comes: `TELL` frames (a rune circle and embers where it will stand, it flickers, the
+  ground shakes, a toast), then it is set down there (`_coming`). Where: `Nav.meet_spots` (a standing node of its class
+  from RMIN to `RMAX` of you with a way to your nearest node; fliers `Nav.fly_spots`), kept to `_allowed` (a guardian's
+  tether, a warden's hall); with none (you in a tunnel narrower than it), `_pocket` beside you (only where every solid
+  cell is HARD <= its power: 2, Vulkhar 3; never runestone), cut at `CARVE_AT` by an AIR STAMP (`_carve`; a blast
+  loosened the rock round it, which fell in and filled it), its corners kept as WORLD points (the grid moves as you
+  step back: kept in grid cells it was cut 30 cells off). `COOLDOWN` before it may come again. Vulkhar's surge
+  (`_golem_reach`) now works too: `FoeAI.can_reach` says yes with no graph, and nothing asked for his class's graph
+  until Pursuit did. Test: `_test_pursuit` ("pursuit"; in the full run after `_test_nav`; pictures
+  `pursuit_tell.png`, `pursuit_came.png`).
 - Digging speed grows (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it"): main
   `dig_speed(m)` = `DIG_TIER` by staff tier (0.55, 0.55, 0.9, 1.3, 1.8) x `DELVE` (1.3) per Delver's Rune
   (`items["delve"]`, recipes delve1-3: copper ingots, then wisp ingots and obsidian, then star iron and core;
@@ -1295,7 +1310,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "pursuit", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

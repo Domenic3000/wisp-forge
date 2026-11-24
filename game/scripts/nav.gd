@@ -371,3 +371,68 @@ static func _open_near(ag: AStarGrid2D, b: Vector2) -> Vector2i:
 				if ag.is_in_boundsv(q) and not ag.is_point_solid(q):
 					return q
 	return Vector2i(-1, -1)
+
+## Where a walker of class key could stand near `to` (feet, world) and get to it from there (pursuit.gd:
+## a boss coming to you): standing nodes from rmin to rmax cells of it, nearest first, each with a way to
+## the standing node nearest `to`; [] when that node isn't within tol of `to` (nothing that size gets
+## there: then it blasts its own way) or the graph isn't built.
+func meet_spots(key: String, to: Vector2, tol: float, rmin: float, rmax: float, most := 10) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if not has(key):
+		return out
+	var ag: AStar2D = data["graph"][key]
+	var n: int = data["n"]
+	var tb := _stand_near(ag, to_block(to), n)
+	if tb < 0:
+		return out
+	if from_block(Vector2(float(tb % n) + 0.5, float(tb / n) + 1.0)).distance_to(to) > tol:
+		return out
+	var b := to_block(to)
+	var rb := int(ceil(rmax / float(C)))
+	var cand := []
+	for y in range(maxi(0, int(b.y) - rb), mini(n - 1, int(b.y) + rb + 1)):
+		for x in range(maxi(0, int(b.x) - rb), mini(n, int(b.x) + rb + 1)):
+			var id := y * n + x
+			if id == tb or not ag.has_point(id):
+				continue
+			var f := from_block(Vector2(float(x) + 0.5, float(y) + 1.0))
+			var d := f.distance_to(to)
+			if d >= rmin and d <= rmax:
+				cand.append([d, id, f])
+	cand.sort_custom(func(p, q): return p[0] < q[0])
+	for c in cand:
+		if out.size() >= most:
+			break
+		if ag.get_id_path(int(c[1]), tb, false).size() > 0:
+			out.append(c[2])
+	return out
+
+## The same for a flier of class key (`to` its middle): open places from rmin to rmax of it, nearest
+## first, with a way through the open to it ([] when the open place nearest `to` isn't within tol).
+func fly_spots(key: String, to: Vector2, tol: float, rmin: float, rmax: float, most := 10) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if not has(key):
+		return out
+	var ag: AStarGrid2D = data["graph"][key]
+	var tb := _open_near(ag, to_block(to))
+	if tb.x < 0 or from_block(Vector2(tb) + Vector2(0.5, 0.5)).distance_to(to) > tol:
+		return out
+	var b := to_block(to)
+	var rb := int(ceil(rmax / float(C)))
+	var cand := []
+	for y in range(int(b.y) - rb, int(b.y) + rb + 1):
+		for x in range(int(b.x) - rb, int(b.x) + rb + 1):
+			var q := Vector2i(x, y)
+			if q == tb or not ag.is_in_boundsv(q) or ag.is_point_solid(q):
+				continue
+			var f := from_block(Vector2(float(x) + 0.5, float(y) + 0.5))
+			var d := f.distance_to(to)
+			if d >= rmin and d <= rmax:
+				cand.append([d, q, f])
+	cand.sort_custom(func(p, q2): return p[0] < q2[0])
+	for c in cand:
+		if out.size() >= most:
+			break
+		if ag.get_id_path(c[1], tb, false).size() > 0:
+			out.append(c[2])
+	return out
