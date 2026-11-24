@@ -33,7 +33,7 @@ func _ready() -> void:
 	var bh: Image = tex["bat1"].get_image()
 	bh.flip_y()
 	_make_tex("bat_hang", bh)
-	tex["door_open"] = ImageTexture.create_from_image(_door_open_image(30))
+	tex["door_open_30"] = ImageTexture.create_from_image(_door_open_image(30))
 
 func _draw_build_preview() -> void:
 	if not game.build_on or game.build_prev.is_empty():
@@ -68,7 +68,9 @@ func _draw_build_preview() -> void:
 ## (`cells`: the door's parts across its doorway, `dw` wide, -1 where a part is gone: that slice
 ## of the panel is missing, and the wood around a hole is charred dark)
 static func _door_open_image(h: int, cells := [], dw := 3) -> Image:
-	var w := 10
+	# (6 wide: swung open, the panel is seen at a slant, so it takes little room beside its doorway;
+	# user, 23 Nov: doors took up a lot of space and got in the way of building)
+	var w := 6
 	var img := Image.create(w, h + 1, false, Image.FORMAT_RGBA8)   # an empty last row, like the sprites' outline
 	var dk := Color("#3a2412")
 	var md := Color("#6b4423")
@@ -78,22 +80,22 @@ static func _door_open_image(h: int, cells := [], dw := 3) -> Image:
 	var irl := Color("#8a8a96")
 	for x in w:
 		for y in h:
-			var c := lt if (x % 3) != 0 else md
+			var c := lt if (x % 2) != 0 else md
 			if x == 1:
 				c = hl
 			if (y * 7 + x * 3) % 13 == 0:
 				c = md                                   # grain
-			if y == 5 or y == 6 or y == h - 7 or y == h - 6:
+			if y == 4 or y == 5 or y == h - 6 or y == h - 5:
 				c = ir
-				if (y == 5 or y == h - 7) and x % 3 == 1:
+				if (y == 4 or y == h - 6) and x % 2 == 1:
 					c = irl                              # rivets
-			if y >= 9 and y <= 13 and x >= 3 and x <= 6:
-				c = Color("#141018") if not (y == 11 or x == 4) else ir    # the barred window
+			if y >= 8 and y <= 11 and x >= 2 and x <= 3:
+				c = Color("#141018") if not (y == 10) else ir    # the barred window
 			if x == 0 or x == w - 1 or y == 0 or y == h - 1:
 				c = dk
 			img.set_pixel(x, y, c)
-	img.set_pixel(w - 3, h / 2, Color("#e2b048"))
-	img.set_pixel(w - 3, h / 2 + 1, Color("#9a6c24"))
+	img.set_pixel(w - 2, h / 2, Color("#e2b048"))
+	img.set_pixel(w - 2, h / 2 + 1, Color("#9a6c24"))
 	if cells.size() == dw * h:
 		var gone := func(x: int, y: int) -> bool:
 			if x < 0 or y < 0 or x >= w or y >= h:
@@ -701,6 +703,31 @@ func _draw_all() -> void:
 		return
 	# the villagers (towns.gd), behind the chests so a chest in front of one is never hidden
 	var tq := Time.get_ticks_usec()
+	# open doors, swung out of their houses (before the villagers: they walk past in front of them)
+	for d in game.doors:
+		if not d["open"]:
+			continue
+		var dp: Vector2 = d["pos"]
+		var dsp: Vector2 = game.world_to_screen(dp)
+		if dsp.x < -40 or dsp.y < -40 or dsp.x > game.VW + 40 or dsp.y > game.VH + 40:
+			continue
+		# a door swings away from whoever opened it; the panel stands face-on beside the doorway,
+		# hinged at its edge
+		var swing := float(d.get("swing", d["side"]))
+		var dkey := "door_open_%d" % int(d["h"])
+		if not tex.has(dkey):
+			tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"])))
+		var dc: Array = d.get("cells", [])
+		if dc.has(-1):
+			# a damaged door: its own picture, with the holes (made once per state of damage)
+			dkey = "door_open_%d_%d" % [int(d["h"]), hash(dc)]
+			if not tex.has(dkey):
+				if _door_keys.size() > 64:
+					tex.erase(_door_keys.pop_front())
+				_door_keys.append(dkey)
+				tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"]), dc, int(d["w"])))
+		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true, 1.0, 1.0, Color(1, 1, 1), true)
+	tq = _part("draw: doors", tq)
 	_draw_folk()
 	tq = _part("draw: folk", tq)
 	# treasure chests (whole objects)
@@ -719,29 +746,6 @@ func _draw_all() -> void:
 	tq = _part("draw: chests", tq)
 	_draw_stations()
 	tq = _part("draw: workshops", tq)
-	# open doors, swung out of their houses
-	for d in game.doors:
-		if not d["open"]:
-			continue
-		var dp: Vector2 = d["pos"]
-		var dsp: Vector2 = game.world_to_screen(dp)
-		if dsp.x < -40 or dsp.y < -40 or dsp.x > game.VW + 40 or dsp.y > game.VH + 40:
-			continue
-		# a door swings away from whoever opened it; the panel stands face-on beside the doorway,
-		# hinged at its edge
-		var swing := float(d.get("swing", d["side"]))
-		var dkey := "door_open"
-		var dc: Array = d.get("cells", [])
-		if dc.has(-1):
-			# a damaged door: its own picture, with the holes (made once per state of damage)
-			dkey = "door_open_%d_%d" % [int(d["h"]), hash(dc)]
-			if not tex.has(dkey):
-				if _door_keys.size() > 64:
-					tex.erase(_door_keys.pop_front())
-				_door_keys.append(dkey)
-				tex[dkey] = ImageTexture.create_from_image(_door_open_image(int(d["h"]), dc, int(d["w"])))
-		_sprite(dkey, game.door_panel_pos(d), swing < 0.0, false, float(d["h"]), true, 1.0, 1.0, Color(1, 1, 1), true)
-	tq = _part("draw: doors", tq)
 	# foes
 	# pieces breaking off: felled trees and fragments of buildings, turned as they tumble
 	if game.chunks != null:
@@ -954,8 +958,9 @@ func _lying(v, t: Texture2D) -> void:
 		var bc := Color.from_hsv(fposmod(float(v.fseed % 97) / 97.0, 1.0), 0.45, 0.55) * mod
 		bc.a = mod.a
 		draw_set_transform(c, 0.0, Vector2.ONE / z)
-		draw_rect(Rect2(-ts.y * 0.5 - 1.0, ts.x * 0.5 - 4.0, ts.y + 2.0, 3.0), bc)
-		draw_rect(Rect2(-ts.y * 0.5 - 1.0, ts.x * 0.5 - 1.0, ts.y + 2.0, 1.0), bc.darkened(0.35))
+		# (its underside on the floor: they lie 4.5 cells over the floor's top, towns.gd `_settle_sleeper`)
+		draw_rect(Rect2(-ts.y * 0.5 - 1.0, 1.5, ts.y + 2.0, 3.0), bc)
+		draw_rect(Rect2(-ts.y * 0.5 - 1.0, 3.5, ts.y + 2.0, 1.0), bc.darkened(0.35))
 	draw_set_transform(c, PI * 0.5 if head_right else -PI * 0.5, Vector2.ONE / z)
 	draw_texture(t, -(ts * 0.5).floor(), mod)
 	# a quilt over the body from the shoulders down (just the body's width), its own colour, edged and

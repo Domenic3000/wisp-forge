@@ -618,6 +618,11 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`v.bed`). Asleep at home they `_lie_down` (in their bed if the collision grid still has furniture there, the
   head at the pillow end; else on a bedroll on the floor), `lying` (no physics), `_get_up` at `wake_at` in the
   morning; overlay `_lying` draws them turned a quarter (whole pixels) under a quilt, "z"s from the head.
+- Lying on what's there (user, 23 Nov: "villagers are floating in their sleeping bags, one was like inside the roof
+  triangle"): `_settle_sleeper` (towns.gd `tick`, once a sleeper is within the collision grid; `Villager.lie_ok`)
+  puts someone in bed on the top of the furniture over the bed's middle (3.5 over it) and a bedroll on the floor
+  `_floor_below` finds (4.5 over the floor's top; overlay `_lying` draws the roll's underside there), each only
+  where `_headroom` has open rows over it, else the floor further down. Checked in `_test_town_days`.
 - Keeping apart (user, 21 Nov: "villagers standing on top of each other"): `_spot_in`, the street placement and
   `_new_goal` pick spots clear of others (`_taken` / `_clearance`, which counts where someone stepping through a
   door is about to come out, `_spot_of`, and chests); someone standing still on top of another steps aside
@@ -651,6 +656,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   villagers (towns.gd `line_for` topic "secret") and torn notes in chests (`hint_note`).
 - Real fire (`_fire`, near a mage): smoke, embers, a light, and every `SPARK_EVERY` ticks a chance (`_spark`)
   that a spark lights anything that burns just beside it (FIRE brushes). In water it goes out ("wet").
+  Sparks fly only out of its sides and top, never into the floor it stands on (user, 23 Nov: a smelter on a
+  plank floor set the house on fire; the smelter's chance 0.55 -> 0.35), and setting one down beside something
+  that burns says so (`burnable_near`).
 - Refined materials: COPPERBAR 58 and WISPBAR 59 (Smelter only, `PLACE` 0; NM 60). Glass and roof tiles are
   fired in the Kiln now (no forge recipe); many recipes take ingots (Copper Focus, Levitation, Fireball,
   the skiff, wards...).
@@ -936,6 +944,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   hut, dwelling), `_dress_yard` adds signs (icon by role), hedges, lamps; `_town_square` fills gaps in villages
   (well, market stall, lamps, flowers). A prop only goes where every pixel lands on open space (`_prop_fits`).
   Digging leaves furniture alone; Shift + right-click (deconstruct) takes it as planks.
+- Doors are 24 tall (buildings `DOOR`, build.gd `DOOR_H`; 30 till 23 Nov, user: "doors are actually a little big and
+  take up a lot of space"; GEN_VERSION not bumped, so a world already made keeps its 30-tall doors: door records
+  carry their own "h"). An open door's panel is drawn at a slant, `DOOR_PANEL_W` 6 wide (10 before), keyed by
+  height (`door_open_<h>`), and BEFORE the villagers (overlay `_draw_all`), so they walk past in front of it.
 - Doors (`WOODDOOR`): `_door` in buildings.gd fills a doorway with door cells whose colour variant is their
   part (row << 2 | column) and records it in `door_list`; main.gd keeps `doors` (saved in
   `planet_state["doors"]`). Walking into one opens it (`_door_bump` from `move_body`), F toggles the nearest
@@ -1001,6 +1013,16 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   forgets one whose flame cell isn't furniture any more in the collision grid. Digging leaves torch cells
   (brush.comp keepBg), deconstruct puts a flame out without giving anything, and Shift + right-click on a torch
   piece (kind 0, 3+ flame cells, at most `TORCH_CELLS_MAX` cells) gives back one torch (`_pick_up_furniture`).
+- The build preview is kept (user, 23 Nov: "when i was trying to place furniture depending on where i was placing it
+  the fps drops dramatically"): a prop's design (`_design_key`) and its fit (`_fit_key`, `_fit_val`, 12 frames for
+  the same piece at the same cell; worked out afresh on a click and after placing), each column's floor in
+  `_floor_span` for 8 frames (`_floor_memo`), and a piece that doesn't fit is slid along the floor only once the
+  cursor has rested 2 frames (`_rested`) and with `_prop_fit(..., quick)` stopping at its first bad cell: sliding a
+  bed through the air, every offset read 40 rows a column.
+- Furniture and workshops never overlap (user, 23 Nov: "part of the bed can go behind the kiln"): `_prop_fit`
+  refuses cells inside a workshop (`_stations_near`, `_station_over`: "a workshop is standing there") and
+  `_station_fit` refuses furniture under it. A village's rooms are mostly furnished, so a workshop goes in few
+  spots there; `_test_indoors` judges them by the reasons given.
 - Placing a piece where you point (user, 22 Nov: furniture and workshops "said there was no space" on a house's
   floor but went on ledges): `_update_build` tries the cursor spot, then slides along the floor
   (`_slide_offsets`: 2, -2, 4, -4 ... columns) until `_prop_fit` / `_station_fit` say it fits, and when nothing
@@ -1011,6 +1033,9 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
   thickness. `Build.shape_cells` / `shape_stamp`; one material per cell; blocks skip cells where someone stands.
+- Each spell has its own cooldown (user, 23 Nov: "healing cooldown locks other spells"): `Mage.spell_cd` (id ->
+  ticks), main `spell_ready(m, id)` / `spell_used(m, id, cd)` / `tick_spell_cds(m)` (space.gd's tick too); `cast_cd`
+  is now only the short gap after any cast (`SPELL_GAP` 10). The spell bar darkens each slot by its own.
 - Spells with "single" in `Defs.SPELLS` cast once a click (user, 21 Nov: the start was too strong): `Mage.cast_latch`
   is set by `_cast` and cleared when the button is let go. Spark Bolt is single, 12 mana, 30 ticks, reaches 220
   cells (it was 4 mana every 9 ticks while held). Test: in `_test_vfx`.

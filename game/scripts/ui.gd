@@ -1566,9 +1566,11 @@ func _update_hotbar(g) -> void:
 func _draw_slot_over(c: Control, k: int, id: String) -> void:
 	# the cooldown: darkness falling away from the top
 	var m = game.player
-	if k == game.sel and m.cast_cd > 0:
+	# (each spell its own: a long one, Mending's, never darkens the others)
+	var left := int(m.spell_cd.get(id, 0))
+	if left > 0:
 		var cd: float = float(Defs.SPELLS[id]["cd"])
-		var f := clampf(float(m.cast_cd) / maxf(1.0, cd), 0.0, 1.0)
+		var f := clampf(float(left) / maxf(1.0, cd), 0.0, 1.0)
 		c.draw_rect(Rect2(0, 0, c.size.x, floorf(c.size.y * f)), Color(0.02, 0.01, 0.05, 0.6))
 	# too little mana: a red wash
 	var cost := float(Defs.SPELLS[id]["mana"])

@@ -48,6 +48,48 @@ func tick() -> void:
 			folk.remove_at(k)
 			continue
 		_walk(v)
+		if v.lying and not v.lie_ok:
+			_settle_sleeper(v)
+
+## Someone lying down is put on what's really there (user, 23 Nov: "villagers are floating in their
+## sleeping bags, one was inside the roof triangle"): a bed's mattress (the top of the furniture over its
+## middle), or the floor under a bedroll, read from the collision grid once they're near enough to have
+## it; a spot with no room over it (under a roof's slope) is no place to sleep, so it's the floor then.
+func _settle_sleeper(v) -> void:
+	if not game.in_grid(v.pos, 24.0):
+		return
+	v.lie_ok = true
+	var cf: float = fposmod(atan2(v.pos.y, v.pos.x), TAU) / TAU * float(Defs.NS) - 0.5
+	var col := int(round(cf))
+	var hc: float = fposmod(atan2(v.lie_head.y, v.lie_head.x), TAU) / TAU * float(Defs.NS) - 0.5
+	if not v.bedroll and not v.bed.is_empty():
+		var brow := int(v.bed["row"])
+		var top := -1
+		for k in range(0, 16):
+			if game._bg_at(col, brow - k) == 1:
+				top = brow - k
+			elif top >= 0:
+				break
+		if top >= 0 and _headroom(col, top - 1, 7):
+			v.pos = _at(cf, float(top), 3.5)
+			v.lie_head = _at(hc, float(top), 3.5)
+			return
+		v.bedroll = true                     # (no bed there after all, or no room over it: the floor)
+	var row0 := int(floor(float(Defs.R_TOP) - v.pos.length()))
+	var fr: int = game._floor_below(col, row0 - 10, 28)
+	while fr >= 0 and not _headroom(col, fr, 9):
+		fr = game._floor_below(col, fr + 1, 28)
+	if fr < 0:
+		return
+	v.pos = _at(cf, float(fr), 4.0)
+	v.lie_head = _at(hc, float(fr), 4.0)
+
+## open rows from `row` up (count of them): room to lie or stand there
+func _headroom(col: int, row: int, n: int) -> bool:
+	for k in n:
+		if not game._open_at(col, row - k):
+			return false
+	return true
 
 ## which column a world point is over
 func _col(p: Vector2) -> int:
@@ -458,11 +500,12 @@ func _lie_down(v, now: bool) -> void:
 			if rk > room + 0.5:
 				room = rk
 				c = cc
-		to = _at(c, float(h["floor"]), 4.5)
+		to = _at(c, float(h["floor"]) - 1.0, 4.0)
 		var side := 1.0 if (v.fseed % 2) == 0 else -1.0
-		v.lie_head = _at(c + side * 7.0, float(h["floor"]), 4.5)
+		v.lie_head = _at(c + side * 7.0, float(h["floor"]) - 1.0, 4.0)
 		v.wake_at = _at(c, float(h["floor"]), 9.0)
 	v.bedroll = not in_bed
+	v.lie_ok = false
 	if now:
 		v.pos = to
 		v.lying = true

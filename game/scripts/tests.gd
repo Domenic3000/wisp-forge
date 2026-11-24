@@ -112,6 +112,7 @@ func _test_gear() -> void:
 	# the Silver Sigil (and the alloys' cheaper spells): a Spark Bolt costs less
 	g.player.mana = g.player.max_mana
 	g.player.cast_cd = 0
+	g.player.spell_cd.clear()
 	var ge_m0: float = g.player.mana
 	g._cast(g.player, "spark", g.player.pos + g.player.pos.normalized() * 40.0)
 	var ge_spent: float = ge_m0 - g.player.mana
@@ -559,6 +560,7 @@ func _test_vfx() -> void:
 	g.sel = g.known.find("spark")
 	g.player.mana = g.player.max_mana
 	g.player.cast_cd = 0
+	g.player.spell_cd.clear()
 	var sp_c0: int = int(g.vfx.stats.get("casts", 0))
 	var sp_m0: float = g.player.mana
 	g.test_aim = g.player.pos + g.player.pos.normalized().orthogonal() * 60.0
@@ -577,6 +579,20 @@ func _test_vfx() -> void:
 	g.sel = sp_sel0
 	_ok("Spark Bolt fires once a click, not while the button is held, and costs more mana", sp_held == 1 and sp_again == 2 and sp_spent >= 11.0,
 		"held 1.5 s: %d bolt, %.1f mana; clicked again: %d in all" % [sp_held, sp_spent, sp_again])
+	# each spell keeps its own cooldown: Mending's long one doesn't hold Spark Bolt (user, 23 Nov)
+	g.player.cast_cd = 0
+	g.player.spell_cd.clear()
+	g.player.mana = g.player.max_mana
+	g.player.hp = g.player.max_hp - 40.0
+	g._cast(g.player, "mend", g.player.pos)
+	var cd_mend: int = int(g.player.spell_cd.get("mend", 0))
+	await _frames(12)
+	var cd_spark_ok: bool = g.spell_ready(g.player, "spark") and not g.spell_ready(g.player, "mend")
+	g.player.hp = g.player.max_hp
+	g.player.heal_left = 0.0
+	g.player.spell_cd.clear()
+	_ok("each spell has its own cooldown: casting Mending leaves Spark Bolt ready a moment later", cd_mend > 100 and cd_spark_ok,
+		"Mending's cooldown %d ticks; %d ticks on, Spark Bolt ready and Mending not: %s" % [cd_mend, 12, cd_spark_ok])
 	var vx_runs := [["spark", "night"], ["fireball", "night"], ["frost", "night"], ["tide", "night"], ["quake", "night"], ["starfall", "night"], ["fireball", "day"], ["blink", "night"], ["mend", "night"]]
 	for vx_run in vx_runs:
 		var vx_id: String = vx_run[0]
@@ -593,6 +609,7 @@ func _test_vfx() -> void:
 		g.prof_reset()
 		g.player.mana = g.player.max_mana
 		g.player.cast_cd = 0
+		g.player.spell_cd.clear()
 		if vx_id == "mend":
 			g.player.hp = g.player.max_hp - 40.0
 		var vx_tc := vx_col + (30 if vx_id == "blink" else 52)
@@ -707,13 +724,34 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		for vb in watch:
 			if vb != va and vb.lying and vb.inside == va.inside and absf(vb.pos.length() - va.pos.length()) < 10.0 and absf(tw._dc(float(tw._col(va.pos)), vb.pos)) < 10.0:
 				piled += 1
+	# lying on what's really there (user, 23 Nov: floating bedrolls, one up in a roof): a bedroll 4.5 over the
+	# floor's top, anyone lying with room over them
+	var floating := 0
+	var boxed := 0
+	var settled := 0
+	for vs in watch:
+		if not vs.lying or not g.in_grid(vs.pos, 24.0):
+			continue
+		await _frames(1)
+		if vs.lie_ok:
+			settled += 1
+		var scol := int(round(fposmod(atan2(vs.pos.y, vs.pos.x), TAU) / TAU * float(Defs.NS) - 0.5))
+		var srow := int(floor(float(Defs.R_TOP) - vs.pos.length()))
+		if not tw._headroom(scol, srow, 3):
+			boxed += 1
+		if vs.bedroll:
+			var sfr: int = g._floor_below(scol, srow, 12)
+			var over: float = vs.pos.length() - (float(Defs.R_TOP) - float(sfr) - 1.0)
+			if sfr < 0 or absf(over - 4.5) > 0.75:
+				floating += 1
+	print("[towns] asleep: %d settled on the world, %d floating, %d with no room over them" % [settled, floating, boxed])
 	var tc_ok: bool = tc_v == null or (tc_v.lying and tc_v.bedroll)
 	if tc_chest != null:
 		g.chests.erase(tc_chest)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town_night.png"))
 	# (they walk there: "stuck", stepping in after pushing on a wall for 90 ticks, is the exception)
 	var night_ok: bool = not watch.is_empty() and home == watch.size() and slept > 0 and int(tw.stats.get("stuck", 0)) * 2 <= int(tw.stats.get("went_in", 0)) \
-		and lying == watch.size() and (with_bed == 0 or in_bed > 0) and piled == 0 and over_chest == 0 and tc_ok
+		and lying == watch.size() and (with_bed == 0 or in_bed > 0) and piled == 0 and over_chest == 0 and tc_ok and floating == 0 and boxed == 0
 	var late := []
 	for v6 in watch:
 		if v6.inside != v6.house:
@@ -773,8 +811,8 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		if tw.want_place(v7, tw.hour_at(v7.pos)).is_empty() and not v7.inside.is_empty():
 			late.append("%s still in at %.1f h (%s, fade %d, talk %d)" % [v7.name, tw.hour_at(v7.pos), "in grid" if g.in_grid(v7.pos, 12.0) else "far", v7.fade, v7.talk_t])
 	_ok("living towns: folk keep the hours (home asleep at night, out in the morning)", sched_ok and night_ok and morn_ok,
-		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds; %d in one spot, %d over a chest; with a chest before %s's bed: %s); in the morning %d of the %d who'd be out came out; %s%s" % [
-		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed, piled / 2, over_chest, tc_v.name if tc_v != null else "nobody", ("on the floor" if tc_v.bedroll else "in it") if tc_v != null else "-",
+		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds; %d in one spot, %d over a chest; with a chest before %s's bed: %s; %d settled on the world, %d floating, %d with no room over them); in the morning %d of the %d who'd be out came out; %s%s" % [
+		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed, piled / 2, over_chest, tc_v.name if tc_v != null else "nobody", ("on the floor" if tc_v.bedroll else "in it") if tc_v != null else "-", settled, floating, boxed,
 		out, want_out, JSON.stringify(tw.stats), "" if late.is_empty() else "; " + ", ".join(late)])
 	g.time = tw.time_for_hour(mid_p, 12.0)
 
@@ -3544,6 +3582,7 @@ func run() -> void:
 		g.known.append("mend")
 	g.mana = g.max_mana
 	g.player.cast_cd = 0
+	g.player.spell_cd.clear()
 	g._cast(g.player, "mend", g.player.pos)
 	var mana_after: float = g.mana
 	await _frames(90)
@@ -5875,6 +5914,9 @@ func _test_indoors() -> void:
 	var in_fit := {"kiln": 0, "table": 0}
 	var in_tried := {"kiln": 0, "table": 0}
 	var in_houses := 0
+	var in_bad := 0
+	var in_built := {"kiln": 0, "table": 0}
+	var in_built_n := {"kiln": 0, "table": 0}
 	for in_t in g.builds.towns:
 		if not bool(in_t.get("living", false)) or in_houses >= 5:
 			continue
@@ -5899,13 +5941,17 @@ func _test_indoors() -> void:
 				var cc := hx0 + 8
 				while cc < hx0 + hw - 8:
 					g.test_aim = _cell_pos(cc, hf - 6)
-					await _frames(2)
+					await _frames(5)               # (a piece is slid into place once the cursor rests)
 					in_tried[in_kind] += 1
 					if g.build_prev.get("ok", false):
 						in_fit[in_kind] += 1
 					else:
 						var wy: String = g.build_why
 						in_whys[wy] = int(in_whys.get(wy, 0)) + 1
+						# (a house's rooms are furnished: furniture or a door in the way is a fair "no"; no
+						# floor found on a house's floor is the old bug)
+						if not (wy.contains("furniture") or wy.contains("door") or wy.contains("workshop")):
+							in_bad += 1
 					cc += 7
 				in_rows.append("house %s %d..%d floor %d, %s: %s" % [String(in_h.get("role", "?")), hx0, hx0 + hw, hf, in_kind, str(in_whys)])
 			g.test_aim = Vector2.ZERO
@@ -5948,10 +5994,10 @@ func _test_indoors() -> void:
 		for dx in [-12, -6, 0, 6, 12]:
 			for dy in [-2, -6, 0]:
 				g.test_aim = _cell_pos(in_mid + dx, in_c.y + dy, in_c.x, IW)
-				await _frames(2)
-				in_tried[in_kind2] += 1
+				await _frames(5)
+				in_built_n[in_kind2] += 1
 				if g.build_prev.get("ok", false):
-					in_fit[in_kind2] += 1
+					in_built[in_kind2] += 1
 				else:
 					var wy2: String = g.build_why
 					in_whys2[wy2] = int(in_whys2.get(wy2, 0)) + 1
@@ -5972,8 +6018,10 @@ func _test_indoors() -> void:
 			g.doors.erase(in_dr)
 	_go(in_back)
 	await _frames(20)
-	_ok("indoors, workshops and furniture go down on a house's floor", in_houses > 0 and in_fit["kiln"] * 2 >= in_tried["kiln"] and in_fit["table"] * 3 >= in_tried["table"],
-		"%d houses; kiln fits %d of %d spots, table %d of %d" % [in_houses, in_fit["kiln"], in_tried["kiln"], in_fit["table"], in_tried["table"]])
+	# (since 23 Nov a workshop never stands over furniture, nor furniture behind a workshop: in a village's
+	# furnished rooms most spots are rightly refused, so they're judged by the reasons given)
+	_ok("indoors, workshops and furniture go down on a house's floor", in_houses > 0 and in_bad == 0 and in_fit["kiln"] + in_fit["table"] > 0 and in_built["kiln"] * 2 >= in_built_n["kiln"] and in_built["table"] * 2 >= in_built_n["table"],
+		"%d village houses: kiln fits %d of %d spots, table %d of %d, %d refused for a wrong reason; a house you build: kiln %d of %d, table %d of %d" % [in_houses, in_fit["kiln"], in_tried["kiln"], in_fit["table"], in_tried["table"], in_bad, in_built["kiln"], in_built_n["kiln"], in_built["table"], in_built_n["table"]])
 
 ## A new journey as the player starts one (user, 22 Nov: "there is a small hitch when starting a new
 ## game"): the title, then Play on an empty slot (a grown system, not the classic one), then the first
@@ -7349,6 +7397,13 @@ func _test_workshops() -> void:
 	var still = ws.add("still", _cell_pos(wk_mid + 26, wk_gr - 9, wk_c.x, WKW))
 	var anvil = ws.add("anvil", _cell_pos(wk_mid + 48, wk_gr - 6, wk_c.x, WKW))
 	await _frames(60)
+	# furniture can't be set down where a workshop stands, nor a workshop over furniture (user, 23 Nov: part
+	# of a bed went behind the kiln)
+	var wk_bed: Array = Build.design({"prop": "bed"}, 3)["rows"]
+	var wk_pf: Dictionary = g._prop_fit(wk_bed, false, wk_mid, wk_gr - 6)
+	var wk_ok0: bool = not wk_pf["ok"] and String(wk_pf["why"]).contains("workshop")
+	wk_rows.append("%sa bed where the kiln stands: fits %s (%s)" % ["" if wk_ok0 else "(!) ", wk_pf["ok"], wk_pf["why"]])
+	wk_ok = wk_ok and wk_ok0
 	# glass, batch after batch
 	ws.load_mat(kiln, Defs.SAND, 8)
 	ws.add_fuel(kiln, Defs.COAL, 2)

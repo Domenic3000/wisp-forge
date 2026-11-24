@@ -3,7 +3,7 @@ extends RefCounted
 ## parts the planet's own buildings are made of:
 ##  - back walls, painted with a brush (one material per cell) where there is no background yet;
 ##    they are load-bearing like a generated building's walls;
-##  - doors (a 3 x 30 doorway filled with door cells, then opened and closed like any other door);
+##  - doors (a 3 x 24 doorway filled with door cells, then opened and closed like any other door);
 ##  - platforms (a strip of one-way scaffold);
 ##  - staircases (a flight of steps you walk up, on posts down to the floor, with a handrail);
 ##  - furniture and outdoor details, grown by props.gd: you see the exact design before placing it,
@@ -56,7 +56,7 @@ const STRUCT_W_MAX := 96
 const STRUCT_FLOORS_MAX := 4
 const FOUND_MAX := 10         # how far a structure's floor may stand above the ground (filled with a plinth)
 const DOOR_W := 3
-const DOOR_H := 30
+const DOOR_H := 24
 const PLATFORM_W := 9
 const WALL_R := 2.6
 ## Staircases (user, 21 Nov roadmap: "staircases as pieces"): steps STAIR_STEP up and along (the mage

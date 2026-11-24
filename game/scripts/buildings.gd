@@ -21,7 +21,7 @@ const F_FILL := 0x10000           # only fill where there is no solid ground
 const F_ANCHOR := 0x20000         # part of the planet (foundations)
 const F_WALL := 0x40000           # background is a built back wall
 const STOREY := 40                # floor to floor; the mage is 24 tall with the hat, so rooms feel roomy
-const DOOR := 30                  # doorway height
+const DOOR := 24                  # doorway height (30 till 23 Nov: the user found doors too big)
 const GAP := 14                   # the hole in each upper floor that you levitate through
 const CHEST_KEEP := 0.45          # share of the possible chest spots that get a chest
 

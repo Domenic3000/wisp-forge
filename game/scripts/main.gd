@@ -118,6 +118,7 @@ class Villager extends Body:
 	var lie_next := false        # (lying down once the fade's halfway)
 	var bedroll := false
 	var lie_head := Vector2.ZERO # (where their head is, lying)
+	var lie_ok := false          # (lying put down on the floor or mattress the world really has there)
 	var wake_at := Vector2.ZERO  # (where they stand up again)
 
 func new_chest():
@@ -383,6 +384,17 @@ var build_pieces: Array = []
 var stamps: Array = []        # small blueprints to write into the world before the next GPU frame
 var build_why_cell := Vector2i.ZERO
 var build_why := ""                # why the last preview didn't fit (for the tests)
+# (the build preview's fit, kept a few frames for the same piece at the same cell: worked out every frame, a
+# piece that didn't fit slid along the floor cell by cell and dropped the frame rate where it didn't)
+var _fit_key := ""
+var _fit_frame := -100
+var _fit_val := {}
+var _floor_memo := {}
+var _floor_memo_frame := -100
+var _cur_cell := Vector2i(-99999, 0)  # (the cell the cursor's been on, and since when: a piece that
+var _cur_since := 0                   # doesn't fit is only slid along the floor once the cursor rests)
+var _design_key := ""
+var _design_val := {}
 var _build_warn_t := 0
 var _mana_warn_t := 0
 var _flat_key := ""          # (the flatten preview: worked out again only when the drag moves)
@@ -466,6 +478,7 @@ class Mage extends Body:
 	var sel := 0
 	var mat := 2               # Defs.DIRT
 	var cast_cd := 0
+	var spell_cd := {}           # each spell's own cooldown (id -> ticks): Mending's long one never holds the others
 	var dig_blocked := 0
 	var pending_place := 0
 	var pending_mat := -1      # what the pending placement uses (-1: the conjure material)
@@ -1400,7 +1413,7 @@ func _hurt_open_door(d: Dictionary, p: Vector2, r: float, burnt: bool) -> bool:
 		_door_destroyed(d, burnt)
 	return hit
 
-const DOOR_PANEL_W := 10.0    # an open door is drawn face-on, this wide, beside its doorway
+const DOOR_PANEL_W := 6.0     # an open door is drawn at a slant, this wide, beside its doorway (10 till 23 Nov)
 
 ## where an open door's panel is (its middle, world)
 func door_panel_pos(d: Dictionary) -> Vector2:
@@ -1423,7 +1436,7 @@ func _check_door_fire() -> void:
 		var a := atan2(pp.y, pp.x)
 		# fire eats into the panel where it touches it (a third left and it falls apart)
 		for sj in range(-int(d["h"]) / 2, int(d["h"]) / 2 + 1, 3):
-			for si in range(-4, 5, 2):
+			for si in range(-2, 3, 2):
 				var q := pp + basis_r(a) * float(si) + basis_d(a) * float(sj)
 				var t := type_at(q)
 				if t == Defs.FIRE or t == Defs.LAVA:
@@ -2254,6 +2267,7 @@ func _tick() -> void:
 	for m in players:
 		if m.cast_cd > 0:
 			m.cast_cd -= 1
+		tick_spell_cds(m)
 		if m.dig_blocked > 0:
 			m.dig_blocked -= 1
 		_use_grid(m)
@@ -2544,25 +2558,46 @@ func _staff(m: Mage, aim: Vector2) -> Array:
 		dir = basis_r(a)
 	return [hand + dir * 10.0, dir, hand]
 
+## Cooldowns are each spell's own (user, 23 Nov: "healing cooldown locks other spells"): a spell cast waits
+## its "cd" before it's cast again, and holds the others only a moment (`SPELL_GAP`), so you can heal and
+## fight on.
+const SPELL_GAP := 10
+func spell_ready(m: Mage, id: String) -> bool:
+	return m.cast_cd <= 0 and int(m.spell_cd.get(id, 0)) <= 0
+
+func spell_used(m: Mage, id: String, cd: int) -> void:
+	m.spell_cd[id] = cd
+	m.cast_cd = mini(cd, SPELL_GAP)
+
+func tick_spell_cds(m: Mage) -> void:
+	if m.spell_cd.is_empty():
+		return
+	for k in m.spell_cd.keys():
+		var v := int(m.spell_cd[k]) - 1
+		if v <= 0:
+			m.spell_cd.erase(k)
+		else:
+			m.spell_cd[k] = v
+
 func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	var s: Dictionary = Defs.SPELLS[id]
 	var cost := float(s["mana"]) * gear("mana_cost", m)     # (the Silver Sigil)
-	if m.cast_cd > 0 or m.mana < cost:
+	if not spell_ready(m, id) or m.mana < cost:
 		return
 	m.cast_frame = frame
 	m.cast_latch = bool(s.get("single", false))
 	if id == "conjure":
 		_conjure(m, aim)
-		m.cast_cd = s["cd"]
+		spell_used(m, id, int(s["cd"]))
 		return
 	if id == "mend":
 		if m.hp >= m.max_hp:
 			if m.local:
 				ui.toast("You're unhurt", Color(0.8, 0.95, 0.8), 1.0)
-			m.cast_cd = 20
+			spell_used(m, id, 20)
 			return
 		m.mana -= cost
-		m.cast_cd = s["cd"]
+		spell_used(m, id, int(s["cd"]))
 		m.heal_left += Defs.MEND_HEAL
 		audio.play("rare", m.pos, 0.6)
 		vfx.mend(m)
@@ -2571,10 +2606,10 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		if _blink(m, aim):
 			audio.play("blink", m.pos)
 			m.mana -= cost
-			m.cast_cd = s["cd"]
+			spell_used(m, id, int(s["cd"]))
 		return
 	m.mana -= cost
-	m.cast_cd = s["cd"]
+	spell_used(m, id, int(s["cd"]))
 	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
 	audio.play(snd.get(id, "spark"), m.pos, 0.8)
 	var st := _staff(m, aim)
@@ -4784,6 +4819,10 @@ func craft(r: Dictionary) -> bool:
 	if r.has("give"):
 		for k in r["give"]:
 			player.inv[int(k)] += int(r["give"][k])
+		# (what it made may teach recipes at once: the forge's panel keeps the world waiting, and first finds
+		# are otherwise looked for as it ticks; user, 23 Nov: crafted obsidian, no Obsidian Focus)
+		if not testing_no_learn():
+			_learn_from_finds()
 	if r.has("potion"):
 		items["potion"] = int(items.get("potion", 0)) + int(r["potion"])
 		ui.toast("Healing Draught forged: drink it with H (%d now)" % int(items["potion"]), Color(0.6, 1.0, 0.65), 3.0)
@@ -5086,8 +5125,19 @@ func _floor_below(col: int, row: int, reach: int) -> int:
 ## none of them has ground within reach
 func _floor_span(c0: int, w: int, row: int, reach: int) -> int:
 	var best := -1
+	# (each column's floor is kept a few frames: the build preview asks for the same columns again and
+	# again as a piece slides along, and each look down is up to `reach` cells read through the grid)
+	if frame - _floor_memo_frame > 8:
+		_floor_memo.clear()
+		_floor_memo_frame = frame
 	for i in w:
-		var f := _floor_below(c0 + i, row, reach)
+		var mk := Vector3i(c0 + i, row, reach)
+		var f: int
+		if _floor_memo.has(mk):
+			f = _floor_memo[mk]
+		else:
+			f = _floor_below(c0 + i, row, reach)
+			_floor_memo[mk] = f
 		if f >= 0 and (best < 0 or f < best):
 			best = f
 	return best
@@ -5102,6 +5152,33 @@ func _slide_offsets(reach: int) -> Array:
 		k += 2
 	return out
 
+## has the cursor rested on this cell a few frames? (and the preview not settled there yet: it's worked out
+## again once it has, so a piece slides into place as soon as you stop)
+func _rested(cell: Vector2i) -> bool:
+	if cell != _cur_cell:
+		_cur_cell = cell
+		_cur_since = frame
+		_fit_key = ""
+	if frame - _cur_since == 2:
+		_fit_key = ""
+	return frame - _cur_since >= 2
+
+## the workshops within `pad` of p (for a piece being placed there)
+func _stations_near(p: Vector2, pad: float) -> Array:
+	var out := []
+	for st in workshops.list:
+		if st.pos.distance_to(p) < pad + maxf(st.w, st.h):
+			out.append(st)
+	return out
+
+## is world point p inside one of these workshops?
+func _station_over(list: Array, p: Vector2) -> bool:
+	for st in list:
+		var l: Vector2 = workshops._local(st, p)
+		if absf(l.x) < st.w * 0.5 and absf(l.y) < st.h * 0.5:
+			return true
+	return false
+
 ## what's in front at a cell, in words, for "it doesn't fit" (a door, a wall, the ground...)
 func _what_blocks(col: int, row: int) -> String:
 	var t := type_at(Build.cell_pos(col, row))
@@ -5113,7 +5190,7 @@ func _what_blocks(col: int, row: int) -> String:
 
 ## Would a piece of furniture (its pixel rows) go down centred on column cx, standing on the floor under
 ## row cy (or, a wall piece, hung there)? {ok, why, pc (its cells), bottom, tree}
-func _prop_fit(rows: Array, wall: bool, cx: int, cy: int) -> Dictionary:
+func _prop_fit(rows: Array, wall: bool, cx: int, cy: int, quick := false) -> Dictionary:
 	var bottom := cy + rows.size() / 2
 	var why := ""
 	var ok := true
@@ -5125,12 +5202,24 @@ func _prop_fit(rows: Array, wall: bool, cx: int, cy: int) -> Dictionary:
 		ok = false
 		why = "no floor under it"
 		bottom = cy + rows.size() / 2
+	if quick and not ok:
+		return {"ok": false}
 	var pc := Build.prop_cells(rows, cx, bottom, build_flip)
 	var feet := 0
 	var held := 0
 	var tree := false
+	# (a workshop standing there: furniture would go behind it, half hidden)
+	var near_st := _stations_near(Build.cell_pos(cx, bottom - rows.size() / 2), float(maxi(rows.size(), rows[0].length())))
 	for c in pc:
 		var cc: Vector2i = Vector2i(int(c[0]), int(c[1]))
+		if quick and not ok:
+			return {"ok": false}
+		if not near_st.is_empty() and _station_over(near_st, Build.cell_pos(cc.x, cc.y)):
+			if ok:
+				why = "a workshop is standing there"
+				build_why_cell = cc
+			ok = false
+			continue
 		# room in front, and no other furniture where it goes (a back wall behind it is fine)
 		var bga := _bg_at(cc.x, cc.y)
 		if not _open_at(cc.x, cc.y):
@@ -5175,6 +5264,12 @@ func _station_fit(sk: String, cx: int, cy: int) -> Dictionary:
 				if not _open_at(sc2.x, sc2.y):
 					if ok:
 						why = _what_blocks(sc2.x, sc2.y)
+					ok = false
+					break
+				# (furniture there would end up behind it, half hidden)
+				if _bg_at(sc2.x, sc2.y) == 1:
+					if ok:
+						why = "furniture is in the way (Shift + right-click takes a piece)"
 					ok = false
 					break
 			if not ok:
@@ -5246,21 +5341,34 @@ func _update_build(m: Mage) -> void:
 	var kid := 0
 	build_why = ""
 	if kind == "prop" or kind == "carried":
-		var d: Dictionary = Build.design(piece, build_seed) if kind == "prop" else {"rows": piece["rows"], "wall": piece["wall"]}
+		var dkey := "%s|%d" % [String(piece.get("prop", "")), build_seed]
+		if kind == "prop" and dkey != _design_key:
+			_design_key = dkey
+			_design_val = Build.design(piece, build_seed)
+		var d: Dictionary = _design_val if kind == "prop" else {"rows": piece["rows"], "wall": piece["wall"]}
 		kid = Build.Props.kind_id(String(piece["prop"])) if kind == "prop" else int(piece["kid"])
 		var rows: Array = d["rows"]
 		var wall: bool = d.get("wall", false)
 		# where you point, or (user, 22 Nov: indoors it kept saying there was no room) slid along the floor
 		# to the nearest spot where it fits: a piece is centred on the cursor, so near a wall it ran into
 		# the doorway
-		var fit := _prop_fit(rows, wall, cell.x, cell.y)
-		if not fit["ok"]:
-			var pw0: int = rows[0].length()
-			for off in _slide_offsets(pw0 / 2 + 6):
-				var f2 := _prop_fit(rows, wall, cell.x + off, cell.y)
-				if f2["ok"]:
-					fit = f2
-					break
+		var rest := _rested(cell)
+		var fkey := "p|%s|%s|%d|%s|%d,%d" % [kind, dkey, int(piece.get("item", -1)), build_flip, cell.x, cell.y]
+		var fit: Dictionary
+		if not build_click and fkey == _fit_key and frame - _fit_frame < 12:
+			fit = _fit_val
+		else:
+			fit = _prop_fit(rows, wall, cell.x, cell.y)
+			if not fit["ok"] and (build_click or rest):
+				var pw0: int = rows[0].length()
+				for off in _slide_offsets(pw0 / 2 + 6):
+					var f2 := _prop_fit(rows, wall, cell.x + off, cell.y, true)
+					if f2["ok"]:
+						fit = f2
+						break
+			_fit_key = fkey
+			_fit_frame = frame
+			_fit_val = fit
 		ok = fit["ok"]
 		build_why = fit["why"]
 		tree_in_way = fit["tree"]
@@ -5373,13 +5481,22 @@ func _update_build(m: Mage) -> void:
 		# a workshop: an object standing on the ground where you point (most of its width on ground), or
 		# slid along the floor to the nearest spot where it fits
 		var sk: String = piece["station"]
-		var sfit := _station_fit(sk, cell.x, cell.y)
-		if not sfit["ok"]:
-			for off2 in _slide_offsets(int(Defs.STATIONS[sk]["w"]) / 2 + 8):
-				var sf2 := _station_fit(sk, cell.x + off2, cell.y)
-				if sf2["ok"]:
-					sfit = sf2
-					break
+		var rest2 := _rested(cell)
+		var skey := "s|%s|%s|%d,%d" % [sk, build_flip, cell.x, cell.y]
+		var sfit: Dictionary
+		if not build_click and skey == _fit_key and frame - _fit_frame < 12:
+			sfit = _fit_val
+		else:
+			sfit = _station_fit(sk, cell.x, cell.y)
+			if not sfit["ok"] and (build_click or rest2):
+				for off2 in _slide_offsets(int(Defs.STATIONS[sk]["w"]) / 2 + 8):
+					var sf2 := _station_fit(sk, cell.x + off2, cell.y)
+					if sf2["ok"]:
+						sfit = sf2
+						break
+			_fit_key = skey
+			_fit_frame = frame
+			_fit_val = sfit
 		ok = sfit["ok"]
 		build_why = sfit["why"]
 		var sw: int = int(Defs.STATIONS[sk]["w"])
@@ -5446,6 +5563,11 @@ func _update_build(m: Mage) -> void:
 			if int(m.items[stk]) <= 0:
 				m.items.erase(stk)
 		audio.play("place", nst.pos, 0.7)
+		# (sparks fly from its fire: say so if it's set down beside something that burns)
+		if float(Defs.STATIONS[nst.kind]["spark"]) > 0.0:
+			var bt: int = workshops.burnable_near(nst)
+			if bt > 0:
+				ui.toast("Careful: the %s's sparks can catch the %s beside it" % [String(Defs.STATIONS[nst.kind]["name"]).to_lower(), Defs.NAMES[bt].to_lower()], Color(1, 0.65, 0.4), 4.0)
 		if not m.items.has("tip_station"):
 			m.items["tip_station"] = true
 			ui.toast("%s set down: press F beside it to load it and light its fire" % Defs.STATIONS[place["station"]]["name"], Color(1, 0.85, 0.5), 4.0)
@@ -5460,6 +5582,7 @@ func _update_build(m: Mage) -> void:
 		for dd in sbp.doors:
 			doors.append(_door_rec(sbp.x0 + int(dd[0]), sbp.y0 + int(dd[1]), int(dd[2]), int(dd[3]), int(dd[4]), Defs.anchor_c, 1))
 		_struct_key = ""          # it's there now: work out the next one afresh
+	_fit_key = ""                 # (something's there now: work the fit out afresh)
 	audio.play("place", p, 0.9)
 	var psize := 8.0
 	if place.has("stamp"):

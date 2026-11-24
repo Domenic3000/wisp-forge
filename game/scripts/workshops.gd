@@ -160,6 +160,8 @@ func take_out(st) -> void:
 	st.out.clear()
 	if not parts.is_empty():
 		game.ui.toast("Taken: " + ", ".join(parts), Color(1, 0.85, 0.5), 2.5)
+		if not game.testing_no_learn():
+			game._learn_from_finds()           # (a first find teaches at once, though the panel keeps the world waiting)
 		game.audio.play("coin", st.pos, 0.4)
 		game.save_game()
 
@@ -373,11 +375,24 @@ func _fire(st) -> void:
 		return
 	_spark(st)
 
+## what burns beside a station where its sparks fly (its sides and over it), or -1: a word of warning as
+## it's set down
+func burnable_near(st) -> int:
+	for k in 24:
+		var ang := -PI - 0.4 + (PI + 0.8) * float(k) / 23.0
+		var p := _world(st, Vector2(cos(ang) * (st.w * 0.5 + 2.0), sin(ang) * (st.h * 0.5 + 2.0)))
+		var t: int = game.type_at(p)
+		if t > 0 and Defs.FUEL[t] > 0 and t != Defs.COAL:
+			return t
+	return -1
+
 ## a spark flies from a lit station to a random spot just beside it: if what's there burns, it catches
 ## (returns true then)
 func _spark(st) -> bool:
 	var sd: Dictionary = Defs.STATIONS[st.kind]
-	var ang := randf() * TAU
+	# (out of its sides and top only: never down into the floor it stands on; user, 23 Nov: a smelter on a
+	# plank floor set the house on fire)
+	var ang := randf_range(-PI - 0.4, 0.4)
 	var l := Vector2(cos(ang) * (st.w * 0.5 + 2.0), sin(ang) * (st.h * 0.5 + 2.0))
 	var p := _world(st, l)
 	var t: int = game.type_at(p)

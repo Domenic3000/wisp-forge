@@ -432,6 +432,7 @@ func _tick() -> void:
 	var a := up.angle()
 	if m.cast_cd > 0:
 		m.cast_cd -= 1
+	game.tick_spell_cds(m)
 	if not m.input.cast:
 		m.cast_latch = false
 	if in_station != null and not m.dead:
@@ -3139,7 +3140,7 @@ func _space_cast(m, st) -> void:
 	var id: String = m.known[m.sel]
 	var s: Dictionary = Defs.SPELLS[id]
 	var cost: float = float(s["mana"]) * game.gear("mana_cost", m)
-	if m.cast_cd > 0 or m.mana < cost:
+	if not game.spell_ready(m, id) or m.mana < cost:
 		return
 	match id:
 		"mend":
@@ -3147,7 +3148,7 @@ func _space_cast(m, st) -> void:
 			return
 		"conjure":
 			m.cast_latch = true
-			m.cast_cd = 30
+			game.spell_used(m, id, 30)
 			game.ui.toast("Conjure needs ground to draw from: there's none out here", Color(0.7, 0.8, 1.0), 1.6)
 			game.vfx.fizzle(m.input.aim)
 			return
@@ -3155,7 +3156,7 @@ func _space_cast(m, st) -> void:
 			if _st_blink(m, st):
 				game.audio.play("blink", m.pos)
 				m.mana -= cost
-				m.cast_cd = int(s["cd"])
+				game.spell_used(m, id, int(s["cd"]))
 				m.cast_frame = game.frame
 			return
 	if not Defs.PROJ.has(id):
@@ -3163,7 +3164,7 @@ func _space_cast(m, st) -> void:
 	m.cast_frame = game.frame
 	m.cast_latch = bool(s.get("single", false))
 	m.mana -= cost
-	m.cast_cd = int(s["cd"])
+	game.spell_used(m, id, int(s["cd"]))
 	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
 	game.audio.play(snd.get(id, "spark"), m.pos, 0.8)
 	var hand: Vector2 = m.pos + st.axis_x() * (float(m.facing) * 6.0) - st.axis_y() * 0.5

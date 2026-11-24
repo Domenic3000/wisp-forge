@@ -1353,7 +1353,7 @@ const RECIPES := [
 const STATIONS := {
 	"kiln": {"name": "Kiln", "w": 16, "h": 17, "burn": 1.0, "spark": 0.3, "cost": {STONE: 24, DIRT: 12},
 		"desc": "Fires sand into glass, clay into tiles and bricks, wood into charcoal."},
-	"smelter": {"name": "Smelter", "w": 16, "h": 23, "burn": 2.0, "spark": 0.55, "cost": {STONE: 30, BRICK: 12, COPPER: 4},
+	"smelter": {"name": "Smelter", "w": 16, "h": 23, "burn": 2.0, "spark": 0.35, "cost": {STONE: 30, BRICK: 12, COPPER: 4},
 		"desc": "Melts ore down into ingots. It eats fuel: coal burns longest."},
 	"still": {"name": "Still", "w": 15, "h": 15, "burn": 0.6, "spark": 0.1, "cost": {GLASS: 6, COPPER: 8, PLANK: 6},
 		"desc": "Steeps herbs and crystals in water over a low flame: draughts."},
