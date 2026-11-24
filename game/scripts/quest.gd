@@ -287,10 +287,14 @@ func mystery_world() -> int:
 	if Defs.is_exotic(here):
 		return here
 	var sys := Defs.system_of(int(game.space.home) if game.space.active else here)
+	# (the first of the system's exotics whose prize you haven't claimed: the deep ocean world first)
+	var any := -1
 	for i in Defs.exotics_of(sys):
-		if Defs.exotic_kind(int(i)) == "abyss":
+		if any < 0:
+			any = int(i)
+		if not bool(((game.items.get("myst", {}) as Dictionary).get(str(int(i)), {}) as Dictionary).get("claimed", false)):
 			return int(i)
-	return -1
+	return any
 
 ## its steps: [{title, how, done}]
 func mystery_steps() -> Array:
@@ -299,6 +303,21 @@ func mystery_steps() -> Array:
 		return []
 	var nm := String(Defs.make_planet(wi)["name"])
 	var md: Dictionary = (game.items.get("myst", {}) as Dictionary).get(str(wi), {})
+	if Defs.exotic_kind(wi) == "giant":
+		var been2 := not md.is_empty() or int(game.planet.get("index", 0)) == wi
+		var lit := int(md.get("lit", 0))
+		return [
+			{"title": "Forge the Storm Lattice", "done": game.items.has("lattice") or been2,
+				"how": "A Thunderhead of endless lightning wraps %s. Void essence (from the creatures between the stars, or a monolith's cache), star iron and copper ingots make a Storm Lattice at the Wisp Forge that grounds it." % nm},
+			{"title": "Fly to %s" % nm, "done": been2,
+				"how": "Through the Thunderhead and down onto its landing isle. There's no ground: isles of rock float over a sea of cloud, and under the clouds the air crushes you (the Depth Seal bears it). Levitation and the skiff get you between the isles."},
+			{"title": "Find the Eye of the Storm", "done": bool(md.get("read", false)) or bool(md.get("solved", false)),
+				"how": "A domed hall on the highest isle, on the far side from where you land. The inscription over its door says what it wants (F to read it)."},
+			{"title": "Light the five beacons as one (%d/5)" % lit, "done": bool(md.get("solved", false)),
+				"how": "Five beacons stand on the isles round the Eye, one under it. F lights one for 15 mana, and it burns for 75 seconds: all five must burn at once."},
+			{"title": "Claim what the Eye keeps", "done": bool(md.get("claimed", false)),
+				"how": "The ward is broken: F at the altar in the Eye's vault."},
+		]
 	var notes: Array = md.get("notes", [-1, -1, -1, -1, -1])
 	var nk := 0
 	for nv in notes:
@@ -326,6 +345,8 @@ func mystery_notes() -> String:
 	if wi < 0:
 		return ""
 	var md: Dictionary = (game.items.get("myst", {}) as Dictionary).get(str(wi), {})
+	if Defs.exotic_kind(wi) == "giant":
+		return "beacons burning: %d of 5" % int(md.get("lit", 0)) if not bool(md.get("solved", false)) else "the Eye is open"
 	var notes: Array = md.get("notes", [-1, -1, -1, -1, -1])
 	var out := []
 	for nv in notes:
@@ -337,8 +358,17 @@ func _mystery_tick(here: int) -> void:
 	var it: Dictionary = game.items
 	if Defs.is_exotic(here) and not game.space.active and not it.has("myst_landed_%d" % here):
 		it["myst_landed_%d" % here] = true
-		say("This world sings under its waters. Five tide-stones on its islands and shelves hold a song; on the deepest floor a temple waits to hear it. L shows what we know.")
+		if Defs.exotic_kind(here) == "giant":
+			say("No ground here, only isles adrift over the clouds, and the air below crushes. On the far side something watches from the highest isle: the Eye of the Storm. L shows what we know.")
+		else:
+			say("This world sings under its waters. Five tide-stones on its islands and shelves hold a song; on the deepest floor a temple waits to hear it. L shows what we know.")
 		return
+	if game.space.active and not it.has("myst_heard_giant") and not it.has("lattice"):
+		for b2 in game.space.bodies:
+			if String(b2.get("exotic", "")) == "giant" and (game.player.pos - (b2["pos"] as Vector2)).length() < float(b2["space"]) + 7000.0:
+				it["myst_heard_giant"] = true
+				say("A gas giant, %s, wrapped in a Thunderhead: lightning without end. A Storm Lattice would ground it. Something old burns up there." % String(b2["name"]))
+				return
 	if game.space.active and not it.has("myst_heard") and not it.has("keel"):
 		for b in game.space.bodies:
 			if String(b.get("exotic", "")) == "abyss" and (game.player.pos - (b["pos"] as Vector2)).length() < float(b["space"]) + 7000.0:

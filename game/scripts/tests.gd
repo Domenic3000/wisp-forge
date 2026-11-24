@@ -1599,6 +1599,8 @@ func run() -> void:
 			await _test_far_biomes()
 		elif only == "abyss":
 			await _test_abyss()
+		elif only == "giant":
+			await _test_giant()
 		elif only == "worlds":
 			await _test_worlds()
 		elif only == "stampdiag":
@@ -3342,7 +3344,11 @@ func run() -> void:
 		_go(sp9 * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
 		boss_e.hp = boss_e.max_hp * 0.3
 		boss_e.awake = true
-		await _frames(260)
+		# (since 24 Nov a boss gives up only after main GIVE_UP_T frames that far off)
+		for f9 in 700:
+			await _frames(1)
+			if boss_e.hp >= boss_e.max_hp and not boss_e.awake:
+				break
 		_ok("a boss left alone recovers to full health", boss_e.hp >= boss_e.max_hp and not boss_e.awake,
 			"health %d of %d, %s" % [int(boss_e.hp), int(boss_e.max_hp), "asleep" if not boss_e.awake else "awake"])
 	else:
@@ -4449,6 +4455,7 @@ func run() -> void:
 
 	await _test_far_biomes()
 	await _test_abyss()
+	await _test_giant()
 	await _test_worlds()
 	await _test_bench()
 
@@ -8617,6 +8624,8 @@ func _test_pirates() -> void:
 	g.items["shield"] = true
 	g.space.shield = 1.0
 	var sv0: int = int(g.space.stats["shield_saves"])
+	sk.pos = pi_at                    # (where it's held while the bolt flies: aimed at anywhere else it can miss)
+	sk.vel = Vector2.ZERO
 	var fr: Vector2 = sk.pos + pi_r * (float(sk.w) * 0.5 + 14.0)     # (close by: drifting debris can't take it)
 	g.space.foe_shots.append([fr, (sk.pos - fr).normalized() * 7.0, 60, null])
 	for k5 in 40:
@@ -9202,9 +9211,10 @@ func _test_galaxy() -> void:
 		sk.vel = Vector2.ZERO
 		await _frames(90)
 		var cm = null
+		var ckey: String = G.key_of(comet_s)
 		for a3 in g.space.rocks:
-			if not a3.orbit.is_empty():
-				cm = a3
+			if not a3.orbit.is_empty() and (cm == null or a3.sect == ckey):
+				cm = a3                      # (its own sector's comet: in the full run another one is streamed in too)
 		if cm != null:
 			sk.pos = cm.pos + Vector2(0, -260.0)
 			sk.vel = Vector2.ZERO
@@ -10608,6 +10618,195 @@ func _test_quest() -> void:
 ## lets you through), its sea hundreds of cells deep and dark, the crushing deep and the Depth Seal, the tide-stones
 ## read, the temple's dry hall over its flooded moon pool, a wrong note and the right song, the ward broken and the
 ## Tide Heart claimed.
+## A gas giant (user, 24 Nov): where it lies (system 0's second exotic, clear of the deep ocean world), its
+## Thunderhead (strikes far more than a storm belt; out of reach without the Storm Lattice), down onto its
+## landing isle (you stand there; no ground within 450 under the mean surface), the crushing air under the
+## cloud deck and the Depth Seal, the Eye's inscription, beacons lit (one left to go out), all five as one
+## breaking the ward, the Storm Crown (the air under the clouds can't crush you with it). Pictures
+## `giant_landing.png`, `giant_beacon.png`, `giant_eye.png`, `giant_vault.png`, `giant_journal.png`.
+func _test_giant() -> void:
+	var rows := []
+	var ok := true
+	var GX: int = Defs.EXOTIC + 1
+	var god0: bool = g.test_god
+	g.test_god = true
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+	g.player.aboard = null
+	# ---- where it lies
+	var dh: float = Defs.g_rel(Defs.planet_g(GX), Defs.planet_g(0)).length()
+	var dmin := 1e12
+	for k in range(1, Defs.SYSTEM.size()):
+		dmin = minf(dmin, Defs.g_rel(Defs.planet_g(GX), Defs.planet_g(k)).length())
+	var dab: float = Defs.g_rel(Defs.planet_g(GX), Defs.planet_g(Defs.EXOTIC)).length()
+	var pl: Dictionary = Defs.make_planet(GX)
+	var ok1: bool = Defs.exotics_of(0).has(GX) and Defs.planets_of(0).has(GX) and Defs.exotic_kind(GX) == "giant" and String(pl["kind"]) == "giant" and dh > 90000.0 and dh < 120000.0 and dmin > 20000.0 and dab > 20000.0
+	rows.append("%s%s: %.0fk from home, %.0fk from the nearest round planet, %.0fk from the deep ocean world" % ["" if ok1 else "(!) ", pl["name"], dh / 1000.0, dmin / 1000.0, dab / 1000.0])
+	ok = ok and ok1
+	# ---- its Thunderhead: strikes far more than a storm belt, and the Storm Lattice grounds it
+	var lat0: bool = g.items.has("lattice")
+	g.items.erase("lattice")
+	g.space._make_bodies(true)
+	var gb := {}
+	var ob := {}
+	for b in g.space.bodies:
+		var bi := int(b["index"])
+		if bi == GX:
+			gb = b
+		elif not Defs.is_exotic(bi) and bi != g.space.home and not g.space.reachable(bi) and ob.is_empty():
+			ob = b
+	var reach_no: bool = g.space.reachable(GX)
+	var hits := func(hb: Dictionary) -> int:
+		if hb.is_empty():
+			return 0
+		var hn := Vector2(1, 0)
+		var pp: Vector2 = (hb["pos"] as Vector2) + hn * (float(hb["space"]) + 2900.0)
+		var n0: int = g.space.bolts.size()
+		for q7 in 500:
+			g.space._storm(pp, Vector2.ZERO)
+		var n1: int = g.space.bolts.size() - n0
+		g.space.bolts.clear()
+		return n1
+	var hg: int = hits.call(gb)
+	var ho: int = hits.call(ob)
+	g.items["lattice"] = true
+	var reach_yes: bool = g.space.reachable(GX)
+	var ok2: bool = not gb.is_empty() and not reach_no and reach_yes and hg > 2 * maxi(ho, 4) and g.space.barrier_name(GX) == "thunderhead"
+	rows.append("%sits Thunderhead: out of reach without the lattice %s, with it %s; %d strikes in 500 ticks halfway in (a storm belt %d)" % ["" if ok2 else "(!) ", not reach_no, reach_yes, hg, ho])
+	ok = ok and ok2
+	if not lat0:
+		g.items.erase("lattice")
+	# ---- down onto its landing isle
+	g._enter_planet(GX)
+	g.ui.title.visible = false
+	g.time = g.towns.time_for_hour(g.player.pos, 12.0)       # (midday, so the pictures show the isles)
+	await _frames(150)
+	var md: Dictionary = g.builds.mystery
+	var hgt: float = g.player.pos.length() - Defs.RS0
+	var deepest := 1e9
+	for q72 in 72:
+		deepest = minf(deepest, Defs.RS0 - g.gpu.surf_at(float(q72) / 72.0 * TAU).x)
+	var ok3: bool = g.player.on_ground and hgt > 20.0 and hgt < 90.0 and deepest > 450.0 and String(md.get("kind", "")) == "beacons" and (md.get("beacons", []) as Array).size() == 5 and (md.get("echoes", []) as Array).size() == 5 and md.has("ward") and md.has("plaque")
+	rows.append("%s%s made: you stand on its landing isle %s, %.0f over the mean surface; its ground lies %.0f+ under it; %d beacons, the Eye %s" % ["" if ok3 else "(!) ", g.planet["name"], g.player.on_ground, hgt, deepest, (md.get("beacons", []) as Array).size(), md.has("ward")])
+	ok = ok and ok3
+	_shot("giant_landing.png")
+	if md.is_empty() or not md.has("ward"):
+		g.test_god = god0
+		g._enter_planet(0)
+		g.ui.title.visible = false
+		await _frames(60)
+		_ok("a gas giant: its Thunderhead, isles over the clouds, the crushing air, the beacons and the Storm Crown", false, "; ".join(rows))
+		return
+	var hold := func(p: Vector2, n: int) -> void:
+		for f in n:
+			g.player.pos = p
+			g.player.vx = 0.0
+			g.player.vy = 0.0
+			await _frames(1)
+	# ---- the crushing air under the clouds; the Depth Seal bears it
+	var seal0: bool = g.player.items.has("depthseal")
+	var crown0: bool = g.player.items.has("stormcrown")
+	g.player.items.erase("depthseal")
+	g.player.items.erase("stormcrown")
+	var down: Vector2 = g.player.pos.normalized() * (Defs.RS0 - 170.0)
+	g.test_god = false
+	g.player.hp = g.player.max_hp
+	await hold.call(down, 120)
+	var lost1: float = g.player.max_hp - g.player.hp
+	g.player.items["depthseal"] = true
+	g.player.hp = g.player.max_hp
+	await hold.call(down, 120)
+	var lost2: float = g.player.max_hp - g.player.hp
+	g.test_god = true
+	g.player.hp = g.player.max_hp
+	if not seal0:
+		g.player.items.erase("depthseal")
+	var ok4: bool = lost1 > 3.0 and lost2 < 0.5
+	rows.append("%sthe crushing air 170 under: %.1f health lost in 2 s, %.1f with the Depth Seal" % ["" if ok4 else "(!) ", lost1, lost2])
+	ok = ok and ok4
+	# ---- the Eye's inscription
+	g.time = g.towns.time_for_hour(md["plaque"], 11.0)      # (late morning at the Eye: the beacons round it stay in daylight)
+	await hold.call(md["plaque"], 12)
+	g.mystery.tick()
+	var said: String = g.mystery.prompt()
+	g.mystery.interact(g.player)
+	_shot("giant_eye.png")
+	var ok5: bool = said.contains("inscription") and g.mystery.st.has("read_plaque")
+	rows.append("%sthe Eye's inscription: prompt \"%s\", read %s" % ["" if ok5 else "(!) ", said, g.mystery.st.has("read_plaque")])
+	ok = ok and ok5
+	# ---- the Eye's hall and its ward are really there (stone, not just places in the plan)
+	var wr0: Dictionary = md["ward"]
+	var rr0: Dictionary = g.gpu.read_rect(int(wr0["x0"]), int(wr0["y0"]), int(wr0["w"]), int(wr0["h"]), int(wr0["ax"]), int(wr0["aw"]))
+	var ward0 := 0
+	for c0 in (rr0.get("fg", PackedInt32Array()) as PackedInt32Array):
+		if (c0 & 255) == Defs.RUNESTONE:
+			ward0 += 1
+	var ok5b: bool = ward0 >= int(wr0["w"]) * int(wr0["h"]) - 4
+	rows.append("%sthe Eye's ward stands: %d runestone cells of %d" % ["" if ok5b else "(!) ", ward0, int(wr0["w"]) * int(wr0["h"])])
+	ok = ok and ok5b
+	# ---- the beacons: lit one by one, one let go out, then all five as one
+	var bcs: Array = md["beacons"]
+	var hud := ""
+	for k2 in 4:
+		await hold.call(bcs[k2]["stand"], 8)
+		g.mystery.tick()
+		g.player.mana = g.player.max_mana
+		g.mystery.interact(g.player)
+		if k2 == 0:
+			await _frames(10)
+			_shot("giant_beacon.png")
+			hud = g.quest.hud_line() if g.quest != null else ""
+	var lit4: int = g.mystery.burn.size()
+	g.mystery.burn[0] = g.frame + 20                 # (the first burns down)
+	await _frames(30)
+	var out1: int = int(g.mystery.stats["out"])
+	var solved_early: bool = bool(g.mystery.st["solved"])
+	g.player.mana = g.player.max_mana
+	g.mystery.light(0)
+	g.player.mana = g.player.max_mana
+	g.mystery.light(4)
+	await _frames(20)
+	var solved: bool = bool(g.mystery.st["solved"])
+	var wr: Dictionary = md["ward"]
+	var rr: Dictionary = g.gpu.read_rect(int(wr["x0"]), int(wr["y0"]), int(wr["w"]), int(wr["h"]), int(wr["ax"]), int(wr["aw"]))
+	var left := 0
+	var fgw: PackedInt32Array = rr.get("fg", PackedInt32Array())
+	for c in fgw:
+		if (c & 255) == Defs.RUNESTONE:
+			left += 1
+	var ok6: bool = lit4 == 4 and out1 >= 1 and not solved_early and solved and left == 0 and fgw.size() > 0
+	rows.append("%sbeacons: %d lit by hand, %d went out (not solved yet %s), all five as one: solved %s, the ward gone %s (%d left)" % ["" if ok6 else "(!) ", lit4, out1, not solved_early, solved, left == 0, left])
+	ok = ok and ok6
+	# ---- the vault: the Storm Crown, and what it bears
+	var coins0 := int(g.items.get("coins", 0))
+	await hold.call(md["vault"], 12)
+	g.mystery.tick()
+	_shot("giant_vault.png")
+	g.mystery.interact(g.player)
+	var crown: bool = g.player.items.has("stormcrown")
+	g.test_god = false
+	g.player.hp = g.player.max_hp
+	await hold.call(down, 90)
+	var lost3: float = g.player.max_hp - g.player.hp
+	g.test_god = true
+	g.player.hp = g.player.max_hp
+	var ok7: bool = crown and int(g.items.get("coins", 0)) > coins0 and bool(g.mystery.st["claimed"]) and lost3 < 0.5 and hud.begins_with("Light")
+	rows.append("%sthe Storm Crown %s (+%d coins); under the clouds with it: %.1f lost; on this world the HUD said \"%s\"" % ["" if ok7 else "(!) ", crown, int(g.items.get("coins", 0)) - coins0, lost3, hud])
+	ok = ok and ok7
+	g.ui.toggle_journal(g)
+	await _frames(5)
+	_shot("giant_journal.png")
+	g.ui.toggle_journal(g)
+	# ---- put things back, and home again
+	if not crown0:
+		g.player.items.erase("stormcrown")
+	g.test_god = god0
+	g._enter_planet(0)
+	g.ui.title.visible = false
+	await _frames(60)
+	print("[giant] " + "\n[giant] ".join(rows))
+	_ok("a gas giant: its Thunderhead, isles over the clouds, the crushing air, the beacons and the Storm Crown", ok, "; ".join(rows))
+
 func _test_abyss() -> void:
 	var rows := []
 	var ok := true
@@ -10624,7 +10823,7 @@ func _test_abyss() -> void:
 	for k in range(1, Defs.SYSTEM.size()):
 		dmin = minf(dmin, Defs.g_rel(Defs.planet_g(EX), Defs.planet_g(k)).length())
 	var pl: Dictionary = Defs.make_planet(EX)
-	var ok1: bool = ex0 == [EX] and dh > 90000.0 and dh < 120000.0 and dmin > 20000.0 and String(pl["kind"]) == "abyss" and Defs.system_of(EX) == 0 and Defs.planets_of(0).has(EX)
+	var ok1: bool = ex0.has(EX) and dh > 90000.0 and dh < 120000.0 and dmin > 20000.0 and String(pl["kind"]) == "abyss" and Defs.system_of(EX) == 0 and Defs.planets_of(0).has(EX)
 	rows.append("%s%s: %.0fk from home, %.0fk from the nearest other planet; a %s world of %s" % ["" if ok1 else "(!) ", pl["name"], dh / 1000.0, dmin / 1000.0, pl["kind"], str(pl["biomes"])])
 	ok = ok and ok1
 	# ---- its maelstrom: spins you round more than it throws you out; the Tempest Keel lets you through

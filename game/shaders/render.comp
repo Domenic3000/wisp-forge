@@ -464,7 +464,8 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 	// is textured in its own coordinates (so its detail drifts with it), lit from the sun's side, takes
 	// the colour of the land it stands for, and fades into the haze toward its foot, so where a nearer
 	// layer rises in front of it there's a soft band of mist between them instead of a hard edge.
-	if (zoom < 2.5) {
+	// (a gas giant has no land to stand behind it: no mountains or hills, only its sky)
+	if (zoom < 2.5 && P.p[125].x > -0.5) {
 		// (P.p[121].w is the camera's angle unwrapped, so nothing jumps when it wraps)
 		float camU = P.p[121].w;
 		float sunX = dot(sd, camR());                       // the sun to the right (+) or left (-)
@@ -704,6 +705,13 @@ void main() {
 		float lit = clamp(cdn - above + 0.45, 0.0, 1.0);
 		cc *= lit > 0.62 ? 1.08 : (lit > 0.4 ? 0.92 : 0.8);
 		if (below < 0.15) cc *= 0.82 - rain * 0.12;          // the underside
+		// a gas giant's deck: banded amber and rust, the bands drifting slowly, and wholly opaque deep in
+		float dk = cloudDeck(pos);
+		if (dk > 0.0) {
+			float band = 0.5 + 0.5 * sin((r - RS0) * 0.09 + fbm(vec2(th * RS0 / 180.0 + TIME * 0.004, 2.5), 4264, 2) * 6.0);
+			cc *= mix(vec3(1.1, 0.88, 0.62), vec3(0.82, 0.52, 0.36), band) * (0.75 + 0.25 * dk);
+			if (dk > 0.85) cdn = 2.0;
+		}
 		float wisp = vnoise(vec2(th * RS0 * 0.33 + TIME * 0.02, r * 0.33), 77);
 		float a = cdn * 1.5 + (wisp - 0.5) * 0.7;
 		float bay = (BAYER[(iy & 3) * 4 + (ix & 3)] + 0.5) / 16.0;

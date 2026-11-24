@@ -561,6 +561,7 @@ const BIOMES := {
 	"grove": {"name": "Mirecap Grove", "under": "Glowroot Caverns", "off": 2.0, "amp": 11.0, "top": MYCELIUM, "topD": 2, "sub": DIRT, "subD": 10, "weather": "rain", "flora": 9, "ug": 0, "flags": 8},
 	"ocean": {"name": "Drowned Shelf", "under": "Abyssal Grottos", "off": 62.0, "amp": 18.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 6, "ug": 0, "flags": 0},
 	# a deep ocean world's sea floor, hundreds of cells down (user, 23 Nov: "are there super deep ocean worlds?")
+	"giant": {"name": "The Cloud Sea", "under": "The Crushing Deep", "off": 560.0, "amp": 30.0, "top": GRAVEL, "topD": 3, "sub": STONE, "subD": 20, "weather": "rain", "flora": 5, "ug": 3, "flags": 0},
 	"abyss": {"name": "The Abyss", "under": "Hadal Vaults", "off": 430.0, "amp": 26.0, "top": GRAVEL, "topD": 2, "sub": SAND, "subD": 10, "weather": "rain", "flora": 10, "ug": 1, "flags": 0},
 }
 
@@ -635,7 +636,10 @@ func system_g(r: int) -> PackedFloat64Array:
 ## them: use `system_of`). Each is reached through a hazard of its own, not the Core Drive (space.gd
 ## `reachable`). The first kind: the deep ocean world ("abyss": a sea hundreds of cells deep, a maelstrom round
 ## it that only the Tempest Keel rides out, and a sunken mystery at the bottom). Every system's first has one;
-## the others half the time.
+## the others half the time. The second (user, 24 Nov: "maybe some gas giants with no ground or only clouds"):
+## the gas giant ("giant": slot 1; islands of rock floating over a sea of cloud with no ground to be found, the
+## crushing depths under it, a Thunderhead round it that only the Storm Lattice grounds, and five beacons to
+## light at once). Every system's first has one; the others two times in five.
 const EXOTIC := 100000
 const EXO_SLOTS := 8
 func is_exotic(i: int) -> bool:
@@ -646,10 +650,15 @@ func system_of(i: int) -> int:
 
 func exotics_of(r: int) -> Array:
 	if r == 0:
-		return [EXOTIC]
+		return [EXOTIC, EXOTIC + 1]
 	var er := RandomNumberGenerator.new()
 	er.seed = hash([world_seed, r, 41])
-	return [EXOTIC + r * EXO_SLOTS] if er.randf() < 0.5 else []
+	var out := [EXOTIC + r * EXO_SLOTS] if er.randf() < 0.5 else []
+	var gr := RandomNumberGenerator.new()          # (its own draw: the deep ocean worlds stay where they were)
+	gr.seed = hash([world_seed, r, 49])
+	if gr.randf() < 0.4:
+		out.append(EXOTIC + r * EXO_SLOTS + 1)
+	return out
 
 ## every planet of system r: its round of five, then its exotics
 func planets_of(r: int) -> Array:
@@ -659,8 +668,11 @@ func planets_of(r: int) -> Array:
 	out.append_array(exotics_of(r))
 	return out
 
+const EXO_KINDS := ["abyss", "giant"]
 func exotic_kind(i: int) -> String:
-	return "abyss" if i >= EXOTIC else ""
+	if i < EXOTIC:
+		return ""
+	return String(EXO_KINDS[mini(posmod(i - EXOTIC, EXO_SLOTS), EXO_KINDS.size() - 1)])
 
 ## an exotic's place in its system: 92-118 thousand cells from the first planet, on the bearing farthest from
 ## the others (so no journey toward it begins by another)
@@ -678,6 +690,11 @@ func _exotic_local(i: int) -> Vector2:
 		var md := 1e12
 		for k in SYSTEM.size():
 			md = minf(md, p.distance_to(planet_local(r * SYSTEM.size() + k)))
+		# (a later exotic keeps clear of the ones before it in its system; the first is placed as it always was)
+		for k2 in posmod(i - EXOTIC, EXO_SLOTS):
+			var j := EXOTIC + r * EXO_SLOTS + k2
+			if exotics_of(r).has(j):
+				md = minf(md, p.distance_to(_exotic_local(j)) * 0.6)
 		if md > best_d:
 			best_d = md
 			best = p
@@ -754,6 +771,7 @@ const CLIMATES := {
 	"ocean": {"storm": 1.8, "wind": 0.5, "deep": 1.0, "settle": 0.35, "towns": 0.5, "belt": Color(0.3, 0.85, 0.95)},
 	# a deep ocean world (an exotic: see EXOTIC): the deep and, far down, the crushing deep; a few island folk
 	"abyss": {"storm": 1.7, "wind": 0.6, "deep": 1.0, "crush": 1.0, "settle": 0.35, "towns": 0.4, "belt": Color(0.25, 0.5, 1.0)},
+	"giant": {"storm": 2.2, "wind": 1.0, "pressure": 1.0, "settle": 0.0, "towns": 0.0, "wild": 1.3, "belt": Color(1.0, 0.78, 0.42)},
 	"desert": {"storm": 0.8, "wind": 0.7, "dust": 1.0, "sun": 1.0, "settle": 0.35, "towns": 0.3, "ruin": 0.25, "belt": Color(1.0, 0.8, 0.35)},
 	"marsh": {"storm": 1.3, "fog": 1.0, "miasma": 1.0, "settle": 0.3, "towns": 0.3, "ruin": 0.15, "belt": Color(0.55, 0.95, 0.45)},
 	"frozen": {"storm": 1.4, "wind": 0.8, "freeze": 1.0, "cold": 1.0, "settle": 0.3, "towns": 0.5, "belt": Color(0.7, 0.9, 1.0)},
@@ -779,6 +797,9 @@ const HAZARDS := {
 	# (a deep ocean world's: 160+ under the sea, past where the Tide Charm holds)
 	"crush": {"ward": "depthseal", "relic": "tideheart", "dmg": 0.05, "name": "The crushing deep",
 		"msg": "The abyss of %s crushes you: forge the Depth Seal (Wards), or rise toward the light"},
+	# (a gas giant's: under its cloud deck the air grows too heavy to bear; main `_hazard_level`)
+	"pressure": {"ward": "depthseal", "relic": "stormcrown", "dmg": 0.045, "name": "The crushing air",
+		"msg": "Under the cloud deck of %s the air crushes you: climb back up, or forge the Depth Seal (Wards)"},
 }
 
 ## Sky events (main `_update_sky_events`): now and then something happens in the sky, picked by the
@@ -1038,7 +1059,7 @@ const LEARN := {
 	"sunveil": {"shop": "shop", "kind": "desert", "price": 45, "hoard": true},
 	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
 	"tidecharm": {"shop": "shop", "kind": "ocean", "price": 45, "hoard": true},
-	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]},
+	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]}, "lattice": {"find": [VOIDESS]},
 	"engine": {"hoard": true},
 }
 
@@ -1099,7 +1120,7 @@ func ore_kind(mat: int) -> String:
 ## a planet's climate and settlement (see CLIMATES), every key filled in
 func climate(pl: Dictionary) -> Dictionary:
 	var out := {"storm": 1.0, "wind": 0.0, "fog": 0.0, "heat": 0.0, "freeze": 0.0, "dust": 0.0, "wild": 1.0,
-		"cold": 0.0, "sun": 0.0, "miasma": 0.0, "deep": 0.0, "crush": 0.0, "settle": 1.0, "towns": 1.0, "ruin": 0.0,
+		"cold": 0.0, "sun": 0.0, "miasma": 0.0, "deep": 0.0, "crush": 0.0, "pressure": 0.0, "settle": 1.0, "towns": 1.0, "ruin": 0.0,
 		"belt": Color(0.45, 0.7, 1.0)}
 	var c: Dictionary = CLIMATES.get(String(pl.get("kind", "temperate")), {})
 	for k in c:
@@ -1138,7 +1159,7 @@ const PLANET_KINDS := {
 }
 const PLANET_ORDER := ["volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm"]
 const BIOME_WORDS := {"forest": "woods", "jungle": "jungle", "marsh": "bogs", "tundra": "snowfields", "mountain": "peaks",
-	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas", "abyss": "abyssal deeps"}
+	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas", "abyss": "abyssal deeps", "giant": "cloud seas"}
 const NAME_A := ["Ver", "Cin", "Thal", "Ser", "Fen", "Ar", "Bel", "Cor", "Dra", "El", "Gal", "Hal", "Ith", "Kel", "Lor", "Mor",
 	"Nev", "Or", "Pyr", "Quel", "Ryn", "Syl", "Tor", "Ul", "Vel", "Wyn", "Zar", "Ash", "Brim", "Cal", "Del", "Em", "Fal", "Gry",
 	"Hes", "Ka", "Mal", "Nim", "Oss", "Per", "Rhe", "Sol", "Tav", "Va", "Yr"]
@@ -1190,6 +1211,8 @@ func _planet_kind(ws: int, i: int) -> String:
 ## A deep ocean world: the abyss most of the way round (its floor 400-480 cells under the sea), a shelf or
 ## two, and a couple of narrow islands (where you come down, and where the tide-stones stand)
 func _exotic_planet(ws: int, i: int) -> Dictionary:
+	if exotic_kind(i) == "giant":
+		return _giant_planet(ws, i)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([ws, i, 47])
 	var r := system_of(i)
@@ -1218,6 +1241,28 @@ func _exotic_planet(ws: int, i: int) -> Dictionary:
 		"desc": "A deep ocean world: a sea hundreds of fathoms deep over a drowned land, a few islands, and a storm that never ends.",
 		"biomes": bl2, "starts": starts, "magmaR": radius * rng.randf_range(0.34, 0.4), "sea": rng.randf_range(8.0, 12.0),
 		"rich": 1.3 * (1.0 + r * 0.25), "lava": 0.5, "sky": Color(0.8, 0.98, 1.15)}
+
+## A gas giant: one biome all round (the cloud sea, its floor far under the deck, out of reach), big, banded
+## amber and rust; buildings.gd grows its floating islands, beacons and the Eye.
+const GIANT_NAMES := ["Thunder", "Gale", "Storm", "Tempest", "Squall", "Halo"]
+func _giant_planet(ws: int, i: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([ws, i, 53])
+	var r := system_of(i)
+	var bl := []
+	var starts := PackedFloat32Array()
+	for q in 8:
+		bl.append("giant")
+		starts.append(float(q) / 8.0)
+	var nrng := RandomNumberGenerator.new()
+	nrng.seed = hash([ws, i, 13])
+	var pname := String(NAME_A[nrng.randi_range(0, NAME_A.size() - 1)]) + String(NAME_C[nrng.randi_range(0, NAME_C.size() - 1)]) + " " + String(GIANT_NAMES[nrng.randi_range(0, GIANT_NAMES.size() - 1)])
+	var radius := rng.randf_range(1500.0, 1700.0) * PLANET_SCALE
+	return {"name": pname, "index": i, "kind": "giant", "exotic": "giant", "seed": 1 + posmod(hash([ws, i, 5]), 0xFFFFFE),
+		"guardians": [], "radius": radius,
+		"desc": "A gas giant: islands of rock adrift over an endless sea of cloud, no ground to be found under it, and a storm that never sleeps.",
+		"biomes": bl, "starts": starts, "magmaR": radius * 0.3, "sea": -1.0,
+		"rich": 1.4 * (1.0 + r * 0.25), "lava": 0.3, "sky": Color(1.18, 0.96, 0.74)}
 
 func _grown_planet(ws: int, i: int) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
@@ -1445,6 +1490,7 @@ const RECIPES := [
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},
 	{"id": "scanner", "cat": "Travel", "name": "Wisp Scanner", "part": "part_scanner", "cost": {XENITE: 12, CRYSTAL: 10, WISPBAR: 6, HULL: 10}, "desc": "A lens of alien glass fitted to your skiff, built round a Scanner Lens from a derelict station's vault: what you see round you reaches three times as far, systems are charted from farther off, and the nearest wreck and derelict station within reach are marked at the edge of the screen."},
 	{"id": "keel", "cat": "Travel", "name": "Tempest Keel", "cost": {ABYSSPEARL: 12, STARIRON: 6, HULL: 10}, "desc": "A keel of pearl and star iron that rides out a maelstrom: the skiff can pass the storm that spins round a deep ocean world. Needs the skiff."},
+	{"id": "lattice", "cat": "Travel", "name": "Storm Lattice", "cost": {VOIDESS: 8, STARIRON: 6, COPPERBAR: 12}, "desc": "A cage of copper and star iron strung with void essence round the skiff: it grounds the lightning of the Thunderhead round a gas giant, so the skiff can pass. Needs the skiff."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars; it burns a Wisp Cell every few seconds (refined at a smelter from wisp ore and coal, or bought at an outpost). Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
 	{"id": "harness", "cat": "Travel", "name": "Void Harness", "cost": {VOIDESS: 16, STARIRON: 6, WISPBAR: 4}, "desc": "Bands of void essence round your skiff's keel: a gravity well can never drag it past its edge, and skimming one flings you out much faster. Needs the skiff."},
@@ -2685,6 +2731,14 @@ const CREATURES := {
 		"glow": Color(0.35, 0.95, 1.0),
 		"body": {"plan": "serpent", "segs": 18, "rad": 1.3, "base": "#14202e", "belly": "#2a4a5a", "accent": "#5cf0ff", "dark": "#05080e", "eye": "#c8ffff"},
 		"moves": {"dive": {"v": 3.8}}, "drops": [[ABYSSPEARL, 1, 0.3], [CRYSTAL, 1, 0.2]]},
+	"skyray": {"name": "Sky Ray", "where": ["giant"], "temper": "neutral", "w": 14.0, "h": 6.0, "hp": 50.0, "dmg": 9.0, "go": "fly", "speed": 1.0,
+		"idle": {"soar": 4, "circle": 3}, "glow": Color(0.6, 0.9, 1.0),
+		"body": {"plan": "bird", "len": 12, "span": 14, "base": "#5a6aa8", "belly": "#c8d8ff", "accent": "#8ae8ff", "dark": "#1a2040", "eye": "#eaffff", "skin": "spots"},
+		"moves": {"dive": {"v": 3.0}}, "drops": [[VOIDESS, 1, 0.35], [CRYSTAL, 2, 0.4]]},
+	"stormkite": {"name": "Storm Kite", "where": ["giant"], "temper": "predator", "w": 7.0, "h": 5.0, "hp": 26.0, "dmg": 8.0, "go": "fly", "speed": 2.2,
+		"idle": {"circle": 3, "soar": 2},
+		"body": {"plan": "bird", "len": 6, "span": 8, "base": "#c87a2a", "belly": "#ffd890", "accent": "#fff06a", "dark": "#3a2010", "eye": "#ffffff", "skin": "fur"},
+		"moves": {"dive": {"v": 4.6}}, "drops": [[COPPER, 2, 0.4], [WISP, 1, 0.3]]},
 	"abyssjelly": {"name": "Abyss Jelly", "where": ["abyss"], "temper": "neutral", "swim": true, "w": 7.0, "h": 7.0, "hp": 26.0, "dmg": 8.0, "go": "fly", "speed": 0.4,
 		"glow": Color(1.0, 0.45, 0.9), "col": Color(1.0, 0.45, 0.9),
 		"body": {"plan": "fungus", "len": 7, "tall": 7, "base": "#3a2a6a", "belly": "#c8a8ff", "accent": "#ff6ae8", "dark": "#140a2a", "eye": "#ffffff", "skin": "spots"},

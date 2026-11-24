@@ -232,6 +232,32 @@ func _draw_mystery() -> void:
 				var a := float(q) / 10.0 * TAU + float(game.frame) * 0.02
 				draw_rect(Rect2((sp + Vector2(cos(a), sin(a)) * 7.0).floor(), Vector2.ONE), Color(0.6, 0.9, 1.0, 0.4))
 		_glyph(sp, int(pil[k]["glyph"]), col)
+	# a gas giant's beacons: a flame in each basin that burns (mystery.gd `burn`), and the Eye's braziers that
+	# answer them
+	var bcs: Array = md.get("beacons", [])
+	var ech: Array = md.get("echoes", [])
+	var solved := bool(game.mystery.st.get("solved", false))
+	for k2 in bcs.size():
+		if not (solved or game.mystery.burn.has(k2)):
+			continue
+		_flame(game.world_to_screen(bcs[k2]["pos"]), 1.0, k2, view)
+		if k2 < ech.size():
+			_flame(game.world_to_screen(ech[k2]), 0.6, k2 + 7, view)
+
+## a pixel flame standing on screen point sp (s: its size), flickering
+func _flame(sp: Vector2, s: float, fseed: int, view: Rect2) -> void:
+	if not view.has_point(sp):
+		return
+	var t := float(game.frame) * 0.25 + float(fseed) * 1.7
+	var hgt := (7.0 + 2.0 * sin(t) + randf()) * s
+	var base := sp.floor()
+	for y in int(hgt):
+		var f := float(y) / maxf(hgt, 1.0)
+		var wv := maxf(1.0, (3.5 * s) * (1.0 - f * 0.85))
+		var sway := sin(t * 1.3 + f * 3.0) * f * 1.5 * s
+		var col := Color(1.0, 0.95, 0.6).lerp(Color(1.0, 0.45, 0.15), f)
+		col.a = 1.0 - f * 0.4
+		draw_rect(Rect2((base + Vector2(-wv * 0.5 + sway, -1.0 - float(y))).floor(), Vector2(ceil(wv), 1.0)), col)
 
 func _glyph(sp: Vector2, g: int, col: Color) -> void:
 	var art: Array = MysteryArt.GLYPH_ART[g]

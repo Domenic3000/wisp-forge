@@ -537,6 +537,45 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   and the pool flooded, a wrong note then the song, the ward's cells gone, the Tide Heart; pictures `abyss_deep.png`,
   `abyss_stone.png`, `abyss_temple.png`, `abyss_vault.png`, `abyss_journal.png`.
 
+## The gas giant (user, 24 Nov: "maybe some gas giants with no ground or only clouds"; built while he was away)
+- The second exotic kind, slot 1: `Defs.exotics_of(r)` is [EXOTIC, EXOTIC + 1] for system 0, and for the others the
+  deep ocean world half the time (its draw unchanged) plus a giant two times in five (its own draw, seed 49);
+  `EXO_KINDS` by slot (`exotic_kind`). `_exotic_local` keeps a later exotic clear of the ones before it (the first
+  is placed as it always was). `_giant_planet`: kind/exotic "giant", one biome "giant" all round (`off` 560: its
+  ground lies hundreds of cells under the mean surface, out of reach), sea -1, no guardians, name + "Thunder",
+  "Gale", ... (`GIANT_NAMES`), sky tint amber. CLIMATES "giant": storm 2.2, wind 1.0, "pressure", settle 0.
+- THE THUNDERHEAD: its storm belt (space.gd `_storm`, `thunder`) strikes four times as often; `_draw_belts`
+  flickers forks of lightning through it; `barrier_name` "thunderhead". The STORM LATTICE (recipe "lattice",
+  Travel: 8 Void Essence, 6 Star Iron, 12 Copper Ingots; learned on finding void essence, hidden until the skiff;
+  main `exotic_ok`) grounds it. Its disc is banded amber and rust with a storm's eye (`_disc_image`).
+- THE CLOUD DECK: main sets P.p[125].x to -1 on a giant (it's a frozen world's icing chance otherwise);
+  clouds.comp `cloudDeck` (from about 40 under the mean surface down, a billowing top drifting with the wind) is
+  part of `cloudDensity`; render.comp bands it amber and rust and makes it opaque deep in (nothing under it shows),
+  and draws no mountains or hills behind a giant. Under it main `_hazard_level` "pressure" (`HAZARDS`: ward Depth
+  Seal, relic Storm Crown): from `PRESSURE_D` (110) under the mean surface, 1 + (depth - 110) / 60.
+- ISLES (buildings.gd `_giant_sky`, its own RNG; `_sky_island(cx, h, w, build, trees, flat)`: grass, earth, stone
+  with copper/wisp/coal, a lumpy underside with crystal drips, living trees by `Lairs.tree`; written through
+  `Lairs.Lay.n` (natural rock, anchored: they float and stay until dug)): the landing isle at the spawn column
+  (`builds.landing`: main `_respawn` puts you there), the Eye's isle on the far side (205 up), five beacon isles round
+  it (two each side, one under it), and isles all round the rest (150-270 apart). Creatures: skyray (neutral, big,
+  a little glow), stormkite (predator); both fliers. `_try_place` puts nothing on a giant.
+- THE MYSTERY (mystery.gd kind "beacons"; buildings `_beacon`, `_eye_hall`): five BEACONS (a masonry pillar with a
+  copper basin, k + 1 crystal marks; `mystery["beacons"]` [{pos (the basin), stand}]); THE EYE OF THE STORM
+  (`EYE_W` 150, a hall `EYE_HALL` 56 high under a tiled dome, its door under a round window, five braziers along
+  the floor (`echoes`), an inscription by the door (`plaque`), the vault behind a 4-thick RUNESTONE ward (`ward`),
+  an altar (`vault`) and a chest). Beacons and the hall are `_pin`ned (every cell anchored before `_finish`): with no
+  ground under them in their own blueprint the soundness pass cut them all away (the test now reads the ward's runestone back). F at a beacon lights it (`light`: `LIGHT_MANA` 15) and it burns `BURN` (4500
+  ticks; `burn`: index -> frame, not saved); `_tick_beacons` gives light and embers, its brazier answers, and puts
+  it out in time; all five at once -> `_solve` (the ward's air stamp). The vault: the STORM CROWN
+  (`items["stormcrown"]`: main skips the wind's push and lightning's hurt, levitation costs no mana, it bears
+  "pressure") and `CROWN_LOOT`. Overlay `_flame` draws a burning beacon and brazier. quest.gd: `mystery_world`
+  (this world, or the first of the system's exotics not yet claimed), `mystery_steps`/`mystery_notes` by kind,
+  `_mystery_tick` (the wisp on landing, and near the Thunderhead: `myst_heard_giant`).
+- Test: `_test_giant` ("giant"; in the full run after `_test_abyss`): where it lies, the Thunderhead's strikes and
+  the lattice, standing on the landing isle with no ground in reach, the crushing air and the Depth Seal, the
+  inscription, four beacons lit and one let burn out, all five as one and the ward's cells gone, the Storm
+  Crown; pictures `giant_landing/beacon/eye/vault/journal.png`.
+
 ## The main quest (scripts/quest.gd; user, 23 Nov: "add a main quest system to guide the player through the main progressions"; chose: the wisp companion speaks it, a HUD line + journal, and the wisp's own powers as rewards)
 - main `quest` (a RefCounted), `quest.tick()` from `_tick` on the planet and in space; every 30 frames it ticks off
   steps whose condition holds (`need`: a list of conditions, ANY one does: "held" mat n, "found" ore, "spell",
@@ -1326,7 +1365,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "pursuit", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

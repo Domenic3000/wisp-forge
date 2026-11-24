@@ -1120,7 +1120,8 @@ func _write_frame_params() -> void:
 	var vflags := (1 if unrolled() else 0) | (2 if space.active or state == "map" else 0) | (4 if cellpic else 0) | (8 if space.backdrop() and state != "map" else 0)
 	gpu.setp(123, Vector4(gpu.PW, gpu.PH, gpu.PMX, gpu.PMY))
 	# the climate the shaders need: open water icing over (react.comp), ground fog (inc/clouds.comp)
-	gpu.setp(125, Vector4(0.0008 * float(clim.get("freeze", 0.0)), sky_level("aurora"), sky_level("bloodmoon"), float(clim.get("fog", 0.0))))
+	# (.x: a frozen world's icing; a gas giant's cloud deck is a negative .x: clouds.comp `cloudDeck`)
+	gpu.setp(125, Vector4(-1.0 if String(planet.get("exotic", "")) == "giant" else 0.0008 * float(clim.get("freeze", 0.0)), sky_level("aurora"), sky_level("bloodmoon"), float(clim.get("fog", 0.0))))
 	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
 	var pk := "%s|%d|%d|%d" % [settings["dither"], scale_px, VW, VH]
 	if pk != _post_key:
@@ -2431,7 +2432,7 @@ func _update_player(m: Mage) -> void:
 	var speed := ((1.5 if fin else 0.9) * gear("swim", m) * (1.5 if m.items.has("tideheart") else 1.0)) if p.in_liquid else 1.5 * gear("speed", m)
 	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
-	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02:
+	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02 and not m.items.has("stormcrown"):
 		p.vx += wind * (0.02 if p.on_ground else 0.04)      # (the wind, out in the open)
 	var jump: bool = m.input.jump
 	if p.on_ground:
@@ -2465,7 +2466,8 @@ func _update_player(m: Mage) -> void:
 		audio.play("levitate", p.pos, 0.35)
 		p.vy -= g + 0.28
 		p.vy = maxf(p.vy, -2.5)
-		m.mana -= (0.27 if m.items.has("roc") else 0.55) * gear("levitate", m)
+		if not m.items.has("stormcrown"):          # (the Storm Crown bears you up for nothing)
+			m.mana -= (0.27 if m.items.has("roc") else 0.55) * gear("levitate", m)
 		if randf() < 0.6:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
 	if p.in_liquid:
@@ -4543,7 +4545,7 @@ func lightning_strike(cells: float) -> void:
 	lights.append([to, 80.0, Color(1.3, 1.4, 1.8)])
 	Ecology.scare(self, to, 10.0)
 	for m in players:
-		if not m.dead and m.pos.distance_to(to) < 12.0:
+		if not m.dead and m.pos.distance_to(to) < 12.0 and not m.items.has("stormcrown"):
 			hurt(m, 14.0, (m.pos - to).normalized() * 2.0, true)
 	sky_stats["strikes"] = int(sky_stats.get("strikes", 0)) + 1
 
@@ -4702,7 +4704,13 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 				return 0.0
 			var under2: float = (Defs.RS0 - sea2) - p.pos.length()
 			return 0.0 if under2 < 160.0 else 1.0 + (under2 - 160.0) / 80.0
+		"pressure":
+			# (a gas giant's: from PRESSURE_D under its mean surface, well into its cloud deck, harder the deeper)
+			var under3: float = Defs.RS0 - p.pos.length()
+			return 0.0 if under3 < PRESSURE_D else 1.0 + (under3 - PRESSURE_D) / 60.0
 	return 0.0
+
+const PRESSURE_D := 110.0
 
 ## a fire, a torch or lava within about 14 cells (the collision grid round you)
 func _near_warmth(wp: Vector2) -> bool:
@@ -4765,6 +4773,7 @@ func recipe_done(r: Dictionary) -> bool:
 		"skiff": return items.has("skiff")
 		"drive": return Defs.is_exotic(int(planet.get("index", 0))) or skiff_reach() > int(planet.get("index", 0))
 		"keel": return items.has("keel")
+		"lattice": return items.has("lattice")
 		"depthseal": return items.has("depthseal")
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
@@ -4782,6 +4791,7 @@ func recipe_done(r: Dictionary) -> bool:
 func exotic_ok(i: int) -> bool:
 	match Defs.exotic_kind(i):
 		"abyss": return items.has("keel")
+		"giant": return items.has("lattice")
 	return false
 
 func skiff_reach() -> int:
@@ -4919,7 +4929,7 @@ func ore_found(om: int) -> bool:
 func recipe_hidden(r: Dictionary) -> bool:
 	if String(r["id"]) == "drive" and Defs.is_exotic(int(planet.get("index", 0))):
 		return true                  # (an exotic world's core leads nowhere: the Drive is forged on the round's planets)
-	if String(r["id"]) == "keel" and not items.has("skiff"):
+	if (String(r["id"]) == "keel" or String(r["id"]) == "lattice") and not items.has("skiff"):
 		return true
 	if r.has("part"):
 		# (ship parts: once you have a skiff to fit them to)
@@ -5125,9 +5135,11 @@ func craft(r: Dictionary) -> bool:
 			ui.toast("Fitted to your skiff: %s" % ("the Wisp Shield takes a lightning strike out there, then charges again" if r["id"] == "shield" else "the Wisp Cannon fires with the cast button while you fly in space (the keys steer)"), Color(1, 0.85, 0.4), 5.0)
 			save_game()
 			return true
-		"keel", "depthseal":
+		"keel", "depthseal", "lattice":
 			items[String(r["id"])] = true
-			ui.toast("%s forged: %s" % [r["name"], "the skiff rides out a maelstrom now" if r["id"] == "keel" else "the abyss of a deep ocean world can't crush you"], Color(1, 0.85, 0.4), 5.0)
+			var what := {"keel": "the skiff rides out a maelstrom now", "lattice": "the skiff grounds the Thunderhead's lightning now",
+				"depthseal": "the abyss of a deep ocean world, or the air under a gas giant's clouds, can't crush you"}
+			ui.toast("%s forged: %s" % [r["name"], what[String(r["id"])]], Color(1, 0.85, 0.4), 5.0)
 			save_game()
 			return true
 		"drive":
@@ -7503,6 +7515,8 @@ func _respawn() -> void:
 		space.reset_after_death()
 	var rs: float = gpu.surf_at(spawn_angle).x
 	player.pos = Vector2(cos(spawn_angle), sin(spawn_angle)) * (rs + 30.0)
+	if builds != null and builds.landing != Vector2.INF:
+		player.pos = builds.landing          # (a gas giant: no ground to stand on, so the landing isle)
 	var home = _home_pos() if gpu != null else null
 	if home != null:
 		player.pos = home

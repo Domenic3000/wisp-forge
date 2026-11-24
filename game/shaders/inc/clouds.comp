@@ -56,4 +56,23 @@ float groundFog(vec2 pos) {
 	return clamp((n - 0.44) * 2.6, 0.0, 0.5) * edge * f;
 }
 
-float cloudDensity(vec2 pos) { return max(max(cloudLow(pos), cloudHigh(pos)), groundFog(pos)); }
+// A gas giant's cloud deck (P.p[125].x < -0.5; user, 24 Nov: "gas giants with no ground or only clouds"):
+// from about 40 cells under the mean surface down, a sea of cloud with no bottom you can see. Its top
+// billows in long swells that drift with the wind; under it everything is hidden, and flown into it is a
+// thick fog. (Its floor lies hundreds of cells further down, where the air crushes you: main `_hazard_level`.)
+float cloudDeck(vec2 pos) {
+	if (P.p[125].x > -0.5) return 0.0;
+	float hgt = length(pos) - RS0;
+	if (hgt > 10.0) return 0.0;
+	float wnd = P.p[121].y * 0.8;
+	float cw = cos(wnd), sw = sin(wnd);
+	vec2 q = vec2(pos.x * cw - pos.y * sw, pos.x * sw + pos.y * cw);
+	float arc = atan(q.y, q.x) * RS0;
+	float top = -40.0 + (fbm(vec2(arc / 260.0, 0.5), 4261, 3) - 0.5) * 56.0 + (fbm(vec2(arc / 55.0, 1.5), 4262, 2) - 0.5) * 16.0;
+	if (hgt > top + 6.0) return 0.0;
+	float edge = 1.0 - smoothstep(top - 12.0, top + 6.0, hgt);
+	float n = fbm(q / 40.0, 4263, 3);
+	return clamp(0.62 + n * 0.5 + smoothstep(top - 12.0, top - 70.0, hgt), 0.0, 1.0) * edge;
+}
+
+float cloudDensity(vec2 pos) { return max(max(max(cloudLow(pos), cloudHigh(pos)), groundFog(pos)), cloudDeck(pos)); }

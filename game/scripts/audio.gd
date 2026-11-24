@@ -25,7 +25,7 @@ var music_volume := 0.6
 
 var tracks := {}              # mood (or "kind:mood") -> Array of streams
 const MOODS := ["surface_day", "surface_night", "underground", "deep", "boss", "space", "title"]
-const KINDS := ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss"]
+const KINDS := ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss", "giant"]
 var _music_a: AudioStreamPlayer
 var _music_b: AudioStreamPlayer
 var _music_on_a := true

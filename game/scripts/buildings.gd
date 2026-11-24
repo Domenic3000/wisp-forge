@@ -46,6 +46,7 @@ var _last_flip := false           # (whether `_place_prop` mirrored what it plac
 var warden_list := []
 var mystery := {}                 # a deep ocean world's sunken mystery (`_abyss_mystery`): the song, its stones, the temple
 const Mystery := preload("res://scripts/mystery.gd")
+var landing := Vector2.INF        # a gas giant's landing isle: where you come down and wake again (main `_respawn`)
 var _seed := 0
 var guards := []                  # {pos, type}: foes that wait inside castles, catacombs, temples and mines
 var infos := []                   # what was built (for the test mode): {x0, y0, w, h, ruined, solid, chests}
@@ -317,6 +318,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	towns.clear()
 	warden_list.clear()
 	mystery = {}
+	landing = Vector2.INF
 	lair_why.clear()
 	_lair_cols.clear()
 	_jobs.clear()
@@ -356,6 +358,12 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		rng.seed = int(planet["seed"]) * 97 + 4241
 		_abyss_mystery(build, String(planet.get("name", "")))
 		rng = keep
+	elif exo == "giant":
+		var keep2 := rng
+		rng = RandomNumberGenerator.new()
+		rng.seed = int(planet["seed"]) * 89 + 6151
+		_giant_sky(build, String(planet.get("name", "")))
+		rng = keep2
 	# dungeons: a gatehouse on the surface over a maze of halls below
 	var dn := 0
 	for tries in 80:
@@ -395,8 +403,8 @@ func _pick(weights: Dictionary) -> String:
 
 func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
 	var b := biome(x)
-	if b == "abyss":
-		return false                  # (a deep ocean world's floor: nothing but the sunken temple, `_abyss_mystery`)
+	if b == "abyss" or b == "giant":
+		return false                  # (a deep ocean world's floor, a gas giant's far under its clouds: nothing)
 	var w := {}
 	match b:
 		"forest": w = {"town": 3, "cottage": 3, "tower": 1.5, "mine": 1, "catacomb": 1.5}
@@ -3033,6 +3041,198 @@ func _abyss_mystery(build: bool, pname: String) -> void:
 			continue
 		if _tide_stone(x2, int(order[spots.size()]), spots.size(), build):
 			spots.append(x2)
+
+# ------------------------------------------------------------ a gas giant ---
+## A gas giant (user, 24 Nov: "maybe some gas giants with no ground or only clouds"): its ground lies hundreds
+## of cells under its cloud deck, where the air crushes you, so ISLES of rock float over the clouds (natural
+## and anchored: they stay where they are until dug): the landing isle where you come down (`landing`), more all
+## round the planet with ore in their stone and trees on the bigger ones, and on the far side THE EYE OF THE
+## STORM on the highest, a domed hall whose vault is shut by a ward of runestone, with five BEACON isles round
+## it. Light all five together (mystery.gd, kind "beacons": each burns a little over a minute) and the ward
+## breaks. mystery = {kind, beacons [{pos (the basin), stand}], echoes (the hall's braziers that answer them),
+## plaque, vault, hall, ward, name, planet}.
+const NAT_ROCK := 0x80000
+const EYE_W := 150
+const EYE_HALL := 56
+func _giant_sky(build: bool, pname: String) -> void:
+	mystery = {"kind": "beacons", "beacons": [], "echoes": [], "name": "The Eye of the Storm", "planet": pname}
+	var isles := []                       # [middle column, half width] of every isle so far
+	var li := _sky_island(spawn_col, 40, 124, build, 2, false)
+	landing = li["stand"]
+	isles.append([spawn_col, 62])
+	# the Eye, on the far side and high
+	var ex := posmod(spawn_col + N0 / 2 + rng.randi_range(-N0 / 16, N0 / 16), N0)
+	var eye := _sky_island(ex, 205, 250, build, 0, true)
+	isles.append([ex, 125])
+	_eye_hall(ex, int(eye["top"]), build)
+	# its five beacon isles: two each side, a flight apart, and one under the Eye itself
+	var offs := [-660, -390, 385, 650, rng.randi_range(-40, 40)]
+	var hs := [rng.randi_range(70, 170), rng.randi_range(110, 190), rng.randi_range(110, 190), rng.randi_range(70, 170), 60]
+	for k in 5:
+		var bx := posmod(ex + int(offs[k]) + (rng.randi_range(-40, 40) if k < 4 else 0), N0)
+		var bi := _sky_island(bx, int(hs[k]), rng.randi_range(64, 84), build, 1 if k < 4 else 0, true)
+		isles.append([bx, 42])
+		_beacon(bx, int(bi["top"]), k, build)
+	# and isles all round the rest of the planet: ore, trees, somewhere to stand
+	var x := posmod(spawn_col + 150, N0)
+	var gone := 150
+	while gone < N0 - 150:
+		var w := rng.randi_range(46, 116)
+		var clear := true
+		for il in isles:
+			if cdist(x, int(il[0])) < int(il[1]) + w / 2 + 60:
+				clear = false
+				break
+		if clear:
+			_sky_island(x, rng.randi_range(15, 200), w, build, rng.randi_range(0, 2) if w > 70 else 0, false)
+			isles.append([x, w / 2])
+		var step := rng.randi_range(150, 270)
+		x = posmod(x + step, N0)
+		gone += step
+
+## an isle floating h cells over the mean surface, w wide round column cx: grass, earth, stone with ore, a
+## lumpy underside with crystal drips, `trees` living trees on top. Its grass row at the middle ("top"), where
+## to stand on it ("stand").
+func _sky_island(cx: int, h: int, w: int, build: bool, trees: int, flat: bool) -> Dictionary:
+	var top := int(Defs.R_TOP - (Defs.RS0 + float(h)))
+	var depth := int(float(w) * 0.4) + 6
+	var FL := 70                          # (room over it for its trees)
+	var x0 := cx - w / 2
+	var bp := BP.new(x0, top - FL, w, FL + depth + 12)
+	var L := Lairs.Lay.new(self, bp, {}, "forest", w, 0, FL, true)
+	var nz := FastNoiseLite.new()
+	nz.seed = rng.randi()
+	nz.frequency = 0.07
+	var tops := PackedInt32Array()
+	tops.resize(w)
+	for i in w:
+		var u := (float(i) + 0.5) / float(w) * 2.0 - 1.0
+		var rim := pow(absf(u), 6.0)
+		var t := FL + int(round(rim * 6.0 + (0.0 if flat else nz.get_noise_1d(float(i)) * 2.5)))
+		var bot := FL + int(round(pow(maxf(0.0, 1.0 - u * u), 0.8) * float(depth) + nz.get_noise_1d(float(i) * 1.7 + 40.0) * 5.0))
+		bot = maxi(bot, t + 3)
+		var dirt := 3 + int(round(nz.get_noise_1d(float(i) * 0.5 + 9.0) * 1.5 + 1.0))
+		for j in range(t, bot + 1):
+			var dd := j - t
+			var m := Defs.GRASS if dd == 0 else (Defs.DIRT if dd <= dirt else Defs.STONE)
+			if m == Defs.STONE:
+				var on := nz.get_noise_2d(float(i) * 2.1, float(j) * 2.1 + 300.0)
+				if on > 0.62 and dd > 12:
+					m = Defs.WISP
+				elif on > 0.55:
+					m = Defs.COPPER
+				elif on < -0.62:
+					m = Defs.COAL
+			L.n(i, j, m)
+		if bot - t > 10 and rng.randf() < 0.06:
+			for dq in rng.randi_range(2, 5):
+				L.n(i, bot + 1 + dq, Defs.CRYSTAL)
+		tops[i] = t
+	for k in trees:
+		var tx := rng.randi_range(w / 5, w * 4 / 5)
+		Lairs.tree(L, float(tx), tops[tx], rng.randi_range(22, 40), 2.2, Defs.WOOD, Defs.LEAF)
+	L.commit()
+	_finish(bp, build)
+	var srow := bp.y0 + int(tops[w / 2]) - 9
+	return {"top": bp.y0 + int(tops[w / 2]), "stand": _bp_at(bp, float(w) * 0.5, srow, Defs.R_TOP - float(srow) - 0.5)}
+
+## a beacon on an isle whose grass row at column bx is `top`: a stone pillar with a copper basin, its rune in
+## crystal (k + 1 marks); the basin's place and where to stand go in `mystery["beacons"]`
+func _beacon(bx: int, top: int, k: int, build: bool) -> void:
+	var W := 9
+	var H := 18
+	var bp := BP.new(bx - W / 2, top - H, W, H)
+	for j in H:
+		for i in range(1, W - 1):
+			bp.fg(i, j, Defs.MASONRY if j > 2 else Defs.COPPERBAR)
+	for i2 in [0, W - 1]:
+		bp.fg(i2, 0, Defs.COPPERBAR)
+		bp.fg(i2, 1, Defs.COPPERBAR)
+	bp.fg(W / 2, 1, 0)                 # (the basin's hollow)
+	for d in k + 1:
+		bp.fg(W / 2, 5 + d * 2, Defs.CRYSTAL)
+	_pin(bp)
+	_finish(bp, build)
+	var brow := bp.y0
+	var srow := top - 9
+	(mystery["beacons"] as Array).append({"pos": _bp_at(bp, float(W) * 0.5, brow, Defs.R_TOP - float(brow) - 0.5),
+		"stand": _bp_at(bp, float(W) * 0.5 + 9.0, srow, Defs.R_TOP - float(srow) - 0.5)})
+
+## The Eye of the Storm on the isle whose grass row at column ex is `top`: a domed hall of masonry, its door
+## at one end under a great round window, five braziers along its floor that answer the beacons, an inscription
+## by the door, and at the other end the vault behind a ward of runestone, with an altar and a chest.
+func _eye_hall(ex: int, top: int, build: bool) -> void:
+	var W := EYE_W
+	var DOME := 30
+	var fl := EYE_HALL + 4 + DOME + 2          # (the hall's floor row, local: the isle's grass)
+	var bp := BP.new(ex - W / 2, top - fl, W, fl + 1)
+	var side := -1 if rng.randf() < 0.5 else 1   # (the door's end; the vault at the other)
+	var F := func(i: int) -> int: return i if side < 0 else W - 1 - i
+	var htop := fl - EYE_HALL                  # (the hall's first air row)
+	for i in W:
+		var u := (float(i) + 0.5) / float(W) * 2.0 - 1.0
+		var dome := int(round(sqrt(maxf(0.0, 1.0 - u * u)) * float(DOME)))
+		for j in range(htop - 4 - dome, fl):
+			var wall := i < 4 or i >= W - 4 or j < htop
+			if wall:
+				bp.fg(i, j, Defs.TILE if j < htop - 4 else Defs.MASONRY)
+			else:
+				bp.fg(i, j, 0)
+			bp.bg(i, j, Defs.MASONRY if wall else Defs.TILE)
+		bp.fg(i, fl, Defs.MASONRY)
+	# the door, under a round window (the Eye)
+	for j2 in range(fl - 24, fl):
+		for i3 in 4:
+			bp.fg(F.call(i3), j2, 0)
+	var ec := Vector2(float(F.call(2)), float(fl - 38))
+	for j3 in range(fl - 47, fl - 28):
+		for i4 in range(0, 6):
+			var dv := Vector2(float(F.call(i4)), float(j3)) - ec
+			var dl := dv.length()
+			if dl < 8.5:
+				bp.fg(F.call(i4), j3, Defs.CRYSTAL if dl > 6.0 else (Defs.GLASS if dl > 2.0 else Defs.WISP))
+	# the vault at the far end, behind its ward
+	var VW := 34
+	var wfx: int = F.call(W - 4 - VW - 4)       # (the ward's first column, whichever way it faces)
+	var wx0 := mini(wfx, F.call(W - 4 - VW - 1))
+	for j4 in range(htop, fl):
+		for i5 in 4:
+			bp.fg(wx0 + i5, j4, Defs.RUNESTONE)
+	var acx: int = F.call(W - 4 - VW / 2)
+	for j5 in range(fl - 6, fl):
+		for i6 in range(acx - 4, acx + 5):
+			bp.fg(i6, j5, Defs.MASONRY if j5 > fl - 6 else Defs.COPPERBAR)
+	_chest(bp, (W - 4 - VW + 1) if side < 0 else 4, fl, true)     # (in the vault, clear of the altar)
+	# five braziers along the hall's floor, and the inscription by the door
+	var echoes := []
+	for k in 5:
+		var bi: int = F.call(16 + k * 18)
+		for j6 in range(fl - 4, fl):
+			bp.fg(bi, j6, Defs.MASONRY)
+			bp.fg(bi + 1, j6, Defs.MASONRY)
+		echoes.append(_bp_at(bp, float(bi) + 1.0, bp.y0 + fl - 5, Defs.R_TOP - float(bp.y0 + fl - 5) - 0.5))
+	mystery["echoes"] = echoes
+	var prow := bp.y0 + fl - 12
+	mystery["plaque"] = _bp_at(bp, float(F.call(8)) + 0.5, prow, Defs.R_TOP - float(prow) - 0.5)
+	var vrow := bp.y0 + fl - 14
+	mystery["vault"] = _bp_at(bp, float(acx) + 0.5, vrow, Defs.R_TOP - float(vrow) - 0.5)
+	var hrow := bp.y0 + fl - 20
+	mystery["hall"] = _bp_at(bp, float(W) * 0.5, hrow, Defs.R_TOP - float(hrow) - 0.5)
+	mystery["ward"] = {"x0": posmod(bp.x0 + wx0, N0), "y0": bp.y0 + htop, "w": 4, "h": fl - htop, "ax": posmod(bp.x0, N0), "aw": W}
+	_claim(bp.x0, W, "The Eye of the Storm", bp.y0, bp.y0 + fl)
+	_pin(bp)
+	_finish(bp, build)
+
+## Anchor every cell a blueprint writes: what stands on a floating isle has no planet's ground under it in its
+## own blueprint (a gas giant's lies hundreds of cells down), so the soundness pass would cut it all away
+## (the beacons and the Eye's hall were missing). Anchored, it stays as built until dug near, then rests on
+## the isle like any building.
+func _pin(bp: BP) -> void:
+	var cc: PackedInt32Array = bp.c
+	for k in cc.size():
+		if cc[k] != 0xffff:
+			cc[k] = cc[k] | F_ANCHOR
+	bp.c = cc
 
 const TEMPLE_W := 250
 const TEMPLE_HALL := 62

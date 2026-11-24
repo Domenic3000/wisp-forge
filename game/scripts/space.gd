@@ -580,6 +580,7 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		belt_col = b["belt"]
 		var t := Vector2(-n.y, n.x)
 		var mael: bool = String(b.get("exotic", "")) == "abyss"
+		var thunder: bool = String(b.get("exotic", "")) == "giant"
 		if mael:
 			# (a maelstrom: it spins you round the world as much as it throws you out, so the gale streaks
 			# swirl; user, 23 Nov: "different hazards to traverse to get to different types of planets")
@@ -595,7 +596,8 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		for k in int(f * 3.0) + (1 if randf() < f * 3.0 - floorf(f * 3.0) else 0):
 			var off: Vector2 = Vector2(randf() - 0.5, randf() - 0.5) * Vector2(game.VW, game.VH).length() * float(game.zoom)
 			game._particle(p + off, n * (3.0 + randf() * 4.0) + t * (randf() - 0.5) * 3.0, 16 + randi() % 12, col.lightened(0.3), true, 0.0)
-		if f >= 1.0 or randf() < 0.004 + 0.035 * f:
+		# (a Thunderhead strikes four times as often, and harder: user, 24 Nov)
+		if f >= 1.0 or randf() < (0.004 + 0.035 * f) * (4.0 if thunder else 1.0):
 			v += n * (2.0 + 4.0 * f)
 			_strike(p, n, f, col)
 			if f >= 1.0:
@@ -603,7 +605,9 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		_belt_warn -= 1
 		if _belt_warn <= 0:
 			_belt_warn = 420
-			if mael:
+			if thunder:
+				game.ui.toast("%s is wrapped in a Thunderhead of endless lightning. A Storm Lattice (void essence, star iron and copper ingots, at the Wisp Forge) grounds it." % b["name"], col.lightened(0.4), 4.5)
+			elif mael:
 				game.ui.toast("%s spins inside a maelstrom that hurls you round and out. A Tempest Keel (abyss pearls, star iron and hull plating, at the Wisp Forge) rides it out." % b["name"], col.lightened(0.4), 4.5)
 			else:
 				game.ui.toast("%s is wrapped in a storm belt that throws you back. A Core Drive (forged at the Wisp Forge from this world's Planet Core and star iron) carries the skiff through." % b["name"], col.lightened(0.4), 4.5)
@@ -662,7 +666,10 @@ func reachable(i: int) -> bool:
 
 ## what keeps planet i out of reach, for its marker
 func barrier_name(i: int) -> String:
-	return "maelstrom" if Defs.is_exotic(i) else "storm belt"
+	match Defs.exotic_kind(i):
+		"abyss": return "maelstrom"
+		"giant": return "thunderhead"
+	return "storm belt"
 
 ## Clearly nearer to another planet than to home: make it in the background, then move over to it.
 func _maybe_travel(p: Vector2) -> void:
@@ -1432,6 +1439,16 @@ func _draw_belts(xf: Transform2D) -> void:
 			var deep1 := xf * (c + d1 * r_in)
 			var ch := Color(col.r, col.g, col.b, 0.05 + 0.03 * i0)
 			draw_polygon(PackedVector2Array([deep0, in0, in1, deep1]), PackedColorArray([Color(col.r, col.g, col.b, 0.13), ch, ch, Color(col.r, col.g, col.b, 0.13)]))
+		if String(b.get("exotic", "")) == "giant" and randf() < 0.12:
+			# a Thunderhead: forks of lightning flickering through it all the time
+			var fa := ac + randf_range(-span, span)
+			var f0 := c + Vector2(cos(fa), sin(fa)) * randf_range(r_in, r_out + 120.0)
+			var fpts := PackedVector2Array([xf * f0])
+			var fd := Vector2(cos(fa + randf_range(-1.6, 1.6)), sin(fa + randf_range(-1.6, 1.6)))
+			for q2 in 6:
+				f0 += fd * randf_range(30.0, 70.0) + fd.orthogonal() * randf_range(-25.0, 25.0)
+				fpts.append(xf * f0)
+			draw_polyline(fpts, Color(1.0, 0.95, 0.8, 0.8), 2.0)
 		if String(b.get("exotic", "")) == "abyss":
 			# a maelstrom: spiral arms of cloud wheeling through the belt
 			for arm in 7:
@@ -1682,6 +1699,13 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 			var nv := noise.get_noise_2d(float(x), float(y))
 			var bi := Defs.biome_index_at(pl, ang + nv * 0.6 / float(cols.size()) * TAU)
 			var c: Color = cols[bi]
+			if String(pl.get("exotic", "")) == "giant":
+				# (a gas giant: bands of amber and rust across it, swirled, with a great storm's eye)
+				var band := 0.5 + 0.5 * sin(s.y * 15.0 + nv * 3.0)
+				c = Color(0.95, 0.74, 0.5).lerp(Color(0.62, 0.36, 0.24), band)
+				var ey := s - Vector2(0.28, 0.32)
+				if ey.length() < 0.13:
+					c = c.lerp(Color(0.9, 0.45, 0.3), 0.6 * (1.0 - ey.length() / 0.13))
 			c = c.lightened(nv * 0.25) if nv > 0.0 else c.darkened(-nv * 0.3)
 			if sea and nv < -0.05:
 				c = Color(0.16, 0.36, 0.68).darkened(clampf(-nv, 0.0, 0.5))
