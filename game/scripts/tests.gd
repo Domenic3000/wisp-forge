@@ -247,6 +247,7 @@ func _test_towns() -> void:
 	g.items["coins"] = tn_c0
 	await _test_town_days(tn_t, tn_mid)
 	_test_requests(tn_t)
+	await _test_rebuild(tn_t)
 	_test_kind_trade()
 	g.time = tn_time0
 	g.test_god = tn_god0
@@ -956,6 +957,85 @@ func _test_requests(t: Dictionary) -> void:
 	_ok("living towns: villagers' requests (bring, hunt, deliver) are taken, done and paid", ok, ("no asker in %s" % t["name"]) if asker == null else "; ".join(lines))
 
 ## each kind of planet's shops: the ward its danger needs, its fare, an imported ore, a better price for its own
+## Villages rebuild what was knocked down (rebuild.gd; user, 23 Nov), and a planet planned again as on loading
+## is the planet that was built (its villages where they stand, each house the same cell for cell: a plan made
+## again used to drift from the first structure on, so villagers were set out for houses that weren't there).
+func _test_rebuild(t: Dictionary) -> void:
+	var rows := []
+	var Bd = load("res://scripts/buildings.gd")
+	var b2 = Bd.new()
+	b2.plan(g.planet, g.gpu.surface, g.spawn_angle, fposmod(g.spawn_angle + PI, TAU), false)
+	b2.finish_all()
+	var same: bool = b2.towns.size() == g.builds.towns.size() and b2.labels.size() == g.builds.labels.size()
+	var with_struct := 0
+	var same_cells := true
+	for k in mini(b2.towns.size(), g.builds.towns.size()):
+		same = same and int(b2.towns[k]["x0"]) == int(g.builds.towns[k]["x0"]) and int(b2.towns[k]["seed"]) == int(g.builds.towns[k]["seed"])
+		var hs2: Array = b2.towns[k]["houses"]
+		var hs1: Array = g.builds.towns[k]["houses"]
+		for q in mini(hs2.size(), hs1.size()):
+			if (hs2[q] as Dictionary).has("struct"):
+				with_struct += 1
+				if (hs1[q] as Dictionary).has("struct"):
+					same_cells = same_cells and (hs2[q]["struct"]["data"] as PackedInt32Array) == (hs1[q]["struct"]["data"] as PackedInt32Array)
+	var ok1: bool = same and same_cells and with_struct > 0
+	rows.append("%splanned again as on loading: %d villages, the same places %s, %d houses known cell for cell, the same cells %s" % [
+		"" if ok1 else "(!) ", b2.towns.size(), same, with_struct, same_cells])
+	# a house knocked about (its top half cleared), then its folk put it back
+	var rb = g.towns.rebuild
+	var h := {}
+	for hh2 in t.get("houses", []):
+		if (hh2 as Dictionary).has("struct"):
+			h = hh2
+			break
+	var ok2 := false
+	if h.is_empty():
+		rows.append("(!) no house of %s knows its cells" % String(t.get("name", "?")))
+	else:
+		var st: Dictionary = h["struct"]
+		var data: PackedInt32Array = st["data"]
+		var w: int = st["w"]
+		var hgt: int = st["h"]
+		var r0: Dictionary = g.gpu.read_rect(int(st["x0"]), int(st["y0"]), w, hgt, int(st["ax"]), int(st["aw"]))
+		var miss0: int = rb._missing(h, r0).size()
+		var built: int = int(h.get("built_n", 0))
+		var air := PackedInt32Array()
+		air.resize(w * hgt)
+		air.fill(0xffff)
+		var cut := 0
+		for j in hgt / 2:
+			for i in w:
+				var v: int = data[j * w + i]
+				var fv: int = 0 if rb._want_front(v) != 0 else 255
+				var bv: int = 0 if rb._want_back(v) != 0 else 255
+				if fv == 0 or bv == 0:
+					air[j * w + i] = fv | (bv << 8)
+					cut += 1
+		g.stamps.append({"x0": int(st["x0"]), "y0": int(st["y0"]), "w": w, "h": hgt, "data": air, "ax": int(st["ax"]), "aw": int(st["aw"])})
+		await _frames(6)
+		h.erase("rest_until")
+		rb.job = {}
+		rb.look_at(h, t)
+		var started := false
+		for f in 30:
+			await _frames(1)
+			if not rb.job.is_empty():
+				started = true
+				break
+		var laid0: int = int(rb.stats["laid"])
+		var waited := 0
+		while not rb.job.is_empty() and waited < 3600:
+			await _frames(30)
+			waited += 30
+		var r1: Dictionary = g.gpu.read_rect(int(st["x0"]), int(st["y0"]), w, hgt, int(st["ax"]), int(st["aw"]))
+		var miss1: int = rb._missing(h, r1).size()
+		ok2 = started and rb.job.is_empty() and miss1 <= miss0 + maxi(8, built / 50)
+		rows.append("%sa house of %s knocked about (%d cells of %d cleared; %d missing before): rebuilding began %s, %d laid in %d ticks, %d missing after" % [
+			"" if ok2 else "(!) ", String(t.get("name", "?")), cut, built, miss0, started, int(rb.stats["laid"]) - laid0, waited, miss1])
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town_rebuilt.png"))
+	print("[rebuild] " + "\n[rebuild] ".join(rows))
+	_ok("villages rebuild the houses knocked down, and a planet planned again is the one that was built", ok1 and ok2, "; ".join(rows))
+
 func _test_kind_trade() -> void:
 	var tw = g.towns
 	var bad := []
@@ -6136,6 +6216,35 @@ func _test_start() -> void:
 		"without it: floated %d frames, fell %.0f cells; with it: floated %d frames, rose %.0f; recipes spark %s, levitate %s" % [
 		st_floated, st_fell, st_floated2, st_rose, str(st_recipes.has("spark")), str(st_recipes.has("levitate"))])
 	g.test_god = st_god0
+	# digging grows with the staff's tier and the Delver's Runes (user, 23 Nov: slow at first, faster later)
+	var st_tier0: int = g.player.tier
+	var st_delve0 = g.items.get("delve", null)
+	var st_speeds := []
+	for st_t in [1, 2, 3, 4]:
+		g.player.tier = st_t
+		g.items.erase("delve")
+		st_speeds.append(g.dig_speed(g.player))
+	g.player.tier = 2
+	var st_d_ok := true
+	var st_last: float = g.dig_speed(g.player)
+	for st_dr in ["delve1", "delve2", "delve3"]:
+		var st_rec: Dictionary = st_recipes.get(st_dr, {})
+		var st_un: bool = not st_rec.is_empty() and g.recipe_unlocked(st_rec) and not g.recipe_done(st_rec)
+		for st_cm in st_rec.get("cost", {}):
+			g.player.inv[int(st_cm)] += int(st_rec["cost"][st_cm])
+		g.learn(st_dr, "test")
+		var st_made: bool = st_un and g.craft(st_rec)
+		var st_now: float = g.dig_speed(g.player)
+		st_d_ok = st_d_ok and st_made and st_now > st_last * 1.25 and g.recipe_done(st_rec)
+		st_last = st_now
+	var st_mono: bool = st_speeds[0] < st_speeds[1] and st_speeds[1] < st_speeds[2] and st_speeds[2] < st_speeds[3]
+	_ok("digging speeds up with each focus and each Delver's Rune", st_mono and st_d_ok,
+		"by tier %s; with the Copper Focus and three runes %.2f" % [str(st_speeds), st_last])
+	g.player.tier = st_tier0
+	if st_delve0 == null:
+		g.items.erase("delve")
+	else:
+		g.items["delve"] = st_delve0
 	_go(st_orig)
 	await _frames(20)
 
@@ -7875,6 +7984,38 @@ func _test_wrecks() -> void:
 	var wr_ok5: bool = g.player.inv[Defs.HULL] > hull1
 	wr_rows.append("%ssalvage: dug %d hull plating from its keel" % ["" if wr_ok5 else "(!) ", g.player.inv[Defs.HULL] - hull1])
 	wr_ok = wr_ok and wr_ok5
+	# ---- Mending out in the open (user, 23 Nov: "Healing spell didn't work in space"): chosen, a click heals
+	# (it doesn't push the jet), and the healing comes in out here
+	var md_known: bool = g.player.known.has("mend")
+	if not md_known:
+		g.player.known.append("mend")
+	var md_sel0: int = g.player.sel
+	g.player.sel = g.player.known.find("mend")
+	g.test_god = false
+	g.player.hp = g.player.max_hp - 40.0
+	g.player.heal_left = 0.0
+	g.player.mana = g.player.max_mana
+	g.player.spell_cd.clear()
+	g.player.cast_cd = 0
+	var md_hp0: float = g.player.hp
+	g.space.vel = wk.vel
+	g.test_cast = true
+	g.test_aim = g.player.pos + Vector2(200, 0)
+	var md_jet := false
+	for md_f in 3:
+		await _frames(1)
+		md_jet = md_jet or g.space.jetting
+	g.test_cast = false
+	await _frames(90)
+	var md_hp1: float = g.player.hp
+	g.test_god = true
+	g.player.hp = g.player.max_hp
+	g.player.sel = md_sel0
+	if not md_known:
+		g.player.known.erase("mend")
+	var wr_ok5b: bool = md_hp1 > md_hp0 + 20.0 and not md_jet
+	wr_rows.append("%sMending cast out in the open: health %.0f -> %.0f, the jet pushed %s" % ["" if wr_ok5b else "(!) ", md_hp0, md_hp1, md_jet])
+	wr_ok = wr_ok and wr_ok5b
 	# ---- the Wisp Shield: forged from the emitter, it takes a strike, then charges
 	var sh_rec: Dictionary = {}
 	var cn_rec: Dictionary = {}

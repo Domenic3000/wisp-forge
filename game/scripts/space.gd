@@ -195,6 +195,7 @@ var _cast_note := 0
 var docked = null               # the outpost whose hangar the skiff is in, or null
 var near_wreck = null
 # derelict stations (station.gd) and their aliens (alien.gd)
+const VIEW_NEAR := 4000.0       # "down" turns to the nearest planet within this of its air, and holds still further out
 const STATION_DOWN := 400000.0  # inside a station, "down" is its floor: `centre` is put this far under it
 const ST_JET := 0.085           # a dead room's jet: the movement keys push you (cast casts)
 const ST_JET_MANA := 0.12
@@ -213,6 +214,7 @@ var _st_w := Vector2.INF        # kept, so a single float's rounding far out nev
 var _drop_t := 0
 var _burn := 0.0               # (ticks of sailing since the last Wisp Cell burned)
 var _fuel_warn := 0
+var _dock_hint := {}            # (stations you've been told to drift into on foot: seed -> true)
 var _st_jobs := []              # stations being grown on a worker thread: [task id, its plan]
 var scan_marks := []            # the Wisp Scanner: [galaxy point, name, colour] of wrecks and stations near you
 var vl                          # space's own life and its anomalies (voidlife.gd): creatures, wells, rifts, monoliths
@@ -345,6 +347,12 @@ func _tick() -> void:
 	_find_near(focus)
 	_station_frame(focus)
 	_pmark("near")
+	game.heal_tick(m)
+	if m.cast_cd > 0:
+		m.cast_cd -= 1
+	game.tick_spell_cds(m)
+	if not m.input.cast:
+		m.cast_latch = false
 	_grow_disc()
 	_ensure_rocks()
 	_stream(focus)
@@ -371,13 +379,15 @@ func _tick() -> void:
 		# aboard (one left down on the planet waits there)
 		var pl = sk.pilot()
 		sk.centre = centre
-		# (with the Wisp Cannon fitted, the cast button fires it: the keys steer)
-		var firing: bool = pl != null and game.items.has("cannon") and pl.input.cast
-		if firing:
+		# (with the Wisp Cannon fitted, the cast button fires it: the keys steer; with Mending chosen it heals)
+		var mending: bool = pl != null and _mend_cast(pl)
+		var firing: bool = pl != null and not mending and game.items.has("cannon") and pl.input.cast
+		if firing or mending:
 			pl.input.cast = false
 		var want: Vector2 = sk.steer(pl.input) if pl != null else Vector2.ZERO
-		if firing:
+		if firing or mending:
 			pl.input.cast = true
+		if firing:
 			_fire_cannon(pl, sk)
 		sk.power = 1.5 if game.items.has("engine") else 1.0
 		var v0: Vector2 = sk.vel
@@ -430,11 +440,6 @@ func _tick() -> void:
 	var up: Vector2 = (m.pos - centre).normalized()
 	jetting = false
 	var a := up.angle()
-	if m.cast_cd > 0:
-		m.cast_cd -= 1
-	game.tick_spell_cds(m)
-	if not m.input.cast:
-		m.cast_latch = false
 	if in_station != null and not m.dead:
 		_station_move(m, in_station)
 		if m.input.cast and not m.cast_latch:
@@ -450,7 +455,7 @@ func _tick() -> void:
 		return
 	vel -= up * pull(m.pos)
 	vel = vl.well_force(m.pos, vel, "mage")
-	if m.input.cast and m.mana > JET_MANA:
+	if not _mend_cast(m) and m.input.cast and m.mana > JET_MANA:
 		var d: Vector2 = m.input.aim - m.pos
 		if d.length() > 1.0:
 			var dir := d.normalized()
@@ -517,7 +522,12 @@ func _find_near(p: Vector2) -> void:
 		if d < best:
 			best = d
 			near = b
-	centre = near["pos"]
+	# (the nearest planet pulls; but the view only turns to it close in: out between them "down" holds still,
+	# or flying past a planet, or another becoming the nearest, swung the view round; user, 23 Nov)
+	if best > VIEW_NEAR:
+		centre = p + (centre - p).normalized() * 400000.0 if centre != p else p + Vector2(0, 400000.0)
+	else:
+		centre = near["pos"]
 
 ## dropping back into home's orbit band (once it is the planet the GPU holds)
 func _landing(p: Vector2, v: Vector2) -> bool:
@@ -1091,7 +1101,10 @@ func _scan_quiet(g: PackedFloat64Array) -> void:
 ## band, fading with the square of the distance
 func pull(p: Vector2) -> float:
 	var top: float = float(near.get("space", Defs.R_SPACE))
-	return 0.17 * 0.06 * pow(top / maxf((p - centre).length(), top), 2.0)
+	if near.is_empty():
+		return 0.0
+	# (from the planet itself: `centre` is where "down" points, and far out that's the held view, not the planet)
+	return 0.17 * 0.06 * pow(top / maxf((p - (near["pos"] as Vector2)).length(), top), 2.0)
 
 ## the camera stays on you, as close as on the ground unless you zoom out yourself (the user: no zooming
 ## out as you leave; 23 Nov: "a zoom in and out feature in space. Not auto zoom though"), turning
@@ -1296,7 +1309,7 @@ func _draw_space() -> void:
 			draw_colored_polygon(PackedVector2Array([wsp + Vector2(0, -5), wsp + Vector2(4, 0), wsp + Vector2(0, 5), wsp + Vector2(-4, 0)]), Color(1.0, 0.82, 0.3, wb))
 			_label(wsp + Vector2(0, -8), "Waypoint")
 		else:
-			_marker(xf, wl, 0.0, "Waypoint", Color(1.0, 0.82, 0.3))
+			_marker(xf, wl, 0.0, "Waypoint", Color(1.0, 0.82, 0.3), 1)
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
 		_marker(xf, nr.pos, nr.reach(), "Comet" if not nr.orbit.is_empty() else "Asteroid", Color(0.95, 0.82, 0.62))
@@ -1312,11 +1325,16 @@ func _draw_space() -> void:
 		_marker(xf, game.cam_c + Defs.g_rel(smk[0], galaxy_of(game.cam_c)), 100.0, String(smk[1]), smk[2])
 	for pa in rocks:
 		if pa.kind == "pirate":
-			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4))
+			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4), 2)
 	var nwk = nearest_wreck(game.player.pos)
 	if nwk != null:
 		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85))
+	# your own ship, while you're off it (it waits where you left it)
+	var own = game.skiff
+	if own != null and game.player.aboard != own and own.pos.length() > Defs.R_SPACE - 9.5:
+		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff", Color(0.55, 0.9, 1.0), 1)
 	vl.draw_markers(xf)
+	_flush_marks()
 	_top.queue_redraw()
 	if _mid.get_index() != get_child_count() - 1:
 		move_child(_mid, -1)        # (after every rock sprite, still before the overlay's mage)
@@ -1439,22 +1457,67 @@ func _sprite_for(idx: int) -> Sprite2D:
 	sprites[idx] = spr
 	return spr
 
-func _marker(xf: Transform2D, wpos: Vector2, rad: float, text: String, col: Color) -> void:
+## Markers for what's off the screen (user, 23 Nov: "the arrow system isn't great because its hard to see them
+## when they stack and go under the ui"): gathered while drawing (`_marks`, prio: lower comes first; 1 your skiff
+## and the waypoint, 2 pirates, 5 the rest), then `_flush_marks` keeps the `MARK_MAX` most wanted, sets them on an
+## oval inset from the screen's edges (out of the corners, where the HUD and the satchel are, and clear of the
+## spell bar), spreads apart those that would sit on each other, and draws each arrow pointing the true way.
+const MARK_MAX := 7
+const MARK_GAP := 15.0          # (game pixels between two markers along the oval)
+var _marks := []
+func _marker(xf: Transform2D, wpos: Vector2, rad: float, text: String, col: Color, prio := 5) -> void:
 	var w := float(game.VW)
 	var h := float(game.VH)
 	var sp: Vector2 = xf * wpos
 	var rpx: float = rad / game.zoom
 	if sp.x + rpx > 0.0 and sp.y + rpx > 0.0 and sp.x - rpx < w and sp.y - rpx < h:
 		return                                   # (on screen: it shows itself)
-	var ctr := Vector2(w, h) * 0.5
-	var dir := (sp - ctr).normalized()
-	# where the line from the centre leaves the screen (inset a little)
-	var t := minf((w * 0.5 - 10.0) / maxf(absf(dir.x), 0.001), (h * 0.5 - 10.0) / maxf(absf(dir.y), 0.001))
-	var at := ctr + dir * t
-	var side := Vector2(-dir.y, dir.x)
-	draw_colored_polygon(PackedVector2Array([at + dir * 4.0, at - dir * 2.0 + side * 3.0, at - dir * 2.0 - side * 3.0]), col)
 	var dist: float = (wpos - game.player.pos).length() - rad
-	_label(at - dir * 9.0, "%s  %.0fk" % [text, maxf(dist, 0.0) / 1000.0])
+	_marks.append({"sp": sp, "dist": maxf(dist, 0.0), "text": text, "col": col, "prio": prio})
+
+func _flush_marks() -> void:
+	if _marks.is_empty():
+		return
+	_marks.sort_custom(func(x, y): return int(x["prio"]) < int(y["prio"]) or (int(x["prio"]) == int(y["prio"]) and float(x["dist"]) < float(y["dist"])))
+	if _marks.size() > MARK_MAX:
+		_marks.resize(MARK_MAX)
+	var w := float(game.VW)
+	var h := float(game.VH)
+	var ctr := Vector2(w, h) * 0.5
+	var rx := maxf(w * 0.5 - 34.0, 40.0)
+	var ry := maxf(h * 0.5 - 26.0, 30.0)
+	for mk in _marks:
+		mk["dir"] = ((mk["sp"] as Vector2) - ctr).normalized()
+		mk["a"] = (mk["dir"] as Vector2).angle()
+	# (spread along the oval: neighbours closer than MARK_GAP are pushed apart, a few passes)
+	_marks.sort_custom(func(x, y): return float(x["a"]) < float(y["a"]))
+	var n := _marks.size()
+	for it in 8:
+		var moved := false
+		for k in n:
+			var m0: Dictionary = _marks[k]
+			var m1: Dictionary = _marks[(k + 1) % n]
+			if n < 2:
+				break
+			var p0 := ctr + Vector2(cos(float(m0["a"])) * rx, sin(float(m0["a"])) * ry)
+			var p1 := ctr + Vector2(cos(float(m1["a"])) * rx, sin(float(m1["a"])) * ry)
+			if p0.distance_to(p1) < MARK_GAP:
+				var push := (MARK_GAP - p0.distance_to(p1)) / maxf(rx, ry) * 0.6 + 0.01
+				m0["a"] = float(m0["a"]) - push
+				m1["a"] = float(m1["a"]) + push
+				moved = true
+		if not moved:
+			break
+	for mk2 in _marks:
+		var at := ctr + Vector2(cos(float(mk2["a"])) * rx, sin(float(mk2["a"])) * ry)
+		var dir: Vector2 = mk2["dir"]
+		var side := Vector2(-dir.y, dir.x)
+		var ink := Color(0.02, 0.02, 0.05, 0.8)
+		draw_colored_polygon(PackedVector2Array([at + dir * 5.5, at - dir * 3.0 + side * 4.2, at - dir * 3.0 - side * 4.2]), ink)
+		draw_colored_polygon(PackedVector2Array([at + dir * 4.0, at - dir * 2.0 + side * 3.0, at - dir * 2.0 - side * 3.0]), mk2["col"])
+		# (the label further in than the arrow, and to its inner side: never over the arrow itself)
+		_label(at - dir * 13.0 + Vector2(0.0, 4.0 if dir.y < 0.0 else -1.0), "%s  %.0fk" % [mk2["text"], float(mk2["dist"]) / 1000.0])
+	_marks.clear()
 
 func _label(at: Vector2, text: String) -> void:
 	var f: Font = PixelFont.make()
@@ -1753,7 +1816,7 @@ func _mine_at(m, p: Vector2, r: float) -> void:
 				if Defs.HARD[t] > m.tier:
 					hard = true
 					continue
-				if randf() > 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2):
+				if randf() > minf(0.95, 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2) * game.dig_speed(m)):
 					continue
 				a.take(ck)
 				m.inv[t] += 1
@@ -1881,7 +1944,8 @@ func box_pts(m, k := 1.0) -> Array:
 
 ## the least move (up to 6 cells, 16 ways round) that takes the mage's box out of a body's cells
 func _shortest_out(m, a, pts: Array, rr: Vector2, dd: Vector2) -> Vector2:
-	for step in range(1, 13):
+	# (up to 6 cells out at first; then, wedged deeper (stepped off a skiff pressed against a hull), up to 24)
+	for step in range(1, 49):
 		var dist := float(step) * 0.5
 		for k in 16:
 			var dv := Vector2.from_angle(float(k) * TAU / 16.0) * dist
@@ -2693,6 +2757,91 @@ func reset_after_death() -> void:
 	game.view_rect.visible = true
 	game.view_c = Vector2.ZERO
 
+## Mending out here (user, 23 Nov: "Healing spell didn't work in space"): the cast button is the jet (or the
+## skiff's steering) out in the open, but with Mending chosen a click heals instead. True while it's taken.
+func _mend_cast(m) -> bool:
+	if m.known.is_empty() or not m.input.cast or m.dead:
+		return false
+	if String(m.known[clampi(m.sel, 0, m.known.size() - 1)]) != "mend":
+		return false
+	if not m.cast_latch:
+		game._cast(m, "mend", m.input.aim)
+		m.cast_latch = true                  # (once a click)
+	return true
+
+## where the mage could step off the skiff out here: the first of `spots` (world points, his middle) where his box
+## is clear of every rock, wreck and station's cells (user, 23 Nov: stepped out against a derelict, "got stuck up
+## against it": the spot behind the cockpit was inside its hull); the first spot if none is
+func clear_spot(m, spots: Array) -> Vector2:
+	var ua: float = (spots[0] - centre).angle()
+	var rr: Vector2 = game.basis_r(ua)
+	var dd: Vector2 = game.basis_d(ua)
+	var pts := box_pts(m)
+	for p in spots:
+		var ok := true
+		for a in _rocks_near(p, 30.0):
+			for q in pts:
+				if a.solid_at(p + rr * q.x + dd * q.y):
+					ok = false
+					break
+			if not ok:
+				break
+		if ok:
+			return p
+	return spots[0]
+
+## A game loaded, or begun (main `start_game`): out of space altogether, with nothing of the galaxy kept out here
+## (user, 23 Nov: reloaded by a derelict station, he came down at home and the station came down with him: going
+## back to the title and on again never left space, so what was streamed in out there stayed). What was saved
+## (mined sectors, stations, the void's anomalies) comes back from the save as you fly out again.
+func reset_for_load() -> void:
+	reset_after_death()
+	for job in _st_jobs:
+		WorkerThreadPool.wait_for_task_completion(int(job[0]))
+	_st_jobs.clear()
+	rocks.clear()
+	_rocks_for = -1
+	_rock_plan.clear()
+	_loaded.clear()
+	_sect_plan.clear()
+	for spr in _rock_sprites:
+		spr.visible = false
+	for bk in _rock_backs:
+		bk.visible = false
+	folk.clear()
+	aliens.clear()
+	acid.clear()
+	sbolts.clear()
+	shots.clear()
+	foe_shots.clear()
+	bolts.clear()
+	scan_marks.clear()
+	in_station = null
+	frame_st = null
+	docked = null
+	near_cache = null
+	near_wreck = null
+	near_trader = null
+	near_keeper = null
+	near_folk = null
+	vl.beasts.clear()
+	vl.groups.clear()
+	vl.wells.clear()
+	vl.rifts.clear()
+	vl.motes.clear()
+	bodies.clear()
+	_bodies_for = -1
+	_body_key = ""
+	near = {}
+	centre = Vector2.ZERO
+	vel = Vector2.ZERO
+	zoom_i = 0
+	sail = 0.0
+	sailing = false
+	target = -1
+	active = false
+	visible = false
+
 ## Out here you choose how far you see: the wheel or - zooms out, + back in (`ZOOMS`, eased to)
 func zoom_by(d: int) -> void:
 	var zi := clampi(zoom_i + d, 0, ZOOMS.size() - 1)
@@ -3019,6 +3168,9 @@ func _station_frame(focus: Vector2) -> void:
 		if b.x < -30.0 or b.y < -30.0 or b.x > float(a.w) + 30.0 or b.y > float(a.h) + 30.0:
 			continue
 		frame_st = a
+		if m.aboard != null and a.kind == "station" and not _dock_hint.has(a.seed_):
+			_dock_hint[a.seed_] = true
+			game.ui.toast("A derelict's dock is too small for the skiff: step out (F) and drift in through its open mouth", Color(0.8, 0.7, 1.0), 5.0)
 		if m.aboard == null and not m.dead and a.inside(b):
 			in_station = a
 			var op: bool = a.kind == "outpost"

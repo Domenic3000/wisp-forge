@@ -29,11 +29,15 @@ var folk: Array = []         # main.gd Villager bodies
 var _peopled := {}           # village seed -> true
 var shop_of = null           # the keeper you're trading with (main state "shop")
 var stats := {}              # (counts for the tests)
+var rebuild                  # rebuild.gd: villages put back the houses knocked down (user, 23 Nov)
 
 func _init(g) -> void:
 	game = g
+	rebuild = preload("res://scripts/rebuild.gd").new(g, self)
 
 func clear() -> void:
+	rebuild.job = {}
+	rebuild._look = {}
 	folk.clear()
 	_peopled.clear()
 	shop_of = null
@@ -42,6 +46,7 @@ func clear() -> void:
 func tick() -> void:
 	if game.frame % 30 == 0:
 		_people()
+	rebuild.tick()
 	for k in range(folk.size() - 1, -1, -1):
 		var v = folk[k]
 		if v.gone:

@@ -1033,6 +1033,42 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (Blocks tab, `CAT_BLOCKS`) are laid by pressing, dragging and letting go: a line snapped across, up or at 45
   degrees, a filled rectangle, or a frame; G cycles the shape (back walls can also be brushed), [ ] the
   thickness. `Build.shape_cells` / `shape_stamp`; one material per cell; blocks skip cells where someone stands.
+- Villages rebuild (scripts/rebuild.gd, towns.gd `rebuild`; user, 23 Nov: "if the village gets destroyed ... the
+  villagers should be able to build their houses back. not build infinite houses"): every living village's house
+  keeps its finished blueprint (buildings.gd `_finish(bp, build, house)` -> `house["struct"]`; on loading too: a
+  "home_only" job finishes just those). Every `CHECK_EVERY` a house of the nearest village is read back
+  (`request_rect`), and with more than `DAMAGED` (8%) of its built cells gone (`_missing`: front solids but doors,
+  torches, furniture, fills; back walls but furniture and torches) its folk put them back a course at a time,
+  bottom first (`_work`: front cells fill-only, never where someone stands), reading again every 4 s, until whole
+  (or a pass lays nothing); then it rests `RESTS`. Never furniture, never a new house. Test: `_test_rebuild`
+  (in "towns"; picture `town_rebuilt.png`).
+- A plan made again (on loading) is the plan that was built: `_finish` draws the roughening's seed whether or
+  not it builds. (It drew only when building, so a loaded world's towns, guards, wardens and labels drifted from
+  the first structure on: villagers set out for houses that weren't there.) Checked in `_test_rebuild`.
+- Vulkhar out of reach (user, 23 Nov: cheesed "through a hole in the ground"): main `_golem_reach` looks for a way
+  to you (`FoeAI.can_reach`) every 30 frames; kept from you `GOLEM_SURGE_AFTER` he surges every
+  `GOLEM_SURGE_EVERY` (a tight stream of efire straight at you, two imps called up, at most 4), and past
+  `GOLEM_MEND_AFTER` he mends 9 health a second.
+- Digging speed grows (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it"): main
+  `dig_speed(m)` = `DIG_TIER` by staff tier (0.55, 0.55, 0.9, 1.3, 1.8) x `DELVE` (1.3) per Delver's Rune
+  (`items["delve"]`, recipes delve1-3: copper ingots, then wisp ingots and obsidian, then star iron and core;
+  each learned on first finding its ingot / star iron) x gear "dig_rate". Used by the excavation brush and
+  asteroid mining (space `_mine_at`), not the Remove tool. Test: in `_test_start`.
+- In space a skiff nobody pilots holds where it was left (skiff `fly`: vel x0.93 a tick; user, 23 Nov: it floated
+  away while he mined), and a "Your skiff" marker points to it while you're off it. A quick right-click's
+  `dig_tap` counts down in `_read_local_input` (it counted down only on the planet, so in space one click kept
+  mining).
+- Space's view holds still (user, 23 Nov: "the camera keeps reorienting"): space `_find_near` points `centre` at the
+  nearest planet only within `VIEW_NEAR` (4000) of its air (or a station's floor, `_station_frame`); further out
+  "down" holds as it was. `pull` measures from the planet itself (`near["pos"]`), not `centre`.
+- Markers (user, 23 Nov: "hard to see them when they stack and go under the ui"): `_marker` only gathers
+  (`_marks`, prio 1 your skiff / waypoint, 2 pirates, 5 the rest); `_flush_marks` keeps `MARK_MAX` (7), sets them
+  on an oval inset from the edges (out of the HUD's corners and off the spell bar), spreads them `MARK_GAP`
+  apart, each arrow (inked) pointing the true way.
+- Loading a game leaves space altogether (space `reset_for_load`, from `start_game`; user, 23 Nov: reloaded by a
+  derelict, the station came down with him). Stepping off the skiff out there picks a spot clear of every hull
+  (`clear_spot`), `_shortest_out` searches up to 24 cells, and a derelict's dock says it's for drifting in on
+  foot (`_dock_hint`).
 - One satchel for everything carried (user, 23 Nov: "its a little convoluted ... i can have a bed in my
   inventory, but not a kiln and i cant place a bed from my inventory"): ui.gd `_update_satchel`, open, is
   sections (`satchel` a VBox; `_sat_section`, `_sat_slot`, `SAT_COLS` 8, `satchel_slots` for the tests): Blocks,

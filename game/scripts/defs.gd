@@ -964,7 +964,7 @@ const LEARN := {
 	"sandstone": {"find": [SAND]},
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
-	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
+	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "beam": {"find": [STARIRON]}, "delve1": {"find": [COPPERBAR]}, "delve2": {"find": [WISPBAR]}, "delve3": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
 	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
 	"skiff": {"scroll": 2, "shop": "smithy", "price": 90},
@@ -1320,13 +1320,19 @@ const RECIPES := [
 	{"id": "mend", "cat": "Spells", "name": "Mending", "cost": {WISP: 8, SHROOM: 12, CRYSTAL: 4}, "spell": "mend", "scroll": "scroll_mend"},
 	{"id": "potion", "cat": "Potions", "name": "Healing Draught", "cost": {CRYSTAL: 2, SHROOM: 6, GLASS: 2}, "potion": 1, "desc": "Drink with H: 35 health over a moment."},
 	{"id": "starfall", "cat": "Spells", "name": "Starfall", "cost": {EMBER: 12, OBSIDIAN: 6, COAL: 10}, "spell": "starfall", "scroll": "scroll_starfall"},
-	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava. Copper ingots come from a Smelter (build mode, Workshops)."},
+	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava, and you dig faster. Copper ingots come from a Smelter (build mode, Workshops)."},
+	# Delver's Runes (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it ... slow is fine in the
+	# beggining but should get more powerful through progression"): each digs 30% faster (main `dig_speed`), the
+	# second and third building on the one before
+	{"id": "delve1", "cat": "Staff & Body", "name": "Delver's Rune", "cost": {COPPERBAR: 4, STONE: 30, COAL: 10}, "desc": "Bound into your staff: you dig 30% faster (the ground and asteroids, not the Remove tool)."},
+	{"id": "delve2", "cat": "Staff & Body", "name": "Delver's Rune II", "cost": {WISPBAR: 4, OBSIDIAN: 6, CRYSTAL: 2}, "desc": "Another 30% faster digging, on top of the first rune."},
+	{"id": "delve3", "cat": "Staff & Body", "name": "Delver's Rune III", "cost": {STARIRON: 4, WISPBAR: 4, CORE: 2}, "desc": "Another 30% faster digging, on top of the second rune."},
 	{"id": "wide", "cat": "Staff & Body", "name": "Wide Excavation", "cost": {COPPERBAR: 3, CRYSTAL: 10}, "desc": "Bigger excavation radius (7.5 to 11)."},
 	{"id": "vital", "cat": "Staff & Body", "name": "Vital Bloom", "cost": {SHROOM: 16, LEAF: 12}, "desc": "+50 max health."},
 	{"id": "mana", "cat": "Staff & Body", "name": "Mana Crystal", "cost": {WISPBAR: 3, CRYSTAL: 8}, "desc": "+70 max mana, faster regeneration."},
 	{"id": "ward", "cat": "Staff & Body", "name": "Heat Ward", "cost": {EMBER: 15, FROST: 10, OBSIDIAN: 6}, "desc": "Survive the mantle heat."},
-	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISPBAR: 2}, "desc": "Staff tier 3: Obsidian and Magma Rock."},
-	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISPBAR: 5}, "desc": "Staff tier 4: harvest the Planet Core. Needs the Ember Heart."},
+	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISPBAR: 2}, "desc": "Staff tier 3: Obsidian and Magma Rock, and you dig faster still."},
+	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISPBAR: 5}, "desc": "Staff tier 4: harvest the Planet Core, and dig fastest of all. Needs the Ember Heart."},
 	# wards: each bears one kind of planet's hazard (HAZARDS); a guardian's relic can do it instead
 	{"id": "hearth", "cat": "Wards", "name": "Hearth Charm", "cost": {EMBER: 10, COAL: 16, COPPERBAR: 2}, "desc": "Keeps a frozen world's cold off you under the open sky."},
 	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPERBAR: 2}, "desc": "Shades you from a desert world's midday sun."},

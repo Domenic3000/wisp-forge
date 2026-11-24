@@ -206,6 +206,8 @@ class Enemy extends Body:
 	var nav_gap := false       # (that jump is across a gap)
 	var unreach_t := 0         # frames you've been out of its reach (a guardian then smashes in)
 	var reach_ok := true       # (it can get to you: looked at now and then)
+	var surge_t := 0           # Vulkhar out of reach: frames to his next surge (a stream of fire, imps called up)
+	var surge_n := 0           # (the surge's shots still to come)
 	var roam := 0.0            # (a creature out of reach: where it roams to, cells along the ground from itself)
 	var breach := false        # this charge smashes through walls
 	var breach_hits := 0       # (how many holes this breach has blasted)
@@ -2237,6 +2239,10 @@ func _read_local_input(m: Mage) -> void:
 	var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or m.dig_tap > 0
 	var shift := Input.is_key_pressed(KEY_SHIFT)
 	inp.dig = (can_act and rmb and not shift) or test_dig
+	# (a quick right-click's few frames of digging count down here, every tick: they used to count down only on
+	# the planet, so out in space one click kept mining an asteroid for good; user, 23 Nov)
+	if m.dig_tap > 0:
+		m.dig_tap -= 1
 	inp.decon = can_act and rmb and shift
 	inp.sail = (shift and state == "play") or test_sail
 	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on) or test_mend
@@ -2289,8 +2295,6 @@ func _tick() -> void:
 				m.decon_pause = 0
 		if not m.dead and state == "play" and m.aboard != null and m.local and build_on:
 			_update_cabin(m)
-		if m.dig_tap > 0:
-			m.dig_tap -= 1
 	prof_add("mages", Time.get_ticks_usec() - tm)
 	_use_grid(player)
 	var tq := Time.get_ticks_usec()
@@ -2485,23 +2489,7 @@ func _update_player(m: Mage) -> void:
 	m.mana = minf(m.max_mana, m.mana + regen)
 	if m.mana_spent_t > 0:
 		m.mana_spent_t -= 1
-	# no health comes back by itself: only a draught or Mending, a little each frame
-	if m.heal_left > 0.0 and not m.dead:
-		var hh := minf(m.heal_left, Defs.HEAL_RATE)
-		m.hp = minf(m.max_hp, m.hp + hh)
-		m.heal_left -= hh
-		if m.hp >= m.max_hp:
-			m.heal_left = 0.0
-		if frame % 6 == 0:
-			_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 10.0, m.pos.normalized() * 0.4, 24, Color(0.55, 1.0, 0.6), true, -0.01)
-	if m.potion_cd > 0:
-		m.potion_cd -= 1
-	for bk in m.buffs.keys():
-		m.buffs[bk] = int(m.buffs[bk]) - 1
-		if int(m.buffs[bk]) <= 0:
-			m.buffs.erase(bk)
-			if m.local:
-				ui.toast("The %s wears off" % Defs.DRAUGHTS[bk]["name"], Color(0.8, 0.8, 0.9), 2.0)
+	heal_tick(m)
 	if m.local and m.hp < m.max_hp * 0.3 and m.heal_left <= 0.0 and frame >= _low_hp_t and not m.dead:
 		_low_hp_t = frame + 1800
 		ui.toast("Low health%s" % (": drink a Healing Draught (H)" if int(items.get("potion", 0)) > 0 else ". Health doesn't come back by itself"), Color(1, 0.55, 0.5), 3.0)
@@ -2697,10 +2685,7 @@ func _excavate(m: Mage, aim: Vector2) -> void:
 	if m.local and _dig_open_t <= 0 and _dig_hits_chest(p, m.dig_r):
 		_dig_open_t = 30
 		_try_open_chest()
-	# (the Fire Opal Focus digs half again as fast: brush.comp's rate)
-	# (a plain staff digs slowly; each focus digs faster: tier 1 at 0.55, 2 at 0.8, 3 at 1, 4 at 1.2)
-	var tier_rate: float = [0.55, 0.55, 0.8, 1.0, 1.2][clampi(m.tier, 0, 4)]
-	brushes.append([p, m.dig_r, 1, 0, m.tier, gear("dig_rate", m) * tier_rate - 1.0, 0, m.slot])
+	brushes.append([p, m.dig_r, 1, 0, m.tier, dig_speed(m) - 1.0, 0, m.slot])
 	vfx.dig(m, p, m.dig_r)
 
 ## Shift + right mouse: take background tiles (a building's back walls, furniture, plants). It is how
@@ -3680,6 +3665,7 @@ func _update_enemies() -> void:
 					shake = 10.0
 				if e.awake and not tgt.dead:
 					var enraged := e.hp < e.max_hp * 0.4
+					_golem_reach(e, tgt, dist, g, enraged)
 					var gd2 := _walker_nav(e, dx, dist, 0.5, 5.2, g)
 					if e.on_ground:
 						e.vx += (gd2 * (0.75 if enraged else 0.5) * slow_f - e.vx) * 0.1
@@ -3771,6 +3757,73 @@ func _update_enemies() -> void:
 			lights.append([e.pos - basis_d(atan2(e.pos.y, e.pos.x)) * 4.0, 7.0, Color(0.7, 0.18, 0.1)])
 		elif e.type == "imp":
 			lights.append([e.pos, 14.0, Color(0.6, 0.2, 0.05)])
+
+## Vulkhar out of reach (user, 23 Nov: "i was able to cheese the boss near the core pretty easily by fighting
+## him through a hole in the ground"): every half second he looks for a way to you (the nav graph, as the
+## guardians do). Kept from you for two seconds, he SURGES every three: a tight stream of fire straight up at
+## you (his spread volleys missed down a narrow hole) and two imps called up from the heart's fire to come after
+## you (at most 4 about him); kept from you for five seconds the heart mends him (9 health a second), so
+## striking from where he can't follow gains nothing.
+const GOLEM_SURGE_AFTER := 120
+const GOLEM_SURGE_EVERY := 180
+const GOLEM_MEND_AFTER := 300
+func _golem_reach(e: Enemy, tgt: Mage, dist: float, g: float, enraged: bool) -> void:
+	if frame % 30 == 0:
+		var ta := atan2(tgt.pos.y, tgt.pos.x)
+		e.reach_ok = FoeAI.can_reach(self, e, tgt.pos + basis_d(ta) * (tgt.h * 0.5), 5.2, g)
+	e.unreach_t = 0 if e.reach_ok or dist > 260.0 else e.unreach_t + 1
+	if e.surge_n > 0:
+		if frame % 5 == 0:
+			FoeAI.shoot(self, e, tgt, "efire", 1, 0.0, 0.3)
+			e.surge_n -= 1
+		return
+	if e.unreach_t < GOLEM_SURGE_AFTER:
+		e.surge_t = 30
+		return
+	if e.unreach_t == GOLEM_SURGE_AFTER:
+		ui.toast("Vulkhar can't reach you: the heart's fire answers for him", Color(1, 0.55, 0.25), 3.0)
+	if e.unreach_t > GOLEM_MEND_AFTER and e.hp < e.max_hp:
+		e.hp = minf(e.max_hp, e.hp + 0.15)
+	e.surge_t -= 1
+	if e.surge_t > 0:
+		return
+	e.surge_t = GOLEM_SURGE_EVERY - (60 if enraged else 0)
+	e.surge_n = 8 if enraged else 6
+	shake = maxf(shake, 6.0)
+	audio.play("roar", e.pos, 0.8)
+	vfx.blast(e.pos, 14.0, 0)
+	var imps := 0
+	for o in enemies:
+		if o.type == "imp" and o.pos.distance_to(e.pos) < 300.0:
+			imps += 1
+	var ea := atan2(e.pos.y, e.pos.x)
+	for k in mini(2, 4 - imps):
+		var ip: Vector2 = e.pos - basis_d(ea) * (e.h * 0.5 + 8.0) + basis_r(ea) * (float(k) * 2.0 - 1.0) * 14.0
+		var im := spawn_enemy("imp", ip)
+		if im != null:
+			im.awake = true
+			im.provoked = true
+
+## no health comes back by itself: only a draught or Mending, a little each tick (from `_update_player`, and
+## space.gd's tick out there: user, 23 Nov, "Healing spell didn't work in space")
+func heal_tick(m: Mage) -> void:
+	if m.heal_left > 0.0 and not m.dead:
+		var hh := minf(m.heal_left, Defs.HEAL_RATE)
+		m.hp = minf(m.max_hp, m.hp + hh)
+		m.heal_left -= hh
+		if m.hp >= m.max_hp:
+			m.heal_left = 0.0
+		if frame % 6 == 0:
+			_particle(m.pos + Vector2(randf() - 0.5, randf() - 0.5) * 10.0, m.pos.normalized() * 0.4, 24, Color(0.55, 1.0, 0.6), true, -0.01)
+	# (and a draught's cooldown, and the draughts working on you, wear off as time goes by)
+	if m.potion_cd > 0:
+		m.potion_cd -= 1
+	for bk in m.buffs.keys():
+		m.buffs[bk] = int(m.buffs[bk]) - 1
+		if int(m.buffs[bk]) <= 0:
+			m.buffs.erase(bk)
+			if m.local:
+				ui.toast("The %s wears off" % Defs.DRAUGHTS[bk]["name"], Color(0.8, 0.8, 0.9), 2.0)
 
 ## (user, 22 Nov: "a bit too many enemies and spawn rate are a bit too aggressive on the starting planet ...
 ## give the player some breathing room if they kill all the enemies in an area. maybe we only spawn enemies
@@ -4522,6 +4575,15 @@ func _refresh_recipes() -> void:
 		recipes[i] = r
 
 # ============================================================= crafting ====
+## How fast you dig (the ground, and asteroids out in space; not the Remove tool), 1 = the old Stone staff's
+## full rate (user, 23 Nov: "slow is fine in the beggining but should get more powerful through progression"):
+## each focus digs faster (a plain staff 0.55, the Copper Focus 0.9, the Obsidian 1.3, the Core Siphon 1.8),
+## each Delver's Rune forged 30% faster again (`items["delve"]` 0..3), and the Fire Opal gear on top.
+const DIG_TIER := [0.55, 0.55, 0.9, 1.3, 1.8]
+const DELVE := 1.3
+func dig_speed(m: Mage) -> float:
+	return float(DIG_TIER[clampi(m.tier, 0, 4)]) * pow(DELVE, float(int(m.items.get("delve", 0)))) * gear("dig_rate", m)
+
 func recipe_done(r: Dictionary) -> bool:
 	if r.has("spell"):
 		return known.has(r["spell"])
@@ -4537,6 +4599,9 @@ func recipe_done(r: Dictionary) -> bool:
 		"drive": return skiff_reach() > int(planet.get("index", 0))
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
+		"delve1": return int(items.get("delve", 0)) >= 1
+		"delve2": return int(items.get("delve", 0)) >= 2
+		"delve3": return int(items.get("delve", 0)) >= 3
 	if r.has("gear") or r["cat"] == "Wards" or r["id"] in ["engine", "beam", "sail", "shield", "cannon"]:
 		return items.has(String(r["id"]))
 	return false
@@ -4555,6 +4620,8 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"tier2": return tier == 1
 		"tier3": return tier == 2
 		"tier4": return tier == 3 and items.has("heart")
+		"delve2": return int(items.get("delve", 0)) >= 1
+		"delve3": return int(items.get("delve", 0)) >= 2
 		"drive": return tier >= 4 and items.has("skiff")
 		"engine", "beam", "sail", "shield", "cannon", "scanner": return items.has("skiff")
 	if r.has("gear"):
@@ -4857,6 +4924,9 @@ func craft(r: Dictionary) -> bool:
 		"tier3": tier = 3
 		"tier4": tier = 4
 		"wide": dig_r = 11.0
+		"delve1", "delve2", "delve3":
+			items["delve"] = maxi(int(items.get("delve", 0)), int(String(r["id"]).substr(5)))
+			ui.toast("Your staff bites deeper: you dig %d%% as fast as you started" % int(round(dig_speed(player) / 0.55 * 100.0)), Color(1, 0.82, 0.23), 4.0)
 		"vital":
 			max_hp += 50
 			hp = max_hp
@@ -6513,6 +6583,7 @@ func start_game(use_save: bool) -> void:
 	ui.show_loading("Forging a round planet…")
 	await get_tree().process_frame
 	await get_tree().process_frame
+	space.reset_for_load()                 # (nothing of space kept from the game before: user, 23 Nov)
 	var s = _load_save() if use_save else null
 	if s != null:
 		_apply_save(s)
@@ -7170,9 +7241,15 @@ func _skiff_interact(m: Mage) -> bool:
 		m.deck = false
 		# out beside it, behind the cockpit (on top of it if that's blocked)
 		var out: Vector2 = skiff.to_world(Vector2(-skiff.com.x - 6.0, float(skiff.h) - skiff.com.y - m.h * 0.5 - 1.0))
-		_use_grid(m)
-		if box_solid(to_grid(out).x - m.w * 0.5, to_grid(out).y - m.h * 0.5, m.w, m.h):
-			out = skiff.to_world(Vector2(0.0, -skiff.com.y - m.h * 0.5 - 2.0))
+		if space.active:
+			# (out there: clear of every hull and rock: behind, on top, in front, under it)
+			out = space.clear_spot(m, [out, skiff.to_world(Vector2(0.0, -skiff.com.y - m.h * 0.5 - 2.0)),
+				skiff.to_world(Vector2(float(skiff.w) - skiff.com.x + 6.0, 0.0)), skiff.to_world(Vector2(-skiff.com.x - 8.0, 0.0)),
+				skiff.to_world(Vector2(0.0, float(skiff.h) - skiff.com.y + m.h * 0.5 + 2.0))])
+		else:
+			_use_grid(m)
+			if box_solid(to_grid(out).x - m.w * 0.5, to_grid(out).y - m.h * 0.5, m.w, m.h):
+				out = skiff.to_world(Vector2(0.0, -skiff.com.y - m.h * 0.5 - 2.0))
 		m.pos = out
 		m.vx = 0.0
 		m.vy = 0.0

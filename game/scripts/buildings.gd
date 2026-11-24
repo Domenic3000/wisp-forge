@@ -753,10 +753,18 @@ func _note_cut(bp: BP, nm: String, k := -1) -> void:
 ## the tests keep), which `finish_all` runs for every queued blueprint at once, one per core. Each job
 ## touches only its own blueprint and the planet's surface, so they can't disturb each other; their
 ## results are gathered in the order they were planned, so the planet comes out the same every time.
-func _finish(bp: BP, build: bool) -> void:
-	if not build:
-		return
-	_jobs.append({"bp": bp, "rs": rng.randi()})
+func _finish(bp: BP, build: bool, house := {}) -> void:
+	# (the roughening's seed is drawn whether or not this plan builds: a plan made again on loading drew
+	# nothing here, so everything planned after the first structure came out elsewhere than what was
+	# stamped, and villagers, guards and wardens were set out for houses that weren't there; user, 23 Nov:
+	# sleepers floating, one inside a roof)
+	var rs := rng.randi()
+	if build:
+		_jobs.append({"bp": bp, "rs": rs, "house": house})
+	elif not house.is_empty():
+		# (a living village's house, planned again on loading: finished for its cells only, so its folk can
+		# rebuild it as it was: rebuild.gd)
+		_jobs.append({"bp": bp, "rs": rs, "house": house, "home_only": true})
 
 var _jobs := []
 
@@ -797,6 +805,10 @@ func finish_collect() -> void:
 		if not jb.has("out"):
 			_finish_job(jk)      # (only if the pool never ran it)
 		var o: Dictionary = jb["out"]
+		if jb.has("house") and not (jb["house"] as Dictionary).is_empty():
+			jb["house"]["struct"] = o["struct"]       # (what the house is, cell for cell: rebuild.gd)
+		if jb.get("home_only", false):
+			continue
 		structs.append(o["struct"])
 		chest_list.append_array(o["chests"])
 		door_list.append_array(o["doors"])
@@ -1700,12 +1712,13 @@ func _cottage(x: int, b: String, ruined: bool, build: bool, label := true, w_in 
 		_furnish(bp, left if aside < 0 else ox + w - th, aw, th, lb, 1, "hut" if role != "home" else "home", ruined)
 	_dress_yard(bp, left, full, role, ruined)
 	_house = {"role": role, "x0": posmod(bp.x0 + ox, N0), "w": w, "floor": bp.y0 + lb, "ruined": ruined, "beds": _beds.duplicate()}
+	var own_house: Dictionary = _house if (not label and not ruined) else {}
 	if label:
 		_claim(x0, tw, ("Ruined " if ruined else "Abandoned ") + ("Cottage" if b != "desert" else "Dwelling"), bp.y0, base + 2)
 	else:
 		used.append(Vector2i(x0, x0 + tw))
 		sites.append(Vector2(posmod(x0, N0), posmod(x0, N0) + tw))
-	_finish(bp, build)
+	_finish(bp, build, own_house)
 	return true
 
 ## a row of houses with real gaps between them

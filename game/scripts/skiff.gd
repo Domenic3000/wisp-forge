@@ -223,7 +223,13 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 	# turn round when steered the other way (the picture eases through it: `look`)
 	if steering and want.dot(right) * float(facing) < -0.25:
 		facing = -facing
-	if not piloted:
+	if not piloted and in_space:
+		# nobody at the controls out in space: its wisp engine holds it where it was left (user, 23 Nov: "when
+		# i got out to mine the asteroid my wisp skiff floated away"), easing out what speed it had
+		vel *= 0.93
+		if vel.length() < 0.02:
+			vel = Vector2.ZERO
+	elif not piloted:
 		# nobody at the controls: it falls, and drifts
 		if grounded and vel.length() < 0.5:
 			vel = Vector2.ZERO
