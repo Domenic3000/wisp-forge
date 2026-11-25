@@ -1619,6 +1619,8 @@ func _belt_icon(g, sid: String) -> Array:
 				n += 1
 		var rows: Array = g.player.furn[fi].get("rows", []) if fi >= 0 else []
 		return [Icons.prop_rows(rows) if not rows.is_empty() else Icons.item("chair"), nm, n]
+	if sid.begins_with("p:"):
+		return [Icons.plan(sid.substr(2)), Build.plan_name(sid.substr(2)) + " plan", 1]
 	var sk := sid.substr(2)
 	return [Icons.station(sk), String(Defs.STATIONS[sk]["name"]) if Defs.STATIONS.has(sk) else sk, int(g.items.get("st_" + sk, 0))]
 
@@ -1645,7 +1647,7 @@ func _update_belt(g) -> void:
 			continue
 		var info := _belt_icon(g, sid)
 		var pinned: bool = e2[1]
-		var sl := _slot(info[0], _count(int(info[2])), sid == hid, "%s  ×%d\nClick or Q / E: in your hand\nRight-click: %s" % [info[1], int(info[2]), "unpin" if pinned else "pin it here"])
+		var sl := _slot(info[0], "" if sid.begins_with("p:") else _count(int(info[2])), sid == hid, "%s  ×%d\nClick or Q / E: in your hand\nRight-click: %s" % [info[1], int(info[2]), "unpin" if pinned else "pin it here"])
 		if int(info[2]) <= 0:
 			sl.modulate = Color(1, 1, 1, 0.4)
 		if pinned:
@@ -2018,6 +2020,12 @@ func _draw_slot_over(c: Control, k: int, id: String) -> void:
 
 ## the satchel: a slot for each material held (click: Conjure places it), the draughts, and the furniture
 ## carried whole
+## B on the planet: the satchel open, with a word on where building went
+func open_plans() -> void:
+	if not satchel_open:
+		toggle_satchel()
+	toast("Build from your hand: click a plan in the satchel (Plans) and Conjure raises it. Right-drag with a shaped block cuts; Shift + right-click takes furniture.", Color(0.95, 0.85, 0.55), 5.0)
+
 func toggle_satchel() -> void:
 	satchel_open = not satchel_open
 	_inv_key = ""
@@ -2092,6 +2100,22 @@ func _update_satchel(g) -> void:
 			if can:
 				sl.gui_input.connect(_on_mat_input.bind(m2))
 			n += 1
+	# plans you know (Build.plans): never used up, raised by Conjure from your materials
+	var gpl: GridContainer = null
+	for plx in Build.plans():
+		var pid := String(plx[0])
+		if not g.knows_plan(pid):
+			continue
+		if gpl == null:
+			gpl = _sat_section("Plans")
+		var held: bool = String(g.hand_item.get("what", "")) == "plan" and String(g.hand_item.get("id", "")) == pid
+		var psl0 := _sat_slot(gpl, Icons.plan(pid), "", held, "%s plan\n%s\nClick: in your hand, Conjure raises it\nRight-click: pin it to the belt" % [plx[1], plx[3]], String(plx[1]))
+		psl0.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				game.hold_plan(pid)
+			elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
+				game.belt_pin("p:" + pid))
+		n += 1
 	# set down whole: torches, doors, furniture, workshops
 	var placing := []
 	if g.player.inv[Defs.TORCH] > 0:
@@ -2231,11 +2255,11 @@ func _render_forge() -> void:
 		grid.add_theme_constant_override("v_separation", 4)
 		forge_list.add_child(grid)
 		for r in cats[cat]:
-			grid.add_child(_recipe_card(r))
+			grid.add_child(_plan_card(r) if r.has("plan") else _recipe_card(r))
 		# its tab: how many of its recipes you could forge now
 		var n_ready := 0
 		for r2 in cats[cat]:
-			if not game.recipe_done(r2) and game.recipe_unlocked(r2) and game.recipe_affordable(r2):
+			if not r2.has("plan") and not game.recipe_done(r2) and game.recipe_unlocked(r2) and game.recipe_affordable(r2):
 				n_ready += 1
 		var tb := _button(cat + (" ·%d" % n_ready if n_ready > 0 else ""))
 		if n_ready > 0:
@@ -2301,6 +2325,8 @@ func _render_forge() -> void:
 ## a recipe's icon: the spell's glyph, what it makes, its own picture (Icons.THINGS), the piece of
 ## furniture itself, its ore, or a scroll
 func _recipe_icon(r: Dictionary) -> Texture2D:
+	if r.has("plan"):
+		return Icons.plan(String(r["plan"]))
 	if r.has("spell"):
 		return Icons.spell(String(r["spell"]))
 	if r.has("give") and not (r["give"] as Dictionary).is_empty():
@@ -2415,6 +2441,39 @@ func _book_page(r: Dictionary) -> Control:
 	hl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	hl.custom_minimum_size = Vector2(138, 0)
 	v.add_child(hl)
+	return p
+
+## a plan you know, as a page of the book: what it raises, and a button that puts it in your hand
+func _plan_card(r: Dictionary) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _frame(Color(0.06, 0.08, 0.15, 0.97), Color(0.35, 0.55, 0.85), 3))
+	p.custom_minimum_size = Vector2(148, 0)
+	var v := _box(true, 2)
+	v.mouse_filter = Control.MOUSE_FILTER_PASS
+	p.add_child(v)
+	var top := _box(false, 3)
+	v.add_child(top)
+	top.add_child(_tex(_recipe_icon(r)))
+	var nm := _head(String(r["name"]) + " plan", 12, CREAM)
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
+	nm.custom_minimum_size.x = 120
+	top.add_child(nm)
+	var dl := _label(String(r.get("desc", "")), 11, Color(0.7, 0.8, 0.95))
+	dl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	dl.custom_minimum_size = Vector2(138, 0)
+	v.add_child(dl)
+	var gap := Control.new()
+	gap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(gap)
+	v.add_child(_label("Known: in your satchel's Plans", 11, Color(0.6, 0.75, 1.0)))
+	var b := _button("Hold it")
+	var pid := String(r["plan"])
+	b.pressed.connect(func():
+		if game.state == "forge":
+			game.toggle_forge()
+		game.hold_plan(pid))
+	v.add_child(b)
 	return p
 
 func _recipe_card(r: Dictionary) -> Control:

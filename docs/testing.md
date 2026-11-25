@@ -34,3 +34,5 @@ Notes for development sessions on this part of the game. The rules that apply ev
   "pocket" alone before chasing it.
 - (25 Nov) "trees stand when you come near" failed once in a full run: in the marsh one tree came down as a log
   (2668 -> 2616 plant cells). It runs early, before the building checks; not yet looked into.
+- (25 Nov) The pirates check failed once in a full run on the scrap count round a beaten ship (1, wanting 2: how
+  it breaks up is physics); it passed run alone.

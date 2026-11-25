@@ -538,7 +538,7 @@ class Mage extends Body:
 
 var player := Mage.new()
 ## every Wisp Forge recipe: the fixed ones and the furniture from build mode's catalogue
-var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Defs.sigil_recipes() + Build.workshop_recipes() + Build.furniture_recipes()
+var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Defs.sigil_recipes() + Build.workshop_recipes() + Build.furniture_recipes() + Build.plan_recipes()
 var players: Array = [player]
 
 # the local mage's state, by its old names (so the rest of the game reads naturally)
@@ -2348,6 +2348,8 @@ func _read_local_input(m: Mage) -> void:
 func _tick() -> void:
 	if player != null and conjuring(player):
 		_note_hand()
+	if not raising.is_empty():
+		_raise_tick()
 	frame += 1
 	time += 1.0
 	hand_live = false               # (set again this tick by whatever places from the hand)
@@ -5522,8 +5524,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_B:
 			if player.aboard != null and not pocket.active:
 				shipyard.open()              # (aboard: the ship builder, where it's parked; else a word why not)
-			else:
+			elif pocket.active or build_on:
 				_toggle_build()
+			else:
+				# (user, 25 Nov: build mode folded into the hand: on the planet B opens the satchel at its Plans)
+				ui.open_plans()
 			return
 		if k == KEY_G and pocket.active and not build_on:
 			if pocket.leave_by_ship(player):
@@ -5656,6 +5661,37 @@ func build_piece() -> Dictionary:
 		return {}
 	return l[clampi(int(build_idx[build_cat]), 0, l.size() - 1)]
 
+## Plans (Build.plans; user, 25 Nov: everything you build comes from your hand, and "can we have it be
+## animated like the mage is casting a spell that is erecting the structures with magic?"): a plan you know
+## goes in your hand from the satchel's Plans (or the belt) and Conjure raises it (`_raise`). Never used up.
+var _plan_cache := {}         # the piece the held plan raises (the hand's keys change its size and style on it)
+var hand_fill := Defs.DIRT    # what Level the Ground fills dips with (R: dirt, stone, sand)
+
+func knows_plan(id: String) -> bool:
+	var r := recipe_by_id("plan_" + id)
+	return not r.is_empty() and knows(r)
+
+func hold_plan(id: String) -> void:
+	if not knows_plan(id):
+		return
+	if player.aboard != null and not pocket.active:
+		ui.toast("Step off the ship to build", Color(1, 0.8, 0.6), 2.0)
+		return
+	if build_on:
+		_toggle_build()
+	hand_item = {"what": "plan", "id": id}
+	_plan_cache = {}
+	_struct_key = ""
+	# (a house in the style of the land you stand in, as build mode did)
+	var bn: String = builds.biome(Build.cell_of(player.pos).x) if builds != null else "forest"
+	for si in Build.STYLES.size():
+		if Build.STYLES[si][1] == bn:
+			build_style = si
+	_to_conjure()
+	build_prev = {}
+	build_drag = false
+	ui.toast("%s plan in hand: click where it goes" % Build.plan_name(id), Color(0.95, 0.85, 0.55), 2.0)
+
 ## Something carried, put in your hand from the satchel (user, 23 Nov: a bed went in the satchel but
 ## couldn't be set down from it; 25 Nov: one way to place what you carry): it goes in your hand and the cast
 ## button becomes Conjure, which sets it down where you point (see "the hand" below).
@@ -5699,7 +5735,8 @@ func hold_carried(what: String, idx := -1, sk := "") -> void:
 ## (G, [ ] thickness), in front or as a back wall (V); furniture, workshops, torches and doors show where they
 ## go and a click sets one down (R the next design of a stack, T mirrors). It goes through the building code
 ## (`_update_build` / `_update_shape` / `_cabin_edit` with `_hand_over` as the piece), only within your
-## staff's reach. Build mode (B) keeps what isn't carried: structures, stairs and doors, and Remove.
+## staff's reach. Plans (rooms, houses, stairs, Level the Ground) go in the hand too, and right-click takes away
+## the way the hand is set (`_hand_cut`): build mode stays only for the pocket and the tests.
 var hand_item := {}          # a carried piece: {"what": "furn", "name"} or {"what": "station", "sk"}; {} = the material `mat`
 var hand_back := false       # solids go up as back wall
 var hand_shape := 0          # how solids are laid: Build.SHAPES (0 the brush)
@@ -5727,6 +5764,8 @@ func hand_name() -> String:
 	return ""
 
 func hand_count() -> int:
+	if not hand_item.is_empty() and String(hand_item["what"]) == "plan":
+		return 1
 	if not hand_item.is_empty():
 		return int(hand_piece(false).get("carried", 1))
 	return player.inv[mat] if mat > 0 else 0
@@ -5746,6 +5785,17 @@ func hand_piece(body := false) -> Dictionary:
 			var n := int(items.get("st_" + sk, 0))
 			if n > 0 and Defs.STATIONS.has(sk):
 				return {"cat": Build.CAT_SATCHEL, "name": String(Defs.STATIONS[sk]["name"]), "kind": "station", "station": sk, "carried": n, "cost": {}}
+		elif String(hand_item["what"]) == "plan":
+			# (a plan: never used up; its piece raised from your materials)
+			var pid := String(hand_item["id"])
+			if knows_plan(pid):
+				if _plan_cache.is_empty() or String(_plan_cache.get("_id", "")) != pid:
+					_plan_cache = Build.plan_piece(pid, build_pieces)
+					_plan_cache["_id"] = pid
+					_plan_cache["name"] = Build.plan_name(pid)
+				if String(_plan_cache.get("kind", "")) == "flatten":
+					_plan_cache["mat"] = hand_fill
+				return _plan_cache
 		hand_item = {}                # (the last one set down: the hand goes back to the material)
 	if mat <= 0 or player.inv[mat] <= 0:
 		return {}
@@ -5775,13 +5825,74 @@ func _hand_update(m: Mage) -> bool:
 	if hp.is_empty():
 		return false
 	hand_live = true
-	if build_click and (m.input.aim - m.pos).length() > _reach_len(m) * 1.08 and String(hp["kind"]) != "block" and String(hp["kind"]) != "wall":
+	if build_click and (m.input.aim - m.pos).length() > _reach_len(m) * 1.08 and not (String(hp["kind"]) in ["block", "wall", "flatten"]):
 		# (only within your staff's reach: a click beyond it sets nothing down)
 		wisp_note("That's out of reach: I can only shape what's near your staff.")
 		build_click = false
+	if _hand_cut(m, hp):
+		return true
 	_hand_over = hp
 	_update_build(m)
 	_hand_over = {}
+	return true
+
+## Right-click takes away the way your hand is set (user, 25 Nov: build mode's Remove folded into the hand):
+## with a solid in hand laid as a line, rectangle or frame (G, [ ] thickness), a right-drag cuts that shape;
+## only blocks in front, or only back walls when the hand lays back walls (V). Press, drag, let go; a left
+## click cancels. With the brush, right-click digs as ever. (Furniture: Shift + right-click takes it whole.)
+var _cut_drag := false
+var _cut_from := Vector2.ZERO
+var stats_cut := 0                   # (for the tests: cells cut)
+
+func _hand_cut(m: Mage, hp: Dictionary) -> bool:
+	var kind := String(hp.get("kind", ""))
+	if not (kind == "block" or (kind == "wall" and int(hp.get("shape", 0)) != 0)):
+		_cut_drag = false
+		return false
+	var d := m.input.aim - m.pos
+	var lim := _reach_len(m)
+	if d.length() > lim:
+		d = d.normalized() * lim
+	var cell := Build.cell_of(m.pos + d)
+	if not _cut_drag:
+		if not m.input.dig:
+			return false
+		_cut_drag = true
+		_cut_from = Build.cell_pos(cell.x, cell.y)
+		build_drag = false
+	var layer := "back" if kind == "wall" else "front"
+	var cells: Array = Build.shape_cells(Build.cell_of(_cut_from), cell, maxi(int(hp.get("shape", 1)), 1), int(hp.get("thick", 1)))
+	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
+	var prev := []
+	var n := 0
+	if not too_big:
+		for c in cells:
+			if _removable_guess(c, layer):
+				n += 1
+				prev.append([Build.cell_pos(c.x, c.y), Color(1.0, 0.3, 0.25)])
+			else:
+				prev.append([Build.cell_pos(c.x, c.y), Color(0.75, 0.75, 0.8, 0.5)])
+	build_prev = {"cells": prev, "ok": not too_big, "text": ("Too big to take in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS) if too_big else
+		"Cut %s: %d %s" % [String(Build.SHAPES[maxi(int(hp.get("shape", 1)), 1)]).to_lower(), n, "back wall cells" if layer == "back" else "blocks"]}
+	if m.input.cast:
+		_cut_drag = false            # (a left click cancels)
+		build_click = false
+		m.cast_latch = true
+		m.input.dig = false
+		return true
+	if m.input.dig:
+		m.input.dig = false          # (held: the shape follows you; no digging meanwhile)
+		return true
+	_cut_drag = false
+	if too_big:
+		return true
+	var r := remove_cells(m, cells, layer)
+	var got: int = r["n"]
+	if got > 0:
+		stats_cut += got
+		audio.play("dig", m.pos + d, 0.6)
+	elif not r.has("mana"):
+		wisp_note("Nothing there to take." if not r["hard"] else "That's too hard for your staff.")
 	return true
 
 ## in the pocket: the hand builds in the isle's own cells (pocket.gd's tick)
@@ -5818,7 +5929,18 @@ func hand_hint() -> String:
 		return ""
 	var head := "%s ×%d" % [nm, hand_count()]
 	var how := ""
-	if not hand_item.is_empty():
+	if not hand_item.is_empty() and String(hand_item["what"]) == "plan":
+		head = "%s plan" % nm
+		match String(hand_piece().get("kind", "")):
+			"structure":
+				how = "click where it goes  ·  [ ] wider  ·  - = storeys  ·  T style  ·  R another design"
+			"stairs":
+				how = "click where its foot goes  ·  [ ] a step  ·  - = a storey  ·  T turn"
+			"flatten":
+				how = "press, drag, let go  ·  R fill: %s" % Defs.NAMES[hand_fill]
+			_:
+				how = "click where it goes"
+	elif not hand_item.is_empty():
 		var hp := hand_piece()
 		how = "click where it goes"
 		if (hp.get("items", []) as Array).size() > 1:
@@ -5834,7 +5956,7 @@ func hand_hint() -> String:
 		var shp := "brush" if hand_shape == 0 else String(Build.SHAPES[hand_shape]).to_lower()
 		how = "%s, %s  ·  G shape  ·  V %s" % [shp, "back wall" if hand_back else "in front", "in front" if hand_back else "back wall"]
 		if hand_shape != 0:
-			how += "  ·  [ ] %d thick" % hand_thick
+			how += "  ·  [ ] %d thick  ·  right-drag cuts the same" % hand_thick
 	var lines := [head + "  ·  " + how]
 	var pt := String(build_prev.get("text", "")) if hand_live else ""
 	if pt != "":
@@ -5871,6 +5993,8 @@ func belt_has(id: String) -> bool:
 		return _furn_index(id.substr(2)) >= 0
 	if id.begins_with("s:"):
 		return int(items.get("st_" + id.substr(2), 0)) > 0
+	if id.begins_with("p:"):
+		return knows_plan(id.substr(2))
 	return false
 
 ## the belt's slots: [id, pinned] (id "" for an empty slot)
@@ -5938,6 +6062,8 @@ func hand_id() -> String:
 	if hand_item.is_empty():
 		return ("m%d" % mat) if mat > 0 else ""
 	match String(hand_item.get("what", "")):
+		"plan":
+			return "p:" + String(hand_item["id"])
 		"furn":
 			return "f:" + String(hand_item["name"])
 		"station":
@@ -5959,17 +6085,8 @@ func quick_list() -> Array:
 	var out := []
 	for id in hand_recent:
 		var sid := String(id)
-		if sid == hand_id():
-			continue
-		if sid.begins_with("m"):
-			if player.inv[int(sid.substr(1))] > 0:
-				out.append(sid)
-		elif sid.begins_with("f:"):
-			if _furn_index(sid.substr(2)) >= 0:
-				out.append(sid)
-		elif sid.begins_with("s:"):
-			if int(items.get("st_" + sid.substr(2), 0)) > 0:
-				out.append(sid)
+		if sid != hand_id() and belt_has(sid):
+			out.append(sid)
 	return out
 
 func _furn_index(fname: String) -> int:
@@ -5992,6 +6109,8 @@ func quick_take(id: String) -> void:
 		hold_carried("furn", _furn_index(id.substr(2)))
 	elif id.begins_with("s:"):
 		hold_carried("station", -1, id.substr(2))
+	elif id.begins_with("p:"):
+		hold_plan(id.substr(2))
 	_note_hand()
 
 func hand_bar_on() -> bool:
@@ -6004,6 +6123,20 @@ func _reach_len(m: Mage) -> float:
 func _hand_key(k: int) -> bool:
 	if build_on or not conjuring(player) or hand_name() == "":
 		return false
+	if not hand_item.is_empty() and String(hand_item["what"]) == "plan":
+		# (a plan: build mode's keys for its piece; R cycles Level the Ground's fill)
+		var hp0 := hand_piece()
+		if k == KEY_R and String(hp0.get("kind", "")) == "flatten":
+			var fills := [Defs.DIRT, Defs.STONE, Defs.SAND]
+			hand_fill = fills[(fills.find(hand_fill) + 1) % fills.size()]
+			ui.toast("Fill dips with %s" % Defs.NAMES[hand_fill], Color(0.95, 0.85, 0.55), 1.0)
+			return true
+		if k == KEY_Q or k == KEY_E or (k >= KEY_1 and k <= KEY_9):
+			return false
+		_hand_over = hp0
+		var used := _build_key(k)
+		_hand_over = {}
+		return used
 	var solid: bool = hand_item.is_empty() and mat > 0 and Defs.KIND[mat] == Defs.K_SOLID and mat != Defs.TORCH and mat != Defs.WOODDOOR
 	if k == KEY_G and solid:
 		hand_shape = (hand_shape + 1) % Build.SHAPES.size()
@@ -6451,6 +6584,8 @@ func _update_build(m: Mage) -> void:
 		ok = _struct.get("ok", false)
 		tree_in_way = _struct.get("tree", false)
 		build_prev = {"tex": _struct.get("tex"), "corner": _struct.get("corner", Vector2.ZERO), "ok": ok and not cost.is_empty(), "cells": []}
+		if not _hand_over.is_empty() and not (piece["cost"] as Dictionary).is_empty():
+			build_prev["text"] = "Takes " + Build.cost_text(piece["cost"]) + ("" if not cost.is_empty() else "  (not enough)")
 		place = {"structure": _struct}
 	elif kind == "stairs":
 		# its foot where you point, on the highest ground under its first step; it climbs away from you
@@ -6589,10 +6724,15 @@ func _update_build(m: Mage) -> void:
 	if not _hand_over.is_empty():
 		# (the hand: what's set down streams out of the satchel along the staff)
 		vfx.stream(m, place.get("pos", p), Color(1.0, 0.86, 0.5), 12)
-		if int(piece.get("carried", 1)) <= 1 and kind != "door":
+		if int(piece.get("carried", 1)) <= 1 and kind != "door" and String(piece.get("_id", "")) == "":
 			wisp_note("That was your last %s." % String(piece["name"]).to_lower())
+	# (a plan from your hand is raised by a spell, course by course from the ground up: `_raise`)
+	var by_spell: bool = not _hand_over.is_empty() and String(piece.get("_id", "")) != ""
 	if place.has("stamp"):
-		stamps.append(place["stamp"])
+		if by_spell:
+			_raise(place["stamp"], m, [], p)
+		else:
+			stamps.append(place["stamp"])
 		build_last_stamp = place["stamp"]
 	if place.has("torch"):
 		add_torch(place["torch"])
@@ -6622,9 +6762,15 @@ func _update_build(m: Mage) -> void:
 	if place.has("structure"):
 		var sbp = place["structure"]["bp"]
 		# (anchored near you, as it was planned and previewed: Build.cell_pos)
-		stamps.append({"x0": posmod(sbp.x0, Defs.NS), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c, "ax": Defs.anchor_c, "aw": 1})
+		var sst := {"x0": posmod(sbp.x0, Defs.NS), "y0": sbp.y0, "w": sbp.w, "h": sbp.h, "data": sbp.c, "ax": Defs.anchor_c, "aw": 1}
+		var sdoors := []
 		for dd in sbp.doors:
-			doors.append(_door_rec(sbp.x0 + int(dd[0]), sbp.y0 + int(dd[1]), int(dd[2]), int(dd[3]), int(dd[4]), Defs.anchor_c, 1))
+			sdoors.append(_door_rec(sbp.x0 + int(dd[0]), sbp.y0 + int(dd[1]), int(dd[2]), int(dd[3]), int(dd[4]), Defs.anchor_c, 1))
+		if by_spell:
+			_raise(sst, m, sdoors, p)
+		else:
+			stamps.append(sst)
+			doors.append_array(sdoors)
 		_struct_key = ""          # it's there now: work out the next one afresh
 	_fit_key = ""                 # (something's there now: work the fit out afresh)
 	audio.play("place", p, 0.9)
@@ -6636,6 +6782,72 @@ func _update_build(m: Mage) -> void:
 	elif place.has("door"):
 		psize = 30.0
 	vfx.place_flash(p, psize)
+
+## Raising by magic (user, 25 Nov: "can we have it be animated like the mage is casting a spell that is
+## erecting the structures with magic?"): what a plan builds goes in a band of rows at a time from the
+## bottom up (`RAISE_EVERY` ticks a band, about a second and a half for a house), every band on the anchor the
+## whole was planned on so they line up; a rune circle opens on the ground, matter streams from the staff to
+## each new course, which flares as it sets, and you hold the casting pose till it's done. Its doors hang
+## when the last course is in. Already paid for. [stamp, rows done, rows a band, mage, doors, world point]
+var raising := []
+const RAISE_EVERY := 3
+var stats_raised := 0                # (for the tests: whole things raised)
+
+func _raise(st: Dictionary, m, rdoors: Array, at: Vector2) -> void:
+	st["ax"] = int(st.get("ax", Defs.anchor_c))
+	st["aw"] = int(st.get("aw", 1))
+	var h: int = int(st["h"])
+	var steps := clampi(h / 2, 3, 28)
+	var per := maxi(1, int(ceil(float(h) / float(steps))))
+	raising.append({"st": st, "done": 0, "per": per, "m": m, "doors": rdoors, "at": at, "t": 0})
+	# the rune circle where it stands
+	var foot: Vector2 = Build.cell_pos(int(st["x0"]) + int(st["w"]) / 2, int(st["y0"]) + h - 1)
+	vfx.spawn(Vfx.RING, foot, Vector2.ZERO, 30, Color(0.75, 0.95, 1.0), Color(0.4, 0.6, 1.0, 0.0), 2.0, float(int(st["w"])) * 0.6, true)
+	vfx.conjure(foot, Color(0.7, 0.9, 1.0))
+	audio.play("blink", foot, 0.5)
+
+func _raise_tick() -> void:
+	var k := 0
+	while k < raising.size():
+		var rs: Dictionary = raising[k]
+		var m = rs["m"]
+		if m != null:
+			m.cast_frame = frame                 # (the casting pose, staff up, till it's done)
+		rs["t"] = int(rs["t"]) - 1
+		if int(rs["t"]) > 0:
+			k += 1
+			continue
+		rs["t"] = RAISE_EVERY
+		var st: Dictionary = rs["st"]
+		var w: int = int(st["w"])
+		var h: int = int(st["h"])
+		var done: int = int(rs["done"])
+		var nr: int = mini(int(rs["per"]), h - done)
+		var r0: int = h - done - nr                  # (from the bottom row up)
+		var data: PackedInt32Array = st["data"]
+		var band := {"x0": st["x0"], "y0": int(st["y0"]) + r0, "w": w, "h": nr, "data": data.slice(r0 * w, (r0 + nr) * w), "ax": st["ax"], "aw": st["aw"]}
+		stamps.append(band)
+		rs["done"] = done + nr
+		# the course flares as it sets, and matter streams to it from the staff
+		var mid: Vector2 = Build.cell_pos(int(st["x0"]) + w / 2, int(st["y0"]) + r0)
+		var right: Vector2 = basis_r(atan2(mid.y, mid.x))
+		for q in mini(6, maxi(2, w / 8)):
+			var px: Vector2 = mid + right * randf_range(-0.5, 0.5) * float(w)
+			vfx.spawn(Vfx.DOT, px, Vector2(randf() - 0.5, -randf()) * 0.5, 16 + randi() % 12, Color(0.85, 0.97, 1.0), Color(0.4, 0.6, 1.0, 0.0), 1.0, 0.4, true, 0.0)
+		if m != null and (int(rs["done"]) / maxi(1, nr)) % 2 == 0:
+			vfx.stream(m, mid, Color(0.75, 0.92, 1.0), 2)
+		vfx.light(mid, 26.0, Color(0.7, 0.9, 1.3), 8)
+		if (int(rs["done"]) / maxi(1, nr)) % 3 == 0:
+			audio.play("place", mid, 0.3, 1.0 + 0.4 * float(rs["done"]) / float(h))
+		if int(rs["done"]) >= h:
+			for rd in rs["doors"]:
+				doors.append(rd)
+			vfx.place_flash(mid, float(maxi(w, h)) * 0.5)
+			audio.play("place", mid, 0.9)
+			stats_raised += 1
+			raising.remove_at(k)
+			continue
+		k += 1
 
 ## what putting a piece up costs in mana: its cells (a stamp's written cells, a door's doorway, a
 ## structure's blueprint), a torch or a workshop as one
@@ -7252,6 +7464,11 @@ func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
 
 func _build_need(piece: Dictionary) -> void:
 	if not _hand_over.is_empty():
+		if String(piece.get("_id", "")) != "":
+			# (a plan isn't used up: say what raising it takes)
+			var pc: Dictionary = piece.get("cost", {})
+			wisp_note(("That %s needs %s." % [String(piece["name"]).to_lower(), Build.cost_text(pc)]) if not pc.is_empty() else "It won't stand there.")
+			return
 		wisp_note("You're out of %s." % String(piece["name"]).to_lower())
 		return
 	if _build_warn_t > frame:

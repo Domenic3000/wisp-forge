@@ -855,8 +855,79 @@ func _test_inworld() -> void:
 	g.hand_recent = recent0
 	ok["belt"] = still and has_sand and pinned_first and recent_in and e_sand and q_stone and unpinned and g.items.has("belt")
 	txt.append("belt %s; recent %s; E -> sand %s, Q Q -> stone %s (%s), slots kept %s, unpinned %s" % [str(bl.slice(0, 3)), str(ql), e_sand, q_stone, Defs.NAMES[g.mat], still, unpinned])
-	# ---- put back
+	# ---- plans: a Room raised from your hand course by course, a right-drag cutting a shape, B opening the plans
 	ws.list.erase(kiln)
+	var doors0: int = g.doors.size()
+	for pm in Defs.NM:
+		if Defs.KIND[pm] == Defs.K_SOLID:
+			m.inv[pm] += 600
+	m.mana = m.max_mana
+	_go(_cell_pos(cx + 22, top - 12))
+	await _frames(30)
+	var bw0 := [g.build_w, g.build_floors]
+	g.build_w = 40
+	g.build_floors = 1
+	var known_room: bool = g.knows_plan("room")
+	g.hold_plan("room")
+	var plan_piece: Dictionary = g.hand_piece()
+	var plan_hint: String = g.hand_hint()
+	g.test_aim = _cell_pos(cx + 62, top - 2)
+	await _frames(6)
+	var room_fit: bool = g.build_prev.get("ok", false)
+	var room_why: String = g.build_why + " " + String(g.build_prev.get("text", ""))
+	var raised0: int = g.stats_raised
+	g.build_click = true
+	await _frames(3)
+	var rising: bool = not g.raising.is_empty()
+	var posing: bool = g.frame - g.player.cast_frame < 14
+	var count_built := func() -> int:
+		var rr: Dictionary = g.gpu.read_rect(posmod(cx + 20, Defs.NS), top - 80, 80, 80)
+		var nb := 0
+		for v in rr["fg"]:
+			var t: int = int(v) & 255
+			if t != 0 and Defs.KIND[t] == Defs.K_SOLID:
+				nb += 1
+		return nb
+	await _frames(8)
+	var mid_n: int = count_built.call()
+	await _frames(140)
+	var end_n: int = count_built.call()
+	g.test_aim = Vector2.ZERO
+	var room_ok: bool = known_room and String(plan_piece.get("kind", "")) == "structure" and plan_hint.contains("plan") and room_fit and rising and posing and g.raising.is_empty() and g.stats_raised == raised0 + 1 and end_n > mid_n + 50
+	ok["plans"] = room_ok
+	txt.append("a room plan: known %s, fits %s (%s), rising %s, casting %s, %d cells a few ticks in, %d at the end, raised %d, doors %d -> %d" % [known_room, room_fit, room_why, rising, posing, mid_n, end_n, g.stats_raised - raised0, doors0, g.doors.size()])
+	await _frames(20)
+	_shot("plan_room.png")
+	# a right-drag with stone laid as a rectangle cuts a rectangle of the slab
+	g.select_material(Defs.STONE)
+	g.hand_shape = 2
+	g.hand_thick = 1
+	g.hand_back = false
+	var cut0: int = g.stats_cut
+	g.test_aim = _cell_pos(cx + 6, top)
+	g.test_dig = true
+	await _frames(3)
+	g.test_aim = _cell_pos(cx + 10, top + 1)
+	await _frames(3)
+	g.test_dig = false
+	await _frames(3)
+	g.test_aim = Vector2.ZERO
+	var cut_n: int = g.stats_cut - cut0
+	g.hand_shape = 0
+	ok["cut"] = cut_n >= 6
+	txt.append("a right-drag cut %d cells" % cut_n)
+	# B on the planet opens the satchel at its plans
+	var sat0: bool = g.ui.satchel_open
+	if sat0:
+		g.ui.toggle_satchel()
+	g.ui.open_plans()
+	var b_ok: bool = g.ui.satchel_open and not g.build_on
+	g.ui.toggle_satchel()
+	ok["b"] = b_ok
+	# ---- put back
+	g.doors.resize(doors0)
+	g.build_w = bw0[0]
+	g.build_floors = bw0[1]
 	while ws.list.size() > ws_n0:
 		ws.list.pop_back()
 	g.time = t0
@@ -871,9 +942,9 @@ func _test_inworld() -> void:
 	g.items = items0
 	g.learned[r_id] = true
 	var clr := PackedInt32Array()
-	clr.resize(SW * (SH + 30))
+	clr.resize(SW * (SH + 90))
 	clr.fill(0xFF00 | 0x40000)
-	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 30, "w": SW, "h": SH + 30, "data": clr})
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 90, "w": SW, "h": SH + 90, "data": clr})
 	_go(iw_back)
 	await _frames(30)
 	var all_ok := true
@@ -882,7 +953,7 @@ func _test_inworld() -> void:
 		if not ok[k]:
 			all_ok = false
 			bad.append(k)
-	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the item belt", all_ok,
+	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the item belt, plans raised by a spell, cutting by right-drag", all_ok,
 		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
 
 func _test_stairs() -> void:

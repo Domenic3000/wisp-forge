@@ -284,6 +284,32 @@ static func draught(id: String) -> ImageTexture:
 	return tex
 
 ## a material's icon, 9 x 9 (11 with its outline)
+## a plan's picture: a little blueprint with the thing drawn on it in white lines (Build.plans)
+const PLAN_ART := {
+	"house": ["BBBBBBBBB", "BbbbwbbbB", "BbbwbwbbB", "BbwbbbwbB", "BwwwwwwwB", "BbwbbbwbB", "BbwbwbwbB", "BbwwwwwbB", "BBBBBBBBB"],
+	"room": ["BBBBBBBBB", "BbbbbbbbB", "BwwwwwwwB", "BwbbbbbwB", "BwbbbbbwB", "BwbbwbbwB", "BwbbwbbwB", "BwwwwwwwB", "BBBBBBBBB"],
+	"roof": ["BBBBBBBBB", "BbbbbbbbB", "BbbbwbbbB", "BbbwbwbbB", "BbwbbbwbB", "BwbbbbbwB", "BwwwwwwwB", "BbbbbbbbB", "BBBBBBBBB"],
+	"stairs": ["BBBBBBBBB", "BbbbbbwwB", "BbbbbwwbB", "BbbbwwbbB", "BbbwwbbbB", "BbwwbbbbB", "BwwbbbbbB", "BwbwbwbwB", "BBBBBBBBB"],
+	"platform": ["BBBBBBBBB", "BbbbbbbbB", "BbbbbbbbB", "BwwwwwwwB", "BbwbbbwbB", "BbbbbbbbB", "BbbbbbbbB", "BbbbbbbbB", "BBBBBBBBB"],
+	"level": ["BBBBBBBBB", "BbbbwbbbB", "BbbwwwbbB", "BbbbwbbbB", "BwwwwwwwB", "BwbwbwbwB", "BwwwwwwwB", "BbbbbbbbB", "BBBBBBBBB"],
+}
+
+static func plan(id: String) -> ImageTexture:
+	var k := "pl_" + id
+	if _cache.has(k):
+		return _cache[k]
+	var art := id
+	if id.ends_with("stairs"):
+		art = "stairs"
+	var line := Color(0.9, 0.96, 1.0)
+	if id == "sstairs":
+		line = Color(0.8, 0.82, 0.86)
+	elif id == "bstairs":
+		line = Color(0.95, 0.66, 0.55)
+	var tex := _outlined(_art(PLAN_ART.get(art, PLAN_ART["room"]), {"B": Color(0.15, 0.27, 0.5), "b": Color(0.22, 0.4, 0.7), "w": line}))
+	_cache[k] = tex
+	return tex
+
 ## (user, 25 Nov: locked pages of the recipe book "as smudged sketches"): an icon redrawn as an ink sketch on
 ## a page: sepia strokes by its shading, a few gaps where the ink didn't take, and a faint smudge beside each
 ## stroke. Cached by the icon.

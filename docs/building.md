@@ -166,3 +166,30 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - The summoned forge, the grimoire, workshops that show their work, the gem: see crafting.md and ui.md.
 - Test: `_test_inworld` ("inworld"; in the full run after `_test_hand`; pictures `forge.png`, `tray.png`).
 
+## Plans: build mode folded into the hand (user, 25 Nov: build mode "still exists for removing flattening, structures and so on. how can we make this feel like it part of the same system"; agreed to plans in the satchel, right-click taking away the way the hand is set, B gone on the planet; then "how would we aquire the plans? also can we have it be animated like the mage is casting a spell that is erecting the structures with magic?")
+- PLANS (`Build.plans()`: [id, name, the build piece, what it is, how it's learned]): room, roof, house, wooden /
+  stone / brick stairs, platform, level (Level the Ground = the "Flatten with Dirt" piece, R the fill). They're
+  recipes (`Build.plan_recipes()`: id "plan_<id>", cat "Plans", "plan", cost {}, "learn") in `main.recipes`, so the
+  book, `learn()` and its flying page, shops (`shop_recipes`: "shop" keepers sell Roof and House), chest scrolls
+  (`_chest_recipe`) and "taught as thanks" all work for them; `Defs.learn_of` reads a recipe's own "learn". Known
+  from the start: room, wooden stairs, platform, level; stone stairs from the first Stone Blocks (masonry), brick
+  stairs from the first bricks. Never forged: the forge shows a known plan as `_plan_card` (Hold it), an unknown
+  one as a book page; icons `Icons.plan(id)` (blueprints).
+- THE HAND: `hold_plan(id)` (`knows_plan`) puts {"what": "plan", "id"} in the hand (from the satchel's Plans,
+  the belt, "p:<id>"); `hand_piece` gives `Build.plan_piece` (a copy, `_plan_cache`, with "_id"), so
+  `_update_build` places it as build mode did; `_hand_key` runs `_build_key` on it ([ ], - =, T, R) and R cycles
+  `hand_fill` for Level the Ground. `_build_need` says what a plan takes; the hand bar shows a structure's cost.
+- RAISED BY A SPELL: a plan's stamp (stairs, platform) or structure goes to `_raise(stamp, m, doors, at)`, not
+  straight in: `_raise_tick` (from `_tick`) stamps a band of rows every `RAISE_EVERY` (3) ticks from the bottom
+  row up (at most 28 bands), every band with the anchor (`ax`/`aw`) pinned when it was cast so they line up;
+  the mage holds the casting pose (`cast_frame`), a rune ring opens at its foot, each course flares with sparks
+  and light as matter streams to it from the staff, and its doors hang when the last course is in
+  (`stats_raised`). Paid for when cast. Build mode (tests, the pocket) still stamps at once.
+- TAKING AWAY: `_hand_cut(m, hp)` (from `_hand_update`): with a solid in hand laid as a line, rectangle or
+  frame, a right-drag cuts that shape (`remove_cells`, layer "front", or "back" when the hand lays back walls);
+  a left click cancels; the dig input is held off meanwhile (`stats_cut`). With the brush, right-click digs.
+- B on the planet calls `ui.open_plans()` (the satchel open, a word on where building went); in the pocket, or
+  with build mode already on, it toggles build mode; aboard a parked ship it's the ship builder. Build mode and
+  its code stay (the tests and the pocket use it).
+- Test: in `_test_inworld`: a Room plan raised (rising, the casting pose, cells growing over the ticks, its
+  doors), a right-drag cut, B opening the plans; picture `plan_room.png`.

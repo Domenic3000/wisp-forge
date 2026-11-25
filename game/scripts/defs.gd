@@ -1141,6 +1141,8 @@ func learn_of(r: Dictionary) -> Dictionary:
 	var id := String(r["id"])
 	if LEARN.has(id):
 		return LEARN[id]
+	if r.has("learn"):
+		return r["learn"]                 # (a plan's own: Build.plans)
 	if r.has("gear"):
 		var ores: Array = r["ores"]
 		if ores.size() > 1:

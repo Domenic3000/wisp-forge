@@ -238,6 +238,45 @@ static func furniture_recipes() -> Array:
 				"desc": "Goes into your satchel: click it there (I) to set it down. Each one forged has a design of its own."})
 	return out
 
+## Plans (user, 25 Nov: everything you build is in your hand; "how would we aquire the plans?"): the
+## structures, stairs, the platform and levelling the ground, as recipes you learn (the book, shops, chest
+## scrolls and "taught as thanks" all work for them) but never forge: a plan known is in your satchel's Plans,
+## never used up; in your hand Conjure raises it from your materials (main `hold_plan`). [id, name, the build
+## piece it is, what it is, how it's learned]
+static func plans() -> Array:
+	return [
+		["room", "Room", "Room", "Walls, floors and a door: live in it, build onto it, or put a roof on it later. [ ] wider, - = storeys, T its style.", {"start": true}],
+		["roof", "Roof", "Roof", "A roof to put on a room: point at the room's top.", {"shop": "shop", "price": 45, "scroll": 1}],
+		["house", "House", "House", "A whole house of rooms under its roof. [ ] wider, - = storeys, T its style.", {"shop": "shop", "price": 90, "scroll": 2}],
+		["wstairs", "Wooden Stairs", "Wooden Stairs", "A flight of plank steps on posts, a storey high. [ ] a step higher or lower, - = a storey, T turns it.", {"start": true}],
+		["sstairs", "Stone Stairs", "Stone Stairs", "A flight of stone-block steps on posts. [ ] a step higher or lower, - = a storey, T turns it.", {"find": [Defs.MASONRY]}],
+		["bstairs", "Brick Stairs", "Brick Stairs", "A flight of brick steps on posts. [ ] a step higher or lower, - = a storey, T turns it.", {"find": [Defs.BRICK]}],
+		["platform", "Platform", "Platform", "A strip of scaffold: jump up through it, stand on it, drop through.", {"start": true}],
+		["level", "Level the Ground", "Flatten with Dirt", "Press where the ground should be, drag along, let go: what's above goes, dips are filled. R: fill with dirt, stone or sand.", {"start": true}],
+	]
+
+static func plan_recipes() -> Array:
+	var out := []
+	for pl in plans():
+		out.append({"id": "plan_" + String(pl[0]), "cat": "Plans", "name": String(pl[1]), "cost": {}, "plan": String(pl[0]),
+			"desc": String(pl[3]), "learn": pl[4]})
+	return out
+
+## the build piece a plan raises (a copy: the hand sets its own fill and keys on it)
+static func plan_piece(id: String, all: Array) -> Dictionary:
+	for pl in plans():
+		if String(pl[0]) == id:
+			for pc in all:
+				if String(pc["name"]) == String(pl[2]):
+					return (pc as Dictionary).duplicate()
+	return {}
+
+static func plan_name(id: String) -> String:
+	for pl in plans():
+		if String(pl[0]) == id:
+			return String(pl[1])
+	return id
+
 ## the workshops, forged at the Wisp Forge into the satchel (items "st_<kind>"), then set down from it
 static func workshop_recipes() -> Array:
 	var out := []

@@ -44,7 +44,7 @@ one. Every journey grows a new star system of its own.
 | L | The journal (the main quest) |
 | M | The map: the planet, then Tab for the galaxy. Click to set a waypoint, right-click or Backspace clears it |
 | N | Show or hide the minimap |
-| B | Build mode (see below) |
+| B | The satchel's Plans (see below) |
 | Esc | Settings and pause; "Save and return to title" |
 | F11 or Alt + Enter | Fullscreen |
 | F3 | Frame time and where it goes |
@@ -60,27 +60,23 @@ one. Every journey grows a new star system of its own.
 Click anything in the satchel (I) to take it in your hand: the cast button becomes Conjure, which places it
 where you point, within your staff's reach. Sand, water and other loose stuff pours from the staff; blocks are
 painted with the brush or laid in shapes; furniture, workshops, torches and doors show where they'll go first.
+**Plans** (the satchel's Plans; B opens it) are rooms, houses, roofs, stairs, platforms and Level the Ground:
+take one in your hand and Conjure raises it from your materials, course by course, as you cast. A plan is
+never used up. You start with a few; others come from your first stone blocks or bricks, village shopkeepers
+and scrolls in chests.
 
 | Key | Does |
 |---|---|
 | Left mouse | Place (for a line, rectangle or frame: press, drag and let go) |
-| G | How blocks are laid: brush, line, rectangle, frame |
-| [ ] | Thickness of a line or frame |
+| Right mouse | Dig; with blocks laid as a line, rectangle or frame, press, drag and let go to cut that shape (only blocks, or only back walls with V) |
+| Shift + right mouse | Take furniture, a torch or a workshop whole |
+| G | How blocks are laid (and cut): brush, line, rectangle, frame |
+| [ ] | Thickness of a line or frame; a structure's width; a staircase's step |
+| - / = | A structure's storeys; a staircase's height |
 | V | Blocks in front, or as a back wall (planks, logs, stone, brick, sandstone, glass) |
-| R | The next design, for a stack of furniture of one name |
-| T | Mirror a piece |
-
-**Build mode (B)**: for what isn't carried: houses, rooms and roofs, stairs and doors, and Remove.
-
-| Key | Does |
-|---|---|
-| Q / E | Category (remove, doors and stairs, structures) |
-| Mouse wheel / 1–9 | Piece |
-| Left mouse | Place, or press, drag and let go to remove or flatten |
-| G | Remove's shape: line, rectangle, frame |
-| [ ] | Thickness, a structure's width, a staircase's height |
-| - / = | Storeys |
-| R / T | A structure's variation / style; T turns a staircase |
+| R | The next design (furniture in a stack, a structure's variation, Level the Ground's fill) |
+| T | Mirror a piece; a structure's style |
+| B | Open the satchel at its Plans (aboard a parked ship: the ship builder) |
 
 **The skiff and space**
 
