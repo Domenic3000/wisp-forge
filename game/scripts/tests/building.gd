@@ -460,7 +460,7 @@ func _test_harvest() -> void:
 		await _frames(20)
 		var ec2: Vector2i = Build.cell_of(e.pos)
 		var pit_top := fl - 2
-		var pit_h := (top + 13) - pit_top
+		var pit_h := maxi(top + 13, ec2.y + 2) - pit_top     # (down past the worm, wherever it dug back in)
 		var pit := PackedInt32Array()
 		pit.resize(12 * pit_h)
 		pit.fill(0xFF00)
