@@ -112,3 +112,38 @@ Notes for development sessions on this part of the game. The rules that apply ev
   handle are a torch's (`Build.is_torch_stump`, by palette colour) gives a Torch even with its flame partly
   or wholly gone, and a stump carried from before turns back into a torch on load.
 - Test: `_test_harvest` ("harvest"; in the full run after `_test_remove`).
+
+## The hand: one way to place what you carry (user, 25 Nov: "currently the conjure spell and the build menu sort of do the same things. when i select something from the inventory i want a unified system somehow? i do like being able to conjur water and sand"; agreed: Conjure places whatever is in your hand, build mode keeps what isn't carried)
+- main "the hand": whatever you click in the satchel goes in your hand (`select_material(m)` for a material,
+  `hold_carried(what, idx, sk)` for furniture, workshops, torches and doors) and `_to_conjure` picks Conjure.
+  `hand_item` ({"what": "furn", "name"} / {"what": "station", "sk"}; {} = the material `mat`), `hand_back` (V),
+  `hand_shape` (G: 0 the brush, then Build.SHAPES), `hand_thick` ([ ]). `hand_piece(body)` is the piece the
+  building code places, or {} when Conjure's own brush does it: sand, water and other loose stuff, and a solid
+  painted with the brush in front. A solid as back wall (only `hand_walls`: planks, logs, stone, brick,
+  sandstone, glass) is a "wall" piece (brush mode 10, or a shape); in a shape a "block"; a torch the Satchel
+  tab's torch piece; a door the Wooden Door piece; a carried stack its `Build.carried_pieces` entry (R the next
+  design, `carried_pick`); a workshop its station piece.
+- `_hand_update(m)` (from the tick, before casting) runs `_update_build(m)` with `_hand_over` as the piece
+  (`build_piece()` returns it), so the ghost, fitting, sliding along the floor, paying and setting down are
+  build mode's. `hand_live` (set each tick) makes left clicks build clicks (never over the UI: a click on the
+  satchel only picks). The pieces carry their own "shape" and "thick" (`_update_shape`, `_update_build`'s wall
+  branch). Only within the staff's reach (`_reach_len`): shapes are clamped to it, and a click on a piece
+  beyond it sets nothing down and the wisp says so. In the pocket, pocket.gd's tick calls `hand_body(m, isle)`
+  (`_cabin_edit` with the piece: a solid is always a block there; loose stuff, workshops, torches and doors
+  can't go in, the wisp says why); `cabin_cast` takes the cast button there.
+- Keys (`_hand_key`, while Conjure is held with something in hand, not in build mode): G, [ ], V for solids;
+  R a stack's next design (R doesn't mend then); T mirrors a piece. ui.gd's hand bar (`hand_bar` over the spell
+  bar, `_update_hand_bar` from main `hand_hint()`) says what's held and how it goes down, with a shape's cost.
+- Build mode's `CAT_ORDER` is [Remove, Doors & Stairs, Structures]: Back Walls, Blocks and the Satchel tab are
+  gone (their pieces and code stay: the cabin and tests use them); toggling build mode on leaves a removed tab.
+- It looks like magic (user, 25 Nov, "inside the world"): the hand's ghost is drawn in the staff's mana-blue
+  light with a faint line of light from the staff tip (overlay `_draw_build_preview`); matter streams out of the
+  satchel along the staff to where it goes (`vfx.stream(m, to, col, n)`, from `_conjure`, the wall brush,
+  `_update_shape` and `_update_build` as a piece goes down); what's held floats at your shoulder as a little
+  block of its colours (overlay `_draw_hand`). Reminders come from the wisp (`wisp_note(text)`: out of
+  something, out of reach, too little for a shape, the last of a stack; the same words wait 5 s; overlay draws
+  them in the wisp's bubble, over you in the pocket). Dug matter pops up where it was dug (`_pick_acc` from
+  `_apply_counts`, flushed every 24 ticks by `_pick_flush` into `popups` [world point, "+3 Sand", colour,
+  ticks]; overlay `_draw_popups`, rising and fading over `POPUP_TICKS`).
+- Test: `_test_hand` ("hand"; in the full run after `_test_harvest`; pictures `hand_line.png`, `hand_ghost.png`).
+

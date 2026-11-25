@@ -502,6 +502,205 @@ func _test_harvest() -> void:
 	_ok("harvest fixes: no sliding in the wind standing still, a torch taken whole by any part, carried pieces stack, a dug-out burrower comes out", all_ok,
 		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
 
+## The hand (user, 25 Nov: "currently the conjure spell and the build menu sort of do the same things. when
+## i select something from the inventory i want a unified system"): what's picked in the satchel goes in your
+## hand and Conjure places it: planks painted by the brush and laid in a line, raised as a back wall, sand
+## poured, a chair and a kiln set down, a torch; out of reach and out of stock the wisp says so; what's dug
+## pops up where it was dug. On a natural slab in the air, taken away after.
+func _test_hand() -> void:
+	var hd_back: Vector2 = g.player.pos
+	var m = g.player
+	var sel0: int = g.sel
+	var mat0: int = g.mat
+	var ha := atan2(m.pos.y, m.pos.x) + 0.2
+	var hup := Vector2(cos(ha), sin(ha))
+	var c0: Vector2i = Build.cell_of(hup * (g.gpu.surf_at(ha).x + 150.0))
+	var cx: int = c0.x
+	var top: int = c0.y
+	var fl := top - 1
+	var SW := 120
+	var SH := 22
+	var sd := PackedInt32Array()
+	sd.resize(SW * SH)
+	sd.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top, "w": SW, "h": SH, "data": sd})
+	await _frames(4)
+	_go(_cell_pos(cx + 60, fl - 12))
+	await _frames(40)
+	var ok := {}
+	var txt := []
+	var count := func(mt: int, back: bool, c_from: int, w: int) -> int:
+		var rr: Dictionary = g.gpu.read_rect(posmod(cx + c_from, Defs.NS), fl - 30, w, 31)
+		var nn := 0
+		for v in rr["bg" if back else "fg"]:
+			if (int(v) & 255) == mt:
+				nn += 1
+		return nn
+	g.hand_item = {}
+	g.hand_back = false
+	g.hand_shape = 0
+	g.hand_thick = 1
+	# ---- planks painted by Conjure's own brush, in front
+	m.inv[Defs.PLANK] = 300
+	g.select_material(Defs.PLANK)
+	var brush_none: bool = g.hand_piece().is_empty() and g.conjuring(m) and g.hand_bar_on()
+	var pl0: int = count.call(Defs.PLANK, false, 30, 60)
+	g.test_aim = _cell_pos(cx + 50, fl - 1)        # (resting on the slab: its bottom row on the open row over it)
+	g.test_cast = true
+	await _frames(20)
+	g.test_cast = false
+	await _frames(20)
+	var pl1: int = count.call(Defs.PLANK, false, 30, 60)
+	ok["brush"] = brush_none and pl1 > pl0 + 5
+	txt.append("planks by the brush: %d -> %d (hand bar %s)" % [pl0, pl1, g.hand_bar_on()])
+	# ---- G: a line, laid by pressing, dragging and letting go
+	var g_used: bool = g._hand_key(KEY_G)
+	var line_piece: Dictionary = g.hand_piece()
+	g.test_aim = _cell_pos(cx + 66, fl)
+	await _frames(2)
+	g.build_click = true
+	g.test_cast = true
+	await _frames(3)
+	g.test_aim = _cell_pos(cx + 86, fl)
+	await _frames(6)
+	_shot("hand_line.png")
+	g.test_cast = false
+	await _frames(20)
+	var pl2: int = count.call(Defs.PLANK, false, 30, 60)
+	ok["line"] = g_used and String(line_piece.get("kind", "")) == "block" and pl2 >= pl1 + 15
+	txt.append("G: %s, laid as %s; a line 20 across: planks %d -> %d" % [g_used, String(Build.SHAPES[g.hand_shape]), pl1, pl2])
+	g.hand_shape = 0
+	# ---- V: a back wall of masonry (sand can't be one)
+	m.inv[Defs.MASONRY] = 200
+	g.select_material(Defs.MASONRY)
+	var v_used: bool = g._hand_key(KEY_V)
+	var wall_piece: Dictionary = g.hand_piece()
+	var mw0: int = count.call(Defs.MASONRY, true, 30, 60)
+	g.test_aim = _cell_pos(cx + 40, fl - 2)
+	await _frames(2)
+	g.test_cast = true
+	await _frames(20)
+	g.test_cast = false
+	await _frames(20)
+	var mw1: int = count.call(Defs.MASONRY, true, 30, 60)
+	g.hand_back = false
+	m.inv[Defs.SAND] = 100
+	g.select_material(Defs.SAND)
+	var v_sand: bool = g._hand_key(KEY_V)
+	ok["back"] = v_used and String(wall_piece.get("kind", "")) == "wall" and mw1 > mw0 + 5 and not v_sand and not g.hand_back
+	txt.append("V: %s, %s; back wall cells %d -> %d; sand can't be a back wall %s" % [v_used, String(wall_piece.get("name", "-")), mw0, mw1, not v_sand])
+	# ---- sand poured where you point
+	var sa0: int = count.call(Defs.SAND, false, 0, 120)
+	g.test_aim = _cell_pos(cx + 20, fl - 8)
+	g.test_cast = true
+	await _frames(15)
+	g.test_cast = false
+	await _frames(30)
+	var sa1: int = count.call(Defs.SAND, false, 0, 120)
+	ok["pour"] = g.hand_piece().is_empty() and sa1 > sa0 + 5
+	txt.append("sand poured: %d -> %d" % [sa0, sa1])
+	# ---- a chair from the satchel, set down where you point (a ghost first)
+	var chair: Dictionary = Build.carried_item("Chair", Build.design({"prop": "chair"}, 5), "chair")
+	m.furn.append(chair)
+	var nf0: int = m.furn.size()
+	g.hold_carried("furn", nf0 - 1)
+	var ch_piece: Dictionary = g.hand_piece()
+	g.test_aim = _cell_pos(cx + 95, fl - 3)
+	await _frames(6)
+	var ghost: bool = g.hand_live and not (g.build_prev.get("cells", []) as Array).is_empty()
+	_shot("hand_ghost.png")
+	g.build_click = true
+	await _frames(20)
+	var ch_set: bool = m.furn.size() == nf0 - 1
+	ok["chair"] = String(ch_piece.get("kind", "")) == "carried" and ghost and ch_set and g.conjuring(m)
+	txt.append("a chair in hand: %s, its ghost %s, set down %s" % [String(ch_piece.get("name", "-")), ghost, ch_set])
+	# ---- a kiln taken from the satchel
+	var k0 := int(g.items.get("st_kiln", 0))
+	g.items["st_kiln"] = k0 + 1
+	var nst0: int = g.workshops.list.size()
+	g.hold_carried("station", -1, "kiln")
+	g.test_aim = _cell_pos(cx + 75, fl - 6)
+	await _frames(6)
+	g.build_click = true
+	await _frames(20)
+	var kiln_set: bool = g.workshops.list.size() == nst0 + 1 and int(g.items.get("st_kiln", 0)) == k0
+	ok["kiln"] = kiln_set and g.hand_item.is_empty()
+	txt.append("a kiln set down %s (the hand empty after: %s)" % [kiln_set, g.hand_item.is_empty()])
+	for st in g.workshops.list.duplicate():
+		if (st.pos as Vector2).distance_to(_cell_pos(cx + 75, fl - 6)) < 30.0:
+			g.workshops.list.erase(st)
+	if k0 == 0:
+		g.items.erase("st_kiln")
+	else:
+		g.items["st_kiln"] = k0
+	# ---- a torch
+	m.inv[Defs.TORCH] = 2
+	g.select_material(Defs.TORCH)
+	var nt0: int = (g.planet_state.get("torches", []) as Array).size()
+	g.test_aim = _cell_pos(cx + 10, fl - 4)
+	await _frames(6)
+	g.build_click = true
+	await _frames(15)
+	var nt1: int = (g.planet_state.get("torches", []) as Array).size()
+	ok["torch"] = String(g.hand_piece().get("kind", "torch")) == "torch" and nt1 == nt0 + 1 and m.inv[Defs.TORCH] == 1
+	txt.append("a torch: torches %d -> %d, left %d" % [nt0, nt1, m.inv[Defs.TORCH]])
+	# ---- out of reach, and out of stock: the wisp says so
+	m.furn.append(Build.carried_item("Chair", Build.design({"prop": "chair"}, 6), "chair"))
+	g.hold_carried("furn", m.furn.size() - 1)
+	g._wisp_said = {}
+	g.test_aim = m.pos + hup.rotated(PI / 2.0) * 150.0
+	await _frames(3)
+	g.build_click = true
+	await _frames(3)
+	var far_said: bool = g.wisp_say.find("reach") >= 0
+	var far_kept: bool = not m.furn.is_empty() and String(m.furn[m.furn.size() - 1]["name"]) == "Chair"
+	if far_kept:
+		m.furn.pop_back()
+	g.hand_item = {}
+	m.inv[Defs.BRICK] = 0
+	g.select_material(Defs.BRICK)
+	g.test_aim = _cell_pos(cx + 50, fl - 3)
+	g.test_cast = true
+	await _frames(4)
+	g.test_cast = false
+	var out_said: bool = g.wisp_say.find("out of") >= 0
+	ok["wisp"] = far_said and far_kept and out_said
+	txt.append("the wisp: out of reach %s (nothing set down %s), out of brick %s ('%s')" % [far_said, far_kept, out_said, g.wisp_say])
+	# ---- dug matter pops up where it was dug
+	g.popups.clear()
+	g.test_aim = _cell_pos(cx + 50, top + 2)
+	g.test_dig = true
+	await _frames(40)
+	g.test_dig = false
+	await _frames(30)
+	var popped := false
+	for pu in g.popups:
+		if String(pu[1]).begins_with("+"):
+			popped = true
+	ok["popups"] = popped
+	txt.append("popups after digging: %d %s" % [g.popups.size(), str(g.popups.map(func(p): return p[1]).slice(0, 3))])
+	g.test_aim = Vector2.ZERO
+	g.hand_item = {}
+	g.hand_back = false
+	g.hand_shape = 0
+	g.sel = sel0
+	g.mat = mat0
+	# take the slab and what's on it away again
+	var clr := PackedInt32Array()
+	clr.resize(SW * (SH + 40))
+	clr.fill(0xFF00 | 0x40000)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 40, "w": SW, "h": SH + 40, "data": clr})
+	_go(hd_back)
+	await _frames(30)
+	var all_ok := true
+	var bad := []
+	for k in ok:
+		if not ok[k]:
+			all_ok = false
+			bad.append(k)
+	_ok("the hand: what's picked in the satchel, Conjure places (brush, line, back wall, poured, furniture, a workshop, a torch), the wisp's notes, pickups pop up", all_ok,
+		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
+
 func _test_stairs() -> void:
 	var sr_back: Vector2 = g.player.pos
 	g.player.inv[Defs.PLANK] += 400
@@ -831,11 +1030,14 @@ func _test_workshops() -> void:
 	# it's in the satchel with the furniture, and a click there puts it in your hand (user, 23 Nov)
 	var wk_listed := false
 	var wk_was_build: bool = g.build_on
+	var wk_sel0: int = g.sel
 	g.hold_carried("station", -1, "kiln")
-	var wk_pc: Dictionary = g.build_piece()
-	wk_listed = g.build_on and g.build_cat == 5 and String(wk_pc.get("kind", "")) == "station" and String(wk_pc.get("station", "")) == "kiln"
-	if g.build_on and not wk_was_build:
+	var wk_pc: Dictionary = g.hand_piece()
+	wk_listed = not g.build_on and g.conjuring(g.player) and String(wk_pc.get("kind", "")) == "station" and String(wk_pc.get("station", "")) == "kiln"
+	if wk_was_build and not g.build_on:
 		g._toggle_build()
+	g.hand_item = {}
+	g.sel = wk_sel0
 	wk_rows.append("%sthe kiln taken up is in the satchel and goes in your hand from it: %s" % ["" if wk_listed else "(!) ", wk_listed])
 	wk_ok = wk_ok and wk_listed
 	var wk_h0 := 0
@@ -895,9 +1097,12 @@ func _test_crafting() -> void:
 		g.player.inv[int(c)] += int(r_kiln["cost"][c])
 	var made_k: int = g.craft_many(r_kiln, 1)
 	var in_sat := int(g.items.get("st_kiln", 0)) == k0 + 1
+	var cr_sel0: int = g.sel
 	g.hold_carried("station", -1, "kiln")
-	var held: Dictionary = g.build_piece()
-	var ok1: bool = made_k == 1 and in_sat and g.build_cat == Bd.CAT_SATCHEL and String(held.get("station", "")) == "kiln"
+	var held: Dictionary = g.hand_piece()
+	g.hand_item = {}
+	g.sel = cr_sel0
+	var ok1: bool = made_k == 1 and in_sat and g.conjuring(g.player) and String(held.get("station", "")) == "kiln"
 	rows.append("%sa Kiln forged into the satchel %s, in hand to set down %s" % ["" if ok1 else "(!) ", in_sat, String(held.get("name", "-"))])
 	ok = ok and ok1
 	if g.build_on:

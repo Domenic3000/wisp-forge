@@ -86,6 +86,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_harvest()
+		elif only == "hand":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_hand()
 		elif only == "backdrop":
 			await _test_backdrop()
 		elif only == "indoors":
@@ -1460,6 +1464,7 @@ func run() -> void:
 	await _test_indoors()
 	await _test_remove()
 	await _test_harvest()
+	await _test_hand()
 	await _test_spawns()
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----

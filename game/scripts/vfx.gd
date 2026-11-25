@@ -470,6 +470,28 @@ func conjure(p: Vector2, mc: Color) -> void:
 		spawn(RUNE, p, Vector2.ZERO, 14, SHAPE_COL * Color(1, 1, 1, 0.5), clear, 3.5, 4.5, true, 0.0, 1.0, 0.1)
 		light(p, 10.0, SHAPE_COL * 0.6, 6)
 
+## the hand placing (user, 25 Nov: "matter streams out of the satchel" as you conjure): motes of what's set
+## down run from the mage's satchel along the staff to where it goes. `n` motes (1 a tick for a brush,
+## a dozen for a piece set down at once).
+func stream(m, to: Vector2, mc: Color, n: int) -> void:
+	if not _showing():
+		return
+	if n <= 1 and _t % 2 != 0:
+		return
+	var tip: Vector2 = game._staff(m, to)[0]
+	var bag: Vector2 = m.pos + (tip - m.pos) * 0.25
+	var clear := Color(mc.r, mc.g, mc.b, 0.0)
+	for k in maxi(n, 1):
+		var from := bag if randf() < 0.5 else tip
+		var aim := to + _rand_dir() * randf() * 3.0 - from
+		var dl := aim.length()
+		if dl < 1.0:
+			continue
+		var sp := minf(3.2, maxf(1.4, dl * 0.08)) * randf_range(0.85, 1.15)
+		spawn(DOT, from + _rand_dir() * 0.8, aim / dl * sp, int(dl / sp) + 1, mc.lightened(0.35), clear, 1.0, 1.0, true, 0.0, 1.0)
+	if n > 1:
+		light(to, 14.0, mc * 0.5, 8)
+
 ## cells taken away (`place` false: mana-blue sparks rising out of them) or put in place (`place` true:
 ## gold motes gathering into them), with a circle of runes over the middle and a light
 func shape_burst(cells: Array, place: bool) -> void:

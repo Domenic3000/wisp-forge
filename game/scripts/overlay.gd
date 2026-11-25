@@ -37,20 +37,99 @@ func _ready() -> void:
 	_make_tex("bat_hang", bh)
 	tex["door_open_30"] = ImageTexture.create_from_image(_door_open_image(30))
 
+## What's in your hand, floating at your shoulder while Conjure is held (user, 25 Nov): a little block of the
+## material (or of the piece's colour), bobbing, with a faint glow.
+func _draw_hand() -> void:
+	var m = game.player
+	if game.build_on or m.dead or m.aboard != null or not game.conjuring(m) or game.hand_name() == "":
+		return
+	var z: float = game.zoom
+	var up: Vector2 = -(game.basis_d(game.view_angle()) if game.pocket.active else _down_at(m.pos))
+	var side: Vector2 = Vector2(-up.y, up.x) * float(-m.facing)
+	var bob := sin(float(game.frame) * 0.07) * 1.0
+	var at: Vector2 = m.pos + up * (12.0 + bob) + side * 6.0
+	var sp: Vector2 = game.world_to_screen(at)
+	var cols := []
+	if game.hand_item.is_empty():
+		var mt: int = game.mat
+		for k in 3:
+			cols.append(Color.hex((Defs.PAL[mt * 4 + k] << 8) | 0xff))
+	else:
+		var base := Color(0.85, 0.62, 0.38) if String(game.hand_item["what"]) == "station" else Color(0.72, 0.5, 0.3)
+		cols = [base.lightened(0.25), base, base.darkened(0.3)]
+	var c := 1.0 / z
+	var o := (sp - Vector2(1.5, 1.5) * c).floor()
+	var glow := HAND_COL
+	glow.a = 0.18 + 0.08 * sin(float(game.frame) * 0.1)
+	draw_rect(Rect2(o - Vector2(2, 2) * c, Vector2(7, 7) * c), glow)
+	draw_rect(Rect2(o - Vector2.ONE * c, Vector2(5, 5) * c), Color(0.06, 0.05, 0.1, 0.9))
+	for j in 3:
+		for i in 3:
+			var shade: int = 0 if j == 0 else (1 if i < 2 and j == 1 else 2)
+			draw_rect(Rect2(o + Vector2(i, j) * c, Vector2.ONE * c), cols[shade])
+
+## "+3 Sand" rising from where it was dug, fading (main `popups`)
+func _draw_popups() -> void:
+	if game.popups.is_empty():
+		return
+	var f: Font = PixelFont.make()
+	var px: float = float(game.scale_px)
+	var u: int = game.ui.U
+	var fs := PixelFont.SIZE * u
+	for pu in game.popups:
+		var t := int(pu[3])
+		var age := float(70 - t)                 # (main POPUP_TICKS)
+		var wp: Vector2 = pu[0]
+		var sp: Vector2 = game.world_to_screen(wp + wp.normalized() * age * 0.12)
+		var col: Color = pu[2]
+		col = col.lightened(0.25)
+		col.a = clampf(float(t) / 20.0, 0.0, 1.0) * clampf(age / 6.0, 0.0, 1.0)
+		var txt: String = pu[1]
+		var sz := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+		draw_set_transform(sp.round(), 0.0, Vector2.ONE / px)
+		var at := Vector2(-roundf(sz.x * 0.5 / u) * u, 0.0)
+		for o2 in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
+			draw_string(f, at + o2 * u, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.06, 0.04, 0.08, col.a * 0.85))
+		draw_string(f, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+const HAND_COL := Color(0.45, 0.85, 1.0)   # (vfx MANA_COL: the hand's ghost is drawn in the staff's light)
+
 func _draw_build_preview() -> void:
-	if not game.build_on or game.build_prev.is_empty():
+	if (not game.build_on and not game.hand_live) or game.build_prev.is_empty():
 		return
 	var pv: Dictionary = game.build_prev
 	var ok: bool = pv.get("ok", false)
 	var z: float = game.zoom
+	var hand: bool = not game.build_on
 	var pulse := 0.55 + 0.2 * sin(float(game.frame) * 0.15)
+	var mid := Vector2.ZERO
+	var nmid := 0
 	for c in pv.get("cells", []):
 		var sp: Vector2 = game.world_to_screen(c[0])
 		var col: Color = c[1]
 		if not ok:
 			col = col.lerp(Color(1, 0.2, 0.15), 0.6)
-		col.a = pulse
+		elif hand:
+			col = col.lightened(0.15).lerp(HAND_COL, 0.25)
+		col.a = minf(1.0, pulse + (0.15 if hand else 0.0))
 		draw_rect(Rect2(sp - Vector2(0.5, 0.5) / z, Vector2.ONE / z), col)
+		if nmid < 400:
+			mid += c[0]
+			nmid += 1
+	if hand and game.player.aboard == null:
+		# (user, 25 Nov: "the preview drawn as a faint outline in mana-blue light off the staff tip")
+		var to: Vector2 = (mid / nmid) if nmid > 0 else (pv["circle"][0] if pv.has("circle") else Vector2.ZERO)
+		if to != Vector2.ZERO:
+			var tip: Vector2 = game._staff(game.player, to)[0]
+			var a0: Vector2 = game.world_to_screen(tip)
+			var a1: Vector2 = game.world_to_screen(to)
+			var n := int(a0.distance_to(a1) / 3.0)
+			var lc := HAND_COL if ok else Color(1, 0.4, 0.35)
+			for k in n:
+				var f := (float(k) + fposmod(float(game.frame) * 0.15, 1.0)) / maxf(n, 1)
+				lc.a = 0.35 * (1.0 - absf(f - 0.5))
+				draw_rect(Rect2((a0.lerp(a1, f)).floor(), Vector2.ONE), lc)
 	if pv.get("tex") != null:
 		# a whole structure, as one picture, its top-left corner (on screen) on its corner cell
 		var tx: Texture2D = pv["tex"]
@@ -713,6 +792,9 @@ func _draw_in_pocket() -> void:
 	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 	_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
 	_draw_build_preview()
+	_draw_hand()
+	if game.wisp_say_t > 0 and game.wisp_say != "":
+		_bubble(game.player.pos - game.basis_d(game.view_angle()) * 16.0, game.wisp_say, clampf(float(game.wisp_say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
 	if game.ui.mouse_over_ui():
 		return
 	var m: Vector2 = (get_viewport().get_mouse_position() / game.scale_px).floor()
@@ -982,6 +1064,10 @@ func _draw_all() -> void:
 	_draw_sense()
 	if game.quest != null and game.quest.say_t > 0 and game.quest.say_text != "":
 		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
+	elif game.wisp_say_t > 0 and game.wisp_say != "":
+		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.wisp_say, clampf(float(game.wisp_say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
+	_draw_hand()
+	_draw_popups()
 	# particles (the light read where each is in the picture: near enough, the light is soft)
 	var pxf: Transform2D = game.screen_xf()
 	var paff: bool = game.screen_xf_ok()

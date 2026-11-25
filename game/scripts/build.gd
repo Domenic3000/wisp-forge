@@ -31,7 +31,10 @@ const HULL_KINDS := ["hull", "cut", "helm", "seat"]
 ## satchel"): furniture (2), outdoor pieces (3) and workshops (7) are forged at the Wisp Forge into the satchel
 ## and set down from the Satchel tab; their tabs' pieces stay for the tests and the code that places them. The
 ## Ship tab, 9, is the ship builder now (shipyard.gd).
-const CAT_ORDER := [0, 6, 8, 1, 4, 5]
+## (user, 25 Nov: "the conjure spell and the build menu sort of do the same things"): what you carry is placed
+## from your hand by Conjure now (main "the hand"), so Back Walls (0), Blocks (6) and the Satchel tab (5) are
+## gone from build mode too; it keeps what isn't carried: Remove, Doors & Stairs, Structures.
+const CAT_ORDER := [8, 1, 4]
 ## Flatten: everything solid up to FLAT_CUT rows over the line you drag is cut away, and dips under it
 ## filled from the satchel down to ground no more than FLAT_FILL rows below (deeper, it's left alone)
 const FLAT_CUT := 40

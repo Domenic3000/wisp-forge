@@ -31,7 +31,7 @@ one. Every journey grows a new star system of its own.
 | 1–9 / mouse wheel | Choose a spell |
 | Right mouse | Dig: pulls matter into your satchel (costs mana, more for harder stuff) |
 | Shift + right mouse | Take back walls, furniture, torches and workshops (furniture and workshops come whole) |
-| Q / E | Choose what Conjure places (in space: turn the view) |
+| Q / E | Choose what's in your hand for Conjure (in space: turn the view) |
 | H | Drink a Healing Draught (health doesn't come back by itself) |
 
 **Menus**
@@ -55,18 +55,32 @@ one. Every journey grows a new star system of its own.
 |---|---|
 | F | Talk, trade, open a chest or door, use a workshop or altar, board or leave the skiff, enter the pocket's door. At a bed with a roof over it: make it home |
 
-**Build mode (B)**
+**Placing what you carry**
+
+Click anything in the satchel (I) to take it in your hand: the cast button becomes Conjure, which places it
+where you point, within your staff's reach. Sand, water and other loose stuff pours from the staff; blocks are
+painted with the brush or laid in shapes; furniture, workshops, torches and doors show where they'll go first.
 
 | Key | Does |
 |---|---|
-| Q / E | Category (back walls, blocks, remove, doors and stairs, structures, your satchel) |
+| Left mouse | Place (for a line, rectangle or frame: press, drag and let go) |
+| G | How blocks are laid: brush, line, rectangle, frame |
+| [ ] | Thickness of a line or frame |
+| V | Blocks in front, or as a back wall (planks, logs, stone, brick, sandstone, glass) |
+| R | The next design, for a stack of furniture of one name |
+| T | Mirror a piece |
+
+**Build mode (B)**: for what isn't carried: houses, rooms and roofs, stairs and doors, and Remove.
+
+| Key | Does |
+|---|---|
+| Q / E | Category (remove, doors and stairs, structures) |
 | Mouse wheel / 1–9 | Piece |
-| Left mouse | Place (press, drag and let go for lines, rectangles and frames) |
-| G | Shape: brush, line, rectangle, frame |
+| Left mouse | Place, or press, drag and let go to remove or flatten |
+| G | Remove's shape: line, rectangle, frame |
 | [ ] | Thickness, a structure's width, a staircase's height |
 | - / = | Storeys |
-| R | A new design (a carried stack: the next one) |
-| T | Mirror, or a structure's style |
+| R / T | A structure's variation / style; T turns a staircase |
 
 **The skiff and space**
 

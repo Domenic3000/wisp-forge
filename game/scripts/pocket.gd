@@ -246,7 +246,7 @@ func tick() -> void:
 	game.tick_spell_cds(m)
 	if not m.input.cast:
 		m.cast_latch = false
-	elif not m.cast_latch and not game.build_on and not game.ui.mouse_over_ui():
+	elif not m.cast_latch and not game.build_on and not game.hand_live and not game.ui.mouse_over_ui():
 		m.cast_latch = true
 		if game.frame - _calm_note > 240:
 			_calm_note = game.frame
@@ -258,6 +258,8 @@ func tick() -> void:
 	_move(m)
 	if game.build_on:
 		game._cabin_edit(m, isle)
+	else:
+		game.hand_body(m, isle)          # (what's in your hand, with Conjure held, builds here)
 	_near(m)
 	if _offer_t > 0:
 		_offer_t -= 1

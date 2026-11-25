@@ -1212,6 +1212,10 @@ func _apply_counts(m: Mage) -> void:
 			# (a world's heart is CORE cells everywhere; what the siphon takes is that world's kind of core)
 			m.inv[core_mat if t == Defs.CORE else t] += cn[t]
 			total += cn[t]
+			if m.local and t != Defs.TREASURE:
+				var pt: int = core_mat if t == Defs.CORE else t
+				_pick_acc[pt] = int(_pick_acc.get(pt, 0)) + cn[t]
+				_pick_at = _reach(m, m.input.aim) if m.input.dig or m.input.decon else m.pos
 			if t != Defs.TREASURE:
 				spent += float(cn[t]) * dig_mana(t)
 			if t >= Defs.FIREOPAL and t <= Defs.SILVER and not m.items.has("found_%d" % t):
@@ -2322,7 +2326,7 @@ func _read_local_input(m: Mage) -> void:
 		m.dig_tap -= 1
 	inp.decon = can_act and rmb and shift
 	inp.sail = (shift and state == "play") or test_sail
-	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on) or test_mend
+	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on and (hand_item.is_empty() or not conjuring(m))) or test_mend
 	inp.turn = 0.0
 	if space.active and state == "play" and not build_on:
 		inp.turn = (1.0 if Input.is_key_pressed(KEY_Q) else 0.0) - (1.0 if Input.is_key_pressed(KEY_E) else 0.0)
@@ -2330,13 +2334,25 @@ func _read_local_input(m: Mage) -> void:
 		inp.turn = test_turn
 	# (building inside the skiff: the cast button builds, it doesn't steer or fire)
 	cabin_cast = false
-	if build_on and (m.aboard != null or pocket.active):
+	if (build_on and (m.aboard != null or pocket.active)) or (pocket.active and hand_live):
 		cabin_cast = inp.cast
 		inp.cast = false
 
 func _tick() -> void:
 	frame += 1
 	time += 1.0
+	hand_live = false               # (set again this tick by whatever places from the hand)
+	if wisp_say_t > 0:
+		wisp_say_t -= 1
+	for pu in popups:
+		pu[3] = int(pu[3]) - 1
+	while not popups.is_empty() and int(popups[0][3]) <= 0:
+		popups.pop_front()
+	_pick_t += 1
+	if _pick_t >= 24:
+		_pick_t = 0
+		if not _pick_acc.is_empty():
+			_pick_flush()
 	if stamps.is_empty() and player != null:
 		Defs.anchor_c = _anchor_col(player.pos)      # (nothing waiting to go in under the old one)
 	_read_local_input(player)
@@ -2387,6 +2403,8 @@ func _tick() -> void:
 				m.cast_latch = false
 			if m.local and build_on:
 				_update_build(m)
+			elif m.local and _hand_update(m):
+				pass                        # (the hand placing through the building code)
 			elif m.input.cast and not m.cast_latch:
 				_cast(m, m.known[m.sel], m.input.aim)
 			if m.input.dig:
@@ -3177,6 +3195,8 @@ func _home_pos() -> Variant:
 
 func _conjure(m: Mage, aim: Vector2) -> void:
 	if m.mat <= 0 or m.inv[m.mat] <= 0:
+		if m.local and m.mat > 0:
+			wisp_note("You're out of %s: dig some, or choose something else from the satchel." % String(Defs.NAMES[m.mat]).to_lower())
 		return
 	var p := _reach(m, aim)
 	if m.mat == Defs.TORCH:
@@ -3203,6 +3223,7 @@ func _conjure(m: Mage, aim: Vector2) -> void:
 	m.pending_place = budget
 	brushes.append([p, 2.6, 5, m.mat, 0, budget, 9.0, m.slot])
 	vfx.conjure(p, Defs.COLOR[m.mat])
+	vfx.stream(m, p, Defs.COLOR[m.mat], 1)
 	audio.play("place", p, 0.6)
 
 func _update_projectiles() -> void:
@@ -5482,6 +5503,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				return
 		if build_on and _build_key(k):
 			return
+		if _hand_key(k):
+			return
 		if space.active and (k == KEY_MINUS or k == KEY_KP_SUBTRACT or k == KEY_EQUAL or k == KEY_KP_ADD):
 			space.zoom_by(1 if k == KEY_MINUS or k == KEY_KP_SUBTRACT else -1)     # (- out, + in)
 			return
@@ -5538,8 +5561,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 		var wheel: bool = ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN
 		if wheel and ui.mouse_over_ui(false):
 			return                  # scrolling the satchel (past its end, too) never changes the spell
-		if build_on and ev.button_index == MOUSE_BUTTON_LEFT:
-			build_click = true
+		if (build_on or hand_live) and ev.button_index == MOUSE_BUTTON_LEFT and not ui.mouse_over_ui():
+			build_click = true      # (a click on the satchel only picks what goes in your hand)
 		if build_on and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
 			_build_step(-1 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1)
 			return
@@ -5563,6 +5586,8 @@ func _toggle_build() -> void:
 		build_seed = randi()
 	while build_idx.size() < Build.CATS.size():
 		build_idx.append(0)
+	if build_on and not Build.CAT_ORDER.has(build_cat):
+		build_cat = Build.CAT_ORDER[0]
 	if build_on:
 		var bn: String = builds.biome(Build.cell_of(player.pos).x) if builds != null else "forest"
 		for si in Build.STYLES.size():
@@ -5570,9 +5595,9 @@ func _toggle_build() -> void:
 				build_style = si
 		_struct_key = ""
 		if player.aboard != null:
-			ui.toast("Building in the skiff's cabin: Blocks, Back Walls and Furniture go in, the Remove tab takes them out · [ ] size · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.5)
+			ui.toast("Building in the skiff's cabin: Q/E for blocks, back walls and furniture, the Remove tab takes them out · [ ] size · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.5)
 		else:
-			ui.toast("Build mode: click to place · Q/E category · wheel piece · G how walls and blocks are laid · R new design · T mirror · B to leave", Color(0.95, 0.85, 0.55), 4.0)
+			ui.toast("Build mode: houses, stairs, doors, and Remove · Q/E category · wheel piece · B to leave. What you carry: pick it in the satchel, Conjure places it", Color(0.95, 0.85, 0.55), 4.5)
 	else:
 		ui.toast("Build mode off", Color(0.8, 0.8, 0.9), 1.0)
 
@@ -5595,51 +5620,274 @@ func select_carried(idx: int) -> void:
 			build_idx[Build.CAT_SATCHEL] = k
 
 func build_piece() -> Dictionary:
+	if not _hand_over.is_empty():
+		return _hand_over           # (the hand placing through the building code)
 	var l := build_list()
 	if l.is_empty():
 		return {}
 	return l[clampi(int(build_idx[build_cat]), 0, l.size() - 1)]
 
 ## Something carried, put in your hand from the satchel (user, 23 Nov: a bed went in the satchel but
-## couldn't be set down from it, and a kiln taken up went nowhere you could see): build mode opens on it,
-## ready to set down. what: "furn" (Mage.furn index `idx`), "station" (a kind taken up), "torch", "door".
+## couldn't be set down from it; 25 Nov: one way to place what you carry): it goes in your hand and the cast
+## button becomes Conjure, which sets it down where you point (see "the hand" below).
+## what: "furn" (Mage.furn index `idx`), "station" (a kind taken up), "torch", "door".
 func hold_carried(what: String, idx := -1, sk := "") -> void:
-	if player.aboard != null:
+	if player.aboard != null and not pocket.active:
 		ui.toast("Step off the ship to set that down", Color(1, 0.8, 0.6), 2.0)
 		return
-	if not build_on:
+	if build_on:
 		_toggle_build()
-	while build_idx.size() < Build.CATS.size():
-		build_idx.append(0)
 	var want := ""
 	match what:
-		"furn", "station":
-			build_cat = Build.CAT_SATCHEL
-			var l := build_list()
-			for k in l.size():
-				var pc: Dictionary = l[k]
-				if (what == "furn" and String(pc["kind"]) == "carried" and (pc["items"] as Array).has(idx)) \
-						or (what == "station" and String(pc["kind"]) == "station" and String(pc["station"]) == sk):
-					build_idx[build_cat] = k
-					want = String(pc["name"])
+		"furn":
+			if idx >= 0 and idx < player.furn.size():
+				var fname := String(player.furn[idx]["name"])
+				hand_item = {"what": "furn", "name": fname}
+				carried_pick[fname] = idx
+				want = fname
+		"station":
+			hand_item = {"what": "station", "sk": sk}
+			want = String(Defs.STATIONS[sk]["name"]) if Defs.STATIONS.has(sk) else sk
 		"torch":
-			build_cat = Build.CAT_SATCHEL
-			var lt := build_list()
-			for kt in lt.size():
-				if String(lt[kt]["kind"]) == "torch":
-					build_idx[build_cat] = kt
-					want = "Torch"
+			hand_item = {}
+			mat = Defs.TORCH
+			want = "Torch"
 		"door":
-			var pname := "Wooden Door"
-			for pc2 in build_pieces:
-				if String(pc2["name"]) == pname:
-					build_cat = int(pc2["cat"])
-					build_idx[build_cat] = Build.in_cat(build_pieces, build_cat).find(pc2)
-					want = pname
+			hand_item = {}
+			mat = Defs.WOODDOOR
+			want = "Door"
+	_to_conjure()
 	build_prev = {}
 	build_drag = false
 	if want != "":
-		ui.toast("%s in hand: click to set it down · B puts it away" % want, Color(0.95, 0.85, 0.55), 2.5)
+		ui.toast("%s in hand: click where it goes" % want, Color(0.95, 0.85, 0.55), 2.0)
+
+# ------------------------------------------------------------------ the hand --
+## What you hold (user, 25 Nov: "currently the conjure spell and the build menu sort of do the same things.
+## when i select something from the inventory i want a unified system"): whatever you click in the satchel
+## goes in your hand and Conjure places it, the way that suits it. Sand, water and the like pour from the
+## staff (Conjure's own brush); a solid is painted with that brush or laid as a line, rectangle or frame
+## (G, [ ] thickness), in front or as a back wall (V); furniture, workshops, torches and doors show where they
+## go and a click sets one down (R the next design of a stack, T mirrors). It goes through the building code
+## (`_update_build` / `_update_shape` / `_cabin_edit` with `_hand_over` as the piece), only within your
+## staff's reach. Build mode (B) keeps what isn't carried: structures, stairs and doors, and Remove.
+var hand_item := {}          # a carried piece: {"what": "furn", "name"} or {"what": "station", "sk"}; {} = the material `mat`
+var hand_back := false       # solids go up as back wall
+var hand_shape := 0          # how solids are laid: Build.SHAPES (0 the brush)
+var hand_thick := 2          # how thick a line or frame is
+var hand_live := false       # this tick the hand placed through the building code (clicks count as build clicks)
+var _hand_over := {}         # (what build_piece() gives while the hand places)
+var hand_walls := [Defs.PLANK, Defs.WOOD, Defs.MASONRY, Defs.BRICK, Defs.SANDSTONE, Defs.GLASS]
+
+func _to_conjure() -> void:
+	var ci := known.find("conjure")
+	if ci >= 0:
+		sel = ci
+
+## is m holding Conjure (the hand's spell)?
+func conjuring(m: Mage) -> bool:
+	return not m.known.is_empty() and m.known[clampi(m.sel, 0, m.known.size() - 1)] == "conjure"
+
+## the name and count of what's in your hand ("" when nothing)
+func hand_name() -> String:
+	if not hand_item.is_empty():
+		var hp := hand_piece(false)
+		return String(hp.get("name", ""))
+	if mat > 0 and player.inv[mat] > 0:
+		return String(Defs.NAMES[mat])
+	return ""
+
+func hand_count() -> int:
+	if not hand_item.is_empty():
+		return int(hand_piece(false).get("carried", 1))
+	return player.inv[mat] if mat > 0 else 0
+
+## The piece the hand places through the building code, or {} when Conjure's own brush does it (or the
+## hand is empty). `body`: building in the pocket's cells (a solid is always a block there, painted).
+func hand_piece(body := false) -> Dictionary:
+	if build_pieces.is_empty():
+		build_pieces = Build.pieces()
+	if not hand_item.is_empty():
+		if String(hand_item["what"]) == "furn":
+			for pc in Build.carried_pieces(player.furn, {}, PackedInt32Array(), carried_pick):
+				if String(pc["name"]) == String(hand_item["name"]):
+					return pc
+		elif String(hand_item["what"]) == "station":
+			var sk := String(hand_item["sk"])
+			var n := int(items.get("st_" + sk, 0))
+			if n > 0 and Defs.STATIONS.has(sk):
+				return {"cat": Build.CAT_SATCHEL, "name": String(Defs.STATIONS[sk]["name"]), "kind": "station", "station": sk, "carried": n, "cost": {}}
+		hand_item = {}                # (the last one set down: the hand goes back to the material)
+	if mat <= 0 or player.inv[mat] <= 0:
+		return {}
+	if mat == Defs.TORCH:
+		return {"cat": Build.CAT_SATCHEL, "name": "Torch", "kind": "torch", "carried": player.inv[mat], "cost": {Defs.TORCH: 1}}
+	if mat == Defs.WOODDOOR:
+		for pc2 in build_pieces:
+			if String(pc2.get("kind", "")) == "door":
+				return pc2
+		return {}
+	if Defs.KIND[mat] != Defs.K_SOLID:
+		return {}                     # (sand, water, ash: poured by Conjure's own brush)
+	var nm := String(Defs.NAMES[mat])
+	if hand_back and hand_walls.has(mat):
+		return {"cat": 0, "name": nm + " (back wall)", "kind": "wall", "mat": mat, "cost": {mat: 1}, "shape": hand_shape, "thick": hand_thick}
+	if hand_shape == 0 and not body:
+		return {}                     # (painted with Conjure's own brush)
+	return {"cat": Build.CAT_BLOCKS, "name": nm, "kind": "block", "mat": mat, "cost": {mat: 1}, "shape": maxi(hand_shape, 1), "thick": hand_thick}
+
+## each tick, the local mage holding Conjure with something the building code places: its preview and,
+## on a click, setting it down (true if it did; otherwise the cast button casts Conjure as before)
+func _hand_update(m: Mage) -> bool:
+	hand_live = false
+	if not m.local or build_on or not conjuring(m) or m.aboard != null or pocket.active:
+		return false
+	var hp := hand_piece()
+	if hp.is_empty():
+		return false
+	hand_live = true
+	if build_click and (m.input.aim - m.pos).length() > _reach_len(m) * 1.08 and String(hp["kind"]) != "block" and String(hp["kind"]) != "wall":
+		# (only within your staff's reach: a click beyond it sets nothing down)
+		wisp_note("That's out of reach: I can only shape what's near your staff.")
+		build_click = false
+	_hand_over = hp
+	_update_build(m)
+	_hand_over = {}
+	return true
+
+## in the pocket: the hand builds in the isle's own cells (pocket.gd's tick)
+func hand_body(m: Mage, body) -> bool:
+	hand_live = false
+	if build_on or not conjuring(m):
+		return false
+	var hp := hand_piece(true)
+	if hp.is_empty():
+		if mat > 0 and player.inv[mat] > 0 and m.input.cast and not m.cast_latch:
+			m.cast_latch = true
+			wisp_note("%s won't stay put in here: only blocks, walls and furniture." % Defs.NAMES[mat])
+		return false
+	var hk := String(hp["kind"])
+	if hk != "block" and hk != "wall" and hk != "carried":
+		if m.input.cast and not m.cast_latch:
+			m.cast_latch = true
+			wisp_note("That can't be set down in the pocket.")
+		return false
+	hand_live = true
+	_hand_over = hp
+	var t0 := build_thick
+	build_thick = hand_thick
+	_cabin_edit(m, body)
+	build_thick = t0
+	_hand_over = {}
+	return true
+
+## the hand's bar (ui.gd shows it while Conjure is held with something in hand): what's held, then how
+## it goes down
+func hand_hint() -> String:
+	var nm := hand_name()
+	if nm == "":
+		return ""
+	var head := "%s ×%d" % [nm, hand_count()]
+	var how := ""
+	if not hand_item.is_empty():
+		var hp := hand_piece()
+		how = "click where it goes"
+		if (hp.get("items", []) as Array).size() > 1:
+			how += "  ·  R next design"
+		how += "  ·  T mirror"
+	elif mat == Defs.TORCH:
+		how = "click: on a wall it hangs, near a floor it stands"
+	elif mat == Defs.WOODDOOR:
+		how = "click a doorway to hang it"
+	elif Defs.KIND[mat] != Defs.K_SOLID:
+		how = "poured where you point"
+	else:
+		var shp := "brush" if hand_shape == 0 else String(Build.SHAPES[hand_shape]).to_lower()
+		how = "%s, %s  ·  G shape  ·  V %s" % [shp, "back wall" if hand_back else "in front", "in front" if hand_back else "back wall"]
+		if hand_shape != 0:
+			how += "  ·  [ ] %d thick" % hand_thick
+	var lines := [head + "  ·  " + how]
+	var pt := String(build_prev.get("text", "")) if hand_live else ""
+	if pt != "":
+		lines.append(pt)
+	elif hand_live and build_why != "" and not bool(build_prev.get("ok", true)):
+		lines.append("It doesn't fit: " + build_why)
+	return "\n".join(lines)
+
+func hand_bar_on() -> bool:
+	return not build_on and state == "play" and player != null and player.aboard == null and conjuring(player) and hand_name() != ""
+
+func _reach_len(m: Mage) -> float:
+	return REACH * gear("reach", m) * (1.5 if m.items.has("wisp_hands") else 1.0)
+
+## keys while Conjure is held with something in hand; true if used
+func _hand_key(k: int) -> bool:
+	if build_on or not conjuring(player) or hand_name() == "":
+		return false
+	var solid: bool = hand_item.is_empty() and mat > 0 and Defs.KIND[mat] == Defs.K_SOLID and mat != Defs.TORCH and mat != Defs.WOODDOOR
+	if k == KEY_G and solid:
+		hand_shape = (hand_shape + 1) % Build.SHAPES.size()
+		build_drag = false
+		ui.toast("Laid as: %s" % ("brush" if hand_shape == 0 else String(Build.SHAPES[hand_shape]).to_lower()), Color(0.95, 0.85, 0.55), 1.0)
+		return true
+	if (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT) and solid:
+		hand_thick = clampi(hand_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
+		ui.toast("%d thick" % hand_thick, Color(0.95, 0.85, 0.55), 0.8)
+		return true
+	if k == KEY_V and solid:
+		if not hand_back and not hand_walls.has(mat):
+			wisp_note("%s can't be raised as a back wall; planks, logs, stone and brick, sandstone or glass can." % Defs.NAMES[mat])
+			return true
+		hand_back = not hand_back
+		build_drag = false
+		ui.toast("%s: %s" % [Defs.NAMES[mat], "back wall" if hand_back else "in front"], Color(0.95, 0.85, 0.55), 1.0)
+		return true
+	if k == KEY_R and not hand_item.is_empty() and String(hand_item["what"]) == "furn":
+		var hp := hand_piece()
+		var ks: Array = hp.get("items", [])
+		if ks.size() > 1:
+			carried_pick[String(hp["name"])] = int(ks[(ks.find(int(hp["item"])) + 1) % ks.size()])
+			build_prev = {}
+			return true
+	if k == KEY_T and not hand_item.is_empty():
+		build_flip = not build_flip
+		return true
+	return false
+
+## Reminders the wisp says beside you (user, 25 Nov: "the wisp speaks reminders"): out of something, out of
+## reach, too little for a shape. The same words wait 5 s before they're said again.
+var wisp_say := ""
+var wisp_say_t := 0
+var _wisp_said := {}
+
+func wisp_note(text: String) -> void:
+	if frame - int(_wisp_said.get(text, -99999)) < 300:
+		return
+	_wisp_said[text] = frame
+	wisp_say = text
+	wisp_say_t = 200
+
+## Pickups pop up where they happen (user, 25 Nov): what digging brings in rises as "+3 Sand" from where it
+## was dug, a moment's worth at a time. [world point, text, colour, ticks left]
+var popups := []
+var _pick_acc := {}
+var _pick_at := Vector2.ZERO
+var _pick_t := 0
+const POPUP_TICKS := 70
+
+func _pick_flush() -> void:
+	var ks := _pick_acc.keys()
+	ks.sort_custom(func(a, b): return int(_pick_acc[a]) > int(_pick_acc[b]))
+	var up: Vector2 = _pick_at.normalized()
+	var k := 0
+	for t in ks:
+		if k >= 3:
+			break
+		popups.append([_pick_at + up * (4.0 + 6.0 * k), "+%d %s" % [int(_pick_acc[t]), Defs.NAMES[int(t)]], Defs.COLOR[int(t)], POPUP_TICKS])
+		k += 1
+	while popups.size() > 12:
+		popups.pop_front()
+	_pick_acc = {}
 
 func _build_step(dir: int) -> void:
 	var n := build_list().size()
@@ -5923,7 +6171,7 @@ func _update_build(m: Mage) -> void:
 	var cells := []      # [world pos, colour]
 	var ok := true
 	var tree_in_way := false
-	if kind == "block" or (kind == "wall" and build_shape != 0):
+	if kind == "block" or (kind == "wall" and int(piece.get("shape", build_shape)) != 0):
 		_update_shape(m, piece)
 		return
 	if kind == "remove":
@@ -5942,6 +6190,8 @@ func _update_build(m: Mage) -> void:
 			m.pending_mat = mt
 			brushes.append([p, Build.WALL_R, 10, mt, 0, budget, 0.0, m.slot])
 			vfx.conjure(p, Defs.COLOR[mt])
+			if not _hand_over.is_empty():
+				vfx.stream(m, p, Defs.COLOR[mt], 1)
 		elif m.input.cast:
 			_build_need(piece)
 		build_click = false
@@ -6156,6 +6406,11 @@ func _update_build(m: Mage) -> void:
 		return
 	for mt2 in cost:
 		m.inv[int(mt2)] -= int(cost[mt2])
+	if not _hand_over.is_empty():
+		# (the hand: what's set down streams out of the satchel along the staff)
+		vfx.stream(m, place.get("pos", p), Color(1.0, 0.86, 0.5), 12)
+		if int(piece.get("carried", 1)) <= 1 and kind != "door":
+			wisp_note("That was your last %s." % String(piece["name"]).to_lower())
 	if place.has("stamp"):
 		stamps.append(place["stamp"])
 		build_last_stamp = place["stamp"]
@@ -6232,10 +6487,12 @@ func _place_mana_of(place: Dictionary) -> float:
 func _update_shape(m: Mage, piece: Dictionary) -> void:
 	var mt: int = piece["mat"]
 	var back: bool = piece["kind"] == "wall"
-	var shape: int = maxi(build_shape, 1)
+	var shape: int = maxi(int(piece.get("shape", build_shape)), 1)
+	var thick: int = int(piece.get("thick", build_thick))
 	var d := m.input.aim - m.pos
-	if d.length() > Build.SHAPE_REACH:
-		d = d.normalized() * Build.SHAPE_REACH
+	var lim: float = Build.SHAPE_REACH if _hand_over.is_empty() else _reach_len(m)
+	if d.length() > lim:
+		d = d.normalized() * lim
 	var cell := Build.cell_of(m.pos + d)
 	if m.input.dig and build_drag:
 		build_drag = false
@@ -6246,7 +6503,7 @@ func _update_shape(m: Mage, piece: Dictionary) -> void:
 		build_drag_from = Build.cell_pos(cell.x, cell.y)
 	build_click = false
 	var from := Build.cell_of(build_drag_from) if build_drag else cell
-	var cells: Array = Build.shape_cells(from, cell, shape, build_thick)
+	var cells: Array = Build.shape_cells(from, cell, shape, thick)
 	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
 	var good := []
 	var prev := []
@@ -6280,12 +6537,19 @@ func _update_shape(m: Mage, piece: Dictionary) -> void:
 		if ok:
 			stamps.append(Build.shape_stamp(good, mt, back))
 			vfx.shape_burst(good, true)
+			if not _hand_over.is_empty():
+				vfx.stream(m, m.pos + d, Defs.COLOR[mt], 14)
+				if m.inv[mt] - need <= 0:
+					wisp_note("That was the last of your %s." % String(Defs.NAMES[mt]).to_lower())
 			build_last_stamp = stamps[stamps.size() - 1]
 			m.inv[mt] -= need
 			build_last = "%s: %d cells" % [piece["name"], need]
 			audio.play("place", m.pos + d, 0.6)
 		elif need > m.inv[mt]:
-			ui.toast("%s needs %d %s (you have %d)" % [piece["name"], need, Defs.NAMES[mt], m.inv[mt]], Color(1, 0.7, 0.5), 2.0)
+			if _hand_over.is_empty():
+				ui.toast("%s needs %d %s (you have %d)" % [piece["name"], need, Defs.NAMES[mt], m.inv[mt]], Color(1, 0.7, 0.5), 2.0)
+			else:
+				wisp_note("That takes %d %s and you have %d." % [need, String(Defs.NAMES[mt]).to_lower(), m.inv[mt]])
 		elif need == 0 and not too_big:
 			ui.toast("No room there", Color(1, 0.6, 0.5), 1.2)
 		build_last = build_last if ok else "%s: not laid (%s)" % [piece["name"], what]
@@ -6807,6 +7071,9 @@ func _plan_structure(sk: String, cell: Vector2i) -> Dictionary:
 		"corner": Build.cell_pos(bp.x0 + bp.w - 1, bp.y0), "bp": bp}
 
 func _build_need(piece: Dictionary) -> void:
+	if not _hand_over.is_empty():
+		wisp_note("You're out of %s." % String(piece["name"]).to_lower())
+		return
 	if _build_warn_t > frame:
 		return
 	_build_warn_t = frame + 60
@@ -6822,10 +7089,14 @@ func _cycle_material(dir: int) -> void:
 	var k := owned.find(mat)
 	k = (k + dir + owned.size()) % owned.size()
 	mat = owned[k]
+	hand_item = {}
 	ui.toast("Conjure material: %s" % Defs.NAMES[mat], Defs.COLOR[mat], 1.0)
 
 func select_material(m: int) -> void:
 	mat = m
+	hand_item = {}
+	if Defs.KIND[m] != Defs.K_SOLID:
+		hand_back = false
 	var ci := known.find("conjure")
 	if ci >= 0:
 		sel = ci

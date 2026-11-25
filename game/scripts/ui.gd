@@ -40,6 +40,9 @@ var hot_name: Label            # the chosen spell's name and cost, over the spel
 var _hot_slots := []           # the slots' controls (their cooldown shading is drawn each frame)
 var build_bar: PanelContainer      # build mode: categories, pieces and what the chosen one costs
 var build_box: VBoxContainer
+var hand_bar: PanelContainer        # what's in your hand and how it goes down (Conjure held)
+var hand_box: VBoxContainer
+var _hand_key := ""
 var _build_key := ""
 var satchel: VBoxContainer         # the open satchel: a heading and a grid per section
 var satchel_slots := 0             # (slots in it, for the tests)
@@ -519,6 +522,14 @@ func _build_hud() -> void:
 	hb.position.y -= 5
 	hb.alignment = BoxContainer.ALIGNMENT_END
 	hud.add_child(hb)
+	# (what's in your hand, over the spell bar while Conjure is held: `_update_hand_bar`)
+	hand_bar = _panel(Color(0.05, 0.04, 0.09, 0.85), TRIM, 3)
+	hand_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	hand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hand_bar.visible = false
+	hb.add_child(hand_bar)
+	hand_box = _box(true, 1)
+	hand_bar.add_child(hand_box)
 	hot_name = _head("", 12, CREAM)
 	hot_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hb.add_child(hot_name)
@@ -1554,6 +1565,21 @@ func hide_forge() -> void:
 	forge.visible = false
 
 # ----------------------------------------------------------------- toasts --
+## The hand's bar (25 Nov): while Conjure is held with something in hand, what it is and how it goes down
+## (main `hand_hint`), just over the spell bar
+func _update_hand_bar(g) -> void:
+	var txt: String = g.hand_hint()
+	if txt == _hand_key:
+		return
+	_hand_key = txt
+	for c in hand_box.get_children():
+		c.queue_free()
+	var ls := txt.split("\n")
+	for i in ls.size():
+		var hl := _label(ls[i], 12, GOLD if i == 0 else CREAM)
+		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hand_box.add_child(hl)
+
 ## The building bar: the categories (Q/E), the pieces of the chosen one (wheel or 1-9; dimmed
 ## when the satchel can't pay), and the chosen piece's cost.
 func _update_build_bar(g) -> void:
@@ -1801,9 +1827,13 @@ func update_hud(g) -> void:
 			info.text += "\n· " + g.space.job_short(jb)
 	# build mode replaces the spell bar with the building bar
 	hot_name.get_parent().visible = not g.build_on
+	var hand_on: bool = g.hand_bar_on()
 	build_bar.visible = g.build_on
+	hand_bar.visible = hand_on
 	if g.build_on:
 		_update_build_bar(g)
+	elif hand_on:
+		_update_hand_bar(g)
 	_update_hotbar(g)
 	_update_satchel(g)
 	if mp_glow != null:
