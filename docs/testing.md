@@ -29,3 +29,6 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - The wild-life checks (`_test_creatures`, `_test_ecology`) are set up near `start_pos` (where you arrived), in clear
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
+- (25 Nov) The pocket check's first Wisp Recall cast failed once in a full run (the channel never started; the
+  second cast worked) and passed alone: likely a knock from landing after `_go` breaking the channel. Run
+  "pocket" alone before chasing it.
