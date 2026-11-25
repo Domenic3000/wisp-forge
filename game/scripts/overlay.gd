@@ -329,30 +329,6 @@ func _eco_marks(e) -> void:
 
 ## Ore Sense (the quest's gift for the skiff): the ore the wisp's last pulse found, drawn over rock and fog as a
 ## wave spreads from where it pulsed, then fading. Each ore cell a pixel of its own colour with a faint halo.
-func _draw_sense() -> void:
-	if game.sense_t <= 0 or game.sense_pts.is_empty():
-		return
-	var age := float(210 - int(game.sense_t))       # (main SENSE_SHOW)
-	var wave := age * 3.0
-	var fade := clampf(float(game.sense_t) / 60.0, 0.0, 1.0)
-	var z: float = maxf(1.0, floorf(1.0 / float(game.zoom)))
-	var view := Rect2(-4.0, -4.0, float(game.VW) + 8.0, float(game.VH) + 8.0)
-	var pts: PackedVector2Array = game.sense_pts
-	var cols: PackedColorArray = game.sense_cols
-	var at: Vector2 = game.sense_at
-	for k in pts.size():
-		var d := pts[k].distance_to(at)
-		if d > wave:
-			continue
-		var sp: Vector2 = game.world_to_screen(pts[k])
-		if not view.has_point(sp):
-			continue
-		var flash := clampf(1.0 - (wave - d) / 40.0, 0.0, 1.0)
-		var c: Color = cols[k]
-		var q := sp.floor()
-		draw_rect(Rect2(q - Vector2(1, 1), Vector2(z + 2.0, z + 2.0)), Color(c.r, c.g, c.b, (0.18 + 0.3 * flash) * fade))
-		draw_rect(Rect2(q, Vector2(z, z)), Color(minf(1.0, c.r + flash * 0.4), minf(1.0, c.g + flash * 0.4), minf(1.0, c.b + flash * 0.4), (0.65 + 0.35 * flash) * fade))
-
 ## the resonance pillars' glyphs over them: dim, lit (rung in turn, or all once the song is sung), or a red
 ## flash for a wrong note
 func _draw_mystery() -> void:
@@ -1143,7 +1119,6 @@ func _draw_all() -> void:
 		for k in 12:
 			var wa := float(k) / 12.0 * TAU
 			draw_rect(Rect2((ws + Vector2(cos(wa), sin(wa)) * wr).floor(), Vector2.ONE), Color(0.7, 0.92, 1.0, 0.35))
-	_draw_sense()
 	if game.quest != null and game.quest.say_t > 0 and game.quest.say_text != "":
 		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
 	elif game.wisp_say_t > 0 and game.wisp_say != "":

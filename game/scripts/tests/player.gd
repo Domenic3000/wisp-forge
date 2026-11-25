@@ -875,8 +875,10 @@ func _test_quest() -> void:
 	var n_ore: int = g.sense_pts.size()
 	await _frames(40)
 	_shot("quest_sense.png")
-	rows.append("%sOre Sense: pulsed %s, %d ore cells marked round you" % ["" if pulsed else "(!) ", pulsed, n_ore])
-	ok = ok and pulsed
+	# (shown on the minimap now, not in the world: user, 25 Nov; its stats are the last frame's)
+	var mm_ore: bool = n_ore == 0 or int(g.ui.minimap.stats.get("ore", 0)) > 0
+	rows.append("%sOre Sense: pulsed %s, %d ore cells marked round you, on the minimap %s" % ["" if pulsed and mm_ore else "(!) ", pulsed, n_ore, mm_ore])
+	ok = ok and pulsed and mm_ore
 	# ---- the skiff's plans: a half from each guardian beaten, the second teaches the recipe
 	var pl_learned: bool = g.learned.has("skiff")
 	g.learned.erase("skiff")

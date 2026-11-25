@@ -22,7 +22,7 @@ const SAY_TICKS := 60 * 8
 const HULL_STEP := 180       # (the first ship built out: the keel's 134 cells and fifty more)
 const POWERS := {
 	"lantern": {"name": "Wisp Lantern", "desc": "The wisp's light reaches twice as far, and the fog lifts before it."},
-	"sense": {"name": "Ore Sense", "desc": "Every few seconds the wisp pulses, and ore veins near you glow a moment, through rock and fog."},
+	"sense": {"name": "Ore Sense", "desc": "Every few seconds the wisp looks round you, and the ore nearby shows on the minimap (top right)."},
 	"ward": {"name": "Wisp Ward", "desc": "The wisp takes one hit for you, then needs half a minute to gather itself again."},
 	"hands": {"name": "Wisp Hands", "desc": "You dig and shape from half again as far, and essence drifts to you from twice as far."},
 }

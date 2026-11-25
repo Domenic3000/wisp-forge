@@ -27,9 +27,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - The journal: L (ui `toggle_journal`, `journal_open`; Esc or L closes; `menu_paused` includes it, so the world
   waits): the chapter, every step (done, now with its "how", to come), the wisp's gifts.
 - The wisp's powers (`items["wisp_<id>"]`, `Quest.POWERS`): LANTERN (Copper Focus: `_update_wisp` light 92, not
-  46), SENSE (the second guardian: `_wisp_powers` every `SENSE_EVERY` 480 ticks on the planet `gpu.request_rect`s 260 x 170
-  cells round you, `_sense_take` keeps up to `SENSE_MAX` ore cells of `SENSE_ORES` as world points; overlay
-  `_draw_sense` shows them over rock and fog as a wave spreads, `SENSE_SHOW` ticks), WARD (Vulkhar: `hurt`'s
+  46), SENSE (the second guardian: `_wisp_powers` every `SENSE_EVERY` 480 ticks on the planet `gpu.request_rect`s 420 x 260
+  cells round you, `_sense_take` keeps up to `SENSE_MAX` ore cells of `SENSE_ORES` as world points; minimap.gd
+  `_draw_planet` shows them as dots in their colours till the next look, with a faint sweep from you; user, 25
+  Nov: the big ring and the glow in the world were "a bit much", "show ore on the minimap instead"), WARD (Vulkhar: `hurt`'s
   first hit of 1+ on the local mage is taken, `wisp_ward_t` = `WARD_RECHARGE` 1800; a faint ring round the wisp
   while ready), HANDS (the Core Drive: `_reach` x1.5, voidlife's mote reach x2).
 - Fixes from play (25 Nov): "station" needs count only a workshop standing in the world (`workshops.list`), not one

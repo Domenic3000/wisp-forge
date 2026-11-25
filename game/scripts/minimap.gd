@@ -205,6 +205,23 @@ func _draw_planet() -> void:
 			if ys >= 0.0:
 				draw_rect(Rect2(float(x), y0, 1.0, minf(2.0, PH - y0)), top)
 	_count("columns", int(PW))
+	# Ore Sense (main `sense_pts`): the ore the wisp found round you, a dot each, kept till its next look; a faint
+	# sweep from you as it looks
+	if not g.sense_pts.is_empty():
+		var dots := {}
+		var pts: PackedVector2Array = g.sense_pts
+		var cols: PackedColorArray = g.sense_cols
+		for k in pts.size():
+			var q := _pp(me, s, pts[k]).floor()
+			if q.x < 1.0 or q.y < 1.0 or q.x >= PW - 1.0 or q.y >= PH - 1.0 or dots.has(q):
+				continue
+			dots[q] = true
+			draw_rect(Rect2(q, Vector2.ONE), cols[k])
+		_count("ore", dots.size())
+	var since: int = 210 - int(g.sense_t)            # (main SENSE_SHOW)
+	if g.sense_t > 0 and since < 40:
+		var sr := 3.0 + float(since) * 0.6
+		draw_arc(Vector2(PW * 0.5, cy), sr, 0.0, TAU, 24, Color(0.6, 0.9, 1.0, 0.5 * (1.0 - float(since) / 40.0)), 1.0)
 	# places
 	var home = g.planet_state.get("home", null)
 	if home != null:

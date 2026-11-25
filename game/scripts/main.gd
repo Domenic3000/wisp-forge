@@ -4435,13 +4435,15 @@ func _update_wisp() -> void:
 	_wisp_powers()
 
 ## Wisp Ward and Ore Sense, the quest's gifts (`items["wisp_ward"]`, `["wisp_sense"]`): the ward charges; every
-## SENSE_EVERY ticks on the planet the wisp pulses, asks for the cells round you (`gpu.request_rect`, a frame or
-## two later) and marks the ore in them, drawn by overlay `_draw_sense` through rock and fog for SENSE_SHOW ticks.
+## SENSE_EVERY ticks on the planet the wisp asks for the cells round you (`gpu.request_rect`, a frame or two
+## later) and marks the ore in them on the minimap (minimap.gd `_draw_planet`), kept till the next look. (It was
+## a big ring and glowing ore in the world: user, 25 Nov, "maybe we just make it show ore on the minimap
+## instead. its a bit much".) `sense_t` counts down from the last look (the minimap's faint sweep).
 const SENSE_EVERY := 480
 const SENSE_SHOW := 210
-const SENSE_W := 260
-const SENSE_H := 170
-const SENSE_MAX := 700
+const SENSE_W := 420
+const SENSE_H := 260
+const SENSE_MAX := 900
 const WARD_RECHARGE := 1800
 var SENSE_ORES: Array = [Defs.COPPER, Defs.COAL, Defs.EMBER, Defs.FROST, Defs.WISP, Defs.CRYSTAL, Defs.CORE, Defs.STARIRON, 51, 52, 53, 54, 55, 56, 57]
 func _wisp_powers() -> void:
@@ -4453,6 +4455,9 @@ func _wisp_powers() -> void:
 		sense_t -= 1
 	if not player.items.has("wisp_sense") or space.active or pocket.active or player.dead or travelling:
 		_sense_req = {}
+		if space.active or travelling:
+			sense_pts = PackedVector2Array()     # (another world's ore is somewhere else)
+			sense_cols = PackedColorArray()
 		return
 	if not _sense_req.is_empty():
 		var rr: Dictionary = gpu.take_rect(int(_sense_req["id"]))
@@ -4503,7 +4508,6 @@ func _sense_take(rr: Dictionary) -> void:
 		sense_cols.append(Defs.COLOR[fgs[k2] & 255].lightened(0.35))
 	sense_t = SENSE_SHOW
 	sense_at = player.pos
-	vfx.spawn(Vfx.RING, player.pos, Vector2.ZERO, 50, Color(0.6, 0.9, 1.0, 0.7), Color(0.4, 0.7, 1.0, 0.0), 6.0, 120.0)
 
 # =============================================================== weather ===
 func _update_weather() -> void:
