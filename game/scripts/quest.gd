@@ -180,8 +180,8 @@ func _holds(c: Array) -> bool:
 					return true
 			return false
 		"station":
-			if game.items.has("st_" + String(c[1])):
-				return true
+			# (standing in the world: one forged and still in the satchel isn't set down; user, 25 Nov: "the
+			# wisp said to set down a kiln and as soon as i crafted it the next part started")
 			for s in game.workshops.list:
 				if s.kind == String(c[1]):
 					return true
@@ -221,15 +221,20 @@ func _first_chapter() -> Array:
 		{"id": "dig", "title": "Dig in: gather some stone", "need": [["held", Defs.STONE, 15], ["tier", 2]],
 			"say": "Let's begin: hold right-click on the ground to dig, and gather some stone.",
 			"how": "Hold the right mouse button on the ground to dig. What you dig goes into your satchel (I). Digging costs a little mana, harder rock more."},
+		# (user, 25 Nov: "the wisp says press c, but i dont see it in there": Spark Bolt is learned from your first
+		# copper ore, so finding it is a step of its own)
+		{"id": "copperore", "title": "Find copper ore", "need": [["found", Defs.COPPER], ["spell", "spark"]],
+			"say": "Look for copper ore: it glints orange in the rock, near the surface. Your first piece will teach you a spell.",
+			"how": "Copper ore shows as orange flecks in the rock near the surface; dig it (hold right-click). Holding your first piece teaches you Spark Bolt's recipe: a page flies into your book. Pick up some coal too (black), you'll need it."},
 		{"id": "spark", "title": "Forge Spark Bolt at the Wisp Forge", "need": [["spell", "spark"]], "reward": {"potion": 1},
-			"say": "Open the Wisp Forge (C) and forge Spark Bolt: stone, coal and a little copper ore. Copper glints orange in the rock.",
-			"how": "C opens the Wisp Forge. Spark Bolt is under Spells: stone, coal and a little copper ore. Coal is black, copper ore orange, both near the surface."},
+			"say": "That copper taught you Spark Bolt. Open the Wisp Forge (C), Spells: stone, coal and a little copper ore.",
+			"how": "C opens the Wisp Forge. Spark Bolt is under Spells: 24 stone, 6 coal and 4 copper ore. Coal is black, copper ore orange, both near the surface."},
 		{"id": "kiln", "title": "Set down a Kiln", "need": [["station", "kiln"], ["tier", 2]], "reward": {"coins": 10},
 			"say": "Workshops refine what you gather. Forge a Kiln at the Wisp Forge (C, Workshops), then set it down from your satchel. It fires sand into glass.",
-			"how": "Open the Wisp Forge (C), Workshops: forge a Kiln (stone and dirt). It goes into your satchel: open it (I), click the Kiln and click level ground to set it down. F beside it opens it: click Glass under \"It makes\" (or load sand yourself), feed its fire with coal or wood."},
+			"how": "Open the Wisp Forge (C), Workshops: forge a Kiln (stone and dirt). It goes into your satchel: open it (I), click the Kiln (it goes in your hand) and click level ground to set it down. Hold sand and press F beside it to drop sand in (or F with empty hands opens it: click Glass under \"It makes\"); feed its fire with coal or wood. What it makes waits on a tray beside it: F takes it."},
 		{"id": "smelt", "title": "Smelt copper ingots", "need": [["held", Defs.COPPERBAR, 1], ["tier", 2]], "reward": {"coins": 10},
 			"say": "Now a Smelter: stone, copper ore and twelve bricks (fire mud in the kiln). Load it with copper ore, feed its fire, and it makes Copper Ingots.",
-			"how": "The Smelter (Wisp Forge, Workshops) costs 30 stone, 12 bricks and 4 copper ore; the Kiln fires 3 mud into 4 bricks. Keep it off plank floors: its sparks catch. F beside it: click Copper Ingot under \"It makes\" to load copper ore (the Amount sets how many batches), click coal, wood or planks to feed the fire. It warms up, then works batch after batch; take the ingots out when they're made."},
+			"how": "The Smelter (Wisp Forge, Workshops) costs 30 stone, 12 bricks and 4 copper ore; the Kiln fires 3 mud into 4 bricks. Keep it off plank floors: its sparks catch. Hold copper ore and press F beside it to drop some in, or F with empty hands opens it: click Copper Ingot under \"It makes\" (the Amount sets how many batches), click coal, wood or planks to feed the fire. It warms up, then works batch after batch; the ingots wait on its tray, F takes them."},
 		{"id": "copper", "title": "Forge the Copper Focus", "need": [["tier", 2]], "power": "lantern",
 			"say": "Six copper ingots and some stone make the Copper Focus: harder rock, and faster digging.",
 			"how": "At the Wisp Forge (C), Staff & Body: the Copper Focus. It digs deepstone, ember, wisp ore and brick, and digs faster."},

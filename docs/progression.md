@@ -32,6 +32,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `_draw_sense` shows them over rock and fog as a wave spreads, `SENSE_SHOW` ticks), WARD (Vulkhar: `hurt`'s
   first hit of 1+ on the local mage is taken, `wisp_ward_t` = `WARD_RECHARGE` 1800; a faint ring round the wisp
   while ready), HANDS (the Core Drive: `_reach` x1.5, voidlife's mote reach x2).
+- Fixes from play (25 Nov): "station" needs count only a workshop standing in the world (`workshops.list`), not one
+  forged and still in the satchel (user: "the wisp said to set down a kiln and as soon as i crafted it the next part
+  started"); a step "Find copper ore" ("copperore": found copper, or Spark Bolt known) comes before forging Spark
+  Bolt, since its recipe is learned from the first copper (user: "the wisp says press c, but i dont see it in
+  there"). Inserting a step is safe for saved journeys: done steps are kept by id (`qdone`) and the walk from `at`
+  skips them. The kiln and smelter steps' "how" say F with ore in hand drops it in and F takes the tray.
 - Test: `_test_quest` ("quest"; in the full run after `_test_start`): a bare start, every step made true in turn
   ticks off in order with its rewards and powers, each power works, the journal pauses, an old journey catches
   up quietly, chapters 2-8 well formed; pictures `quest_wisp.png`, `quest_sense.png`, `quest_journal.png`.

@@ -805,7 +805,7 @@ func _test_quest() -> void:
 					g.known.append(String(c[1]))
 			"tier": g.tier = maxi(g.tier, int(c[1]))
 			"item": g.items[String(c[1])] = true
-			"station": g.items["st_" + String(c[1])] = true
+			"station": g.workshops.add(String(c[1]), g.player.pos + g.player.pos.normalized() * 30.0)
 			"count": g.items[String(c[1])] = int(c[2])
 			"learned": g.learn(String(c[1]))
 			"heat": g.heat_ward = true
