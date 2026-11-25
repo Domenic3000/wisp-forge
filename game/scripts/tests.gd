@@ -7115,6 +7115,9 @@ func _test_harvest() -> void:
 	# ---- torches: picked up by the flame, by the cup, and a put-out stump is a torch again ----
 	m.inv[Defs.TORCH] = 4
 	var t_ok: bool = g.place_torch(m, _cell_pos(cx + 22, fl - 4))
+	# (a sconce hangs on a back wall, as in the game: one hanging in the air comes down as a loose piece)
+	g.stamps.append(Build.shape_stamp(Build.shape_cells(Vector2i(cx + 28, fl - 12), Vector2i(cx + 36, fl), 2, 1), Defs.MASONRY, true))
+	await _frames(2)
 	g.stamps.append(Build.prop_stamp(Build.prop_cells(Build.SCONCE, cx + 32, fl - 2, false), 0))
 	g.stamps.append(Build.prop_stamp(Build.prop_cells(Build.SCONCE.slice(3), cx + 42, fl, false), 0))
 	await _frames(12)

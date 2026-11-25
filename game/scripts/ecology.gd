@@ -863,6 +863,7 @@ static func unearth(g, e) -> void:
 	e.was_in = false
 	e.act = ""
 	e.stranded_t = STRANDED
+	e.goal_p = Vector2.ZERO
 	var up: Vector2 = e.pos.normalized()
 	var br: Vector2 = g.basis_r(atan2(e.pos.y, e.pos.x))
 	e.vx = (randf() - 0.5) * 1.2
@@ -879,10 +880,15 @@ static func _stranded(g, e, tgt, gacc: float) -> void:
 	e.under = false
 	e.act = ""
 	e.pose = ""
-	# writhing where it lies, edging away from you
+	var br: Vector2 = g.basis_r(atan2(e.pos.y, e.pos.x))
+	# writhing where it lies; once it has its wits back, crawling to the nearest ground deep enough to
+	# dig into (the bottom of the hole you dug may be too shallow)
 	if e.on_ground:
-		var side := signf((e.pos - tgt.pos).dot(g.basis_r(atan2(e.pos.y, e.pos.x)))) if tgt != null else 1.0
-		e.vx += ((side if side != 0.0 else 1.0) * 0.35 * (0.5 + 0.5 * sin(float(g.frame) * 0.3 + e.phase)) - e.vx) * 0.2
+		var want := 0.12 * sin(float(g.frame) * 0.15 + e.phase)
+		if e.goal_p != Vector2.ZERO:
+			var along: float = (e.goal_p - e.pos).dot(br)
+			want = clampf(along * 0.05, -0.3, 0.3) + 0.06 * sin(float(g.frame) * 0.3 + e.phase)
+		e.vx += (want - e.vx) * 0.3
 		e.facing = 1 if e.vx >= 0.0 else -1
 	_fall(g, e, gacc, "walk")
 	if e.stranded_t > 0 and (e.stranded_t > STRANDED - 60 or e.stranded_t % 20 != 0):
@@ -893,9 +899,24 @@ static func _stranded(g, e, tgt, gacc: float) -> void:
 		e.stranded_t = 0
 		e.under = true
 		e.was_in = false
+		e.goal_p = Vector2.ZERO
 		e.pos = s - s.normalized() * dpt
 		g.audio.play("dig", s, 0.5)
-	elif e.stranded_t <= 0:
+		return
+	if e.on_ground and (e.goal_p == Vector2.ZERO or e.pos.distance_to(e.goal_p) < 3.0):
+		e.goal_p = Vector2.ZERO
+		for k in range(1, 9):
+			for side in [-1.0, 1.0]:
+				var q: Vector2 = e.pos + br * side * float(k * 6)
+				if not g.in_grid(q, 6.0):
+					continue
+				var sq := surface_under(g, q, 20.0, 40.0)
+				if sq.is_finite() and diggable(g, sq, dpt):
+					e.goal_p = sq
+					break
+			if e.goal_p != Vector2.ZERO:
+				break
+	if e.stranded_t <= 0:
 		e.stranded_t = 60                  # (on rock: it stays out, and looks again in a moment)
 
 ## Out of the ground after a breach and back down: into the soft ground where it lands, or back down its
