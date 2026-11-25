@@ -58,6 +58,38 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Test: `_test_crafting` ("crafting"; in the full run after `_test_workshops`; pictures `forge_workshops.png`,
   `workshop_recipes.png`).
 
+## The forge, the book and the workshops in the world (user, 25 Nov, second pass of "make it feel more inside the world": "C summons the forge into the world", "the recipe book is a grimoire", "workshops show what they're doing", "Send to the Kiln")
+- THE SUMMONED FORGE: `toggle_forge` calls `_summon_forge()`: a ghostly anvil and violet flame (workshop_art
+  `spirit_forge()`, 17x24: "body", "fire0", "fire1") rise beside you (`forge_at`, a little to the left on screen,
+  under `view_up()`), with a rune ring and motes. The world waits while the forge is open, so it runs its own
+  clock: `_process`'s "forge" branch calls `_forge_tick()` (`forge_t`, `forge_vis` up over `FORGE_RISE` ticks,
+  violet sparks, `vfx.tick()`, a redraw). Each thing forged (`craft_many` -> `_forge_send(r)`) rings on the anvil
+  and flies to you as motes (`vfx.fly(from, to, col, n)`; `stats_forge_sent`). Shut, `_dismiss_forge()` and
+  `forge_vis` fades over `FORGE_FADE` ticks in `_tick`. overlay `_draw_forge()` (risen with a smoothstep,
+  bobbing). The forge panel sits on the right of the screen (ui `_build_forge`: `PRESET_CENTER_RIGHT`, 2 or 3
+  cards across from half the screen) so the anvil stays in sight.
+- THE GRIMOIRE: `learn(id)` adds the id to `items["book_new"]` and a page to `pages` ([start point, ticks;
+  negative waits, so several learned at once go one after another]): overlay `_draw_pages()` flies a little
+  parchment page, turning, from above you down to a book at your side, which shows a moment (`PAGE_FLY`,
+  `PAGE_BOOK`; audio "page"; `stats_pages`). The next time the forge opens (ui `show_forge`) those ids go into
+  `_inking` and `book_new` is cleared: their cards start faded sepia and tween to full ink one after another with
+  a "New page" tag. Pages not yet learned (`_book_page`) are parchment (`PAGE`, `PAGE_INK`) with the thing sketched
+  in ink (`Icons.sketch(tex)`: sepia strokes by shading, gaps where the ink didn't take, a smudge; cached).
+- WORKSHOPS AT WORK (overlay `_draw_stations`): what's loaded (`_working_mat`) glows in the station's mouth (an
+  "_ore" lump made under its fire's lowest row, in the material's colour, hotter as it heats) and tints the flame;
+  the still's jar fills over the batch (four "_fill<n>" levels cut from its fill image, by `prog / ticks`); what
+  it made sits on a little plank tray at its side (`_draw_tray`: ingots in the material's colour, stoppered
+  bottles for draughts, up to eight, a glint).
+- F AT A WORKSHOP (`workshops.interact`): what's on its tray first (`has_out`, `take_out(st, true)`: flies to you
+  and pops up beside it, no panel; `stats["trays"]`); then, holding Conjure with a material in hand that it works
+  (an input of one of its mixes) and doesn't hold yet, `drop_in` puts in four batches' worth of a known mix (ten
+  for a mix still to try), or feeds the fire with a fuel when it's low (`stats["dropped"]`); otherwise the panel
+  (fuel, details, Load buttons).
+- SEND TO THE KILN: each workshop mix card in the book (`_process_card`) ends in "Send to the <workshop>" when one
+  of its kind is within `workshops.SEND_REACH` (160) of you (`nearest_kind`), else greyed "No <workshop> near";
+  `workshops.send(pr, craft_amount)` loads it there (`load_recipe`) with motes flying to it (`stats["sent"]`).
+- Test: `_test_inworld` ("inworld", tests/building.gd).
+
 ## Shaping the world is magic (user, 22 Nov: "tie excavating and removing blocks to mana ... everything ideally would be tied into the fact that we are using magic including vfx")
 - Mana per cell, harder costs more: main `dig_mana(t)` = `DIG_MANA` (0.068) x (1 + 1.5 x HARD) x `DIG_TIER_COST` by
   staff tier (1, 1, 0.78, 0.62, 0.48) x gear("mana_cost"); mana comes back `mana_regen_of(m)` a tick = `m.mana_regen`

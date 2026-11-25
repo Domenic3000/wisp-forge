@@ -37,6 +37,68 @@ func _ready() -> void:
 	_make_tex("bat_hang", bh)
 	tex["door_open_30"] = ImageTexture.create_from_image(_door_open_image(30))
 
+## The summoned forge beside you (main `forge_at`, `forge_vis`): it rises out of the ground as it comes and
+## sinks as it fades, its violet flame flickering on its own clock (`forge_t`)
+func _draw_forge() -> void:
+	if game.forge_vis <= 0.0:
+		return
+	if not tex.has("_spirit"):
+		var fr: Dictionary = WorkshopArt.spirit_forge()
+		_make_tex("_spirit", fr["body"])
+		_make_tex("_spirit_f0", fr["fire0"])
+		_make_tex("_spirit_f1", fr["fire1"])
+	var v: float = game.forge_vis
+	var rise := v * v * (3.0 - 2.0 * v)
+	var z: float = game.zoom
+	var up: Vector2 = game.view_up()
+	var base: Vector2 = game.forge_at - up * (1.0 - rise) * 10.0 + up * sin(float(game.forge_t + game.frame) * 0.05) * 0.6
+	var sp: Vector2 = game.world_to_screen(base)
+	var t: Texture2D = tex["_spirit"]
+	var ts := t.get_size()
+	draw_set_transform(sp, 0.0, Vector2.ONE / z)
+	var at := Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0)
+	draw_texture(t, at, Color(1, 1, 1, rise))
+	var fk := "_spirit_f%d" % ((int(game.forge_t + game.frame) / 5) % 2)
+	draw_texture(tex[fk], at, Color(1.2, 1.15, 1.3, rise * (0.75 + 0.25 * sin(float(game.forge_t) * 0.3))))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## Pages flying into your book as you learn recipes (main `pages`): a little parchment page turning over as it
+## flies down to your satchel, then the book there a moment, its clasp glinting, fading away
+func _draw_pages() -> void:
+	if game.pages.is_empty() or game.player == null:
+		return
+	var z: float = game.zoom
+	var m = game.player
+	var up: Vector2 = game.view_up()
+	var right: Vector2 = Vector2(-up.y, up.x)
+	var book: Vector2 = m.pos + right * float(m.facing) * 4.0 - up * 1.0
+	var c := 1.0 / z
+	for pg in game.pages:
+		var t := int(pg[1])
+		if t < 0:
+			continue
+		if t < game.PAGE_FLY:
+			var f := float(t) / float(game.PAGE_FLY)
+			var e := f * f * (3.0 - 2.0 * f)
+			var wp: Vector2 = (pg[0] as Vector2).lerp(book, e) + up * sin(f * PI) * 8.0
+			var sp: Vector2 = game.world_to_screen(wp)
+			var flip := absf(cos(float(t) * 0.35))
+			var pw := maxf(1.0, roundf(4.0 * flip))
+			var o := (sp - Vector2(pw * 0.5, 2.5) * c).floor()
+			draw_rect(Rect2(o - Vector2.ONE * c, Vector2(pw + 2.0, 7.0) * c), Color(0.9, 0.95, 1.0, 0.18))
+			draw_rect(Rect2(o, Vector2(pw, 5.0) * c), Color(0.93, 0.86, 0.66))
+			if pw >= 3.0:
+				draw_rect(Rect2(o + Vector2(1, 1) * c, Vector2(pw - 2.0, 1.0) * c), Color(0.35, 0.25, 0.15, 0.8))
+				draw_rect(Rect2(o + Vector2(1, 3) * c, Vector2(pw - 2.0, 1.0) * c), Color(0.35, 0.25, 0.15, 0.6))
+		else:
+			var a := 1.0 - float(t - game.PAGE_FLY) / float(game.PAGE_BOOK)
+			var bs: Vector2 = game.world_to_screen(book)
+			var bo := (bs - Vector2(2.5, 2.0) * c).floor()
+			draw_rect(Rect2(bo - Vector2.ONE * c, Vector2(7, 6) * c), Color(0.08, 0.05, 0.03, 0.8 * a))
+			draw_rect(Rect2(bo, Vector2(5, 4) * c), Color(0.45, 0.2, 0.18, a))
+			draw_rect(Rect2(bo, Vector2(1, 4) * c), Color(0.3, 0.12, 0.1, a))
+			draw_rect(Rect2(bo + Vector2(3, 1) * c, Vector2(2, 2) * c), Color(1.0, 0.85, 0.4, a))
+
 ## What's in your hand, floating at your shoulder while Conjure is held (user, 25 Nov): a little block of the
 ## material (or of the piece's colour), bobbing, with a faint glow.
 func _draw_hand() -> void:
@@ -659,8 +721,27 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	var origin := Vector2(-floorf(ts.x * 0.5) + 1.0, -ts.y + 2.0)
 	MageRig.draw_pixels(self, m.rig.back_pixels(), origin, 1.0, mod, _masks[key])
 	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
-	MageRig.draw_pixels(self, m.rig.front_pixels(gem), origin, 1.0, mod, _masks[key])
+	MageRig.draw_pixels(self, m.rig.front_pixels(_gem_now(m, gem)), origin, 1.0, mod, _masks[key])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## (user, 25 Nov: "the staff's gem shows your mana, dimming as it drains and flaring when full"): the crystal's
+## colour dims toward dark glass as mana runs low, and flashes white for a moment as it fills up again
+var _gem_was := {}       # mage id -> [mana fraction last drawn, frame it last filled]
+var stats_gem_flares := 0
+func _gem_now(m, gem: Color) -> Color:
+	var mf := clampf(m.mana / maxf(1.0, m.max_mana), 0.0, 1.0)
+	var id: int = m.get_instance_id()
+	var was: Array = _gem_was.get(id, [mf, -1000])
+	if mf >= 0.999 and float(was[0]) < 0.999:
+		was[1] = game.frame
+		stats_gem_flares += 1
+	was[0] = mf
+	_gem_was[id] = was
+	var c := gem.lerp(Color(0.12, 0.1, 0.18), 0.7 * (1.0 - mf) * (1.0 - mf) + 0.15 * (1.0 - mf))
+	var since: int = int(game.frame) - int(was[1])
+	if since < 24:
+		c = c.lerp(Color(1, 1, 1), 0.8 * (1.0 - float(since) / 24.0))
+	return c
 
 ## The skiff's body -> screen map: turned with its own frame, one body cell to one pixel at the
 ## view's zoom, like every sprite. (In the close view the terrain's columns are drawn a pixel each,
@@ -792,6 +873,7 @@ func _draw_in_pocket() -> void:
 	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 	_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
 	_draw_build_preview()
+	_draw_forge()
 	_draw_hand()
 	if game.wisp_say_t > 0 and game.wisp_say != "":
 		_bubble(game.player.pos - game.basis_d(game.view_angle()) * 16.0, game.wisp_say, clampf(float(game.wisp_say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
@@ -1066,7 +1148,9 @@ func _draw_all() -> void:
 		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
 	elif game.wisp_say_t > 0 and game.wisp_say != "":
 		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.wisp_say, clampf(float(game.wisp_say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
+	_draw_forge()
 	_draw_hand()
+	_draw_pages()
 	_draw_popups()
 	# particles (the light read where each is in the picture: near enough, the light is soft)
 	var pxf: Transform2D = game.screen_xf()
@@ -1201,6 +1285,68 @@ func _draw_folk() -> void:
 
 ## The workshop stations (workshops.gd): the body, lit by the world; a lit one's fire over it, unlit and
 ## flickering (two frames), as bright as it is hot; a Still's jar coloured by what it's steeping.
+## the material a station is working (the most of what's loaded, not counting what only feeds the fire), or 0
+func _working_mat(st) -> int:
+	var best := 0
+	var bn := 0
+	for k in st.store:
+		if int(st.store[k]) > bn:
+			bn = int(st.store[k])
+			best = int(k)
+	return best
+
+## (user, 25 Nov: "finished goods stacking on a tray beside it, taken with F"): a little plank tray at the
+## station's side with what it made on it: bars and lumps of a material as little ingots in its colour,
+## draughts as tiny stoppered bottles, gear as a gold glint. Up to eight shown.
+func _draw_tray(st) -> void:
+	if not game.workshops.has_out(st):
+		return
+	var z: float = game.zoom
+	var side := float(st.facing)
+	var base: Vector2 = game.workshops._world(st, Vector2(side * (st.w * 0.5 + 3.0), st.h * 0.5))
+	var sp: Vector2 = game.world_to_screen(base)
+	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(base.y, base.x), -PI, PI)
+	if game.close_view() and not game.unrolled():
+		rot = wrapf(game.view_angle() - atan2(base.y, base.x), -PI, PI)
+	var lc: Color = _lit(sp)
+	var lit := Color(lc.r, lc.g, lc.b, 1.0)
+	draw_set_transform(sp.floor(), rot, Vector2.ONE / z)
+	# the tray: a plank on two little legs
+	draw_rect(Rect2(-4, -4, 9, 1), Color(0.55, 0.38, 0.22) * lit)
+	draw_rect(Rect2(-4, -3, 9, 1), Color(0.33, 0.21, 0.12) * lit)
+	draw_rect(Rect2(-3, -2, 1, 2), Color(0.3, 0.19, 0.1) * lit)
+	draw_rect(Rect2(3, -2, 1, 2), Color(0.3, 0.19, 0.1) * lit)
+	var shown := 0
+	for key in st.out:
+		var n := int(st.out[key])
+		var k := String(key)
+		var col := Color(1.0, 0.85, 0.4)
+		var bottle := false
+		if k.begins_with("m"):
+			col = Defs.COLOR[int(k.substr(1))]
+		elif k == "potion":
+			col = Color(0.9, 0.25, 0.3)
+			bottle = true
+		elif Defs.DRAUGHTS.has(k):
+			col = Defs.DRAUGHTS[k]["col"]
+			bottle = true
+		for q in n:
+			if shown >= 8:
+				break
+			var cx := -4 + (shown % 4) * 2 + (1 if bottle else 0)
+			var row := shown / 4
+			if bottle:
+				draw_rect(Rect2(cx, -7 - row * 3, 1, 2), col * lit)
+				draw_rect(Rect2(cx, -8 - row * 3, 1, 1), Color(0.5, 0.35, 0.2) * lit)
+			else:
+				draw_rect(Rect2(cx, -5 - row * 2, 2, 1), col * lit)
+				draw_rect(Rect2(cx, -5 - row * 2, 1, 1), col.lightened(0.35) * lit)
+			shown += 1
+	# a glint now and then, so it catches the eye
+	if (int(game.frame) / 8) % 12 == 0:
+		draw_rect(Rect2(-3, -6 - ((shown - 1) / 4) * 2, 1, 1), Color(1, 1, 0.9, 0.9))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 func _draw_stations() -> void:
 	for st in game.workshops.list:
 		var ssp: Vector2 = game.world_to_screen(st.pos)
@@ -1214,8 +1360,50 @@ func _draw_stations() -> void:
 			_make_tex(key + "_fire1", fr["fire1"])
 			if fr["fill"] != null:
 				_make_tex(key + "_fill", fr["fill"])
+				# (user, 25 Nov: "the still's jar filling"): the jar's liquid at four levels, from the bottom up
+				var fimg: Image = fr["fill"]
+				var fy0 := fimg.get_height()
+				var fy1 := -1
+				for fy in fimg.get_height():
+					for fx in fimg.get_width():
+						if fimg.get_pixel(fx, fy).a > 0.05:
+							fy0 = mini(fy0, fy)
+							fy1 = maxi(fy1, fy)
+				for lv in range(1, 5):
+					var li: Image = fimg.duplicate()
+					var cut := fy1 + 1 - int(ceilf(float(fy1 + 1 - fy0) * float(lv) / 4.0))
+					for fy2 in cut:
+						for fx2 in li.get_width():
+							li.set_pixel(fx2, fy2, Color(0, 0, 0, 0))
+					_make_tex(key + "_fill%d" % lv, li)
+			# (user, 25 Nov: "ore glowing in the kiln's mouth"): a glowing lump where its fire burns lowest
+			var fimg2: Image = fr["fire0"]
+			var ore := Image.create(fimg2.get_width(), fimg2.get_height(), false, Image.FORMAT_RGBA8)
+			ore.fill(Color(0, 0, 0, 0))
+			var by := -1
+			var bx0 := 0
+			var bx1 := 0
+			for fy3 in range(fimg2.get_height() - 1, -1, -1):
+				for fx3 in fimg2.get_width():
+					if fimg2.get_pixel(fx3, fy3).a > 0.3:
+						if by < 0:
+							by = fy3
+							bx0 = fx3
+						bx1 = fx3
+				if by >= 0:
+					break
+			if by >= 0:
+				var cx := (bx0 + bx1) / 2
+				for ox in range(-1, 2):
+					for oy in range(0, 2):
+						var px2 := cx + ox
+						var py2 := by - oy
+						if px2 >= 0 and px2 < ore.get_width() and py2 >= 0:
+							ore.set_pixel(px2, py2, Color(1, 1, 1, 1.0 if oy == 0 or ox == 0 else 0.7))
+			_make_tex(key + "_ore", ore)
 		var fl: bool = st.facing < 0
 		_sprite(key, st.pos, fl, false, st.h, true, 1.0, 1.0, Color(1, 1, 1), true)
+		var wmat := _working_mat(st)
 		var fill_col := Color(0, 0, 0, 0)
 		if st.kind == "still":
 			var pr: Dictionary = Defs.process_by_id(st.cur)
@@ -1226,10 +1414,23 @@ func _draw_stations() -> void:
 				fill_col = Color(0.9, 0.25, 0.3)
 			elif int(st.store.get(Defs.WATER, 0)) > 0:
 				fill_col = Color(0.35, 0.55, 0.95)
-			if fill_col.a > 0.0 and tex.has(key + "_fill"):
-				_sprite(key + "_fill", st.pos, fl, false, st.h, true, 0.85, 1.0, fill_col * (0.7 + 0.5 * st.heat), true, 0.0, st.heat > 0.3)
+			if fill_col.a > 0.0 and tex.has(key + "_fill1"):
+				# (the jar fills as the batch is worked: a little water in it to start)
+				var pr2: Dictionary = Defs.process_by_id(st.cur)
+				var lv2 := 1
+				if not pr2.is_empty():
+					lv2 = clampi(1 + int(4.0 * st.prog / maxf(1.0, float(pr2["ticks"]))), 1, 4)
+				_sprite(key + "_fill%d" % lv2, st.pos, fl, false, st.h, true, 0.85, 1.0, fill_col * (0.7 + 0.5 * st.heat), true, 0.0, st.heat > 0.3)
+		# what it's working glows in its mouth, hotter as it heats, and tints the flame toward its own colour
+		var fire_tint := Color(1.3, 1.2, 1.1)
+		if wmat > 0 and st.kind != "still":
+			var mc: Color = Defs.COLOR[wmat]
+			var hot := mc.lerp(Color(1.0, 0.6, 0.25), 0.55 * st.heat)
+			_sprite(key + "_ore", st.pos, fl, false, st.h, true, 1.0, 1.0, hot * (0.8 + 0.9 * st.heat), true, 0.0, st.heat > 0.15)
+			fire_tint = fire_tint.lerp(Color(mc.r * 1.4, mc.g * 1.4, mc.b * 1.4), 0.3)
 		if st.heat > 0.02:
 			var fk := "%s_fire%d" % [key, (int(game.frame) / 6 + int(absf(st.pos.x))) % 2]
 			var fa: float = clampf(st.heat * 1.3, 0.2, 1.0) if st.lit else st.heat
-			_sprite(fk, st.pos, fl, false, st.h, true, fa, 1.0, Color(1.3, 1.2, 1.1), true, 0.0, true)
+			_sprite(fk, st.pos, fl, false, st.h, true, fa, 1.0, fire_tint, true, 0.0, true)
+		_draw_tray(st)
 

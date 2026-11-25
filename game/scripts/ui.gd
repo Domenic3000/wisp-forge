@@ -43,6 +43,7 @@ var build_box: VBoxContainer
 var hand_bar: PanelContainer        # what's in your hand and how it goes down (Conjure held)
 var hand_box: VBoxContainer
 var _hand_key := ""
+var quick_row: BoxContainer = null
 var _build_key := ""
 var satchel: VBoxContainer         # the open satchel: a heading and a grid per section
 var satchel_slots := 0             # (slots in it, for the tests)
@@ -528,8 +529,14 @@ func _build_hud() -> void:
 	hand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hand_bar.visible = false
 	hb.add_child(hand_bar)
+	var hcol := _box(true, 2)
+	hand_bar.add_child(hcol)
 	hand_box = _box(true, 1)
-	hand_bar.add_child(hand_box)
+	hcol.add_child(hand_box)
+	# (the quick bar: the last few things you held, click one to hold it again: `_update_hand_bar`)
+	quick_row = _box(false, 3)
+	quick_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	hcol.add_child(quick_row)
 	hot_name = _head("", 12, CREAM)
 	hot_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hb.add_child(hot_name)
@@ -638,11 +645,14 @@ func _build_hud() -> void:
 
 
 func _build_forge() -> void:
+	# (on the right of the screen, so the forge it summons beside you stays in sight: user, 25 Nov,
+	# "C summons the forge into the world")
 	forge = _panel(Color(0.05, 0.04, 0.09, 0.97), TRIM, 7)
-	forge.set_anchors_preset(Control.PRESET_CENTER)
+	forge.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
 	forge.custom_minimum_size = Vector2(470, 316)
-	forge.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	forge.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	forge.grow_vertical = Control.GROW_DIRECTION_BOTH
+	forge.offset_right = -10
 	forge.visible = false
 	root.add_child(forge)
 	var v := _box(true, 4)
@@ -1548,9 +1558,18 @@ func show_map(g) -> void:
 func hide_map() -> void:
 	map_bar.visible = false
 
+var _inking := {}       # recipes learned since the book was last open: they ink in as it opens
+var _inked := {}
+
 func show_forge(to_book := false) -> void:
-	# as big as the screen allows (a card is 152 UI pixels wide: 3 to 5 across)
-	var cols := clampi(int((root.size.x - 60.0) / 152.0), 3, 5)
+	_inking = {}
+	_inked = {}
+	for nid in game.items.get("book_new", []):
+		_inking[String(nid)] = true
+	game.items.erase("book_new")
+	# within the right half of the screen, clear of you at its middle (a card is 152 UI pixels wide: 2 or 3
+	# across; at 4 the panel reached over the mage)
+	var cols := clampi(int((root.size.x * 0.5 - 80.0) / 152.0), 2, 3)
 	forge.custom_minimum_size = Vector2(cols * 152 + 14, clampf(root.size.y - 70.0, 300.0, 520.0))
 	_forge_cols = cols
 	_render_forge()
@@ -1569,9 +1588,11 @@ func hide_forge() -> void:
 ## (main `hand_hint`), just over the spell bar
 func _update_hand_bar(g) -> void:
 	var txt: String = g.hand_hint()
-	if txt == _hand_key:
+	var ql: Array = g.quick_list()
+	var key := txt + "|" + ",".join(ql)
+	if key == _hand_key:
 		return
-	_hand_key = txt
+	_hand_key = key
 	for c in hand_box.get_children():
 		c.queue_free()
 	var ls := txt.split("\n")
@@ -1579,6 +1600,34 @@ func _update_hand_bar(g) -> void:
 		var hl := _label(ls[i], 12, GOLD if i == 0 else CREAM)
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hand_box.add_child(hl)
+	for c2 in quick_row.get_children():
+		c2.queue_free()
+	quick_row.visible = not ql.is_empty()
+	for id in ql:
+		var sid := String(id)
+		var ic: Texture2D = null
+		var nm := ""
+		var cnt := ""
+		if sid.begins_with("m"):
+			var mt := int(sid.substr(1))
+			ic = Icons.mat(mt)
+			nm = String(Defs.NAMES[mt])
+			cnt = str(g.player.inv[mt])
+		elif sid.begins_with("f:"):
+			nm = sid.substr(2)
+			var fi: int = g._furn_index(nm)
+			var rows: Array = g.player.furn[fi].get("rows", []) if fi >= 0 else []
+			ic = Icons.prop_rows(rows) if not rows.is_empty() else Icons.item("chair")
+		else:
+			var sk := sid.substr(2)
+			ic = Icons.station(sk)
+			nm = String(Defs.STATIONS[sk]["name"]) if Defs.STATIONS.has(sk) else sk
+			cnt = str(int(g.items.get("st_" + sk, 0)))
+		var sl := _slot(ic, cnt, false, "%s\nClick: back in your hand" % nm)
+		sl.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				game.quick_take(sid))
+		quick_row.add_child(sl)
 
 ## The building bar: the categories (Q/E), the pieces of the chosen one (wheel or 1-9; dimmed
 ## when the satchel can't pay), and the chosen piece's cost.
@@ -2252,7 +2301,24 @@ func _process_card(pr: Dictionary) -> Control:
 		costs.add_child(_cost_chip(int(k), int(pr["in"][k])))
 	var at := _label("at the %s" % sname, 11, Color(0.95, 0.75, 0.5))
 	v.add_child(at)
+	# (user, 25 Nov: "Send to the Kiln"): loads the nearest one in reach from your satchel
+	var near_st = game.workshops.nearest_kind(String(pr["at"]), game.player)
+	var sb := _button(("Send to the %s" % sname) + (" ×%d" % craft_amount if craft_amount > 1 else "") if near_st != null else "No %s near" % sname)
+	sb.disabled = near_st == null
+	if near_st != null:
+		sb.pressed.connect(_on_send.bind(pr))
+	v.add_child(sb)
 	return p
+
+func _on_send(pr: Dictionary) -> void:
+	if game.workshops.send(pr, craft_amount) > 0:
+		_inv_key = ""
+		_hot_key = ""
+		if game.state == "forge":
+			var sv := _forge_scroll.scroll_vertical
+			_render_forge()
+			await get_tree().process_frame
+			_forge_scroll.scroll_vertical = sv
 
 ## a workshop's secret not yet found: a page with its riddle once you've heard it
 func _secret_page(pr: Dictionary) -> Control:
@@ -2270,23 +2336,28 @@ func _secret_page(pr: Dictionary) -> Control:
 	v.add_child(hl)
 	return p
 
-## a recipe not yet learned: its name, and where it's learned
+## A page of the book not yet learned (user, 25 Nov: "locked pages show smudged sketches"): a parchment page
+## with the thing sketched in ink (`Icons.sketch`), its name in faded ink and where it's found
+const PAGE := Color(0.74, 0.66, 0.49, 0.96)
+const PAGE_INK := Color(0.3, 0.21, 0.13)
+
 func _book_page(r: Dictionary) -> Control:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", _frame(Color(0.06, 0.05, 0.1, 0.97), TRIM_DIM, 3))
+	p.add_theme_stylebox_override("panel", _frame(PAGE, Color(0.45, 0.33, 0.2), 3))
 	p.custom_minimum_size = Vector2(148, 0)
 	var v := _box(true, 2)
 	p.add_child(v)
 	var top := _box(false, 3)
 	v.add_child(top)
-	var ic := _tex(_recipe_icon(r))
-	ic.modulate = Color(0.45, 0.45, 0.55)
+	var ic := _tex(Icons.sketch(_recipe_icon(r)))
 	top.add_child(ic)
-	var nm := _label(String(r["name"]), 12, Color(0.62, 0.6, 0.72))
+	var nm := _label(String(r["name"]), 12, PAGE_INK)
+	nm.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0))
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
 	nm.custom_minimum_size.x = 120
 	top.add_child(nm)
-	var hl := _label(Defs.learn_hint(r), 11, DIM)
+	var hl := _label(Defs.learn_hint(r), 11, Color(PAGE_INK.r, PAGE_INK.g, PAGE_INK.b, 0.75))
+	hl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0))
 	hl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	hl.custom_minimum_size = Vector2(138, 0)
 	v.add_child(hl)
@@ -2310,6 +2381,18 @@ func _recipe_card(r: Dictionary) -> Control:
 	var top := _box(false, 3)
 	v.add_child(top)
 	top.add_child(_tex(_recipe_icon(r)))
+	# a page learned since the book was last opened inks itself in (once), and says so
+	var rid := String(r.get("id", ""))
+	if _inking.has(rid):
+		var tag := _label("New page", 11, GOLD)
+		v.add_child(tag)
+		v.move_child(tag, 0)
+		if not _inked.has(rid):
+			_inked[rid] = true
+			p.modulate = Color(0.55, 0.45, 0.3, 0.25)
+			var tw := p.create_tween()
+			tw.tween_interval(0.15 + 0.12 * float(_inked.size() - 1))
+			tw.tween_property(p, "modulate", Color(1, 1, 1, 0.55 if done else 1.0), 1.2)
 	var nm := _head(r["name"], 12, CREAM)
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
 	nm.custom_minimum_size.x = 120
@@ -2389,4 +2472,6 @@ func mouse_over_ui(slots := true) -> bool:
 		return true
 	if build_bar and build_bar.visible and _on_screen(build_bar).has_point(m):
 		return true
+	if quick_row and quick_row.is_visible_in_tree() and _on_screen(quick_row).has_point(m):
+		return true                         # (the quick bar under the hand bar)
 	return false

@@ -871,6 +871,13 @@ func _process(delta: float) -> void:
 		_tick_acc = minf(_tick_acc - steps / 60.0, 1.0 / 60.0)
 		for k in steps:
 			_tick()
+	elif state == "forge" and not menu_up:
+		# (the world waits while the forge is open; the summoned forge keeps its own clock)
+		_tick_acc += minf(delta, 0.1)
+		var fsteps := mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
+		_tick_acc = minf(_tick_acc - fsteps / 60.0, 1.0 / 60.0)
+		for k3 in fsteps:
+			_forge_tick()
 	elif state == "station":
 		# (the world waits while a station's panel is open, but the stations keep working: you watch it)
 		_tick_acc += minf(delta, 0.1)
@@ -2339,9 +2346,20 @@ func _read_local_input(m: Mage) -> void:
 		inp.cast = false
 
 func _tick() -> void:
+	if player != null and conjuring(player):
+		_note_hand()
 	frame += 1
 	time += 1.0
 	hand_live = false               # (set again this tick by whatever places from the hand)
+	if forge_vis > 0.0 and state != "forge":
+		forge_vis = maxf(0.0, forge_vis - 1.0 / float(FORGE_FADE))
+	for pg in pages:
+		pg[1] = int(pg[1]) + 1
+		if int(pg[1]) == PAGE_FLY:
+			stats_pages += 1
+			audio.play("page", player.pos, 0.6)
+	while not pages.is_empty() and int(pages[0][1]) > PAGE_FLY + PAGE_BOOK:
+		pages.pop_front()
 	if wisp_say_t > 0:
 		wisp_say_t -= 1
 	for pu in popups:
@@ -5061,6 +5079,15 @@ func learn(id: String, why := "") -> bool:
 	learned[id] = true
 	if r.has("scroll"):
 		items[String(r["scroll"])] = true      # (a spell that had its own scroll: that's what opens it at the forge)
+	# (user, 25 Nov: "a page flies into the book when you learn a recipe, and its page fills in with ink the
+	# next time you open it"): the page's flight (`pages`, overlay `_draw_pages`), and the book's note of it
+	var bn: Array = items.get("book_new", [])
+	if not bn.has(id):
+		bn.append(id)
+	items["book_new"] = bn
+	if player != null and not player.dead:
+		var up := view_up()
+		pages.append([player.pos + up * 24.0 + basis_r(view_angle()) * randf_range(-16.0, 16.0), -10 * mini(pages.size(), 6)])
 	# (where to find it is said the first few times)
 	var tail := " (C: the Wisp Forge, J: the recipe book)" if learned.size() <= 3 else ""
 	ui.toast("New recipe: %s%s.%s" % [r["name"], (", " + why) if why != "" else "", tail], Color(0.72, 0.9, 1.0), 6.0)
@@ -5292,7 +5319,10 @@ func recipe_repeatable(r: Dictionary) -> bool:
 var craft_quiet := false
 func craft_many(r: Dictionary, n: int) -> int:
 	if not recipe_repeatable(r):
-		return 1 if craft(r) else 0
+		var one := craft(r)
+		if one:
+			_forge_send(r)
+		return 1 if one else 0
 	var made := 0
 	craft_quiet = true
 	for k in maxi(1, n):
@@ -5302,6 +5332,7 @@ func craft_many(r: Dictionary, n: int) -> int:
 	craft_quiet = false
 	if made > 0:
 		save_game()
+		_forge_send(r)
 		var what := String(r["name"])
 		if r.has("give") and (r["give"] as Dictionary).size() == 1:
 			var gm: int = int((r["give"] as Dictionary).keys()[0])
@@ -5458,11 +5489,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 				return
 			if k == KEY_J:
 				# the recipe book: the forge, opened at its unlearned pages
-				if state == "play":
-					state = "forge"
-					ui.show_forge(true)
-				else:
-					toggle_forge()
+				toggle_forge(state == "play")
 				return
 		if state == "map":
 			_map_key(k)
@@ -5813,6 +5840,71 @@ func hand_hint() -> String:
 	elif hand_live and build_why != "" and not bool(build_prev.get("ok", true)):
 		lines.append("It doesn't fit: " + build_why)
 	return "\n".join(lines)
+
+## (user, 25 Nov: "the satchel keeps the last few held things as a quick bar"): what you've had in your hand
+## lately, newest first (the hand's own at [0]), shown under the hand bar to click back into your hand.
+## ids: "m<material>", "f:<furniture name>", "s:<workshop kind>".
+var hand_recent := []
+const QUICK_N := 6
+
+func hand_id() -> String:
+	if hand_item.is_empty():
+		return ("m%d" % mat) if mat > 0 else ""
+	match String(hand_item.get("what", "")):
+		"furn":
+			return "f:" + String(hand_item["name"])
+		"station":
+			return "s:" + String(hand_item["sk"])
+	return ""
+
+func _note_hand() -> void:
+	var id := hand_id()
+	if id == "" or (not hand_recent.is_empty() and hand_recent[0] == id):
+		return
+	hand_recent.erase(id)
+	hand_recent.push_front(id)
+	if hand_recent.size() > QUICK_N:
+		hand_recent.resize(QUICK_N)
+
+## the quick bar: the recent ones you still have (not the one in your hand)
+func quick_list() -> Array:
+	var out := []
+	for id in hand_recent:
+		var sid := String(id)
+		if sid == hand_id():
+			continue
+		if sid.begins_with("m"):
+			if player.inv[int(sid.substr(1))] > 0:
+				out.append(sid)
+		elif sid.begins_with("f:"):
+			if _furn_index(sid.substr(2)) >= 0:
+				out.append(sid)
+		elif sid.begins_with("s:"):
+			if int(items.get("st_" + sid.substr(2), 0)) > 0:
+				out.append(sid)
+	return out
+
+func _furn_index(fname: String) -> int:
+	for k in player.furn.size():
+		if String(player.furn[k]["name"]) == fname:
+			return k
+	return -1
+
+## back into your hand from the quick bar
+func quick_take(id: String) -> void:
+	if id.begins_with("m"):
+		var mt := int(id.substr(1))
+		if mt == Defs.TORCH:
+			hold_carried("torch")
+		elif mt == Defs.WOODDOOR:
+			hold_carried("door")
+		else:
+			select_material(mt)
+	elif id.begins_with("f:"):
+		hold_carried("furn", _furn_index(id.substr(2)))
+	elif id.begins_with("s:"):
+		hold_carried("station", -1, id.substr(2))
+	_note_hand()
 
 func hand_bar_on() -> bool:
 	return not build_on and state == "play" and player != null and player.aboard == null and conjuring(player) and hand_name() != ""
@@ -7101,15 +7193,86 @@ func select_material(m: int) -> void:
 	if ci >= 0:
 		sel = ci
 
-func toggle_forge() -> void:
+func toggle_forge(to_book := false) -> void:
 	if state == "play":
 		state = "forge"
-		ui.show_forge()
+		_summon_forge()
+		ui.show_forge(to_book)
 		if anvil_near():
 			ui.toast("An anvil is at hand: ore gear forged here comes out masterwork", Color(1, 0.9, 0.55), 3.0)
 	elif state == "forge":
 		state = "play"
 		ui.hide_forge()
+		_dismiss_forge()
+
+# ---------------------------------------------------------- the summoned forge --
+## (user, 25 Nov: "C summons the forge into the world"): opening the Wisp Forge raises a spectral anvil and
+## its flame out of the ground beside you in a circle of runes (workshop_art.gd `spirit_forge`, drawn by
+## overlay `_draw_forge`); the panel opens on the right of the screen, so it stays in sight; what's forged
+## flies from it into you (`_forge_send`); closed, it sinks and fades. The world waits meanwhile, so it keeps
+## its own clock (`_forge_tick`, from `_process`), and the effects with it.
+var forge_at := Vector2.ZERO       # its base: on the ground beside you, toward the screen's left
+var forge_vis := 0.0               # 0..1: how much of it shows (risen and bright at 1)
+var forge_t := 0                   # ticks since it was summoned
+const FORGE_RISE := 18             # ticks to rise
+const FORGE_FADE := 30             # ticks to fade once closed
+
+## up on screen, at a world point (the view's own up)
+func view_up() -> Vector2:
+	return -basis_d(view_angle())
+
+func _summon_forge() -> void:
+	var m := player
+	var feet: Vector2 = m.pos - view_up() * (float(m.h) * 0.5)
+	forge_at = screen_to_world(world_to_screen(feet) + Vector2(-18.0 / zoom, 0.0))
+	forge_vis = 0.0
+	forge_t = 0
+	var up := view_up()
+	vfx.spawn(Vfx.RUNE, forge_at + up * 1.0, Vector2.ZERO, 60, Color(0.75, 0.6, 1.0, 0.8), Color(0.45, 0.85, 1.0, 0.0), 9.0, 12.0, true, 0.0, 1.0, 0.06)
+	vfx.spawn(Vfx.RING, forge_at + up * 5.0, Vector2.ZERO, 26, Color(0.85, 0.75, 1.0), Color(0.45, 0.85, 1.0, 0.0), 2.0, 16.0, true)
+	for k in 16:
+		var d := Vector2.from_angle(randf() * TAU)
+		vfx.spawn(Vfx.DOT, forge_at + d * randf_range(6.0, 12.0), (-d * 0.4 + up * 0.5), 26 + randi() % 14, Color(0.9, 0.85, 1.0), Color(0.5, 0.6, 1.0, 0.0), 1.0, 1.0, true, 0.0, 0.97)
+	audio.play("blink", forge_at, 0.5)
+
+func _dismiss_forge() -> void:
+	if forge_vis <= 0.0:
+		return
+	var up := view_up()
+	for k in 12:
+		vfx.spawn(Vfx.DOT, forge_at + up * randf_range(2.0, 14.0) + Vector2.from_angle(randf() * TAU) * 3.0, up * randf_range(0.3, 0.8), 30 + randi() % 20, Color(0.8, 0.75, 1.0), Color(0.45, 0.85, 1.0, 0.0), 1.0, 1.0, true, 0.0, 0.98)
+
+## its own clock while the forge is open (the world waits): it rises, its flame throws violet sparks
+func _forge_tick() -> void:
+	forge_t += 1
+	forge_vis = minf(1.0, forge_vis + 1.0 / float(FORGE_RISE))
+	var up := view_up()
+	if forge_t % 4 == 0 and forge_vis > 0.6:
+		vfx.spawn(Vfx.DOT, forge_at + up * 14.0 + basis_r(view_angle()) * randf_range(-1.5, 1.5), up * randf_range(0.25, 0.6) + Vector2.from_angle(randf() * TAU) * 0.1,
+			20 + randi() % 16, Color(0.85, 0.8, 1.0), Color(0.45, 0.6, 1.0, 0.0), 1.0, 1.0, true, 0.0, 0.98)
+	vfx.tick()
+	overlay.queue_redraw()
+
+## something forged: a flash on the anvil, and it flies from there into you
+func _forge_send(r: Dictionary) -> void:
+	if state != "forge" or forge_vis <= 0.0:
+		return
+	var col := Color(1.0, 0.86, 0.5)
+	if r.has("give") and (r["give"] as Dictionary).size() >= 1:
+		col = Defs.COLOR[int((r["give"] as Dictionary).keys()[0])]
+	var top: Vector2 = forge_at + view_up() * 9.0
+	vfx.spawn(Vfx.RING, top, Vector2.ZERO, 20, Color(1, 0.95, 0.8), Color(0.75, 0.6, 1.0, 0.0), 2.0, 10.0, true)
+	vfx.fly(top, player.pos, col, 14)
+	audio.play("forge", forge_at, 0.4)
+	stats_forge_sent += 1
+
+var stats_forge_sent := 0            # (for the tests)
+
+## pages flying into your book as you learn recipes: [where it starts (world), ticks (negative: waiting)]
+var pages := []
+const PAGE_FLY := 36                 # ticks a page flies
+const PAGE_BOOK := 16                # then the book shows a moment, shut, before it fades
+var stats_pages := 0                 # (for the tests)
 
 # ==================================================================== map ===
 ## The map (M) is a menu of its own: the game waits while it's open (the play camera never zooms

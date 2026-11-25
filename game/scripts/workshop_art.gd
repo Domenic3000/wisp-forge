@@ -268,6 +268,64 @@ static func _anvil(body: Image) -> void:
 				c = Color8(160, 120, 76)
 			body.set_pixel(x, y, c)
 
+## The summoned forge (user, 25 Nov: "C summons the forge into the world"): a spectral anvil on a floating
+## plinth of light, a violet flame over its face (the Wisp Forge's own fire). Grown like the rest: a larger
+## anvil than the workshop's (horn, face, waist, foot), its pixels in ghost-light by their shade, a hollow
+## glowing edge, and two flickering flame frames. {"body", "fire0", "fire1"}, 17 x 24, the base at the bottom.
+static func spirit_forge() -> Dictionary:
+	if _cache.has("_spirit"):
+		return _cache["_spirit"]
+	var w := 17
+	var h := 24
+	var body := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	body.fill(CLEAR)
+	var lit := Color(0.86, 0.9, 1.0, 0.95)
+	var mid := Color(0.55, 0.62, 1.0, 0.85)
+	var dk := Color(0.36, 0.3, 0.78, 0.8)
+	var y0 := h - 12                # the face's top row
+	# the face, the horn pointing left, a heel step on the right
+	for x in range(2, w - 1):
+		body.set_pixel(x, y0, lit)
+		body.set_pixel(x, y0 + 1, mid)
+	for x in range(0, 4):
+		body.set_pixel(x, y0 + 1, mid)
+	body.set_pixel(0, y0 + 2, dk)
+	body.set_pixel(1, y0 + 2, mid)
+	for x in range(w - 4, w - 1):
+		body.set_pixel(x, y0 + 2, mid)
+	# the waist and the foot
+	for y in range(y0 + 2, y0 + 6):
+		for x in range(6, 11):
+			body.set_pixel(x, y, dk if x == 10 else mid)
+	for x in range(4, 13):
+		body.set_pixel(x, y0 + 6, mid)
+		body.set_pixel(x, y0 + 7, dk)
+	# a plinth of light it stands on, fading downward
+	for y in range(y0 + 8, h):
+		var a := 0.55 - 0.13 * float(y - y0 - 8)
+		for x in range(3, 14):
+			if (x + y) % 2 == 0 or y == y0 + 8:
+				body.set_pixel(x, y, Color(0.6, 0.7, 1.0, maxf(a, 0.1)))
+	# the flame over the face: violet at the root, white at the heart
+	var fire := []
+	var cols := [Color(1.0, 0.97, 1.0), Color(0.85, 0.72, 1.0), Color(0.62, 0.45, 1.0), Color(0.42, 0.26, 0.9)]
+	for k in 2:
+		var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+		img.fill(CLEAR)
+		for x in range(5, 12):
+			var dx: int = absi(x - 8)
+			var hgt := 9 - dx * 2 + _h(x * 5 + k * 77, 31) % 3
+			for j in maxi(hgt, 1):
+				var y := y0 - 1 - j
+				if y < 0:
+					break
+				var f := float(j) / float(maxi(hgt - 1, 1))
+				img.set_pixel(x, y, cols[mini(int(f * 3.0 + float(dx) * 0.4), 3)])
+		fire.append(img)
+	var out := {"body": body, "fire0": fire[0], "fire1": fire[1]}
+	_cache["_spirit"] = out
+	return out
+
 ## A Summoning Altar: a stepped plinth of dressed stone, a block carved with runes and a basin on top
 ## between two short pillars capped with crystals. Its "fire" is the runes, the basin and the crystals
 ## glowing mana-blue (always: an altar is never cold).

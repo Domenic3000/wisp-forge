@@ -705,6 +705,166 @@ func _test_hand() -> void:
 	_ok("the hand: what's picked in the satchel, Conjure places (brush, line, back wall, poured, furniture, a workshop, a torch), the wisp's notes, pickups pop up", all_ok,
 		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
 
+## The in-world interface, second pass (user, 25 Nov: "C summons the forge into the world", the recipe book a
+## grimoire, workshops that show what they're doing, the staff's gem showing your mana, "Send to the Kiln", a
+## quick bar): the forge rises beside you and fades when shut, and what's forged flies from it; a recipe
+## learned sends a page flying into your book and inks in as the book next opens; a locked page's sketch; a
+## kiln on a slab in the air shows its glass on a tray, F takes it (no panel), F with sand in hand drops it
+## in, then F opens the panel; a process sent to the kiln from the book; the gem dims and flares; the quick
+## bar gives back what you held. A picture of the forge (`forge.png`). The slab taken away after.
+func _test_inworld() -> void:
+	var m = g.player
+	var iw_back: Vector2 = m.pos
+	var sel0: int = g.sel
+	var mat0: int = g.mat
+	var inv0: PackedInt32Array = m.inv.duplicate()
+	var items0: Dictionary = g.items.duplicate(true)
+	var mana0: float = m.mana
+	var ws = g.workshops
+	var ws_n0: int = ws.list.size()
+	var wk_w0 := [g.rain, g.rain_target, g.weather_timer]
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
+	var ok := {}
+	var txt := []
+	# the slab, up in the air
+	var ia := atan2(m.pos.y, m.pos.x) - 0.25
+	var iup := Vector2(cos(ia), sin(ia))
+	var c0: Vector2i = Build.cell_of(iup * (g.gpu.surf_at(ia).x + 150.0))
+	var cx: int = c0.x
+	var top: int = c0.y
+	var SW := 100
+	var SH := 6
+	var sd := PackedInt32Array()
+	sd.resize(SW * SH)
+	sd.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top, "w": SW, "h": SH, "data": sd})
+	await _frames(4)
+	_go(_cell_pos(cx + 50, top - 12))
+	await _frames(40)
+	var t0: float = g.time
+	g.time = g.towns.time_for_hour(m.pos, 12.0)
+	# ---- the forge summoned beside you, forging from it, and gone when shut
+	g.toggle_forge()
+	await _frames(30)
+	var f_vis: float = g.forge_vis
+	var f_sent0: int = g.stats_forge_sent
+	g._forge_send({"name": "test", "give": {Defs.GLASS: 1}})
+	await _frames(12)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("forge.png"))
+	var f_state: String = g.state
+	g.toggle_forge()
+	await _frames(45)
+	ok["forge"] = f_state == "forge" and f_vis > 0.9 and g.stats_forge_sent == f_sent0 + 1 and g.state == "play" and g.forge_vis == 0.0
+	txt.append("forge: risen %.2f, sent %d, shut -> %s %.2f" % [f_vis, g.stats_forge_sent - f_sent0, g.state, g.forge_vis])
+	# ---- a page into the book, inked in as it next opens
+	var r_id := ""
+	for r in g.recipes:
+		if not r.has("scroll") and g.learned.has(String(r["id"])) and not bool(Defs.learn_of(r).get("start", false)):
+			r_id = String(r["id"])
+			break
+	var pg0: int = g.stats_pages
+	g.learned.erase(r_id)
+	g.items.erase("book_new")
+	var learned_ok: bool = r_id != "" and g.learn(r_id, "for the test")
+	var flying: bool = not g.pages.is_empty()
+	var noted: bool = (g.items.get("book_new", []) as Array).has(r_id)
+	await _frames(70)
+	var landed: bool = g.stats_pages == pg0 + 1 and g.pages.is_empty()
+	g.toggle_forge(true)
+	await _frames(10)
+	var inking: bool = g.ui._inking.has(r_id) and not g.items.has("book_new")
+	g.toggle_forge()
+	await _frames(10)
+	ok["pages"] = learned_ok and flying and noted and landed and inking
+	txt.append("a page: learned %s, flying %s, noted %s, landed %s, inked %s" % [learned_ok, flying, noted, landed, inking])
+	var sk = Icons.sketch(Icons.mat(Defs.STONE))
+	ok["sketch"] = sk != null and sk.get_width() == Icons.mat(Defs.STONE).get_width() + 1
+	# ---- a kiln: its tray taken with F, sand dropped in with F, then its panel
+	m.inv[Defs.SAND] += 40
+	m.inv[Defs.COAL] += 10
+	var kiln = ws.add("kiln", _cell_pos(cx + 40, top - 9))
+	await _frames(60)
+	ws.load_mat(kiln, Defs.SAND, 4)
+	ws.add_fuel(kiln, Defs.COAL, 2)
+	for wt in 900:
+		ws.work_all()
+		if ws.has_out(kiln):
+			break
+	var tray: bool = ws.has_out(kiln)
+	await _frames(20)
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("tray.png"))
+	_go(kiln.pos + kiln.pos.normalized() * 2.0)
+	await _frames(10)
+	var gl0: int = m.inv[Defs.GLASS]
+	var tr0: int = int(ws.stats.get("trays", 0))
+	var took: bool = ws.interact(m) and g.state == "play" and m.inv[Defs.GLASS] > gl0 and not ws.has_out(kiln) and int(ws.stats.get("trays", 0)) == tr0 + 1
+	ws.unload(kiln, Defs.SAND)
+	g.select_material(Defs.SAND)
+	var sd0: int = m.inv[Defs.SAND]
+	var dropped: bool = ws.interact(m) and g.state == "play" and int(kiln.store.get(Defs.SAND, 0)) > 0 and m.inv[Defs.SAND] == sd0 - int(kiln.store.get(Defs.SAND, 0))
+	var panel: bool = ws.interact(m) and g.state == "station"
+	ws.close()
+	await _frames(4)
+	ok["tray"] = tray and took and dropped and panel
+	txt.append("kiln: tray %s, taken by F %s (%d glass), sand dropped in %s (%s), then the panel %s" % [tray, took, m.inv[Defs.GLASS] - gl0, dropped, str(kiln.store), panel])
+	# ---- sent to the kiln from the book
+	ws.unload(kiln, Defs.SAND)
+	var sent: int = ws.send(Defs.process_by_id("k_glass"), 2)
+	ok["send"] = sent == 2 and int(kiln.store.get(Defs.SAND, 0)) == 8
+	txt.append("sent to the kiln: %d batches (%s)" % [sent, str(kiln.store)])
+	ws.unload(kiln, Defs.SAND)
+	# ---- the gem: dim when drained, a flare as it fills
+	var gem := Color(0.3, 0.9, 1.0)
+	m.mana = m.max_mana * 0.15
+	var dim: Color = g.overlay._gem_now(m, gem)
+	var fl0: int = g.overlay.stats_gem_flares
+	m.mana = m.max_mana
+	var flare: Color = g.overlay._gem_now(m, gem)
+	ok["gem"] = dim.get_luminance() < gem.get_luminance() * 0.6 and g.overlay.stats_gem_flares == fl0 + 1 and flare.get_luminance() > gem.get_luminance()
+	txt.append("gem: %.2f drained, %.2f lit, %.2f flaring" % [dim.get_luminance(), gem.get_luminance(), flare.get_luminance()])
+	# ---- the quick bar
+	m.inv[Defs.DIRT] += 10
+	g.select_material(Defs.SAND)
+	g._note_hand()
+	g.select_material(Defs.DIRT)
+	g._note_hand()
+	var ql: Array = g.quick_list()
+	var has_sand: bool = ql.has("m%d" % Defs.SAND) and not ql.has("m%d" % Defs.DIRT)
+	g.quick_take("m%d" % Defs.SAND)
+	ok["quick"] = has_sand and g.mat == Defs.SAND and g.hand_recent[0] == "m%d" % Defs.SAND
+	txt.append("quick bar %s, took sand back: %s" % [str(ql), g.mat == Defs.SAND])
+	# ---- put back
+	ws.list.erase(kiln)
+	while ws.list.size() > ws_n0:
+		ws.list.pop_back()
+	g.time = t0
+	g.rain = wk_w0[0]
+	g.rain_target = wk_w0[1]
+	g.weather_timer = wk_w0[2]
+	m.mana = mana0
+	g.sel = sel0
+	g.mat = mat0
+	g.hand_item = {}
+	m.inv = inv0
+	g.items = items0
+	g.learned[r_id] = true
+	var clr := PackedInt32Array()
+	clr.resize(SW * (SH + 30))
+	clr.fill(0xFF00 | 0x40000)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 30, "w": SW, "h": SH + 30, "data": clr})
+	_go(iw_back)
+	await _frames(30)
+	var all_ok := true
+	var bad := []
+	for k in ok:
+		if not ok[k]:
+			all_ok = false
+			bad.append(k)
+	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the quick bar", all_ok,
+		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
+
 func _test_stairs() -> void:
 	var sr_back: Vector2 = g.player.pos
 	g.player.inv[Defs.PLANK] += 400
@@ -1003,7 +1163,16 @@ func _test_workshops() -> void:
 	# the panel
 	_go(kiln.pos + kiln.pos.normalized() * 2.0)
 	await _frames(10)
+	# (F takes what it made off its tray first, and drops in what's in your hand: neither here)
+	var wk_selp: int = g.sel
+	for wk_si in g.known.size():
+		if g.known[wk_si] != "conjure":
+			g.sel = wk_si
+			break
+	if ws.has_out(kiln):
+		ws.take_out(kiln, true)
 	var wk_opened: bool = ws.interact(g.player) and g.state == "station"
+	g.sel = wk_selp
 	await _frames(12)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("workshop_panel.png"))
 	ws.close()

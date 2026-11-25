@@ -284,6 +284,37 @@ static func draught(id: String) -> ImageTexture:
 	return tex
 
 ## a material's icon, 9 x 9 (11 with its outline)
+## (user, 25 Nov: locked pages of the recipe book "as smudged sketches"): an icon redrawn as an ink sketch on
+## a page: sepia strokes by its shading, a few gaps where the ink didn't take, and a faint smudge beside each
+## stroke. Cached by the icon.
+static func sketch(src: Texture2D) -> ImageTexture:
+	var key := "sk_%d" % src.get_instance_id()
+	if _cache.has(key):
+		return _cache[key]
+	var im: Image = src.get_image()
+	if im.is_compressed():
+		im.decompress()
+	im.convert(Image.FORMAT_RGBA8)
+	var w := im.get_width()
+	var h := im.get_height()
+	var out := Image.create(w + 1, h + 1, false, Image.FORMAT_RGBA8)
+	out.fill(Color(0, 0, 0, 0))
+	var ink := Color(0.27, 0.19, 0.11)
+	for y in h:
+		for x in w:
+			var c := im.get_pixel(x, y)
+			if c.a < 0.5:
+				continue
+			if ((x * 73856093) ^ (y * 19349663)) % 7 == 0:
+				continue                                     # (where the ink didn't take)
+			var lum := c.get_luminance()
+			out.set_pixel(x, y, Color(ink.r, ink.g, ink.b, clampf(0.25 + 0.6 * (1.0 - lum), 0.25, 0.85)))
+			if out.get_pixel(x + 1, y + 1).a < 0.05:
+				out.set_pixel(x + 1, y + 1, Color(ink.r, ink.g, ink.b, 0.12))     # (the smudge)
+	var t := ImageTexture.create_from_image(out)
+	_cache[key] = t
+	return t
+
 static func mat(m: int) -> ImageTexture:
 	var key := "m_%d" % m
 	if _cache.has(key):

@@ -91,3 +91,11 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - The Esc menu pauses (user, 23 Nov: "escape menu doesnt pause"): main `menu_paused()` (state play/dead with
   ui.settings_panel showing): `_process` runs no ticks and the GPU frame as paused, keys and clicks do nothing
   but Esc. Checked in `_test_ui` (the game's `time` stands still while it's open).
+
+## The staff's gem shows your mana (user, 25 Nov: "the staff's gem shows your mana, dimming as it drains and flaring when full")
+- overlay `_gem_now(m, gem)` (from `_draw_mage`, the colour handed to `MageRig.front_pixels`): the selected spell's
+  colour dims toward dark glass as `m.mana / m.max_mana` falls (by the square of what's spent), and flashes white
+  for 24 frames as it fills up again (`_gem_was` per mage; `stats_gem_flares`). The HUD's mana bar stays.
+- The forge panel is on the right of the screen now (crafting.md, "The forge, the book and the workshops in the
+  world"); the quick bar is under the hand bar (building.md).
+

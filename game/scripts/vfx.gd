@@ -492,6 +492,21 @@ func stream(m, to: Vector2, mc: Color, n: int) -> void:
 	if n > 1:
 		light(to, 14.0, mc * 0.5, 8)
 
+## something flying from one point to another as motes (what the summoned forge makes, flying into you)
+func fly(from: Vector2, to: Vector2, mc: Color, n: int) -> void:
+	if not _showing():
+		return
+	var clear := Color(mc.r, mc.g, mc.b, 0.0)
+	for k in maxi(n, 1):
+		var start := from + _rand_dir() * randf() * 2.0
+		var aim := to + _rand_dir() * randf() * 3.0 - start
+		var dl := aim.length()
+		if dl < 1.0:
+			continue
+		var sp := minf(3.0, maxf(1.2, dl * 0.06)) * randf_range(0.8, 1.2)
+		spawn(DOT, start, aim / dl * sp, int(dl / sp) + 1, mc.lightened(0.4), clear, 1.0, 1.0, true, 0.0, 1.0)
+	light(from, 18.0, mc * 0.6, 10)
+
 ## cells taken away (`place` false: mana-blue sparks rising out of them) or put in place (`place` true:
 ## gold motes gathering into them), with a circle of runes over the middle and a light
 func shape_burst(cells: Array, place: bool) -> void:

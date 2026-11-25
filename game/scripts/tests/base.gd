@@ -4,6 +4,7 @@ const Build := preload("res://scripts/build.gd")
 const FoeAI := preload("res://scripts/foe_ai.gd")
 const Ecology := preload("res://scripts/ecology.gd")
 const Skiff := preload("res://scripts/skiff.gd")
+const Icons := preload("res://scripts/icons.gd")
 const BossAI := preload("res://scripts/boss_ai.gd")
 ## Automated checks. "Run tests.bat" starts the game with --test: it builds a fresh planet in
 ## saves/test (your real saves are untouched), plays it for a while, checks that the important

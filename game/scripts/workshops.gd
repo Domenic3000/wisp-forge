@@ -90,11 +90,97 @@ func interact(m) -> bool:
 		# (no panel: F lays a guardian's sigil on it, summoning.gd)
 		game.summoning.try_summon(m, st)
 		return true
+	# (user, 25 Nov: "finished goods stack on a tray beside it, taken with F, no panel needed", and "with
+	# something in hand, F at a workshop drops it in"): what it made comes first, then what's in your hand
+	# if it's any use here and not in yet; otherwise (and for fuel by the panel, details, Load buttons) the panel
+	if has_out(st):
+		take_out(st, true)
+		return true
+	if drop_in(st, m) > 0:
+		return true
 	open_st = st
 	game.state = "station"
 	game.ui.show_station(st)
 	game.audio.play("chest_open", st.pos, 0.4)
 	return true
+
+## (user, 25 Nov: a forge card that needs a workshop gets "Send to the Kiln"): the nearest station of a kind
+## within SEND_REACH of m (a workshop in your home, a room or two away), or null
+const SEND_REACH := 160.0
+func nearest_kind(kind: String, m, reach := SEND_REACH):
+	var best = null
+	var bd := reach * reach
+	for st in list:
+		if st.kind != kind:
+			continue
+		var d: float = st.pos.distance_squared_to(m.pos)
+		if d < bd:
+			bd = d
+			best = st
+	return best
+
+## load n batches of a process into the nearest station of its kind from the forge's book: what goes in flies
+## there from your satchel. How many batches went in (0: none near, or not enough in the satchel; said in a toast).
+func send(pr: Dictionary, n: int) -> int:
+	var m = game.player
+	var st = nearest_kind(String(pr["at"]), m)
+	var sname := String(Defs.STATIONS[pr["at"]]["name"])
+	if st == null:
+		game.ui.toast("No %s near enough to send it to" % sname, Color(1, 0.7, 0.5), 2.5)
+		return 0
+	var got := load_recipe(st, pr, n)
+	if got <= 0:
+		game.ui.toast("Not enough in your satchel for one batch", Color(1, 0.7, 0.5), 2.5)
+		return 0
+	var top := _world(st, Vector2(0, -st.h * 0.4))
+	for k in pr["in"]:
+		game.vfx.fly(m.pos, top, Defs.COLOR[int(k)], 6)
+	game.ui.toast("Sent to the %s: %d batch%s of %s" % [sname, got, "" if got == 1 else "es", String(Defs.process_out(pr)[0])], Color(1, 0.85, 0.5), 3.0)
+	game.audio.play("place", m.pos, 0.6)
+	stats["sent"] = int(stats.get("sent", 0)) + got
+	return got
+
+## anything made waiting on its tray?
+func has_out(st) -> bool:
+	for k in st.out:
+		if int(st.out[k]) > 0:
+			return true
+	return false
+
+## F with a material in your hand (holding Conjure): drop some into the station, if it works that material or
+## burns it and doesn't hold it yet: a known recipe's worth for four batches (all you have if less), or ten
+## for a mix still to be tried; fuel feeds the fire. How many went in (0: nothing, the panel opens).
+func drop_in(st, m) -> int:
+	if m != game.player or not game.conjuring(m) or not game.hand_item.is_empty():
+		return 0
+	var mt: int = game.mat
+	if mt <= 0 or m.inv[mt] <= 0:
+		return 0
+	var want := 0
+	var used := false
+	for pr in Defs.PROCESS:
+		if pr["at"] == st.kind and (pr["in"] as Dictionary).has(mt):
+			used = true
+			if not pr.get("secret", false) or is_secret_known(String(pr["id"])):
+				want = maxi(want, int(pr["in"][mt]) * 4)
+	var n := 0
+	var into := ""
+	if used:
+		if int(st.store.get(mt, 0)) > 0:
+			return 0
+		n = load_mat(st, mt, want if want > 0 else 10)
+		into = "into"
+	elif Defs.FUEL_TICKS.has(mt) and float(Defs.STATIONS[st.kind]["burn"]) > 0.0 and st.fuel < FUEL_MAX * 0.25:
+		n = add_fuel(st, mt, maxi(1, int(FUEL_MAX * 0.5 / float(Defs.FUEL_TICKS[mt]))))
+		into = "on the fire of"
+	if n <= 0:
+		return 0
+	var top := _world(st, Vector2(0, -st.h * 0.4))
+	game.vfx.fly(m.pos, top, Defs.COLOR[mt], 8)
+	game.popups.append([top + st.pos.normalized() * 4.0, "%d %s %s the %s" % [n, Defs.NAMES[mt], into, Defs.STATIONS[st.kind]["name"]], Defs.COLOR[mt], 70])
+	game.audio.play("place", st.pos, 0.6)
+	stats["dropped"] = int(stats.get("dropped", 0)) + n
+	return n
 
 func close() -> void:
 	open_st = null
@@ -171,8 +257,8 @@ func add_fuel(st, m: int, n: int) -> int:
 	st.fuel = minf(st.fuel + per * n, FUEL_MAX)
 	return n
 
-## take everything it made
-func take_out(st) -> void:
+## take everything it made (`here`: taken off its tray with F, said beside it rather than in a toast)
+func take_out(st, here := false) -> void:
 	var parts := []
 	for key in st.out.keys():
 		var n := int(st.out[key])
@@ -192,7 +278,15 @@ func take_out(st) -> void:
 			parts.append("%d %s" % [n, nm])
 	st.out.clear()
 	if not parts.is_empty():
-		game.ui.toast("Taken: " + ", ".join(parts), Color(1, 0.85, 0.5), 2.5)
+		if here:
+			var top := _world(st, Vector2(st.facing * (st.w * 0.5 + 3.0), st.h * 0.5 - 4.0))
+			game.vfx.fly(top, game.player.pos, Color(1, 0.85, 0.5), 8)
+			var up: Vector2 = st.pos.normalized()
+			for q in mini(parts.size(), 3):
+				game.popups.append([top + up * (6.0 + 6.0 * q), "+" + String(parts[q]), Color(1, 0.85, 0.5), 70])
+			stats["trays"] = int(stats.get("trays", 0)) + 1
+		else:
+			game.ui.toast("Taken: " + ", ".join(parts), Color(1, 0.85, 0.5), 2.5)
 		if not game.testing_no_learn():
 			game._learn_from_finds()           # (a first find teaches at once, though the panel keeps the world waiting)
 		game.audio.play("coin", st.pos, 0.4)

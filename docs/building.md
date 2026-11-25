@@ -147,3 +147,11 @@ Notes for development sessions on this part of the game. The rules that apply ev
   ticks]; overlay `_draw_popups`, rising and fading over `POPUP_TICKS`).
 - Test: `_test_hand` ("hand"; in the full run after `_test_harvest`; pictures `hand_line.png`, `hand_ghost.png`).
 
+## The in-world interface, second pass (user, 25 Nov: "can you think of any other ways to make it feel more inside the world", then "yes all of that sounds pretty great", "alright lets do it")
+- The quick bar: main `hand_recent` (ids "m<material>", "f:<furniture name>", "s:<workshop kind>", newest first,
+  `QUICK_N` 6; `_note_hand()` each tick while Conjure is held, and from `quick_take`). `quick_list()` is the ones
+  you still have, not the one in hand; ui.gd draws them as slots under the hand bar (`quick_row`, in
+  `_update_hand_bar`; `mouse_over_ui` counts it so a click there doesn't cast); a click calls `quick_take(id)`.
+- The summoned forge, the grimoire, workshops that show their work, the gem: see crafting.md and ui.md.
+- Test: `_test_inworld` ("inworld"; in the full run after `_test_hand`; pictures `forge.png`, `tray.png`).
+
