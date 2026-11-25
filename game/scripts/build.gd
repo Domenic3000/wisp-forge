@@ -26,7 +26,12 @@ const CAT_REMOVE := 8
 const CAT_SHIP := 9
 const HULL_KINDS := ["hull", "cut", "helm", "seat"]
 ## the order the tabs are shown in (and Q/E steps through)
-const CAT_ORDER := [0, 6, 8, 1, 7, 2, 3, 4, 5]     # (the Ship tab, 9, is the ship builder now: shipyard.gd)
+## (user, 25 Nov: "the workshops should be in the wisp forge not the build menu along with anything that isn't
+## pieces of actual building like walls"; "anything that gets placed as an object should end up in the
+## satchel"): furniture (2), outdoor pieces (3) and workshops (7) are forged at the Wisp Forge into the satchel
+## and set down from the Satchel tab; their tabs' pieces stay for the tests and the code that places them. The
+## Ship tab, 9, is the ship builder now (shipyard.gd).
+const CAT_ORDER := [0, 6, 8, 1, 4, 5]
 ## Flatten: everything solid up to FLAT_CUT rows over the line you drag is cut away, and dips under it
 ## filled from the satchel down to ground no more than FLAT_FILL rows below (deeper, it's left alone)
 const FLAT_CUT := 40
@@ -115,7 +120,7 @@ static func pieces() -> Array:
 		{"cat": 2, "name": "Barrel", "kind": "prop", "prop": "barrel", "cost": {Defs.PLANK: 5}},
 		{"cat": 2, "name": "Crates", "kind": "prop", "prop": "crates", "cost": {Defs.PLANK: 6}},
 		{"cat": 2, "name": "Fireplace", "kind": "prop", "prop": "fireplace", "cost": {Defs.MASONRY: 12, Defs.COAL: 2}},
-		{"cat": 2, "name": "Anvil", "kind": "prop", "prop": "anvil", "cost": {Defs.COPPER: 6}},
+		{"cat": 2, "name": "Decorative Anvil", "kind": "prop", "prop": "anvil", "cost": {Defs.COPPER: 6}},
 		{"cat": 2, "name": "Cauldron", "kind": "prop", "prop": "cauldron", "cost": {Defs.COPPER: 4, Defs.COAL: 1}},
 		{"cat": 2, "name": "Weapon Rack", "kind": "prop", "prop": "rack", "cost": {Defs.PLANK: 4, Defs.COPPER: 2}},
 		{"cat": 2, "name": "Painting", "kind": "prop", "prop": "painting", "cost": {Defs.PLANK: 2, Defs.GLASS: 1}},
@@ -153,7 +158,7 @@ static func pieces() -> Array:
 
 ## The pieces you carry (Mage.furn: picked up whole with Shift + right-click, or forged at the Wisp
 ## Forge), as build pieces: each keeps its exact pixels and costs nothing to set down.
-static func carried_pieces(furn: Array, items: Dictionary = {}) -> Array:
+static func carried_pieces(furn: Array, items: Dictionary = {}, inv: PackedInt32Array = PackedInt32Array()) -> Array:
 	var out := []
 	for k in furn.size():
 		var it: Dictionary = furn[k]
@@ -166,6 +171,10 @@ static func carried_pieces(furn: Array, items: Dictionary = {}) -> Array:
 		if n > 0:
 			out.append({"cat": CAT_SATCHEL, "name": String(Defs.STATIONS[sk]["name"]), "kind": "station",
 				"station": String(sk), "carried": n, "cost": {}})
+	# torches: one piece each, a sconce on a wall or standing on a floor (forged four at a time); last, so a
+	# piece you picked up is still the first in the tab
+	if inv.size() > Defs.TORCH and inv[Defs.TORCH] > 0:
+		out.append({"cat": CAT_SATCHEL, "name": "Torch", "kind": "torch", "carried": inv[Defs.TORCH], "cost": {Defs.TORCH: 1}})
 	return out
 
 ## Furniture recipes for the Wisp Forge, from the same catalogue (the indoor pieces): forging one
@@ -173,9 +182,19 @@ static func carried_pieces(furn: Array, items: Dictionary = {}) -> Array:
 static func furniture_recipes() -> Array:
 	var out := []
 	for p in pieces():
-		if int(p["cat"]) == 2 and p.has("prop"):
-			out.append({"id": "furn_" + String(p["prop"]), "cat": "Furniture", "name": p["name"], "cost": p["cost"],
-				"furniture": p["prop"], "desc": "Carried in your satchel: click it there (I) to set it down."})
+		if (int(p["cat"]) == 2 or int(p["cat"]) == 3) and p.has("prop"):
+			out.append({"id": "furn_" + String(p["prop"]), "cat": "Furniture" if int(p["cat"]) == 2 else "Outdoors",
+				"name": p["name"], "cost": p["cost"], "furniture": p["prop"], "arg": p.get("arg", null),
+				"desc": "Goes into your satchel: click it there (I) to set it down. Each one forged has a design of its own."})
+	return out
+
+## the workshops, forged at the Wisp Forge into the satchel (items "st_<kind>"), then set down from it
+static func workshop_recipes() -> Array:
+	var out := []
+	for k in ["kiln", "smelter", "still", "anvil", "altar"]:
+		var sd: Dictionary = Defs.STATIONS[k]
+		out.append({"id": "st_" + k, "cat": "Workshops", "name": String(sd["name"]), "cost": sd["cost"], "station": k,
+			"desc": String(sd["desc"]) + " Goes into your satchel: click it there (I) to set it down."})
 	return out
 
 ## a carried piece for a satchel: a design of this piece (forged) or the pixels picked up

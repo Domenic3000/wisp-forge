@@ -1,6 +1,6 @@
 ## Guardians are summoned, not met in lairs (user, 22 Nov: the guardian he found was stuck in the ground;
 ## "maybe we move away from gaurdian lairs and go to a summoning them mechanic?"; chose an altar you build
-## and an offering you forge). Build a Summoning Altar (build mode, Workshops) in a biome that has a guardian,
+## and an offering you forge). Build a Summoning Altar (forged at the Wisp Forge, Workshops; set down from the satchel) in a biome that has a guardian,
 ## forge that guardian's sigil at the Wisp Forge (`Defs.sigil_recipes`: the land's own matter, a little
 ## copper and crystal), and press F at the altar: the sigil is laid on it, the altar wakes (a ritual of
 ## `RITUAL` ticks: runes turning, motes drawn in, the ground shaking) and the guardian comes at a clear spot

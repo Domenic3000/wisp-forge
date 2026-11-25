@@ -536,7 +536,7 @@ class Mage extends Body:
 
 var player := Mage.new()
 ## every Wisp Forge recipe: the fixed ones and the furniture from build mode's catalogue
-var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Defs.sigil_recipes() + Build.furniture_recipes()
+var recipes: Array = Defs.RECIPES + Defs.gear_recipes() + Defs.sigil_recipes() + Build.workshop_recipes() + Build.furniture_recipes()
 var players: Array = [player]
 
 # the local mage's state, by its old names (so the rest of the game reads naturally)
@@ -5200,6 +5200,45 @@ func _drink(m: Mage) -> bool:
 	ui.toast("Healing Draught: %d left" % (n - 1), Color(0.6, 1.0, 0.65), 1.5)
 	return true
 
+## can it be forged again and again (it makes something for the satchel: matter, draughts, sigils, furniture,
+## workshops), so the forge's amount applies to it?
+func recipe_repeatable(r: Dictionary) -> bool:
+	return r.has("give") or r.has("potion") or r.has("sigil") or r.has("furniture") or r.has("station")
+
+## (user, 25 Nov: "a way to craft large numbers of things without spam clicking ... a + and - where it shows
+## how many your going to craft"): forge r up to n times, as many as the satchel pays for; one note for all
+## of them. How many were made.
+var craft_quiet := false
+func craft_many(r: Dictionary, n: int) -> int:
+	if not recipe_repeatable(r):
+		return 1 if craft(r) else 0
+	var made := 0
+	craft_quiet = true
+	for k in maxi(1, n):
+		if not craft(r):
+			break
+		made += 1
+	craft_quiet = false
+	if made > 0:
+		save_game()
+		var what := String(r["name"])
+		if r.has("give") and (r["give"] as Dictionary).size() == 1:
+			var gm: int = int((r["give"] as Dictionary).keys()[0])
+			what = "%d %s" % [int(r["give"][gm]) * made, Defs.NAMES[gm]]
+		elif made > 1:
+			what = "%d × %s" % [made, what]
+		var where := ""
+		if r.has("furniture") or r.has("station"):
+			where = ": in your satchel (I), click it there to set it down"
+		elif r.has("sigil"):
+			where = ": lay it on a Summoning Altar in the %s" % (String(Defs.BIOMES[r["sigil"]]["name"]) if Defs.BIOMES.has(r["sigil"]) else String(r["sigil"]))
+		elif r.has("potion"):
+			where = ": drink with H (%d now)" % int(items.get("potion", 0))
+		ui.toast("Forged %s%s" % [what, where], Color(1, 0.82, 0.23), 3.0)
+	if made < n and made > 0:
+		ui.toast("The satchel ran short after %d" % made, Color(1, 0.75, 0.55), 2.0)
+	return made
+
 func craft(r: Dictionary) -> bool:
 	if not knows(r) or recipe_done(r) or not recipe_unlocked(r) or not recipe_affordable(r):
 		return false
@@ -5215,22 +5254,33 @@ func craft(r: Dictionary) -> bool:
 			_learn_from_finds()
 	if r.has("potion"):
 		items["potion"] = int(items.get("potion", 0)) + int(r["potion"])
-		ui.toast("Healing Draught forged: drink it with H (%d now)" % int(items["potion"]), Color(0.6, 1.0, 0.65), 3.0)
-		save_game()
+		if not craft_quiet:
+			ui.toast("Healing Draught forged: drink it with H (%d now)" % int(items["potion"]), Color(0.6, 1.0, 0.65), 3.0)
+			save_game()
 		return true
 	if r.has("sigil"):
 		var sk := "sigil_" + String(r["sigil"])
 		items[sk] = int(items.get(sk, 0)) + 1
-		ui.toast("%s forged: lay it on a Summoning Altar in the %s (build mode, Workshops)" % [r["name"], String(Defs.BIOMES[r["sigil"]]["name"]) if Defs.BIOMES.has(r["sigil"]) else r["sigil"]], Color(1, 0.82, 0.23), 4.0)
-		save_game()
+		if not craft_quiet:
+			ui.toast("%s forged: lay it on a Summoning Altar in the %s" % [r["name"], String(Defs.BIOMES[r["sigil"]]["name"]) if Defs.BIOMES.has(r["sigil"]) else r["sigil"]], Color(1, 0.82, 0.23), 4.0)
+			save_game()
 		return true
 	if r.has("furniture"):
 		var frng := RandomNumberGenerator.new()
 		frng.randomize()
-		var fd: Dictionary = Build.Props.make(String(r["furniture"]), frng, null)
+		var fd: Dictionary = Build.Props.make(String(r["furniture"]), frng, r.get("arg", null))
 		player.furn.append(Build.carried_item(String(r["name"]), fd, String(r["furniture"])))
-		ui.toast("%s forged: set it down in build mode (B), Satchel tab" % r["name"], Color(1, 0.82, 0.23), 3.0)
-		save_game()
+		if not craft_quiet:
+			ui.toast("%s forged: it's in your satchel (I), click it there to set it down" % r["name"], Color(1, 0.82, 0.23), 3.0)
+			save_game()
+		return true
+	if r.has("station"):
+		# (a workshop: into the satchel, set down from there like a piece taken up)
+		var stk := "st_" + String(r["station"])
+		items[stk] = int(items.get(stk, 0)) + 1
+		if not craft_quiet:
+			ui.toast("%s forged: it's in your satchel (I), click it there to set it down" % r["name"], Color(1, 0.82, 0.23), 3.0)
+			save_game()
 		return true
 	if r.has("spell"):
 		known.append(r["spell"])
@@ -5469,7 +5519,7 @@ func _toggle_build() -> void:
 ## the pieces of the chosen category, and the chosen one
 func build_list() -> Array:
 	if build_cat == Build.CAT_SATCHEL:
-		return Build.carried_pieces(player.furn, items)
+		return Build.carried_pieces(player.furn, items, player.inv)
 	return Build.in_cat(build_pieces, build_cat)
 
 func build_piece() -> Dictionary:
@@ -5500,8 +5550,15 @@ func hold_carried(what: String, idx := -1, sk := "") -> void:
 						or (what == "station" and String(pc["kind"]) == "station" and String(pc["station"]) == sk):
 					build_idx[build_cat] = k
 					want = String(pc["name"])
-		"torch", "door":
-			var pname := "Torch" if what == "torch" else "Wooden Door"
+		"torch":
+			build_cat = Build.CAT_SATCHEL
+			var lt := build_list()
+			for kt in lt.size():
+				if String(lt[kt]["kind"]) == "torch":
+					build_idx[build_cat] = kt
+					want = "Torch"
+		"door":
+			var pname := "Wooden Door"
 			for pc2 in build_pieces:
 				if String(pc2["name"]) == pname:
 					build_cat = int(pc2["cat"])
@@ -7455,8 +7512,9 @@ func _cabin_edit(m: Mage, sk) -> void:
 				audio.play("place", sk.pos, 0.4)
 			elif cabin_cast and not ok and not cells.is_empty():
 				_build_need(piece)
-		"prop":
-			var d: Dictionary = Build.design(piece, build_seed)
+		"prop", "carried":
+			# (a piece from the satchel keeps its own pixels and costs nothing; one from the catalogue is grown)
+			var d: Dictionary = {"rows": piece["rows"], "wall": piece.get("wall", false)} if kind == "carried" else Build.design(piece, build_seed)
 			var rows: Array = d["rows"]
 			var on_wall: bool = d.get("wall", false)
 			var pw: int = String(rows[0]).length()
@@ -7485,6 +7543,8 @@ func _cabin_edit(m: Mage, sk) -> void:
 						sk.touch(int(c2[0]), int(c2[1]))
 					for cm in cost:
 						m.inv[int(cm)] -= int(cost[cm])
+					if kind == "carried" and int(piece["item"]) < m.furn.size():
+						m.furn.remove_at(int(piece["item"]))
 					sk.dirty = true
 					cabin_stats["furniture"] += 1
 					build_seed = randi()

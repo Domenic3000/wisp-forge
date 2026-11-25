@@ -70,6 +70,10 @@ var dig_warn: Label
 var forge: PanelContainer
 var forge_tabs: HFlowContainer
 var _forge_cols := 3
+## how many to make at a click (user, 25 Nov: "a + and - where it shows how many your going to craft"): the
+## forge's repeatable recipes forge this many, a workshop's recipe loads this many batches
+var craft_amount := 1
+var _amt_labels: Array = []
 var _forge_scroll: ScrollContainer
 var map_bar: PanelContainer
 var map_title: Label
@@ -641,16 +645,21 @@ func _build_forge() -> void:
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(tv)
 	tv.add_child(_head("The Wisp Forge", 24, CREAM))
-	tv.add_child(_label("Gather from the world, then bind it here into spells, foci, gear and relics.", 12, DIM))
+	tv.add_child(_label("Bind what you gather into spells, foci, gear, workshops and furniture. The book holds the workshops' mixes too.", 12, DIM))
 	var close := _button("Close  [C]")
 	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	close.pressed.connect(func(): game.toggle_forge())
 	head.add_child(close)
-	# a tab per kind of recipe: jumps the list there
+	# a tab per kind of recipe: jumps the list there; how many to forge at a click beside them
+	var trow := _box(false, 6)
+	trow.mouse_filter = Control.MOUSE_FILTER_PASS
+	v.add_child(trow)
 	forge_tabs = HFlowContainer.new()
 	forge_tabs.add_theme_constant_override("h_separation", 2)
 	forge_tabs.add_theme_constant_override("v_separation", 2)
-	v.add_child(forge_tabs)
+	forge_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	trow.add_child(forge_tabs)
+	trow.add_child(_amount_box(func(): _rerender_forge()))
 	var r := _rule(456)
 	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(r)
@@ -663,6 +672,47 @@ func _build_forge() -> void:
 	forge_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	forge_list.add_theme_constant_override("separation", 3)
 	scroll.add_child(forge_list)
+
+## How many to make: − n + (Shift: by 10), 1..99. `changed` runs after.
+func _amount_box(changed: Callable) -> Control:
+	var hb := _box(false, 2)
+	hb.mouse_filter = Control.MOUSE_FILTER_PASS
+	hb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(_label("Amount", 12, DIM))
+	var minus := _button("-")
+	var lbl := _head("%d" % craft_amount, 12, GOLD)
+	lbl.custom_minimum_size.x = 18
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var plus := _button("+")
+	minus.tooltip_text = "One fewer (Shift: ten fewer)"
+	plus.tooltip_text = "One more (Shift: ten more)"
+	minus.pressed.connect(func():
+		set_craft_amount(craft_amount - (10 if Input.is_key_pressed(KEY_SHIFT) else 1))
+		changed.call())
+	plus.pressed.connect(func():
+		set_craft_amount(craft_amount + (10 if Input.is_key_pressed(KEY_SHIFT) and craft_amount > 1 else (9 if Input.is_key_pressed(KEY_SHIFT) else 1)))
+		changed.call())
+	hb.add_child(minus)
+	hb.add_child(lbl)
+	hb.add_child(plus)
+	_amt_labels = _amt_labels.filter(func(l): return is_instance_valid(l))
+	_amt_labels.append(lbl)
+	return hb
+
+func set_craft_amount(n: int) -> void:
+	craft_amount = clampi(n, 1, 99)
+	for l in _amt_labels:
+		if is_instance_valid(l):
+			(l as Label).text = "%d" % craft_amount
+
+## the forge drawn again where it was scrolled to
+func _rerender_forge() -> void:
+	if not forge.visible:
+		return
+	var sv := _forge_scroll.scroll_vertical
+	_render_forge()
+	await get_tree().process_frame
+	_forge_scroll.scroll_vertical = sv
 
 ## A village keeper's shop: what they sell (for coins) on the left, what they'll buy on the right, by
 ## their trade (towns.gd `shop_def`); towns.gd does the trading.
@@ -1035,21 +1085,14 @@ func _render_station() -> void:
 		fg.add_child(fs)
 	if not any_fuel:
 		fg.add_child(_label("no coal, wood or planks in your satchel", 12, DIM))
-	# the satchel
-	_st_section("Your satchel (left 1, right 10)")
-	var sg := _st_grid()
-	for m2 in Defs.NM:
-		var n2: int = game.player.inv[m2]
-		if n2 <= 0 or Defs.KIND[m2] == Defs.K_EMPTY:
-			continue
-		var ss := _slot(Icons.mat(m2), _count(n2), false, "%s ×%d\nLeft: load 1, right: load 10" % [Defs.NAMES[m2], n2])
-		ss.gui_input.connect(func(ev: InputEvent):
-			if ev is InputEventMouseButton and ev.pressed:
-				ws.load_mat(st, m2, 10 if ev.button_index == MOUSE_BUTTON_RIGHT else 1)
-				_st_key = "")
-		sg.add_child(ss)
-	# what it knows how to make
-	_st_section("It makes")
+	# what it knows how to make: click one and its mix is loaded from the satchel (Amount batches of it)
+	var mh := _box(false, 6)
+	mh.add_child(_head("It makes: click one to load it", 12, Color(0.95, 0.8, 0.5)))
+	var mgap := Control.new()
+	mgap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mh.add_child(mgap)
+	mh.add_child(_amount_box(func(): _st_key = ""))
+	_st_body.add_child(mh)
 	for pr in Defs.PROCESS:
 		if pr["at"] != st.kind:
 			continue
@@ -1057,6 +1100,22 @@ func _render_station() -> void:
 		var found: bool = not secret or ws.is_secret_known(String(pr["id"]))
 		var row := _box(false, 3)
 		if found:
+			var lb := _button("Load ×%d" % craft_amount if craft_amount > 1 else "Load")
+			var can := true
+			for nm2 in pr["in"]:
+				if game.player.inv[int(nm2)] + int(st.store.get(int(nm2), 0)) < int(pr["in"][nm2]):
+					can = false
+			lb.disabled = not can
+			lb.tooltip_text = "Load %d batch%s of this mix from your satchel (what else is loaded goes back)" % [craft_amount, "" if craft_amount == 1 else "es"]
+			var prr: Dictionary = pr
+			lb.pressed.connect(func():
+				var nb: int = ws.load_recipe(st, prr, craft_amount)
+				if nb > 0:
+					game.audio.play("place", st.pos, 0.4)
+					if nb < craft_amount:
+						toast("Loaded %d of %d: the satchel ran short" % [nb, craft_amount], Color(1, 0.8, 0.55), 2.0)
+				_st_key = "")
+			row.add_child(lb)
 			for im in pr["in"]:
 				row.add_child(_tex(Icons.mat(int(im))))
 				row.add_child(_label("%d" % int(pr["in"][im]), 12, CREAM))
@@ -1074,6 +1133,20 @@ func _render_station() -> void:
 			sl2.custom_minimum_size.x = 430
 			row.add_child(sl2)
 		_st_body.add_child(row)
+
+	# the satchel
+	_st_section("Your satchel (left 1, right 10)")
+	var sg := _st_grid()
+	for m2 in Defs.NM:
+		var n2: int = game.player.inv[m2]
+		if n2 <= 0 or Defs.KIND[m2] == Defs.K_EMPTY:
+			continue
+		var ss := _slot(Icons.mat(m2), _count(n2), false, "%s ×%d\nLeft: load 1, right: load 10" % [Defs.NAMES[m2], n2])
+		ss.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed:
+				ws.load_mat(st, m2, 10 if ev.button_index == MOUSE_BUTTON_RIGHT else 1)
+				_st_key = "")
+		sg.add_child(ss)
 
 ## A full-screen overlay with a framed panel in the middle; the panel's VBox is in meta "box".
 func _screen(dim := Color(0.02, 0.015, 0.05, 0.86), trim := TRIM) -> Control:
@@ -2032,6 +2105,37 @@ func _render_forge() -> void:
 		tb.pressed.connect(func():
 			_forge_scroll.scroll_vertical = int(ch.position.y))
 		forge_tabs.add_child(tb)
+	# what the workshops make (user, 25 Nov: "some recipes are in the smelter and other workshops but not in
+	# the recipe book"): a section per workshop, a card per mix it knows; secrets not yet found are pages below
+	var ws = game.workshops
+	for wk in ["kiln", "smelter", "still"]:
+		var known_pr: Array = ws.known_recipes(wk)
+		for prs in Defs.PROCESS:
+			if prs["at"] == wk and prs.get("secret", false) and not ws.is_secret_known(String(prs["id"])):
+				book.append({"process": prs})
+		if known_pr.is_empty():
+			continue
+		var wname := "%s (workshop)" % String(Defs.STATIONS[wk]["name"])
+		var wh := _box(false, 4)
+		wh.add_child(_head(wname, 12, Color(0.95, 0.75, 0.5)))
+		var wr := _rule(50)
+		wr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		wr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		wh.add_child(wr)
+		forge_list.add_child(wh)
+		var wg := GridContainer.new()
+		wg.columns = _forge_cols
+		wg.add_theme_constant_override("h_separation", 4)
+		wg.add_theme_constant_override("v_separation", 4)
+		forge_list.add_child(wg)
+		for prk in known_pr:
+			wg.add_child(_process_card(prk))
+			n_known += 1
+		var wt := _button(String(Defs.STATIONS[wk]["name"]))
+		wt.add_theme_color_override("font_color", Color(0.95, 0.75, 0.5))
+		wt.pressed.connect(func():
+			_forge_scroll.scroll_vertical = int(wh.position.y))
+		forge_tabs.add_child(wt)
 	# the recipe book: what you know, and the rest as locked pages saying where each is learned
 	_book_head = _box(false, 4)
 	_book_head.add_child(_head("Recipe Book: %d known, %d to learn" % [n_known, book.size()], 12, Color(0.72, 0.9, 1.0)))
@@ -2049,7 +2153,7 @@ func _render_forge() -> void:
 		bg.add_theme_constant_override("v_separation", 4)
 		forge_list.add_child(bg)
 		for r3 in book:
-			bg.add_child(_book_page(r3))
+			bg.add_child(_secret_page(r3["process"]) if (r3 as Dictionary).has("process") else _book_page(r3))
 	var bh: Control = _book_head
 	var bt := _button("Recipe Book")
 	bt.pressed.connect(func():
@@ -2073,6 +2177,63 @@ func _recipe_icon(r: Dictionary) -> Texture2D:
 	if r.has("potion") or String(r.get("cat", "")) == "Potions":
 		return Icons.item("potion")
 	return Icons.thing("recipe")
+
+## what a workshop makes, as a page of the forge's book: what goes in, what comes out, where and how
+func _process_card(pr: Dictionary) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _frame(Color(0.08, 0.06, 0.1, 0.97), Color(0.55, 0.38, 0.25), 3))
+	p.custom_minimum_size = Vector2(148, 0)
+	var v := _box(true, 2)
+	v.mouse_filter = Control.MOUSE_FILTER_PASS
+	p.add_child(v)
+	var top := _box(false, 3)
+	v.add_child(top)
+	var po: Array = Defs.process_out(pr)
+	var ok_key: String = "m%d" % int((pr["give"] as Dictionary).keys()[0]) if pr.has("give") else String(pr["item"])
+	top.add_child(_tex(_out_icon(ok_key.substr(5) if ok_key.begins_with("gear:") else ok_key)))
+	var nm := _head("%s%s" % [String(po[0]), (" ×%d" % int(po[2])) if int(po[2]) > 1 else ""], 12, CREAM)
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD
+	nm.custom_minimum_size.x = 120
+	top.add_child(nm)
+	var sname := String(Defs.STATIONS[pr["at"]]["name"])
+	var how := "Made at a %s: load what goes in (or click it in the %s's list), feed its fire, and it works over %d s." % [sname, sname.to_lower(), int(ceil(float(pr["ticks"]) / 60.0))]
+	if pr.get("night", false):
+		how += " Only after dark."
+	if pr.get("secret", false):
+		how = "A secret you found. " + how
+	var dl := _label(how, 11, Color(0.75, 0.7, 0.62))
+	dl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	dl.custom_minimum_size = Vector2(138, 0)
+	v.add_child(dl)
+	var gap := Control.new()
+	gap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(gap)
+	var costs := HFlowContainer.new()
+	costs.add_theme_constant_override("h_separation", 5)
+	costs.add_theme_constant_override("v_separation", 1)
+	v.add_child(costs)
+	for k in pr["in"]:
+		costs.add_child(_cost_chip(int(k), int(pr["in"][k])))
+	var at := _label("at the %s" % sname, 11, Color(0.95, 0.75, 0.5))
+	v.add_child(at)
+	return p
+
+## a workshop's secret not yet found: a page with its riddle once you've heard it
+func _secret_page(pr: Dictionary) -> Control:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _frame(Color(0.06, 0.05, 0.1, 0.97), TRIM_DIM, 3))
+	p.custom_minimum_size = Vector2(148, 0)
+	var v := _box(true, 2)
+	p.add_child(v)
+	var sname := String(Defs.STATIONS[pr["at"]]["name"])
+	v.add_child(_label("A secret of the %s" % sname, 12, Color(0.62, 0.6, 0.72)))
+	var heard: bool = game.items.has("hint_" + String(pr["id"]))
+	var hl := _label(("\"%s\"" % String(pr["hint"])) if heard else "Found by trying mixes at a %s. Villagers and torn notes tell riddles of it." % sname.to_lower(), 11, Color(0.85, 0.7, 1.0) if heard else DIM)
+	hl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	hl.custom_minimum_size = Vector2(138, 0)
+	v.add_child(hl)
+	return p
 
 ## a recipe not yet learned: its name, and where it's learned
 func _book_page(r: Dictionary) -> Control:
@@ -2143,7 +2304,8 @@ func _recipe_card(r: Dictionary) -> Control:
 	for k in r["cost"]:
 		costs.add_child(_cost_chip(int(k), int(r["cost"][k])))
 	# every card ends in a button of the same size: Forge, or greyed out saying why not
-	var b := _button("Forged" if done else ("Locked" if not unlocked else "Forge"))
+	var many: bool = game.recipe_repeatable(r) and craft_amount > 1
+	var b := _button("Forged" if done else ("Locked" if not unlocked else ("Forge ×%d" % craft_amount if many else "Forge")))
 	b.disabled = done or not unlocked or not aff
 	if not done and unlocked:
 		b.pressed.connect(_on_craft.bind(r))
@@ -2159,7 +2321,7 @@ func _on_mat_input(ev: InputEvent, m: int) -> void:
 		game.select_material(m)
 
 func _on_craft(r: Dictionary) -> void:
-	var ok: bool = game.craft(r)
+	var ok: bool = game.craft_many(r, craft_amount) > 0
 	_inv_key = ""
 	_hot_key = ""
 	if ok and game.state == "forge":

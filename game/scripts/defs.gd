@@ -1593,7 +1593,7 @@ const RECIPES := [
 	{"id": "thorns", "cat": "Core Arts", "name": "Thornburst", "cost": {WILDCORE: 10, WOOD: 12, LEAF: 12}, "spell": "thorns"},
 	{"id": "sovereign", "cat": "Core Arts", "name": "Sovereign Bolt", "cost": {CROWNCORE: 10, CRYSTAL: 6, WISPBAR: 4}, "spell": "sovereign"},
 	{"id": "leviathan", "cat": "Core Arts", "name": "Leviathan's Wrath", "cost": {ABYSSCORE: 10, ABYSSPEARL: 10, STARIRON: 6}, "spell": "leviathan"},
-	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava; you dig faster for less mana, and mana comes back quicker. Copper ingots come from a Smelter (build mode, Workshops)."},
+	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava; you dig faster for less mana, and mana comes back quicker. Copper ingots come from a Smelter (forged at the Wisp Forge, Workshops)."},
 	# Delver's Runes (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it ... slow is fine in the
 	# beggining but should get more powerful through progression"): each digs 30% faster (main `dig_speed`), the
 	# second and third building on the one before
@@ -1630,7 +1630,7 @@ const RECIPES := [
 # -------------------------------------------------------------- workshops ---
 ## Workshops (user, 22 Nov: "stations that process materials in the world with real fuel and fire ... and
 ## some secrets that can be discovered through experimenting"). A station is an object standing in the
-## world (main `Station`, workshops.gd), set down from build mode's Workshops tab: load what it should work
+## world (main `Station`, workshops.gd), forged at the Wisp Forge (Workshops) into the satchel and set down from it: load what it should work
 ## and feed its fire (F opens it), and it works batch after batch while you do other things. Its fire is
 ## real: it throws sparks that catch anything that burns beside it, and water puts it out. "burn": fuel
 ## used a tick while it works; "spark": how likely a check (every SPARK_EVERY ticks) lights what's next to it.

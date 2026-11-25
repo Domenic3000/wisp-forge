@@ -858,6 +858,27 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Test: `_test_workshops` ("workshops": on a natural slab in the air; pictures `workshops.png`,
   `workshop_panel.png`).
 
+## Crafting as one system (user, 25 Nov: "some recipes are in the smelter and other workshops but not in the recipe book ... All the crafting systems feel a little stuck together"; chose: the forge stays anywhere, workshops load by hand or by clicking a known recipe, the book covers what goes in the satchel, everything placed as an object comes from the satchel, workshops in the forge, an amount to craft many)
+- The Wisp Forge (C, anywhere) forges WORKSHOPS (`Build.workshop_recipes`, category "Workshops": kiln, smelter, still,
+  anvil, altar; `r["station"]` -> `items["st_<kind>"]`) and FURNITURE and OUTDOOR pieces (`Build.furniture_recipes`,
+  cats 2 and 3, "arg" passed to `Props.make`) into the satchel; they're set down from the satchel (ui "To set down",
+  build mode's Satchel tab, `hold_carried`). Build mode's `CAT_ORDER` is [Back Walls, Blocks, Remove, Doors & Stairs,
+  Structures, Satchel]: the Furniture (2), Outdoors (3) and Workshops (7) tabs' pieces and code stay (tests set
+  `build_cat` to them), out of the player's reach. Torches are a Satchel-tab piece (`Build.carried_pieces(furn,
+  items, inv)`). The cabin/pocket builder (`_cabin_edit`) sets carried furniture down too ("carried").
+- AMOUNT: ui `craft_amount` (1..99, `_amount_box`: − n +, Shift by 10; `set_craft_amount`), in the forge's tab row
+  and the workshop panel. main `recipe_repeatable(r)` (give, potion, sigil, furniture, station) and
+  `craft_many(r, n)` (as many as the satchel pays, `craft_quiet` holds the per-item toasts and saves, one toast and
+  save after); ui `_on_craft` uses it ("Forge ×N" on repeatable cards).
+- THE BOOK holds the workshops' mixes: after the forge's own categories a section per workshop ("Kiln (workshop)",
+  ..., a tab each) of `_process_card`s (`workshops.known_recipes(kind)`: the plain ones and the secrets found), and
+  the unfound secrets as `_secret_page`s among the Recipe Book's pages (their riddle once heard).
+- THE WORKSHOP PANEL: under "It makes", a Load button on each known mix: `workshops.load_recipe(st, pr, n)` (what
+  else is loaded goes back first; as many batches as the satchel and what's in already hold). Loading by hand
+  (click the satchel) is as before, and still how secrets are found.
+- Test: `_test_crafting` ("crafting"; in the full run after `_test_workshops`; pictures `forge_workshops.png`,
+  `workshop_recipes.png`).
+
 ## Shaping the world is magic (user, 22 Nov: "tie excavating and removing blocks to mana ... everything ideally would be tied into the fact that we are using magic including vfx")
 - Mana per cell, harder costs more: main `dig_mana(t)` = `DIG_MANA` (0.068) x (1 + 1.5 x HARD) x `DIG_TIER_COST` by
   staff tier (1, 1, 0.78, 0.62, 0.48) x gear("mana_cost"); mana comes back `mana_regen_of(m)` a tick = `m.mana_regen`
@@ -1475,7 +1496,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

@@ -1533,6 +1533,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_stairs()
+		elif only == "crafting":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_crafting()
 		elif only == "workshops":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2911,6 +2915,7 @@ func run() -> void:
 
 	await _test_stairs()
 	await _test_workshops()
+	await _test_crafting()
 	await _test_indoors()
 	await _test_remove()
 	await _test_spawns()
@@ -3826,6 +3831,9 @@ func run() -> void:
 	for r2 in g.recipes:
 		if not g.recipe_hidden(r2):
 			shown += 1
+	for pr2 in Defs.PROCESS:
+		if String(pr2["at"]) in ["kiln", "smelter", "still"]:
+			shown += 1               # (the workshops' mixes are pages of the book too: one card or secret page each)
 	await _test_gear()
 	await _test_towns()
 	await _test_vfx()
@@ -11000,6 +11008,123 @@ func _test_speech() -> void:
 	ok = ok and ok1 and forgot
 	print("[speech] " + "\n[speech] ".join(rows))
 	_ok("speech bubbles pop in, type out with a voice, and are forgotten when they stop", ok, "; ".join(rows))
+
+## (user, 25 Nov: "All the crafting systems feel a little stuck together"; chose: the forge stays anywhere,
+## workshops load by hand or by clicking a known recipe, the book covers what goes in the satchel, workshops and
+## furniture are forged into the satchel, an amount to craft many at once)
+func _test_crafting() -> void:
+	var rows := []
+	var ok := true
+	var Bd = load("res://scripts/build.gd")
+	g.player.dead = false
+	if g.build_on:
+		g._toggle_build()
+	var rec := func(id: String) -> Dictionary:
+		for r in g.recipes:
+			if String(r["id"]) == id:
+				return r
+		return {}
+	# ---- build mode has only building pieces; the rest is forged
+	var tabs_ok: bool = not Bd.CAT_ORDER.has(2) and not Bd.CAT_ORDER.has(3) and not Bd.CAT_ORDER.has(Bd.CAT_WORKSHOPS)
+	var r_kiln: Dictionary = rec.call("st_kiln")
+	var r_well: Dictionary = rec.call("furn_well")
+	var ok0: bool = tabs_ok and not r_kiln.is_empty() and not r_well.is_empty() and not rec.call("st_altar").is_empty()
+	rows.append("%sbuild tabs %s; the forge has workshops %s and outdoor pieces %s" % ["" if ok0 else "(!) ", str(Bd.CAT_ORDER), not r_kiln.is_empty(), not r_well.is_empty()])
+	ok = ok and ok0
+	# ---- a kiln forged goes into the satchel and is set down from it
+	var k0 := int(g.items.get("st_kiln", 0))
+	for c in r_kiln["cost"]:
+		g.player.inv[int(c)] += int(r_kiln["cost"][c])
+	var made_k: int = g.craft_many(r_kiln, 1)
+	var in_sat := int(g.items.get("st_kiln", 0)) == k0 + 1
+	g.hold_carried("station", -1, "kiln")
+	var held: Dictionary = g.build_piece()
+	var ok1: bool = made_k == 1 and in_sat and g.build_cat == Bd.CAT_SATCHEL and String(held.get("station", "")) == "kiln"
+	rows.append("%sa Kiln forged into the satchel %s, in hand to set down %s" % ["" if ok1 else "(!) ", in_sat, String(held.get("name", "-"))])
+	ok = ok and ok1
+	if g.build_on:
+		g._toggle_build()
+	g.items["st_kiln"] = k0
+	if k0 == 0:
+		g.items.erase("st_kiln")
+	# ---- torches in the satchel are a piece of the Satchel tab
+	g.player.inv[Defs.TORCH] += 3
+	var lt: Array = Bd.carried_pieces(g.player.furn, g.items, g.player.inv)
+	var has_torch := false
+	for pc in lt:
+		if String(pc["kind"]) == "torch":
+			has_torch = true
+	rows.append("%storches set down from the Satchel tab %s" % ["" if has_torch else "(!) ", has_torch])
+	ok = ok and has_torch
+	# ---- an amount: ten planks at a click, and as many as the satchel pays when it runs short
+	var r_plank: Dictionary = rec.call("plank")
+	g.player.inv[Defs.WOOD] = 50
+	var p0: int = g.player.inv[Defs.PLANK]
+	var n10: int = g.craft_many(r_plank, 10)
+	var got10: int = g.player.inv[Defs.PLANK] - p0
+	g.player.inv[Defs.WOOD] = 7
+	var n_short: int = g.craft_many(r_plank, 10)
+	var furn0: int = g.player.furn.size()
+	var r_chair: Dictionary = rec.call("furn_chair")
+	g.player.inv[Defs.PLANK] += 30
+	var n_ch: int = g.craft_many(r_chair, 4)
+	var once: Dictionary = rec.call("tier2")
+	var ok2: bool = n10 == 10 and got10 == 40 and n_short == 3 and g.player.inv[Defs.WOOD] == 1 and n_ch == 4 and g.player.furn.size() == furn0 + 4 and not g.recipe_repeatable(once)
+	rows.append("%s×10 planks: %d forged (+%d planks); short of wood: %d of 10; ×4 chairs: %d into the satchel; a focus forged once %s" % ["" if ok2 else "(!) ", n10, got10, n_short, n_ch, not g.recipe_repeatable(once)])
+	ok = ok and ok2
+	for k in 4:
+		g.player.furn.pop_back()
+	# ---- the forge's book shows the workshops' mixes, the amount on its buttons
+	g.ui.set_craft_amount(10)
+	g.toggle_forge()
+	await _frames(6)
+	var heads := []
+	var amt_btn := 0
+	var stack := [g.ui.forge_list]
+	while not stack.is_empty():
+		var n = stack.pop_back()
+		for ch in n.get_children():
+			stack.append(ch)
+			if ch is Label and String(ch.text).ends_with("(workshop)"):
+				heads.append(String(ch.text))
+			if ch is Button and String(ch.text) == "Forge ×10":
+				amt_btn += 1
+	var at_kiln := 0
+	for hc in g.ui.forge_tabs.get_children():
+		if hc is Button and String(hc.text) == "Kiln":
+			g.ui._forge_scroll.scroll_vertical = 0
+			hc.emit_signal("pressed")
+			at_kiln += 1
+	await _frames(4)
+	_shot("forge_workshops.png")
+	g.toggle_forge()
+	var ok3: bool = heads.size() >= 3 and amt_btn > 3 and at_kiln == 1
+	rows.append("%sthe forge's book: %s; %d buttons say Forge ×10" % ["" if ok3 else "(!) ", ", ".join(heads), amt_btn])
+	ok = ok and ok3
+	# ---- a workshop: click a known recipe and it loads itself (Amount batches; anything else goes back)
+	var st = g.workshops.add("kiln", g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 30.0)
+	g.player.inv[Defs.SAND] = 25
+	g.player.inv[Defs.DIRT] += 5
+	g.workshops.load_mat(st, Defs.DIRT, 5)
+	var pr_glass: Dictionary = {}
+	for pr in g.workshops.known_recipes("kiln"):
+		if String(pr["id"]) == "k_glass":
+			pr_glass = pr
+	var nb: int = g.workshops.load_recipe(st, pr_glass, 10)
+	var loaded_ok: bool = nb == 6 and int(st.store.get(Defs.SAND, 0)) == 24 and not st.store.has(Defs.DIRT) and g.player.inv[Defs.SAND] == 1
+	var mp: Dictionary = g.workshops.match_process(st)
+	g.state = "station"
+	g.ui.show_station(st)
+	await _frames(6)
+	_shot("workshop_recipes.png")
+	g.workshops.close()
+	g.workshops.list.erase(st)
+	var ok4: bool = loaded_ok and String(mp.get("id", "")) == "k_glass"
+	rows.append("%sglass ×10 asked, %d batches loaded (24 sand), the dirt given back %s, the kiln knows the mix %s" % ["" if ok4 else "(!) ", nb, not st.store.has(Defs.DIRT), String(mp.get("id", ""))])
+	ok = ok and ok4
+	g.ui.set_craft_amount(1)
+	print("[crafting] " + "\n[crafting] ".join(rows))
+	_ok("crafting together: workshops and furniture forged into the satchel, build mode for building, the book shows the workshops' mixes, a known mix loads itself, an amount to forge many", ok, "; ".join(rows))
 
 ## paints (or cuts) from cell a to b of the ship as it was (`at` says where such a cell is now), a little at a
 ## time as you would by hand

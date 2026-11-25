@@ -1,6 +1,6 @@
 ## Workshops (user, 22 Nov: real smelters and kilns, a small bonus for forging in a proper workshop, and
 ## "some secrets that can be discovered through experimenting"). A station (main `Station`, a Body) stands
-## in the world: set down from build mode's Workshops tab, saved with the planet (planet_state["stations"]),
+## in the world: forged at the Wisp Forge (Workshops) into the satchel and set down from it, saved with the planet (planet_state["stations"]),
 ## taken up again with Shift + right-click (what's in it comes back to the satchel). F beside one opens its
 ## panel (main state "station", ui.gd `show_station`): load materials into it from the satchel, feed its
 ## fire, take out what it made.
@@ -117,6 +117,39 @@ func load_mat(st, m: int, n: int) -> int:
 	game.player.inv[m] -= n
 	st.store[m] = int(st.store.get(m, 0)) + n
 	return n
+
+## (user, 25 Nov: "if you click a known recipe it will load by itself"): load n batches of a recipe it
+## knows, as many as the satchel holds; anything loaded that isn't in it goes back first (a mix it knows must
+## be exactly its kinds). How many batches went in.
+func load_recipe(st, pr: Dictionary, n: int) -> int:
+	if pr.is_empty() or pr["at"] != st.kind:
+		return 0
+	var need: Dictionary = pr["in"]
+	for m in st.store.keys():
+		if not need.has(int(m)):
+			unload(st, int(m))
+	# (what's already in counts toward the batches)
+	var batches := maxi(1, n)
+	var can := batches
+	for m2 in need:
+		var have: int = game.player.inv[int(m2)] + int(st.store.get(int(m2), 0))
+		can = mini(can, have / int(need[m2]))
+	if can <= 0:
+		return 0
+	for m3 in need:
+		var want: int = int(need[m3]) * can - int(st.store.get(int(m3), 0))
+		if want > 0:
+			load_mat(st, int(m3), want)
+	st.prog = 0.0
+	return can
+
+## the recipes a station of this kind can be loaded with by a click: its plain ones and the secrets found
+func known_recipes(kind: String) -> Array:
+	var out := []
+	for pr in Defs.PROCESS:
+		if pr["at"] == kind and (not pr.get("secret", false) or is_secret_known(String(pr["id"]))):
+			out.append(pr)
+	return out
 
 ## take material m back out (all of it)
 func unload(st, m: int) -> void:
