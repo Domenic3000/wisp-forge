@@ -60,6 +60,8 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 		var life: int = Ecology.tick(g, e, tgt, dist, gacc, slow_f)
 		g.prof_add("foes: ecology", Time.get_ticks_usec() - tq)
 		if life == Ecology.DONE:
+			if e.stranded_t > 0:
+				_trail(e)                      # (dug out, writhing on the open ground)
 			_swim_hold(g, e, bd, gacc)
 			return
 		if life == Ecology.WANDER:

@@ -105,6 +105,9 @@ static func tick(g, e, tgt, dist: float, gacc: float, slow_f: float) -> int:
 		e.hunger_t -= 1
 	if go == "burrow":
 		keep_under(g, e)
+		if e.stranded_t > 0:
+			_stranded(g, e, tgt, gacc)
+			return DONE
 	if e.act != "":
 		return HUNT                       # (mid-attack: boss_ai.gd's)
 	_sense(g, e, tgt, dist)
@@ -830,7 +833,14 @@ static func burrow_toward(g, e, goal: Vector2, spd: float, dpt: float) -> bool:
 ## surface, the ground dug away round it, an old save) sinks into the soft ground under it, or
 ## goes back down its hole; with no soft ground anywhere near, a creature leaves.
 static func keep_under(g, e) -> void:
-	if not e.under or _ground(g.type_at(e.pos)):
+	if not e.under:
+		e.was_in = false
+		return
+	if _ground(g.type_at(e.pos)):
+		e.was_in = true
+		return
+	if e.was_in and not e.boss:
+		unearth(g, e)                      # (its ground dug away round it: it's flushed out, not gone)
 		return
 	var dpt := depth(e)
 	var s := surface_under(g, e.pos, 6.0, 120.0)
@@ -844,6 +854,49 @@ static func keep_under(g, e) -> void:
 			return
 	if not e.boss:
 		e.dead = true                      # (nowhere to burrow: it's gone)
+
+## A burrower whose ground was dug away round it (user, 25 Nov: "I harvested the sand where a worm hole was
+## and it dissapeared"): thrown out onto the open ground, where it writhes a while (and can be hit) before
+## it digs back into soft ground near it; on rock it stays out.
+static func unearth(g, e) -> void:
+	e.under = false
+	e.was_in = false
+	e.act = ""
+	e.stranded_t = STRANDED
+	var up: Vector2 = e.pos.normalized()
+	var br: Vector2 = g.basis_r(atan2(e.pos.y, e.pos.x))
+	e.vx = (randf() - 0.5) * 1.2
+	e.vy = -1.6
+	e.gvel = Vector2.ZERO
+	g.audio.play("dig", e.pos, 0.6)
+	for k in 8:
+		g._particle(e.pos, up * randf_range(0.6, 1.6) + br * randf_range(-0.8, 0.8), 30, Color(0.82, 0.7, 0.5), false, 0.05)
+
+const STRANDED := 150        # frames a dug-out burrower lies out before it tries to dig back in
+
+static func _stranded(g, e, tgt, gacc: float) -> void:
+	e.stranded_t -= 1
+	e.under = false
+	e.act = ""
+	e.pose = ""
+	# writhing where it lies, edging away from you
+	if e.on_ground:
+		var side := signf((e.pos - tgt.pos).dot(g.basis_r(atan2(e.pos.y, e.pos.x)))) if tgt != null else 1.0
+		e.vx += ((side if side != 0.0 else 1.0) * 0.35 * (0.5 + 0.5 * sin(float(g.frame) * 0.3 + e.phase)) - e.vx) * 0.2
+		e.facing = 1 if e.vx >= 0.0 else -1
+	_fall(g, e, gacc, "walk")
+	if e.stranded_t > 0 and (e.stranded_t > STRANDED - 60 or e.stranded_t % 20 != 0):
+		return
+	var dpt := depth(e)
+	var s := surface_under(g, e.pos, 8.0, 30.0)
+	if e.on_ground and s.is_finite() and diggable(g, s, dpt):
+		e.stranded_t = 0
+		e.under = true
+		e.was_in = false
+		e.pos = s - s.normalized() * dpt
+		g.audio.play("dig", s, 0.5)
+	elif e.stranded_t <= 0:
+		e.stranded_t = 60                  # (on rock: it stays out, and looks again in a moment)
 
 ## Out of the ground after a breach and back down: into the soft ground where it lands, or back down its
 ## own hole.

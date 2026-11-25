@@ -1545,6 +1545,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_remove()
+		elif only == "harvest":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_harvest()
 		elif only == "backdrop":
 			await _test_backdrop()
 		elif only == "indoors":
@@ -2918,6 +2922,7 @@ func run() -> void:
 	await _test_crafting()
 	await _test_indoors()
 	await _test_remove()
+	await _test_harvest()
 	await _test_spawns()
 
 	# ---- furniture: taken whole, set down again, forged; a bed in a room makes a home ----
@@ -2946,7 +2951,7 @@ func run() -> void:
 		if not g.build_on:
 			g._toggle_build()
 		g.build_cat = Build.CAT_SATCHEL
-		g.build_idx[Build.CAT_SATCHEL] = maxi(0, g.player.furn.size() - 1)
+		g.select_carried(g.player.furn.size() - 1)
 		# (loose litter or grit that blew onto its old spot meanwhile is swept off first)
 		var sw: Dictionary = g.gpu.read_rect(int(tstamp["x0"]), int(tstamp["y0"]), int(tstamp["w"]), int(tstamp["h"]))
 		var swd := PackedInt32Array()
@@ -3015,7 +3020,7 @@ func run() -> void:
 		_go(house_at)
 		await _frames(30)
 		g.build_cat = Build.CAT_SATCHEL
-		g.build_idx[Build.CAT_SATCHEL] = g.player.furn.size() - 1
+		g.select_carried(g.player.furn.size() - 1)
 		var nb0: int = g.player.furn.size()
 		for bk in 7:
 			g.test_aim = house_at + (house_at - g.player.pos).normalized() * 0.0 + Vector2(-house_at.y, house_at.x).normalized() * float(bk % 2 * 2 - 1) * float(bk / 2) * 5.0
@@ -7061,6 +7066,145 @@ func _test_remove() -> void:
 			all_ok = false
 			bad.append(k)
 	_ok("precise removal (a layer at a time, physics wakes), flatten, and torches as one piece with their own light", all_ok,
+		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
+
+## (user, 25 Nov) four things he met: standing on a tower top he slowly slid in the wind; digging the sand
+## a burrower was in made it vanish; carried pieces of one name were separate entries in the Satchel tab;
+## taking a torch's flame on its own left its cup as a put-out "decoration". On a natural slab in the air.
+func _test_harvest() -> void:
+	var hv_back: Vector2 = g.player.pos
+	var m = g.player
+	var ha := atan2(m.pos.y, m.pos.x) - 0.16
+	var hup := Vector2(cos(ha), sin(ha))
+	var c0: Vector2i = Build.cell_of(hup * (g.gpu.surf_at(ha).x + 150.0))
+	var cx: int = c0.x
+	var top: int = c0.y
+	var fl := top - 1
+	var SW := 110
+	var SH := 26
+	var sd := PackedInt32Array()
+	sd.resize(SW * SH)
+	sd.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	# a bed of sand in the slab's top for the burrower (columns 62..99, 16 deep), stone under it
+	for j in 16:
+		for i in range(62, 100):
+			sd[j * SW + i] = Defs.SAND | 0xFF00 | 0x20000 | 0x80000
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top, "w": SW, "h": SH, "data": sd})
+	await _frames(4)
+	_go(_cell_pos(cx + 10, fl - 12))
+	await _frames(40)
+	var ok := {}
+	var txt := []
+	# ---- the wind: standing still in a gale on the open slab, he stays where he stands ----
+	var a0: float = atan2(m.pos.y, m.pos.x)
+	var stood := 0
+	for f in 150:
+		g.wind = 1.6
+		await _frames(1)
+		if m.on_ground:
+			stood += 1
+	var drift: float = absf(angle_difference(a0, atan2(m.pos.y, m.pos.x))) * m.pos.length()
+	ok["wind"] = g.exposed and stood > 120 and drift < 1.0
+	txt.append("in a %.1f wind, out in the open %s, standing %d of 150 frames, drifted %.2f cells" % [g.wind, g.exposed, stood, drift])
+	g.wind = 0.0
+	# ---- torches: picked up by the flame, by the cup, and a put-out stump is a torch again ----
+	m.inv[Defs.TORCH] = 4
+	var t_ok: bool = g.place_torch(m, _cell_pos(cx + 22, fl - 4))
+	g.stamps.append(Build.prop_stamp(Build.prop_cells(Build.SCONCE, cx + 32, fl - 2, false), 0))
+	g.stamps.append(Build.prop_stamp(Build.prop_cells(Build.SCONCE.slice(3), cx + 42, fl, false), 0))
+	await _frames(12)
+	var torch_cells := func() -> int:
+		var rr: Dictionary = g.gpu.read_rect(posmod(cx + 14, Defs.NS), fl - 16, 36, 17)
+		var nn := 0
+		for b in rr["bg"]:
+			var mb := int(b) & 255
+			if mb == Defs.DECOR or mb == Defs.TORCH:
+				nn += 1
+		return nn
+	var tc0: int = torch_cells.call()
+	var inv0: int = m.inv[Defs.TORCH]
+	var furn0: int = m.furn.size()
+	# the standing torch by the cell over its flame's top, the sconce by its flame's top cell
+	var flame_c: Vector2i = Build.cell_of(Vector2(float(g.planet_state["torches"][-1][0]), float(g.planet_state["torches"][-1][1])))
+	g._pick_miss_t = -9999
+	var p1: bool = g._pick_up_furniture(m, _cell_pos(flame_c.x, flame_c.y - 2))
+	await _frames(6)
+	g._pick_miss_t = -9999
+	var p2: bool = g._pick_up_furniture(m, _cell_pos(cx + 32, fl - 8))
+	await _frames(6)
+	g._pick_miss_t = -9999
+	var p3: bool = g._pick_up_furniture(m, _cell_pos(cx + 42, fl - 2))
+	await _frames(12)
+	for fi in range(furn0, m.furn.size()):
+		print("[harvest] carried instead of a torch: %s %s kind %d" % [m.furn[fi]["name"], str(m.furn[fi]["rows"]), int(m.furn[fi].get("kind", -1))])
+	var tc1: int = torch_cells.call()
+	ok["torch"] = t_ok and tc0 >= 25 and p1 and p2 and p3 and m.inv[Defs.TORCH] == inv0 + 3 and m.furn.size() == furn0 and tc1 == 0
+	txt.append("torch cells %d -> %d; taken by the flame %s, the sconce's flame %s, the stump %s; torches %d -> %d, carried pieces %d -> %d" % [tc0, tc1, p1, p2, p3, inv0, m.inv[Defs.TORCH], furn0, m.furn.size()])
+	# ---- carried pieces of one name stack in the Satchel tab; R shows the next design ----
+	var furn_keep: Array = m.furn.duplicate(true)
+	var chair_a: Dictionary = Build.carried_item("Chair", Build.design({"prop": "chair"}, 3), "chair")
+	var chair_b: Dictionary = Build.carried_item("Chair", Build.design({"prop": "chair"}, 9), "chair")
+	var table_a: Dictionary = Build.carried_item("Table", Build.design({"prop": "table"}, 5), "table")
+	m.furn = [chair_a, table_a, chair_b, chair_a.duplicate(true)]
+	var lst: Array = Build.carried_pieces(m.furn, {}, PackedInt32Array())
+	var chairs: Dictionary = lst[0] if lst.size() > 0 else {}
+	if not g.build_on:
+		g._toggle_build()
+	g.build_cat = Build.CAT_SATCHEL
+	g.select_carried(2)
+	var held: Dictionary = g.build_piece()
+	g._build_key(KEY_R)
+	var held2: Dictionary = g.build_piece()
+	g._toggle_build()
+	ok["stack"] = lst.size() == 2 and int(chairs.get("carried", 0)) == 3 and String(chairs.get("name", "")) == "Chair" \
+		and int(held.get("item", -1)) == 2 and int(held2.get("item", -1)) != 2 and String(held2.get("name", "")) == "Chair"
+	txt.append("4 carried (3 chairs, a table): %d entries, chairs x%d; picked the 2nd chair (item %d), R -> item %d" % [lst.size(), int(chairs.get("carried", 0)), int(held.get("item", -1)), int(held2.get("item", -1))])
+	m.furn = furn_keep
+	g.carried_pick = {}
+	# ---- a burrower in sand, dug round: it's thrown out onto the ground, then digs back in ----
+	var bc := cx + 80
+	var bp: Vector2 = _cell_pos(bc, fl + 7)
+	var wasnt_wild: bool = g.test_no_wild
+	var e = g.spawn_enemy("c_sandviper", bp)
+	e.under = true
+	e.asleep = true
+	await _frames(10)
+	var in0: bool = e.was_in and e.under and not e.dead
+	var ec: Vector2i = Build.cell_of(e.pos)
+	var hole := PackedInt32Array()
+	hole.resize(12 * 12)
+	hole.fill(0xFF00)
+	g.stamps.append({"x0": posmod(ec.x - 6, Defs.NS), "y0": ec.y - 6, "w": 12, "h": 12, "data": hole})
+	var out_seen := false
+	var back_in := false
+	for f2 in 400:
+		await _frames(1)
+		if e.dead:
+			break
+		if not e.under and e.stranded_t > 0:
+			out_seen = true
+		elif out_seen and e.under:
+			back_in = true
+			break
+	ok["burrower"] = in0 and out_seen and back_in and not e.dead
+	txt.append("in its sand %s; dug round: thrown out %s, dug back in %s, alive %s" % [in0, out_seen, back_in, not e.dead])
+	e.dead = true
+	g.enemies.erase(e)
+	g.test_no_wild = wasnt_wild
+	# take the slab away again
+	var clr := PackedInt32Array()
+	clr.resize(SW * (SH + 20))
+	clr.fill(0xFF00 | 0x40000)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 20, "w": SW, "h": SH + 20, "data": clr})
+	_go(hv_back)
+	await _frames(30)
+	var all_ok := true
+	var bad := []
+	for k in ok:
+		if not ok[k]:
+			all_ok = false
+			bad.append(k)
+	_ok("harvest fixes: no sliding in the wind standing still, a torch taken whole by any part, carried pieces stack, a dug-out burrower comes out", all_ok,
 		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
 
 func _test_stairs() -> void:

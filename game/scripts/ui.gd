@@ -1583,7 +1583,8 @@ func _update_build_bar(g) -> void:
 		var afford: bool = not Build.payable(pc, g.player.inv).is_empty()
 		var on: bool = pc == piece
 		var col := GOLD if on else (TEXT if afford else Color(0.55, 0.42, 0.45))
-		var txt: String = ("%d %s" % [k + 1, pc["name"]]) if k < 9 else String(pc["name"])
+		var pname: String = String(pc["name"]) + ((" ×%d" % int(pc["carried"])) if int(pc.get("carried", 1)) > 1 else "")
+		var txt: String = ("%d %s" % [k + 1, pname]) if k < 9 else pname
 		row.add_child(_head(txt, 12, col) if on else _label(txt, 12, col))
 	if lst.is_empty() and g.build_cat == Build.CAT_SATCHEL:
 		var el := _label("Nothing carried. Shift + right-click furniture or a workshop to take it whole, or forge furniture (C).", 12, CREAM)
@@ -1625,7 +1626,11 @@ func _update_build_bar(g) -> void:
 			hint = "%s, %d high (%d steps): %s" % [piece["name"], g.build_rise, (g.build_rise + Build.STAIR_STEP - 1) / Build.STAIR_STEP, cost_txt if cost_txt != "" else "point at the floor where it starts"]
 			hint += "\nclick to build  ·  [ ] a step higher or lower  ·  - = a storey  ·  T turn it  ·  B leaves"
 		elif piece["kind"] == "carried":
-			hint = "%s: yours, carried in the satchel\nclick to set it down  ·  T mirror  ·  B leaves" % piece["name"]
+			var nc := int(piece.get("carried", 1))
+			if nc > 1:
+				hint = "%s: %d carried in the satchel\nclick to set one down  ·  R the next of them  ·  T mirror  ·  B leaves" % [piece["name"], nc]
+			else:
+				hint = "%s: yours, carried in the satchel\nclick to set it down  ·  T mirror  ·  B leaves" % piece["name"]
 		else:
 			hint += "\nclick to place%s  ·  B leaves" % ("  ·  R new design  ·  T mirror" if piece["kind"] == "prop" else ("  ·  hold to paint  ·  G shape" if piece["kind"] == "wall" else ""))
 		var pmn: float = float(g.build_prev.get("mana", 0.0))

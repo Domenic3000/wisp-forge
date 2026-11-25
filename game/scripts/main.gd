@@ -181,6 +181,8 @@ class Enemy extends Body:
 	var raged := false         # below half health
 	var raged_burst := false
 	var under := false         # a burrower under the ground: unseen, untouchable, not moved by move_body
+	var was_in := false        # (a burrower: it was in its ground last frame, so ground gone round it was dug away)
+	var stranded_t := 0        # a burrower dug out of its ground: frames it lies out in the open, then digs in
 	var gvel := Vector2.ZERO   # (its flight out of the ground, in world units)
 	var trail := PackedVector2Array()   # a serpent's segments, head first
 	var summoner = null        # the guardian that called it
@@ -2496,8 +2498,11 @@ func _update_player(m: Mage) -> void:
 	var speed := ((1.5 if fin else 0.9) * gear("swim", m) * (1.5 if m.items.has("tideheart") else 1.0)) if p.in_liquid else 1.5 * gear("speed", m)
 	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
-	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02 and not m.items.has("stormcrown"):
-		p.vx += wind * (0.02 if p.on_ground else 0.04)      # (the wind, out in the open)
+	# the wind, out in the open: it slows you walking into it and carries you in the air, but standing
+	# still your feet hold (user, 25 Nov: standing on a tower top he slowly slid to the right)
+	if m.local and exposed and not p.in_liquid and absf(wind) > 0.02 and not m.items.has("stormcrown") \
+			and not (p.on_ground and move == 0):
+		p.vx += wind * (0.02 if p.on_ground else 0.04)
 	var jump: bool = m.input.jump
 	if p.on_ground:
 		m.air_time = 0
@@ -2882,6 +2887,34 @@ func _furniture_piece(bgs: PackedInt32Array, n: int, start: int) -> PackedInt32A
 					todo.append(q)
 	return out
 
+## From a flame cell (TORCH in the back layer) of a block read back: a furniture cell it burns on (the
+## joined flame cells' DECOR neighbour, so the piece is found as from that cell), else the flame itself
+## when it's a torch's whole flame on its own (3+ cells), else -1 (a bare flame in a wall: put out by
+## deconstructing, as before).
+func _flame_holder(bgs: PackedInt32Array, n: int, start: int) -> int:
+	var seen := {start: true}
+	var todo := [start]
+	var flames := 0
+	while not todo.is_empty():
+		var k: int = todo.pop_back()
+		flames += 1
+		var ci := k % n
+		var cj := k / n
+		if ci == 0 or cj == 0 or ci == n - 1 or cj == n - 1:
+			return -1
+		for dj in [-1, 0, 1]:
+			for di in [-1, 0, 1]:
+				var q: int = k + dj * n + di
+				if seen.has(q):
+					continue
+				var mq := bgs[q] & 255
+				if mq == Defs.DECOR:
+					return q
+				if mq == Defs.TORCH:
+					seen[q] = true
+					todo.append(q)
+	return start if flames >= 3 else -1
+
 ## Shift + right-click on a piece of furniture takes it whole: its exact pixels go into the satchel
 ## (Mage.furn) and it can be set down again from build mode's Satchel tab. If it stood in front of a
 ## back wall, the wall is made whole behind it. False if there's no furniture at p (then the
@@ -2914,12 +2947,18 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 	var reach := int(ceil(m.dig_r * 0.8))
 	var start := -1
 	var best := 1 << 30
+	reach = maxi(reach, 3)
 	for dj in range(-reach, reach + 1):
 		for di in range(-reach, reach + 1):
 			var k := (PICK_HALF + dj) * n + PICK_HALF + di
-			if (bgs[k] & 255) == Defs.DECOR and di * di + dj * dj < best:
+			var mk := bgs[k] & 255
+			if (mk == Defs.DECOR or mk == Defs.TORCH) and di * di + dj * dj < best:
 				best = di * di + dj * dj
 				start = k
+	# a flame pointed at: the piece it burns on (user, 25 Nov: taking a torch's flame on its own left its
+	# cup and handle standing, which then came up as a put-out "decoration")
+	if start >= 0 and (bgs[start] & 255) == Defs.TORCH:
+		start = _flame_holder(bgs, n, start)
 	if start < 0:
 		_pick_miss = cc
 		_pick_miss_t = frame
@@ -2996,7 +3035,28 @@ func _pick_up_furniture(m: Mage, p: Vector2) -> bool:
 	for kf in cells:
 		if (bgs[kf] & 255) == Defs.TORCH:
 			n_flame += 1
-	if kid == 0 and n_flame >= 3 and cells.size() <= Build.TORCH_CELLS_MAX:
+	# its cup and handle without the flame (put out, or part of the flame gone) is a torch's too
+	var stump := false
+	if kid == 0 and n_flame < 3 and cells.size() <= Build.TORCH_CELLS_MAX:
+		var si0 := n
+		var sj0 := n
+		var si1 := -1
+		var sj1 := -1
+		for ks in cells:
+			if (bgs[ks] & 255) != Defs.TORCH:
+				si0 = mini(si0, ks % n)
+				si1 = maxi(si1, ks % n)
+				sj0 = mini(sj0, ks / n)
+				sj1 = maxi(sj1, ks / n)
+		var srows := []
+		for sj in range(sj0, sj1 + 1):
+			var sl := ""
+			for si in range(si0, si1 + 1):
+				var bs := bgs[sj * n + si]
+				sl += Build.Props.char_of((bs >> 16) & 63) if (bs & 255) == Defs.DECOR and inside.has(sj * n + si) else "."
+			srows.append(sl)
+		stump = si1 >= 0 and Build.is_torch_stump(srows)
+	if kid == 0 and (n_flame >= 3 or stump) and cells.size() <= Build.TORCH_CELLS_MAX:
 		m.inv[Defs.TORCH] += 1
 		audio.play("place", Build.cell_pos(c0 + (i0 + i1) / 2, r0 + (j0 + j1) / 2), 0.6, 1.2)
 		if m.local:
@@ -5517,10 +5577,22 @@ func _toggle_build() -> void:
 		ui.toast("Build mode off", Color(0.8, 0.8, 0.9), 1.0)
 
 ## the pieces of the chosen category, and the chosen one
+var carried_pick := {}      # name -> the Mage.furn index shown for that stack in the Satchel tab (R cycles)
+
 func build_list() -> Array:
 	if build_cat == Build.CAT_SATCHEL:
-		return Build.carried_pieces(player.furn, items, player.inv)
+		return Build.carried_pieces(player.furn, items, player.inv, carried_pick)
 	return Build.in_cat(build_pieces, build_cat)
+
+## a carried piece (Mage.furn index) chosen in the build Satchel tab: its stack, showing that design
+func select_carried(idx: int) -> void:
+	if idx < 0 or idx >= player.furn.size():
+		return
+	carried_pick[String(player.furn[idx]["name"])] = idx
+	var l := build_list()
+	for k in l.size():
+		if String(l[k]["kind"]) == "carried" and int(l[k]["item"]) == idx:
+			build_idx[Build.CAT_SATCHEL] = k
 
 func build_piece() -> Dictionary:
 	var l := build_list()
@@ -5546,7 +5618,7 @@ func hold_carried(what: String, idx := -1, sk := "") -> void:
 			var l := build_list()
 			for k in l.size():
 				var pc: Dictionary = l[k]
-				if (what == "furn" and String(pc["kind"]) == "carried" and int(pc["item"]) == idx) \
+				if (what == "furn" and String(pc["kind"]) == "carried" and (pc["items"] as Array).has(idx)) \
 						or (what == "station" and String(pc["kind"]) == "station" and String(pc["station"]) == sk):
 					build_idx[build_cat] = k
 					want = String(pc["name"])
@@ -5600,6 +5672,13 @@ func _build_key(k: int) -> bool:
 		build_rise = clampi(build_rise + (40 if k == KEY_EQUAL else -40), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
 		return true
 	if k == KEY_R:
+		var rp := build_piece()
+		if String(rp.get("kind", "")) == "carried" and (rp["items"] as Array).size() > 1:
+			# the next design in a stack of carried pieces of one name
+			var ks: Array = rp["items"]
+			carried_pick[String(rp["name"])] = int(ks[(ks.find(int(rp["item"])) + 1) % ks.size()])
+			build_prev = {}
+			return true
 		build_seed = randi()
 		return true
 	if k == KEY_T:
@@ -8015,6 +8094,9 @@ func _apply_save(s: Dictionary) -> void:
 	player.furn = []
 	for it in s.get("furn", []):
 		if typeof(it) == TYPE_DICTIONARY and it.has("rows") and not (it["rows"] as Array).is_empty():
+			if int(it.get("kind", 0)) == 0 and Build.is_torch_stump(Array(it["rows"])):
+				player.inv[Defs.TORCH] += 1           # a put-out torch carried from before: a torch again
+				continue
 			player.furn.append({"name": str(it.get("name", "Furniture")), "rows": Array(it["rows"]), "wall": bool(it.get("wall", false)), "kind": int(it.get("kind", 0))})
 
 

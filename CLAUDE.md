@@ -967,6 +967,22 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   take the accent colour. Test: `_test_speech` ("speech"; in the full run after `_test_ui`; pictures
   `speech_typing.png`, `speech_wisp.png`, `speech_kinds.png`).
 
+## Fixes from play (user, 25 Nov: drifting on a tower top, a burrower gone when its sand was dug, carried stacks, half a torch)
+- The wind (`_update_player`) no longer pushes you while you stand still on the ground; it still slows you
+  walking into it and carries you in the air.
+- A burrower whose ground is dug away round it (`Enemy.was_in`: it was in its ground last frame) is not
+  deleted: `Ecology.unearth` throws it out onto the ground (`stranded_t` = `STRANDED` 150), `_stranded`
+  writhes it there, edging away from you (hittable), then it digs back into soft ground under it, or stays
+  out on rock and looks again. A burrower spawned in the open still sinks as before.
+- Carried furniture of one name is ONE entry in build mode's Satchel tab (`Build.carried_pieces(..., pick)`:
+  "items" the Mage.furn indices, "carried" the count, "item" the design shown); R shows the next design
+  (main `carried_pick`), `select_carried(idx)` picks a stack showing that item (the tests use it).
+- A torch is taken whole by any part: `_pick_up_furniture` starts from the nearest DECOR or flame cell
+  (reach at least 3), a flame goes to the piece it burns on (`_flame_holder`); a kind-0 piece whose cup and
+  handle are a torch's (`Build.is_torch_stump`, by palette colour) gives a Torch even with its flame partly
+  or wholly gone, and a stump carried from before turns back into a torch on load.
+- Test: `_test_harvest` ("harvest"; in the full run after `_test_remove`).
+
 ## Building the game to share (Build game.bat; user, 22 Nov: "build the game into an easily distributable .exe")
 - `Build game.bat` (repo root): finds the console Godot in engine/, works out the template version from
   `--version` (4.7.2.stable -> templates "4.7.2.stable", release "4.7.2-stable"), and if Godot's export templates
@@ -1496,7 +1512,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

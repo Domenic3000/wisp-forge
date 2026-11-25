@@ -46,6 +46,38 @@ const STANDING := [".t.", "ttt", ".t.", "yIy", ".W.", ".w.", ".W.", ".w.", ".W."
 const TORCH_FLAME := 1          # the row of the flame's middle (from the top)
 const TORCH_CELLS_MAX := 40     # (a piece this small with torch cells in it is a torch: picked up, a torch again)
 
+## a torch's cup and handle with no flame (a torch put out: its flame taken on its own, before 25 Nov):
+## picked up or carried, it's a torch again. Compared by palette colour, so it holds whatever char_of gives.
+static func is_torch_stump(rows: Array) -> bool:
+	# (a carried one may still hold what's left of its flame: its "t" rows on top are dropped)
+	while not rows.is_empty() and String(rows[0]).replace("t", ".").replace(".", "") == "":
+		rows = rows.slice(1)
+	for shape in [SCONCE, STANDING]:
+		var want: Array = shape.slice(3)
+		if rows.size() != want.size():
+			continue
+		var same := true
+		for j in want.size():
+			var a := String(rows[j])
+			var b := String(want[j])
+			if a.length() != b.length():
+				same = false
+				break
+			for i in a.length():
+				var ca := a[i]
+				var cb := b[i]
+				if (ca == ".") != (cb == "."):
+					same = false
+				elif ca != "." and int(Props.CHARS.get(ca, -1)) != int(Props.CHARS.get(cb, -2)):
+					same = false
+				if not same:
+					break
+			if not same:
+				break
+		if same:
+			return true
+	return false
+
 ## How back walls and blocks are laid (G cycles): painted with a round brush (back walls only), or
 ## dragged out (press, drag, release) as a straight line (snapped across, up or at 45 degrees), a
 ## filled rectangle, or a frame (a rectangle's outline). [ ] set the thickness of lines and frames.
@@ -158,12 +190,27 @@ static func pieces() -> Array:
 
 ## The pieces you carry (Mage.furn: picked up whole with Shift + right-click, or forged at the Wisp
 ## Forge), as build pieces: each keeps its exact pixels and costs nothing to set down.
-static func carried_pieces(furn: Array, items: Dictionary = {}, inv: PackedInt32Array = PackedInt32Array()) -> Array:
+## `pick`: name -> the Mage.furn index to show for that name's stack (R cycles it in build mode)
+static func carried_pieces(furn: Array, items: Dictionary = {}, inv: PackedInt32Array = PackedInt32Array(), pick: Dictionary = {}) -> Array:
 	var out := []
+	# pieces of one name are one stack (user, 25 Nov: "stacks of decorations appear as separate things in
+	# the build menu"), in the order first carried; the design shown is the picked one, else the first
+	var groups := {}
+	var order := []
 	for k in furn.size():
-		var it: Dictionary = furn[k]
-		out.append({"cat": CAT_SATCHEL, "name": it["name"], "kind": "carried", "item": k, "rows": it["rows"],
-			"wall": bool(it.get("wall", false)), "kid": int(it.get("kind", 0)), "cost": {}})
+		var fn := String(furn[k]["name"])
+		if not groups.has(fn):
+			groups[fn] = []
+			order.append(fn)
+		groups[fn].append(k)
+	for fn2 in order:
+		var ks: Array = groups[fn2]
+		var k2: int = int(ks[0])
+		if pick.has(fn2) and ks.has(int(pick[fn2])):
+			k2 = int(pick[fn2])
+		var it: Dictionary = furn[k2]
+		out.append({"cat": CAT_SATCHEL, "name": it["name"], "kind": "carried", "item": k2, "items": ks, "carried": ks.size(),
+			"rows": it["rows"], "wall": bool(it.get("wall", false)), "kid": int(it.get("kind", 0)), "cost": {}})
 	# workshops taken up (items "st_<kind>"): set down again for nothing (user, 23 Nov: a kiln taken up
 	# went nowhere you could see, while a bed went in the satchel)
 	for sk in Defs.STATIONS:
