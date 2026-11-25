@@ -444,6 +444,42 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   deck with the riders. Test: `_test_hull` ("hull": a deck grown 64 aft, the cabin's back cut through, a seat on
   it, stand, walk, jump, sit, the helm, a climb, it holds with you on deck, walk off its end, save/load; pictures
   `hull_built.png`, `hull_deck.png`; the skiff as forged is put back after).
+- THE SHIP BUILDER AND THE POCKET DIMENSION (user, 24 Nov: "create a ship builder instead ... when your not in the
+  ship builder you just repair ... the inside of the ship be like a pocket dimension that you can enter ... a return
+  to ship function ... as a spell ... the main quest can walk you through building your first ship"; chose: the
+  builder wherever it's parked, an isle in a nebula, the pocket is home, forge a keel then build).
+  THE KEEL: recipe "skiff" is the Wisp Keel now (planks, wood, wisp ore: what its cells give back, plus ingots);
+  `craft` puts `Skiff.make_keel(seed).save_cells()` in `items["ship"]` (a deck 36 long, a bow, a WISP engine, the
+  helm, `door_cell`), unless main `classic_skiff` (the test mode sets it: older checks fly the skiff as it was).
+  THE BUILDER (scripts/shipyard.gd, main `shipyard`, state "shipyard": the world waits, no GPU frame; ui.gd
+  `show_shipyard`/`update_shipyard` the parts panel and figures): B aboard opens it when `parked()` (on the
+  ground, or `space.docked`/`docked_st`), else a toast; build mode's Ship tab (CAT 9) is out of `CAT_ORDER` (its
+  code stays for `_test_hull`). The ship drawn big (`anchor` = where cell (0, 0) is, kept steady as the grid grows,
+  `_hold_helm` after an undo or a new keel), left lays the chosen part (brush, Shift-drag a rectangle; `_stroke`:
+  only cells `can_hull` joins, grown out from the ship, paid a cell), right cuts (refunded; the helm's floor
+  `keep_cells` stays; `prune_loose` drops and refunds whatever no longer joins it; a seat with no floor goes), Helm /
+  Seat (4 planks) / Pocket Door (an outer hull cell) by click, Z undo (ship, position and satchel), New keel twice,
+  B/Esc closes (`_settle_ship` lifts it clear, `items["ship"]`, `hull_cells` kept as the highest). Out of it you only
+  mend (R).
+  THE POCKET (scripts/pocket.gd, pocket_isle.gd; main `pocket`, a pix child after space): F by the ship's door
+  (`door_in_reach`, `Skiff.door_world`; a violet seam drawn on the hull, a bubble) or WISP RECALL (`Defs.SPELLS`
+  "recall": a `RECALL_CHANNEL` 45-tick channel, `recall_tick` from the planet's and space's ticks, `hurt` breaks
+  it, `_recall_now` enters at the next tick's start; cast in space through `_mend_cast` / `_space_cast`, even in an
+  outpost) puts you on `PocketIsle`, a pixel body (ang PI, so `to_world(b) = (-b.x, b.y)`; the view angle is -PI/2
+  there: `view_angle`, `close_view`, `unrolled`, overlay `_feet`/`_draw_mage`/`_lit`/`_draw_in_pocket`). The world
+  outside waits (`_tick` hands over to `pocket.tick`, `_process` skips the GPU). The isle: grass, dirt, stone with
+  crystal specks over a deep crystal-dripping underside, trees and bushes, the Isle Heart's obelisk and the arch on
+  the back layer (`guard`: never taken or built over; you walk in front of them); a nebula shader behind
+  (`NEBULA`), far isles, light halos (`gather_lights`). Build there with build mode (blocks, back walls,
+  furniture, Remove: main `_cabin_edit(m, body)`, the cabin's code made general with `can_take`/`touch`). F at the
+  heart twice grows the isle (`expand`, `expand_cost` levels 1-6, 40 mana; LEVELS half widths 70..296). F at the
+  arch: back where you came in (`back`); G there: out at the ship's door if it's in the same place (planet or
+  space). Saved in the slot's `pocket.dat` (`save_isle` "v" 2); a save made inside keeps you where you came in
+  (`_world_meta`). First time in: Wisp Recall learned, `items["pocket_seen"]`. A ship from before gets a door at
+  its stern's lowest cell (`Skiff.ensure_door`, from `_update_skiff` and the builder).
+  Quest (v 5): "skiff" (forge the keel), "hull" (`["count", "hull_cells", Quest.HULL_STEP]` 180), "pocket".
+  Test: `_test_shipyard` ("shipyard" or "pocket"; in the full run after `_test_hull`; then `_test_pocket`;
+  pictures `shipyard.png`, `pocket_isle.png`, `pocket_grown.png`).
 - SPACE'S OWN LIFE AND ANOMALIES (scripts/voidlife.gd, monolith.gd; user, 23 Nov: "space creatures and anomalies",
   each with a secret): space.gd `vl` (VoidLife, a RefCounted) holds them in space's coordinates (`vl.shift` from
   `_shift`), streamed with their sectors (`_load_sector` -> `vl.sector_in` BEFORE the sect_state early return,
@@ -1427,7 +1463,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

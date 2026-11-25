@@ -1471,7 +1471,7 @@ func biome_index_at(pl: Dictionary, a: float) -> int:
 	return bi
 
 # ---------------------------------------------------------------- spells ----
-const SPELL_ORDER := ["mote", "spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend",
+const SPELL_ORDER := ["mote", "spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend", "recall",
 	"cinder", "tidal", "sunlance", "mire", "glacier", "thorns", "sovereign", "leviathan"]
 ## "single": one cast a click (let go and click again; holding the button doesn't repeat it: main `cast_latch`)
 const SPELLS := {
@@ -1485,6 +1485,7 @@ const SPELLS := {
 	"blink": {"name": "Blink", "mana": 22.0, "cd": 30, "color": Color(0.55, 0.95, 1.0), "desc": "Step through space to the cursor."},
 	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "A falling star: a huge fiery blast."},
 	"mend": {"name": "Mending", "mana": 60.0, "cd": 600, "color": Color(0.55, 1.0, 0.62), "desc": "Knit your wounds: 30 health over a second. Ten seconds to recover."},
+	"recall": {"name": "Wisp Recall", "mana": 30.0, "cd": 1200, "single": true, "color": Color(0.8, 0.62, 1.0), "desc": "Hold still a moment and the wisp carries you into your ship's pocket, from anywhere. Its arch takes you back where you were. Being hurt breaks it. Twenty seconds to recover."},
 	# the core spells ("art": the glyph they share; "snd": their sound)
 	"cinder": {"name": "Cinderstorm", "mana": 30.0, "cd": 40, "single": true, "color": Color(1.0, 0.45, 0.12), "art": "fireball", "snd": "fire", "desc": "Three fireballs in a fan, each bursting into flame."},
 	"tidal": {"name": "Tidal Surge", "mana": 28.0, "cd": 45, "single": true, "color": Color(0.25, 0.6, 1.0), "art": "tide", "snd": "water", "desc": "A great wave: floods where it lands and hurls every foe near it back."},
@@ -1612,7 +1613,7 @@ const RECIPES := [
 	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISPBAR: 3, GLASS: 6, COPPERBAR: 3}, "desc": "Bears the crushing deep of an ocean world's sea."},
 	{"id": "depthseal", "cat": "Wards", "name": "Depth Seal", "cost": {ABYSSPEARL: 8, GLASS: 6, WISPBAR: 2}, "desc": "Bears the abyss of a deep ocean world, far below where the Tide Charm holds (wear both)."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, WISP: 10, COPPERBAR: 4}, "desc": "Your world's heart, bound in copper and wisp ore: the engine a ship is built round. Forge it before the Wisp Skiff. Needs the Core Siphon (to harvest the Planet Core)."},
-	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 40, GLASS: 12, WISPBAR: 4, COPPERBAR: 3}, "desc": "A small ship for two, built round a Core Drive. K calls it to you, F to board or step out, hold cast to fly toward the cursor. It flies out into space and on to other worlds: any without a barrier round it."},
+	{"id": "skiff", "cat": "Travel", "name": "Wisp Keel", "cost": {PLANK: 82, WOOD: 32, WISP: 20, WISPBAR: 4, COPPERBAR: 3}, "desc": "The keel of your first ship, a Core Drive at its heart: a deck, a helm and a wisp engine. K calls it to you, F to board or step out. Parked, press B aboard to open the ship builder and build it out; F at its door steps into its pocket dimension. It flies out into space and on to other worlds: any without a barrier round it."},
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
 	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},

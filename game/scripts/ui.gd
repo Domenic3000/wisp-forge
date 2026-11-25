@@ -46,6 +46,12 @@ var satchel_slots := 0             # (slots in it, for the tests)
 var _sat_name: Label               # the name of what the pointer's over
 var satchel_panel: PanelContainer
 var minimap_panel: PanelContainer
+var shipyard_panel: PanelContainer   # the ship builder's parts, tools and figures (shipyard.gd draws the ship)
+var _sy_parts: VBoxContainer
+var _sy_figs: Label
+var _sy_note: Label
+var _sy_key := ""
+var _sy_tick := 0
 var minimap: Control            # minimap.gd: the radar out in space, the land round you on a planet (N hides it)
 const SAT_COLS := 8                # the open satchel's columns
 var satchel_open := false          # (I or Tab) the whole satchel; closed, a pouch
@@ -1329,6 +1335,98 @@ func hide_loading() -> void:
 func show_hud() -> void:
 	hud.visible = true
 
+# ------------------------------------------------------------ ship builder --
+## The ship builder's panel (shipyard.gd): the parts with what you hold of each (click one, or 1-9), the
+## tools, Undo / New keel / Done, the ship's figures and a word on what just happened.
+func show_shipyard(g) -> void:
+	if shipyard_panel == null:
+		shipyard_panel = _panel(Color(0.045, 0.04, 0.1, 0.92), TRIM, 4)
+		shipyard_panel.position = Vector2(5, 4)
+		root.add_child(shipyard_panel)
+		var v := _box(true, 3)
+		v.mouse_filter = Control.MOUSE_FILTER_PASS
+		shipyard_panel.add_child(v)
+		v.add_child(_head("Ship builder", 20))
+		v.add_child(_rule(150))
+		_sy_parts = VBoxContainer.new()
+		_sy_parts.add_theme_constant_override("separation", 1)
+		v.add_child(_sy_parts)
+		v.add_child(_rule(150))
+		var tips := _label("Left: lay · Right: cut · Shift-drag: a rectangle\n[ ] brush size · wheel zoom · WASD pan", 10, DIM)
+		v.add_child(tips)
+		var hb := _box(false, 3)
+		hb.mouse_filter = Control.MOUSE_FILTER_PASS
+		var bu := _button("Undo (Z)")
+		bu.pressed.connect(func(): g.shipyard.do_undo())
+		var bk := _button("New keel")
+		bk.pressed.connect(func(): g.shipyard.new_keel())
+		var bd := _button("Done (B)")
+		bd.pressed.connect(func(): g.shipyard.close())
+		hb.add_child(bu)
+		hb.add_child(bk)
+		hb.add_child(bd)
+		v.add_child(hb)
+		v.add_child(_rule(150))
+		_sy_figs = _label("", 10, Color(0.86, 0.87, 1))
+		v.add_child(_sy_figs)
+		_sy_note = _label("", 10, GOLD)
+		_sy_note.autowrap_mode = TextServer.AUTOWRAP_WORD
+		_sy_note.custom_minimum_size = Vector2(160, 0)
+		v.add_child(_sy_note)
+	hud.visible = false
+	_sy_key = ""
+	shipyard_panel.visible = true
+	update_shipyard(g)
+
+func hide_shipyard() -> void:
+	if shipyard_panel != null:
+		shipyard_panel.visible = false
+	hud.visible = true
+
+func update_shipyard(g) -> void:
+	if shipyard_panel == null or not shipyard_panel.visible:
+		return
+	var sy = g.shipyard
+	var key := "%d|%s" % [sy.sel, str(g.player.inv)]
+	if key != _sy_key:
+		_sy_key = key
+		for c in _sy_parts.get_children():
+			c.queue_free()
+		for pi in sy.parts.size():
+			var p: Dictionary = sy.parts[pi]
+			var kind := String(p["kind"])
+			var row := _button("")
+			row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			var held := ""
+			var icon: Texture2D = null
+			match kind:
+				"hull":
+					var pay: int = int((p["cost"] as Dictionary).keys()[0])
+					held = "%d" % int(g.player.inv[pay])
+					icon = Icons.mat(int(p["mat"]))
+				"helm":
+					held = "move it"
+					icon = Icons.mat(Defs.COPPERBAR)
+				"seat":
+					held = "4 planks"
+					icon = Icons.item("chair")
+				"door":
+					held = "place it"
+					icon = Icons.mat(Defs.CRYSTAL)
+			row.text = "%d  %s   %s" % [pi + 1, String(p["name"]), held]
+			row.icon = icon
+			row.expand_icon = false
+			_set_chosen(row, pi == sy.sel)
+			var idx: int = pi
+			row.pressed.connect(func(): sy.sel = idx)
+			_sy_parts.add_child(row)
+	_sy_tick += 1
+	if _sy_tick % 6 == 1:                 # (the world waits in the builder: `frame` doesn't move)
+		var f: Dictionary = sy.figures()
+		_sy_figs.text = "Hull %d cells (%s) · mass %d\nEngines %d cells · thrust %d%%\nHold %d crates · %d seats · brush %d" % [
+			int(f["cells"]), String(f["size"]), int(f["mass"]), int(f["engines"]), int(f["drive"]), int(f["hold"]), int(f["seats"]), sy.brush]
+		_sy_note.text = sy.note
+
 func show_death() -> void:
 	death_txt.text = "The wisp carries you back %s. A quarter of your satchel is lost." % ("home" if game.planet_state.has("home") else "to the surface")
 	death.visible = true
@@ -1515,7 +1613,7 @@ func update_hud(g) -> void:
 		return
 	# the minimap (hidden while the satchel's grid is open: that goes to the top)
 	minimap.game = g
-	var mm_on: bool = bool(g.settings.get("minimap", true)) and not satchel_open and (g.state == "play" or g.state == "dead")
+	var mm_on: bool = bool(g.settings.get("minimap", true)) and not satchel_open and (g.state == "play" or g.state == "dead") and not g.pocket.active
 	minimap_panel.visible = mm_on
 	# (kept 5 in from the right edge whatever size it is: the radar and the side view differ)
 	var mms: Vector2 = minimap_panel.get_combined_minimum_size()
@@ -1540,7 +1638,20 @@ func update_hud(g) -> void:
 		hull_bar.max_value = 100.0
 		hull_bar.value = sk.hull_f * 100.0
 		hull_lbl.text = "Hull %d%%" % int(round(sk.hull_f * 100.0))
-	if g.frame % 6 == 0:
+	if g.frame % 6 == 0 and g.pocket.active:
+		# (inside the ship: its pocket, how far the isle has grown, what F does here)
+		var pl := PackedStringArray(["Your ship's pocket", "An isle in a nebula · level %d of %d" % [g.pocket.isle.level, g.pocket.Isle.LEVELS.size() - 1]])
+		match String(g.pocket.near):
+			"arch":
+				pl.append("[F] step out where you came in · [G] out by your ship")
+			"heart":
+				pl.append("[F] the Isle Heart: grow the isle")
+		info.text = "\n".join(pl)
+		var qp: String = g.quest.hud_line() if g.quest != null else ""
+		quest_lbl.visible = qp != ""
+		if qp != "" and quest_lbl.text != "✦ " + qp:
+			quest_lbl.text = "✦ " + qp
+	elif g.frame % 6 == 0:
 		var a := atan2(g.player.pos.y, g.player.pos.x)
 		var rs: float = g.gpu.surf_at(a).x
 		var depth := int(round(rs - g.player.pos.length()))
@@ -2069,6 +2180,8 @@ static func _on_screen(c: Control) -> Rect2:
 ## `slots` false, only the panels: the wheel still picks a spell over the slots).
 func mouse_over_ui(slots := true) -> bool:
 	if settings_panel and settings_panel.visible:
+		return true
+	if shipyard_panel and shipyard_panel.visible and _on_screen(shipyard_panel).has_point(get_viewport().get_mouse_position()):
 		return true
 	if hud == null or not hud.visible:
 		return false

@@ -64,6 +64,124 @@ static func make(sd: int):
 	s._design()
 	return s
 
+## A new ship's keel (user, 24 Nov: "Forge a keel, then build"): a planked keel rising to a bow, a little
+## wisp engine at the stern, the helm amidships and the door into its pocket dimension by it. The ship
+## builder (shipyard.gd) lays the rest.
+static func make_keel(sd: int):
+	var s = load("res://scripts/skiff.gd").new()
+	s.design_seed = sd
+	s._keel()
+	return s
+
+func _keel() -> void:
+	var deck := 26
+	setup(48, deck + 6)
+	for i in range(5, 41):
+		var bow := i >= 37
+		var depth := 2 if bow else 3
+		for j in range(deck, deck + depth + (0 if i > 8 else -1)):
+			put(i, j, Defs.WOOD if j == deck + depth - 1 else Defs.PLANK, (j / 3 + i / 9) % 3)
+	for k in 4:
+		for j2 in range(deck - 1 - k, deck + 1):
+			put(41 + k, j2, Defs.PLANK, 1)              # (the bow rising to a point, joined along the deck row)
+	for j3 in range(deck - 3, deck + 2):
+		for i3 in range(1, 5):
+			put(i3, j3, Defs.WISP, (i3 + j3) % 4)        # (the engine at the stern)
+	seat_cells = [Vector2i(24, deck - 1)]
+	riders = []
+	riders.resize(1)
+	door_cell = Vector2i(14, deck)
+	rebuild()
+	design = cells.duplicate()
+	design_v = vars.duplicate()
+	design_bg = bg.duplicate()
+	designed = true
+	_count_design()
+	_recount()
+	_seat_marks()
+
+# --------------------------------------------------- the door to the pocket ---
+## (user, 24 Nov: "have the inside of the ship be like a pocket dimension that you can enter"): a hull cell
+## marked as its door (pocket.gd: F by it steps inside). A ship from before has it under the helm.
+var door_cell := Vector2i(-1, -1)
+
+func door() -> Vector2i:
+	if door_cell.x >= 0 and door_cell.y >= 0 and door_cell.x < w and door_cell.y < h:
+		return door_cell
+	if not seat_cells.is_empty():
+		return (seat_cells[0] as Vector2i) + Vector2i(0, 1)
+	return Vector2i(w / 2, h / 2)
+
+## a ship from before the pocket gets its door: the lowest cell of its stern end (you walk up behind it)
+func ensure_door() -> void:
+	if door_cell.x >= 0:
+		return
+	for i in w:
+		for j in range(h - 1, -1, -1):
+			if at(i, j) != 0:
+				door_cell = Vector2i(i, j)
+				return
+
+## where you stand to go in at the door (in the world): just above its cell
+func door_world() -> Vector2:
+	var d := door()
+	return cell_world(d.x, d.y) - axis_y() * 9.0
+
+## the cells the helm stands on: never cut away, and every other cell must join them (`prune_loose`)
+func keep_cells() -> Array:
+	var out := []
+	if seat_cells.is_empty():
+		return out
+	var c: Vector2i = seat_cells[0]
+	for di in range(-1, 2):
+		out.append(Vector2i(c.x + di, c.y + 1))
+	return out
+
+## Cuts away whatever no longer joins the helm's floor (a piece cut loose falls away from the ship).
+## Returns material -> how many cells went.
+func prune_loose() -> Dictionary:
+	var got := {}
+	var seen := PackedByteArray()
+	seen.resize(w * h)
+	var stack := PackedInt32Array()
+	for kc in keep_cells():
+		var c: Vector2i = kc
+		if c.x >= 0 and c.y >= 0 and c.x < w and c.y < h and cells[c.y * w + c.x] != 0:
+			stack.append(c.y * w + c.x)
+			seen[c.y * w + c.x] = 1
+	if stack.is_empty():
+		return got
+	while not stack.is_empty():
+		var k: int = stack[stack.size() - 1]
+		stack.remove_at(stack.size() - 1)
+		var i := k % w
+		var j := k / w
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var ni: int = i + (d as Vector2i).x
+			var nj: int = j + (d as Vector2i).y
+			if ni < 0 or nj < 0 or ni >= w or nj >= h:
+				continue
+			var nk := nj * w + ni
+			if seen[nk] == 0 and cells[nk] != 0:
+				seen[nk] = 1
+				stack.append(nk)
+	for k2 in cells.size():
+		if cells[k2] != 0 and seen[k2] == 0:
+			var m := int(cells[k2])
+			got[m] = int(got.get(m, 0)) + 1
+			cells[k2] = 0
+			made[k2] = 0
+			design[k2] = 0
+	return got
+
+## how many cells the hull has as built (the quest counts it)
+func hull_count() -> int:
+	var n := 0
+	for k in design.size():
+		if design[k] != 0:
+			n += 1
+	return n
+
 func _design() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = design_seed
@@ -565,6 +683,8 @@ func grow_for(i: int, j: int) -> Vector2i:
 	var off := Vector2i(pl, pt)
 	for k in seat_cells.size():
 		seat_cells[k] = (seat_cells[k] as Vector2i) + off
+	if door_cell.x >= 0:
+		door_cell += off
 	com += Vector2(off)
 	return off
 
@@ -702,6 +822,7 @@ func save_cells() -> Dictionary:
 	d["seats"] = seats
 	d["designed"] = designed
 	d["marks"] = Array(seat_marks)
+	d["door"] = [door_cell.x, door_cell.y]
 	return d
 
 func load_cells(d: Dictionary) -> bool:
@@ -728,6 +849,8 @@ func load_cells(d: Dictionary) -> bool:
 		riders = []
 		riders.resize(seat_cells.size())
 	seat_marks = PackedInt32Array(d.get("marks", []))
+	var dr = d.get("door", null)
+	door_cell = Vector2i(int(dr[0]), int(dr[1])) if dr is Array and (dr as Array).size() == 2 else Vector2i(-1, -1)
 	designed = bool(d.get("designed", false))
 	if designed:
 		_count_design()

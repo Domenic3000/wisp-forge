@@ -26,7 +26,7 @@ const CAT_REMOVE := 8
 const CAT_SHIP := 9
 const HULL_KINDS := ["hull", "cut", "helm", "seat"]
 ## the order the tabs are shown in (and Q/E steps through)
-const CAT_ORDER := [0, 6, 8, 1, 7, 2, 3, 4, 5, 9]
+const CAT_ORDER := [0, 6, 8, 1, 7, 2, 3, 4, 5]     # (the Ship tab, 9, is the ship builder now: shipyard.gd)
 ## Flatten: everything solid up to FLAT_CUT rows over the line you drag is cut away, and dips under it
 ## filled from the satchel down to ground no more than FLAT_FILL rows below (deeper, it's left alone)
 const FLAT_CUT := 40

@@ -19,6 +19,7 @@ const Vfx := preload("res://scripts/vfx.gd")
 const MysteryArt := preload("res://scripts/mystery.gd")
 
 const SAY_TICKS := 60 * 8
+const HULL_STEP := 180       # (the first ship built out: the keel's 134 cells and fifty more)
 const POWERS := {
 	"lantern": {"name": "Wisp Lantern", "desc": "The wisp's light reaches twice as far, and the fog lifts before it."},
 	"sense": {"name": "Ore Sense", "desc": "Every few seconds the wisp pulses, and ore veins near you glow a moment, through rock and fog."},
@@ -57,7 +58,7 @@ func tick() -> void:
 	var first := q.is_empty()
 	# (a journey from before the barriers, 24 Nov: its chapters were laid out by index, so it catches up
 	# again from the top, quietly)
-	var quiet := first or int(q.get("v", 1)) < 4
+	var quiet := first or int(q.get("v", 1)) < 5
 	if quiet and not first:
 		q = {"ch": int(q.get("ch", 0)), "at": 0}
 	var ch := int(q.get("ch", 0))
@@ -84,7 +85,7 @@ func tick() -> void:
 		if not game.items.has("qfin"):
 			game.items["qfin"] = {}
 		(game.items["qfin"] as Dictionary)[str(chapter)] = true
-	game.items["quest"] = {"ch": chapter, "at": at, "v": 4}
+	game.items["quest"] = {"ch": chapter, "at": at, "v": 5}
 	if first:
 		say(("I'm your wisp. I'll guide you from here. " + String(steps[at]["say"])) if at < steps.size() else "I'm your wisp. I'll light your way.")
 	elif moved:
@@ -265,9 +266,15 @@ func _first_chapter() -> Array:
 		{"id": "drive", "title": "Forge the Core Drive", "need": [["item", "drive"]], "power": "hands", "reward": {"coins": 30},
 			"say": "Bind the world's heart into a Core Drive: thirty core, ten wisp ore and four copper ingots. A ship is built round it.",
 			"how": "At the Wisp Forge, Travel: the Core Drive. The Wisp Skiff can't be forged without one."},
-		{"id": "skiff", "title": "Forge the Wisp Skiff", "need": [["item", "skiff"]], "reward": {"coins": 25},
-			"say": "Forty planks, twelve glass from the kiln, four wisp ingots and three copper ingots round the Core Drive: the Wisp Skiff. K calls it to you, F boards.",
-			"how": "At the Wisp Forge, Travel: the Wisp Skiff (it needs the Core Drive). K calls it beside you, F boards or steps out. Steer with the movement keys (W up), or hold cast toward the cursor."},
+		{"id": "skiff", "title": "Forge your ship's keel", "need": [["item", "skiff"]], "reward": {"coins": 25},
+			"say": "A ship begins with its keel: eighty-two planks, thirty-two wood, twenty wisp ore, four wisp ingots and three copper ingots round the Core Drive. K calls it to you, F boards.",
+			"how": "At the Wisp Forge, Travel: the Wisp Keel (it needs the Core Drive). K calls it beside you, F boards or steps out. Steer with the movement keys (W up), or hold cast toward the cursor."},
+		{"id": "hull", "title": "Build out your ship", "need": [["count", "hull_cells", HULL_STEP]], "reward": {"coins": 30},
+			"say": "A keel won't keep the wind off. Set it down, board it and press B: the ship builder. Lay a hull round the helm, a canopy of glass if you like: whatever you build, it flies.",
+			"how": "Land the ship (or dock it at a station or outpost), board it (F) and press B for the ship builder. Left button lays the chosen part (planks, hull plating, glass, wisp engines...), right button cuts away; every cell must join the ship. Build it out to %d cells. Wisp engine cells push it; a bigger ship needs more of them. B closes the builder. Out of the builder you can only mend (hold R)." % HULL_STEP},
+		{"id": "pocket", "title": "Step into your ship's pocket", "need": [["item", "pocket_seen"]], "reward": {"potion": 1},
+			"say": "Your ship is bigger inside than out. See the violet seam on its hull? That's its door: stand by it and press F.",
+			"how": "Stand by the ship's door (the violet seam on its hull: the ship builder's Pocket Door moves it) and press F. Inside is a pocket dimension, an isle in a nebula: build there as you would in the world (B), grow the isle at its heart, and step out at the arch. Once you've been in, Wisp Recall takes you back there from anywhere."},
 		{"id": "star", "title": "Mine Star Iron from an asteroid", "need": [["found", Defs.STARIRON], ["landed_other", 0]], "reward": {"potion": 1},
 			"say": "Fly the skiff up out of the sky. The metallic asteroids above hold Star Iron at their hearts: step out (F) and dig.",
 			"how": "Fly straight up out of the atmosphere. Asteroids hang above the planet (the minimap, top right, shows the nearest). Step out with F, push yourself with the staff's jet (hold cast) and dig the dark metallic rock; Star Iron glints blue-white inside. The skiff's fittings and the keys to the barriers round other worlds need it."},

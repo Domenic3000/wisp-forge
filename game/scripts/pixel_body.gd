@@ -165,6 +165,15 @@ func place(i: int, j: int, m: int, back := false, v := -1) -> bool:
 	rebuild()
 	return true
 
+## can the Remove tab take the front of cell k? (only what was built inside; the pocket's isle: anything but
+## its heart and arch)
+func can_take(k: int) -> bool:
+	return made[k] == 1 and cells[k] != 0
+
+## a cell changed outside place/remove (furniture): the picture is made again
+func touch(_i: int, _j: int) -> void:
+	dirty = true
+
 ## Take out what was built in a cell of the room (the hull itself only comes away by `carve`).
 ## Returns the material taken, 0 if none.
 func remove(i: int, j: int, back := false) -> int:

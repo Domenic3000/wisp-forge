@@ -1480,6 +1480,7 @@ func run() -> void:
 	lines.append("")
 	g.test_god = true
 	g.free_magic = true         # (digging and building cost no mana, but in the check about it)
+	g.classic_skiff = true      # (the skiff is forged whole, as the older checks expect; "shipyard" forges a keel)
 
 	# ---- a picture of the animated title screen (saves/shots/title.png) ----
 	var tdir: String = g._real_save_dir().path_join("shots")
@@ -1578,6 +1579,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_hull()
+		elif only == "shipyard" or only == "pocket":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_shipyard()
 		elif only == "cargo":
 			await _test_cargo()
 		elif only == "voidlife":
@@ -4280,6 +4285,7 @@ func run() -> void:
 	await _test_stations()
 	await _test_fuel()
 	await _test_hull()
+	await _test_shipyard()
 	await _test_cargo()
 	await _test_voidlife()
 	await _test_spacebench()
@@ -10540,6 +10546,391 @@ func _test_hull() -> void:
 	print("[hull] " + "\n[hull] ".join(rows))
 	_ok("your own hull: grown cell by cell from the Ship tab, a seat added, walked about on deck, flown, kept", ok, "; ".join(rows))
 
+## (user, 24 Nov: "can we create a ship builder instead ... and then when your not in the ship builder you just
+## repair"; "the inside of the ship be like a pocket dimension that you can enter"; a return spell): a keel forged,
+## built out in the ship builder where it's parked, then its pocket dimension entered by the door and by Wisp
+## Recall, walked, built on, grown, left by the arch and by the ship, kept.
+func _test_shipyard() -> void:
+	var rows := []
+	var ok := true
+	var Sk = load("res://scripts/skiff.gd")
+	g.player.dead = false
+	g.test_god = true
+	if g.build_on:
+		g._toggle_build()
+	var keep_ship = g.items.get("ship", null)
+	var keep_sk = g.skiff
+	var keep_skiff = g.items.get("skiff", null)
+	if keep_sk != null:
+		for hr in keep_sk.riders.size():
+			if keep_sk.riders[hr] != null:
+				keep_sk.riders[hr].aboard = null
+				keep_sk.riders[hr] = null
+	g.player.aboard = null
+	g.player.deck = false
+	# ---- the keel forged (as a new journey forges it: not the classic skiff)
+	var sf_rec: Dictionary = {}
+	for sr in g.recipes:
+		if sr["id"] == "skiff":
+			sf_rec = sr
+	for sk_k in sf_rec.get("cost", {}):
+		g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+	g.items["drive"] = true
+	g.learn("skiff")
+	g.items.erase("skiff")          # (in the full run the skiff is forged already: forge it again as a keel)
+	g.items.erase("ship")
+	g.classic_skiff = false
+	g.skiff = null
+	var forged: bool = g.craft(sf_rec)
+	g.classic_skiff = true
+	var keel_cells := 0
+	if g.items.get("ship") is Dictionary:
+		var kl = Sk.make(int(g.items["skiff"]))
+		kl.load_cells(g.items["ship"])
+		keel_cells = kl.hull_count()
+	var ok0: bool = forged and keel_cells >= 100 and keel_cells < 200 and int(g.items.get("hull_cells", 0)) == keel_cells
+	rows.append("%sthe Wisp Keel forged %s: %d hull cells" % ["" if ok0 else "(!) ", forged, keel_cells])
+	ok = ok and ok0
+	# ---- called onto clear ground, boarded
+	var hs := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 240, 120, 6)
+	var ha: float = (float(hs.x) + 120.0) / float(Defs.NS) * TAU
+	_go(Vector2(cos(ha), sin(ha)) * (g.gpu.surf_at(ha).x + 12.0))
+	await _frames(60)
+	g.call_skiff()
+	await _frames(150)
+	var sk = g.skiff
+	g.player.pos = sk.pos
+	var boarded: bool = g._skiff_interact(g.player) and g.player.aboard == sk
+	await _frames(20)
+	# (not parked: flying, it won't open)
+	var gr0: bool = sk.grounded
+	sk.grounded = false
+	var flying_refused: bool = not g.shipyard.open()
+	sk.grounded = gr0
+	for w in 120:
+		if g.shipyard.parked():
+			break
+		await _frames(1)
+	var opened: bool = g.shipyard.open() and g.state == "shipyard"
+	var ok1: bool = boarded and flying_refused and opened
+	rows.append("%sboarded %s; the builder refused in flight %s, opened parked %s (grounded %s)" % ["" if ok1 else "(!) ", boarded, flying_refused, opened, sk.grounded])
+	ok = ok and ok1
+	if not opened:
+		g.shipyard.sk = sk
+		g.shipyard.active = true
+		g.shipyard.parts = []
+		for pp in load("res://scripts/build.gd").in_cat(load("res://scripts/build.gd").pieces(), 9):
+			if String(pp["kind"]) != "cut":
+				g.shipyard.parts.append(pp)
+		g.shipyard.parts.append({"cat": 9, "name": "Pocket Door", "kind": "door", "cost": {}})
+	var sy = g.shipyard
+	var part := func(pname: String) -> void:
+		for pi in sy.parts.size():
+			if String(sy.parts[pi]["name"]) == pname:
+				sy.sel = pi
+	for mt in [Defs.PLANK, Defs.HULL, Defs.GLASS, Defs.WISP, Defs.WOOD]:
+		g.player.inv[mt] += 400
+	var sc: Vector2i = sk.seat_cells[0]
+	var helm_w0: Vector2 = sk.cell_world(sc.x, sc.y)
+	# ---- a seat on the deck forward of the helm (4 planks)
+	part.call("Seat")
+	var pl0: int = g.player.inv[Defs.PLANK]
+	sy.click_part(Vector2i(sc.x + 9, sc.y - 6))
+	var seat_ok: bool = sk.seat_cells.size() == 2 and g.player.inv[Defs.PLANK] == pl0 - 4
+	rows.append("%sa seat added on the deck %s (%d seats, planks %d -> %d)" % ["" if seat_ok else "(!) ", seat_ok, sk.seat_cells.size(), pl0, g.player.inv[Defs.PLANK]])
+	ok = ok and seat_ok
+	# ---- a mast of planking up from the deck aft: laid where it joins, paid a plank a cell; up past the grid's top
+	part.call("Planking")
+	var mx: int = sc.x - 12
+	pl0 = g.player.inv[Defs.PLANK]
+	var h0: int = sk.h
+	sy._push_undo()
+	var col := []
+	for k in 40:
+		col.append(Vector2i(mx, sc.y - k))
+	sy._stroke(col, false)
+	var sc1: Vector2i = sk.seat_cells[0]
+	var laid: int = pl0 - g.player.inv[Defs.PLANK]
+	var helm_moved: float = sk.cell_world(sc1.x, sc1.y).distance_to(helm_w0)
+	var ok2: bool = laid == 40 and sk.h > h0 and helm_moved < 0.05
+	rows.append("%sa mast of 40 planks laid (%d paid), the grid grew %d -> %d rows, the helm stayed put in the world (%.3f)" % ["" if ok2 else "(!) ", laid, h0, sk.h, helm_moved])
+	ok = ok and ok2
+	# ---- a cell that doesn't join is refused
+	var hc0: int = sk.hull_count()
+	sy._stroke([Vector2i(sc1.x + 30, sc1.y - 30)], false)
+	var ok3: bool = sk.hull_count() == hc0
+	rows.append("%sa cell off by itself refused %s (\"%s\")" % ["" if ok3 else "(!) ", ok3, sy.note])
+	ok = ok and ok3
+	# ---- cut through the mast's foot: what's over it comes loose, falls away, every plank given back
+	pl0 = g.player.inv[Defs.PLANK]
+	var ox: int = sc1.x - 12
+	sy._push_undo()
+	sy._stroke([Vector2i(ox, sc1.y - 3)], true)
+	var back: int = g.player.inv[Defs.PLANK] - pl0
+	var ok4: bool = back == 37 and sk.hull_count() == hc0 - 37 and int(sy.stats["fell"]) == 36
+	rows.append("%scut the mast 3 up: %d planks back, %d fell away (\"%s\")" % ["" if ok4 else "(!) ", back, int(sy.stats["fell"]), sy.note])
+	ok = ok and ok4
+	# ---- the helm's floor can't be cut
+	var hc1: int = sk.hull_count()
+	sy._stroke([Vector2i(sc1.x, sc1.y + 1)], true)
+	var ok5: bool = sk.hull_count() == hc1
+	rows.append("%sthe helm's floor kept %s" % ["" if ok5 else "(!) ", ok5])
+	ok = ok and ok5
+	# ---- the pocket's door moved to the keel's underside; undone
+	part.call("Pocket Door")
+	var d0: Vector2i = sk.door()
+	var bot := sc1.y + 1
+	while sk.at(sc1.x + 6, bot + 1) != 0:
+		bot += 1
+	sy.click_part(Vector2i(sc1.x + 6, bot))
+	var d1: Vector2i = sk.door()
+	sy.do_undo()
+	var d2: Vector2i = sk.door()
+	var ok6: bool = d1 == Vector2i(sc1.x + 6, bot) and d2 == d0
+	rows.append("%sthe pocket's door moved to %s, undone back to %s %s" % ["" if ok6 else "(!) ", str(d1), str(d2), ok6])
+	ok = ok and ok6
+	# ---- a canopy of glass over the helm (the ship's figures update), drawn
+	part.call("Glass Hull")
+	sy.brush = 1
+	sy._push_undo()
+	var gl := []
+	for k2 in range(0, 22):
+		gl.append(Vector2i(sc1.x - 6, sc1.y - k2))
+	for k3 in range(-6, 8):
+		gl.append(Vector2i(sc1.x + k3, sc1.y - 21))
+	sy._stroke(gl, false)
+	var f: Dictionary = sy.figures()
+	await _frames(10)
+	_shot("shipyard.png")
+	var ok7: bool = int(f["cells"]) > hc1 + 30 and int(f["seats"]) == 2
+	rows.append("%sa glass canopy: %d cells, %s, mass %d, thrust %d%%, hold %d" % ["" if ok7 else "(!) ", int(f["cells"]), String(f["size"]), int(f["mass"]), int(f["drive"]), int(f["hold"])])
+	ok = ok and ok7
+	# ---- closed: kept as built, set clear of the ground
+	g.shipyard.close()
+	await _frames(30)
+	var kept: bool = g.items.get("ship") is Dictionary and int((g.items["ship"] as Dictionary).get("w", 0)) == sk.w and g.state == "play" and int(g.items.get("hull_cells", 0)) >= int(f["cells"])
+	var fits: bool = g._skiff_fits()
+	rows.append("%sclosed: kept %s, clear of the ground %s" % ["" if kept and fits else "(!) ", kept, fits])
+	ok = ok and kept and fits
+	print("[shipyard] " + "\n[shipyard] ".join(rows))
+	_ok("the ship builder: a keel forged, opened parked (not in flight), laid, refused, cut (loose parts fall, refunded), the helm kept, a seat, the door, undo, closed and kept", ok, "; ".join(rows))
+	await _test_pocket()
+	# (put things back: later checks fly the skiff as forged)
+	g.player.deck = false
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+	if keep_ship == null:
+		g.items.erase("ship")
+	else:
+		g.items["ship"] = keep_ship
+	if keep_skiff == null:
+		g.items.erase("skiff")
+	else:
+		g.items["skiff"] = keep_skiff
+	if keep_sk != null:
+		for hr2 in keep_sk.riders.size():
+			keep_sk.riders[hr2] = null
+		g.skiff = keep_sk
+		g.call_skiff()
+	else:
+		g.skiff = null
+		if g.items.has("skiff"):
+			g.call_skiff()
+	await _frames(30)
+
+func _test_pocket() -> void:
+	var rows := []
+	var ok := true
+	var Isle = load("res://scripts/pocket_isle.gd")
+	var pk = g.pocket
+	var sk = g.skiff
+	g.player.dead = false
+	g.test_god = true
+	if g.build_on:
+		g._toggle_build()
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
+	await _frames(10)
+	var keep_known: Array = g.player.known.duplicate()
+	var keep_sel: int = g.player.sel
+	g.items.erase("pocket_seen")
+	g.player.known.erase("recall")
+	# (a fresh isle: one kept from a run before would already hold what this one builds)
+	if FileAccess.file_exists(pk._path()):
+		DirAccess.remove_absolute(pk._path())
+	pk.isle = null
+	# ---- in by the door
+	var door: Vector2 = sk.door_world()
+	g.player.pos = door
+	g.player.vx = 0.0
+	g.player.vy = 0.0
+	await _frames(2)
+	g.player.pos = door
+	var reach: bool = g.door_in_reach(g.player)
+	g._interact()
+	var in1: bool = pk.active
+	await _frames(60)
+	if pk.isle == null:
+		pk._ensure()                    # (not in: the checks below still run, and fail, without stopping)
+	var on_isle: bool = g.player.on_ground
+	var learned: bool = g.player.known.has("recall") and g.items.has("pocket_seen")
+	_shot("pocket_isle.png")
+	var ok0: bool = reach and in1 and on_isle and learned and not g.view_rect.visible
+	rows.append("%sin by the door %s (in reach %s), standing on the isle %s, Wisp Recall learned %s" % ["" if ok0 else "(!) ", in1, reach, on_isle, learned])
+	ok = ok and ok0
+	# ---- walk
+	var bx0: float = pk.b.x
+	g.test_move = 1
+	await _frames(50)
+	g.test_move = 0
+	await _frames(20)
+	var walked: float = pk.b.x - bx0
+	var ok1: bool = walked > 20.0 and g.player.on_ground
+	rows.append("%swalked %.0f cells along the isle" % ["" if ok1 else "(!) ", walked])
+	ok = ok and ok1
+	# ---- build: a plank block, a back wall, then the block taken out again
+	var isle = pk.isle
+	var bi := int(floor(pk.b.x)) + 8
+	var bj := int(floor(isle.top_at(bi, isle.level))) - 6
+	var bk: int = bj * Isle.W + bi
+	g._toggle_build()
+	g.build_thick = 1
+	_pick_piece("Planks")
+	var pl0: int = g.player.inv[Defs.PLANK]
+	g.player.inv[Defs.PLANK] += 20
+	pl0 = g.player.inv[Defs.PLANK]
+	g.test_cast = true
+	for k in 6:
+		g.test_aim = isle.cell_world(bi, bj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(3)
+	var built: bool = isle.cells[bk] == Defs.PLANK and g.player.inv[Defs.PLANK] < pl0
+	_pick_piece("Plank Wall")
+	g.test_cast = true
+	for k1 in 6:
+		g.test_aim = isle.cell_world(bi + 3, bj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(3)
+	var walled: bool = isle.bg[bj * Isle.W + bi + 3] == Defs.PLANK
+	_pick_piece("Remove Blocks")
+	g.test_cast = true
+	for k2 in 6:
+		g.test_aim = isle.cell_world(bi, bj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(3)
+	var taken: bool = isle.cells[bk] == 0
+	# (and a block again, kept to check the save)
+	_pick_piece("Planks")
+	g.test_cast = true
+	for k3 in 6:
+		g.test_aim = isle.cell_world(bi, bj)
+		await _frames(1)
+	g.test_cast = false
+	await _frames(3)
+	# (the heart and the arch can't be taken)
+	var hx: int = Isle.W / 2 + Isle.HEART_DX
+	var hy := int(floor(isle.top_at(hx, 0))) - 4
+	var guarded: bool = not isle.can_take(hy * Isle.W + hx) and isle.remove(hx, hy) == 0
+	g._toggle_build()
+	var ok2: bool = built and walled and taken and isle.cells[bk] == Defs.PLANK and guarded
+	rows.append("%sbuilt in the pocket: a block %s, a back wall %s, taken out %s, laid again %s; the heart kept %s" % ["" if ok2 else "(!) ", built, walled, taken, isle.cells[bk] == Defs.PLANK, guarded])
+	ok = ok and ok2
+	# ---- the Isle Heart grows the isle (asked, then F again)
+	var lv0: int = isle.level
+	var cost: Dictionary = pk.expand_cost(lv0 + 1)
+	for ck in cost:
+		g.player.inv[int(ck)] += int(cost[ck])
+	g.player.mana = g.player.max_mana
+	var edge: int = Isle.W / 2 + Isle.LEVELS[lv0] + 20
+	var had_edge: bool = isle.cells[int(floor(isle.top_at(edge, lv0 + 1)) + 3) * Isle.W + edge] != 0
+	pk.b = Vector2(float(hx) + 0.5, isle.top_at(hx, isle.level) - 9.0)
+	await _frames(4)
+	var near_h: String = pk.near
+	g._interact()
+	g._interact()
+	await _frames(20)
+	var grew: bool = isle.level == lv0 + 1 and not had_edge and isle.cells[int(floor(isle.top_at(edge, isle.level)) + 3) * Isle.W + edge] != 0
+	_shot("pocket_grown.png")
+	var ok3: bool = near_h == "heart" and grew
+	rows.append("%sthe Isle Heart (near: %s) grew the isle %d -> %d, ground now %d cells out %s" % ["" if ok3 else "(!) ", near_h, lv0, isle.level, Isle.LEVELS[isle.level], grew])
+	ok = ok and ok3
+	# ---- out by the arch: back by the door where you came in
+	var ax: int = Isle.W / 2 + Isle.ARCH_DX
+	pk.b = Vector2(float(ax) + 0.5, isle.top_at(ax, 0) - 9.0)
+	await _frames(4)
+	var near_a: String = pk.near
+	g._interact()
+	await _frames(30)
+	var out1: bool = not pk.active and g.player.pos.distance_to(door) < 30.0 and g.view_rect.visible
+	rows.append("%sout by the arch (near: %s) %s, %.0f from where you went in" % ["" if out1 else "(!) ", near_a, out1, g.player.pos.distance_to(door)])
+	ok = ok and out1
+	# ---- Wisp Recall from out here, a way off: hurt breaks it; cast again, into the pocket
+	var away: Vector2 = g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 120.0
+	_go(away + g.player.pos.normalized() * 6.0)
+	await _frames(40)
+	var at_cast: Vector2 = g.player.pos
+	g.player.sel = g.player.known.find("recall")
+	g.player.spell_cd.clear()
+	g.player.mana = g.player.max_mana
+	g.test_god = false
+	g.test_cast = true
+	await _frames(2)
+	g.test_cast = false
+	await _frames(5)
+	var chan: bool = g.player.recall_t > 0
+	g.player.iframes = 0
+	g.hurt(g.player, 1.0, Vector2.ZERO, true)
+	g.test_god = true
+	await _frames(70)
+	var broke: bool = chan and not pk.active and g.player.recall_t == 0
+	g.player.spell_cd.clear()
+	g.player.cast_cd = 0
+	g.player.mana = g.player.max_mana
+	g.test_cast = true
+	await _frames(2)
+	g.test_cast = false
+	await _frames(70)
+	var in2: bool = pk.active
+	var ok4: bool = broke and in2
+	rows.append("%sWisp Recall: channelled %s, broken by a blow %s; cast again, in the pocket %s" % ["" if ok4 else "(!) ", chan, broke, in2])
+	ok = ok and ok4
+	# ---- out by the ship (G at the arch): at its door, not where it was cast
+	pk.b = Vector2(float(ax) + 0.5, isle.top_at(ax, 0) - 9.0)
+	await _frames(4)
+	var by_ship: bool = pk.leave_by_ship(g.player)
+	await _frames(20)
+	var out2: bool = by_ship and not pk.active and g.player.pos.distance_to(sk.door_world()) < 30.0 and g.player.pos.distance_to(at_cast) > 60.0
+	rows.append("%sout by the ship %s: %.0f from its door, %.0f from where Recall was cast" % ["" if out2 else "(!) ", by_ship, g.player.pos.distance_to(sk.door_world()), g.player.pos.distance_to(at_cast)])
+	ok = ok and out2
+	# ---- kept: the isle read back from its file as it was left
+	var lvk: int = isle.level
+	pk.isle = null
+	pk._ensure()
+	var kept: bool = pk.isle.level == lvk and pk.isle.cells[bk] == Defs.PLANK and pk.isle.bg[bj * Isle.W + bi + 3] == Defs.PLANK
+	rows.append("%skept: level %d, the block and the wall %s" % ["" if kept else "(!) ", pk.isle.level, kept])
+	ok = ok and kept
+	# ---- the quest's steps for it
+	var Q = load("res://scripts/quest.gd")
+	var qs := []
+	for st in g.quest._first_chapter():
+		qs.append(String(st["id"]))
+	var qi: int = qs.find("skiff")
+	var ok5: bool = qi >= 0 and qi + 2 < qs.size() and qs[qi + 1] == "hull" and qs[qi + 2] == "pocket" and Q.HULL_STEP > 130
+	rows.append("%sthe quest walks you through it: %s" % ["" if ok5 else "(!) ", ", ".join(qs.slice(maxi(qi, 0), qi + 3))])
+	ok = ok and ok5
+	# (put the spells back as they were: later checks cast with the one chosen, and Wisp Recall chosen out in
+	# space would carry the next check into the pocket)
+	g.player.known = keep_known
+	g.player.sel = clampi(keep_sel, 0, keep_known.size() - 1)
+	g.player.recall_t = 0
+	if pk.active:
+		pk.leave(g.player)
+	print("[pocket] " + "\n[pocket] ".join(rows))
+	_ok("the ship's pocket dimension: in by the door and by Wisp Recall (a blow breaks it), walked, built on, grown, out by the arch and by the ship, kept", ok, "; ".join(rows))
+
 ## paints (or cuts) from cell a to b of the ship as it was (`at` says where such a cell is now), a little at a
 ## time as you would by hand
 func _hull_paint(sk, at: Callable, a: Vector2, b: Vector2) -> void:
@@ -10695,7 +11086,7 @@ func _test_quest() -> void:
 	g.tier = 1
 	g.known.erase("spark")
 	g.heat_ward = false
-	g.items["quest"] = {"ch": 0, "at": 0, "v": 4}
+	g.items["quest"] = {"ch": 0, "at": 0, "v": 5}
 	g.items["coins"] = 0
 	q.reset()
 	await _frames(31)
@@ -10831,7 +11222,7 @@ func _test_quest() -> void:
 	q.reset()
 	await _frames(31)
 	var cid: String = String(q.steps[q.at]["id"]) if q.at < q.steps.size() else "-"
-	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 4
+	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 5
 	rows.append("%san old journey (skiff, Obsidian Focus, a quest from before the barriers) caught up to \"%s\", lantern %s, ward %s, %d coins given" % ["" if ok5 else "(!) ", cid, g.items.has("wisp_lantern"), g.items.has("wisp_ward"), int(g.items.get("coins", 0))])
 	ok = ok and ok5
 	# ---- a later world's chapter leads to the next world of the round, and the key to its barrier first

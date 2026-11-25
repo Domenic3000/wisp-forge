@@ -438,6 +438,8 @@ func _sprite_mid(key: String, wpos: Vector2, flip: bool, white: bool, tint := Co
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _lit(sp: Vector2) -> Color:
+	if game.pocket.active:
+		return Color(1, 0.97, 1.0)          # (the pocket's soft, even light)
 	if game.space.active and not game.space.live:
 		return Color(1, 1, 1)               # (out in space: full sun, and no light grid to read)
 	var c: Color = game.gpu.light_at(game.screen_to_pic(sp))
@@ -455,7 +457,10 @@ func _lit(sp: Vector2) -> Color:
 ## forth). Returns [drawn position, unsnapped position].
 func _feet(wpos: Vector2, body_h: float, grounded: bool, body_w := 0.0) -> Array:
 	var up := wpos.normalized()
-	if game.space.active:
+	if game.pocket.active:
+		up = Vector2(0, -1)                  # (the pocket's isle: its up is the screen's)
+		grounded = false
+	elif game.space.active:
 		# (out in space "up" is away from space.centre: the nearest planet, or under a station's floor; and
 		# there's no planet's ground to stand the feet on)
 		up = (wpos - game.space.centre).normalized()
@@ -541,7 +546,9 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	if m.rig == null:
 		m.rig = MageRig.new()
 	var a := atan2(m.pos.y, m.pos.x)
-	if game.space.active:
+	if game.pocket.active:
+		a = -PI * 0.5
+	elif game.space.active:
 		a = (m.pos - game.space.centre).angle()      # (out in space: upright over the nearest planet)
 	var fwd := float(m.facing)
 	# the staff points at the cursor (snappier while casting)
@@ -667,7 +674,15 @@ func _draw_skiff() -> void:
 		_draw_mage(m2, aim2, gem2, true, [feet2, rot, xf.y.length()])
 	draw_set_transform_matrix(xf)
 	draw_texture(sk.texture(), -sk.com, Color(_lit(p), 1.0))
+	# the pocket's door: a violet seam that breathes, and a word when you're by it
+	if sk.door_cell.x >= 0 and game.items.has("skiff"):
+		var dc: Vector2i = sk.door()
+		var pul := 0.45 + 0.35 * sin(float(game.frame) * 0.08)
+		draw_rect(Rect2(Vector2(dc) - sk.com + Vector2(-1, -1), Vector2(3, 2)), Color(0.85, 0.6, 1.0, pul))
+		draw_rect(Rect2(Vector2(dc) - sk.com, Vector2(1, 1)), Color(1.0, 0.92, 1.0, 0.6 + pul * 0.4))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
+	if game.door_in_reach(game.player):
+		_bubble(sk.door_world(), "[F] Step into the pocket", 0.9)
 
 ## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the
 ## light streaming from the staff, and the reticle.
@@ -689,6 +704,24 @@ func _draw_in_space() -> void:
 		draw_rect(Rect2(m + Vector2(0, k), Vector2.ONE), rc)
 		draw_rect(Rect2(m - Vector2(0, k), Vector2.ONE), rc)
 
+## inside the ship's pocket dimension (pocket.gd draws the nebula and the isle under this): you, the sparks,
+## what you're building, the cursor
+func _draw_in_pocket() -> void:
+	for p in game.parts:
+		_px(p["pos"], p["col"])
+	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
+	_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
+	_draw_build_preview()
+	if game.ui.mouse_over_ui():
+		return
+	var m: Vector2 = (get_viewport().get_mouse_position() / game.scale_px).floor()
+	var rc := Color(0.85, 0.75, 1.0, 0.7)
+	for k in range(2, 5):
+		draw_rect(Rect2(m + Vector2(k, 0), Vector2.ONE), rc)
+		draw_rect(Rect2(m - Vector2(k, 0), Vector2.ONE), rc)
+		draw_rect(Rect2(m + Vector2(0, k), Vector2.ONE), rc)
+		draw_rect(Rect2(m - Vector2(0, k), Vector2.ONE), rc)
+
 func _px(wpos: Vector2, col: Color) -> void:
 	var sp: Vector2 = game.world_to_screen(wpos)
 	draw_rect(Rect2(sp.floor(), Vector2.ONE), col)
@@ -698,7 +731,7 @@ func _draw() -> void:
 		return                       # (the map draws its own markers: map_view.gd)
 	var t_draw := Time.get_ticks_usec()
 	_draw_all()
-	if not game.space.active:
+	if not game.space.active and not game.pocket.active:
 		_draw_sky()
 	game.prof_add("drawing sprites", Time.get_ticks_usec() - t_draw)
 
@@ -782,6 +815,9 @@ func _part(nm: String, t0: int) -> int:
 
 func _draw_all() -> void:
 	var z: float = game.zoom
+	if game.pocket.active:
+		_draw_in_pocket()
+		return
 	if game.space.active and not game.space.live:
 		_draw_in_space()
 		return

@@ -26,6 +26,8 @@ const Workshops := preload("res://scripts/workshops.gd")
 const Summoning := preload("res://scripts/summoning.gd")
 const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const Vfx := preload("res://scripts/vfx.gd")
+const Pocket := preload("res://scripts/pocket.gd")
+const Shipyard := preload("res://scripts/shipyard.gd")
 const Weather := preload("res://scripts/weather.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
@@ -271,6 +273,9 @@ var gpu
 var ui
 var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
+var pocket                # inside your ship: a pocket dimension, an isle in a nebula (pocket.gd)
+var shipyard              # the ship builder, where the ship is parked (shipyard.gd; state "shipyard")
+var classic_skiff := false   # (the test mode: the skiff is forged as before, not as a bare keel)
 var towns                 # the living villages' folk, talk and trade (towns.gd)
 var workshops             # the workshop stations on this planet (workshops.gd)
 var summoning             # guardians called at altars (summoning.gd)
@@ -520,6 +525,7 @@ class Mage extends Body:
 	var deck_b := Vector2.ZERO # (on deck: the middle of the body in the ship's own cells, and its speed there)
 	var deck_v := Vector2.ZERO
 	var buffs := {}            # a draught working now (Defs.DRAUGHTS id -> ticks left), read through gear()
+	var recall_t := 0          # Wisp Recall being channelled (ticks left; hurt breaks it)
 	func _init() -> void:
 		h = 17.0
 		w = 7.0
@@ -660,6 +666,9 @@ func _ready() -> void:
 	workshops = Workshops.new(self)
 	summoning = Summoning.new(self)
 	pix.add_child(space)
+	pocket = Pocket.new()
+	pocket.game = self
+	pix.add_child(pocket)
 	view_rect = TextureRect.new()
 	view_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	view_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -685,6 +694,9 @@ func _ready() -> void:
 	map_view.game = self
 	map_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pix.add_child(map_view)
+	shipyard = Shipyard.new()
+	shipyard.game = self
+	pix.add_child(shipyard)
 	post_rect = ColorRect.new()
 	post_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var psh := Shader.new()
@@ -861,6 +873,9 @@ func _process(delta: float) -> void:
 		for k2 in wsteps:
 			workshops.work_all()
 		ui.update_station()
+	if state == "shipyard":
+		shipyard.process(delta)
+		ui.update_shipyard(self)
 	if state == "map":
 		_map_tick(delta)
 		if map_tab == "planet" and not travelling:
@@ -869,7 +884,7 @@ func _process(delta: float) -> void:
 		map_view.queue_redraw()
 	if state == "play" or state == "dead" or state == "forge" or state == "shop" or state == "station":
 		tp = Time.get_ticks_usec()
-		if (space.active and not space.live) or travelling:
+		if (space.active and not space.live) or travelling or pocket.active:
 			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
 			lights.clear()
 		else:
@@ -1556,6 +1571,11 @@ func _door_bump(m: Body) -> void:
 
 ## F: open a chest in reach, otherwise open or close the nearest door
 func _interact() -> void:
+	if pocket.active:
+		pocket.interact(player)
+		return
+	if _door_interact(player):
+		return
 	if _skiff_interact(player):
 		return
 	if space.wreck_interact(player):      # (out in space: a wreck's cache within reach)
@@ -1840,6 +1860,8 @@ func unroll_step(r: float) -> float:
 
 ## zoomed in on the planet (not the round map, not out in space): sprites stand upright on whole pixels
 func close_view() -> bool:
+	if pocket != null and pocket.active:
+		return true
 	# (out in space, with the planet shown as its picture, the view is always flat: close by an
 	# asteroid it zooms right in, and nothing there needs the planet's curve unrolled)
 	if space != null and space.active and (not space.live or zoom > 1.01):
@@ -1848,6 +1870,8 @@ func close_view() -> bool:
 
 ## the close view drawn in strips (the "view" setting), rather than as the world is
 func unrolled() -> bool:
+	if pocket != null and pocket.active:
+		return false
 	return close_view() and settings.get("view", "world") == "unrolled"
 
 func _view() -> Vector2:
@@ -1856,6 +1880,8 @@ func _view() -> Vector2:
 ## the view's turn: "up" points away from the planet's centre, and out in space away from the
 ## nearest planet's (space.view_ang, eased as that changes)
 func view_angle() -> float:
+	if pocket != null and pocket.active:
+		return -PI * 0.5             # (the pocket: its isle's up is the screen's up)
 	if space.active and not space.live:
 		return space.view_ang
 	var c := _view()
@@ -2298,7 +2324,7 @@ func _read_local_input(m: Mage) -> void:
 		inp.turn = test_turn
 	# (building inside the skiff: the cast button builds, it doesn't steer or fire)
 	cabin_cast = false
-	if build_on and m.aboard != null:
+	if build_on and (m.aboard != null or pocket.active):
 		cabin_cast = inp.cast
 		inp.cast = false
 
@@ -2309,6 +2335,22 @@ func _tick() -> void:
 		Defs.anchor_c = _anchor_col(player.pos)      # (nothing waiting to go in under the old one)
 	_read_local_input(player)
 	var aim: Vector2 = player.input.aim
+	if _recall_now:
+		_recall_now = false
+		if not pocket.active and not player.dead:
+			pocket.enter(player, "recall")
+	if pocket.active:
+		# (in the pocket dimension the world outside waits: only you, your isle and what you build)
+		pocket.tick()
+		_update_particles()
+		vfx.tick()
+		_update_wisp()
+		quest.tick()
+		shake *= 0.88
+		hurt_flash *= 0.9
+		if frame % 3600 == 0:
+			save_game()
+		return
 	if space.active:
 		# out in space only the mage moves; the planet below waits as it was
 		space.tick()
@@ -2321,6 +2363,7 @@ func _tick() -> void:
 		return
 	_update_skiff()
 	_mend_skiff(player)
+	recall_tick(player)
 	if frame % 15 == 0:
 		_check_planet_waypoint()
 	var tm := Time.get_ticks_usec()
@@ -2561,6 +2604,10 @@ func _update_player(m: Mage) -> void:
 func hurt(m: Mage, dmg: float, knock: Vector2, hit: bool) -> void:
 	if m.dead or test_god:
 		return
+	if m.recall_t > 0 and dmg > 0.0:
+		m.recall_t = 0                       # (being hurt, even a blow the wisp takes, breaks Wisp Recall)
+		if m.local:
+			ui.toast("Wisp Recall broken", Color(1, 0.65, 0.55), 1.4)
 	# (the Wisp Ward, the quest's gift for beating Vulkhar: the wisp takes one blow, then gathers itself again)
 	if hit and m.local and m.items.has("wisp_ward") and wisp_ward_t <= 0 and m.iframes <= 0 and dmg >= 1.0:
 		wisp_ward_t = WARD_RECHARGE
@@ -2663,6 +2710,9 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		m.heal_left += Defs.MEND_HEAL
 		audio.play("rare", m.pos, 0.6)
 		vfx.mend(m)
+		return
+	if id == "recall":
+		_begin_recall(m, cost)
 		return
 	if id == "blink":
 		if _blink(m, aim):
@@ -4265,6 +4315,8 @@ func _update_particles() -> void:
 func _update_wisp() -> void:
 	wisp_t += 0.05
 	var wc: Vector2 = space.centre if space.active else Vector2.ZERO
+	if pocket.active:
+		wc = player.pos + Vector2(0.0, 400000.0)      # (the pocket's down is the screen's down)
 	var a := (player.pos - wc).angle()
 	var target := player.pos + basis_r(a) * (-player.facing * 11.0) - basis_d(a) * (17.0 + sin(wisp_t * 2.0) * 3.0)
 	wisp = wisp.lerp(target, 0.08)
@@ -4294,7 +4346,7 @@ func _wisp_powers() -> void:
 			vfx.spawn(Vfx.RING, wisp, Vector2.ZERO, 26, Color(0.7, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 2.0, 14.0)
 	if sense_t > 0:
 		sense_t -= 1
-	if not player.items.has("wisp_sense") or space.active or player.dead or travelling:
+	if not player.items.has("wisp_sense") or space.active or pocket.active or player.dead or travelling:
 		_sense_req = {}
 		return
 	if not _sense_req.is_empty():
@@ -5183,7 +5235,17 @@ func craft(r: Dictionary) -> bool:
 	match r["id"]:
 		"skiff":
 			items["skiff"] = randi() % 1000000      # (its seed: the shape of your skiff)
-			ui.toast("Wisp Skiff forged: press K to call it to you", Color(1, 0.82, 0.23), 4.0)
+			if classic_skiff:
+				ui.toast("Wisp Skiff forged: press K to call it to you", Color(1, 0.82, 0.23), 4.0)
+			else:
+				# (user, 24 Nov: "the main quest can walk you through building your first ship"): a bare keel,
+				# built out in the ship builder
+				var kl = Skiff.make_keel(int(items["skiff"]))
+				items["ship"] = kl.save_cells()
+				items["hull_cells"] = kl.hull_count()
+				if skiff != null and player.aboard == null:
+					skiff = null                       # (an old one out: the keel answers K instead)
+				ui.toast("Wisp Keel forged: press K to call it, board it (F), then B to build it out", Color(1, 0.82, 0.23), 5.0)
 			save_game()
 			return true
 		"tier2": tier = 2
@@ -5278,6 +5340,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if k == KEY_ESCAPE or k == KEY_F:
 				workshops.close()
 			return
+		if state == "shipyard":
+			shipyard.key(k, ev.ctrl_pressed)
+			return
 		if state == "play" and ui.journal_open():
 			if k == KEY_ESCAPE or k == KEY_L:
 				ui.toggle_journal(self)
@@ -5293,8 +5358,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_SPACE or k == KEY_W or k == KEY_UP:
 			jump_buf = 8   # catch even the quickest tap
 		if k == KEY_B:
-			_toggle_build()
+			if player.aboard != null and not pocket.active:
+				shipyard.open()              # (aboard: the ship builder, where it's parked; else a word why not)
+			else:
+				_toggle_build()
 			return
+		if k == KEY_G and pocket.active and not build_on:
+			if pocket.leave_by_ship(player):
+				return
 		if build_on and _build_key(k):
 			return
 		if space.active and (k == KEY_MINUS or k == KEY_KP_SUBTRACT or k == KEY_EQUAL or k == KEY_KP_ADD):
@@ -5315,6 +5386,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_interact()
 		elif k == KEY_X:
 			deck_toggle(player)
+		elif k == KEY_K and pocket.active:
+			ui.toast("Your ship is outside: step out by the arch (F), or by your ship (G)", Color(0.85, 0.75, 1.0), 2.0)
 		elif k == KEY_K:
 			if space.active:
 				recall_skiff()
@@ -5323,7 +5396,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		elif k == KEY_I or k == KEY_TAB:
 			ui.toggle_satchel()
 		elif k == KEY_M:
-			open_map()
+			if pocket.active:
+				ui.toast("The pocket lies outside every map", Color(0.85, 0.75, 1.0), 1.5)
+			else:
+				open_map()
 		elif k == KEY_F8 or k == KEY_F7:
 			# developer shortcut: jump 120 cells down (F8) or up (F7)
 			var up2 := player.pos.normalized()
@@ -5342,6 +5418,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			ui.toast("Creative stock: +200 of every material, and every recipe", Color(0.6, 1, 0.6))
 	elif state == "map" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
 		_map_mouse(ev)
+	elif state == "shipyard" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
+		shipyard.mouse(ev)
 	elif ev is InputEventMouseButton and ev.pressed and state == "play" and not menu_paused():
 		var wheel: bool = ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN
 		if wheel and ui.mouse_over_ui(false):
@@ -6908,6 +6986,11 @@ func start_game(use_save: bool) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	space.reset_for_load()                 # (nothing of space kept from the game before: user, 23 Nov)
+	pocket.reset()                         # (and nothing of the pocket: it loads from this slot's file)
+	if shipyard.active:
+		shipyard.active = false
+		shipyard.visible = false
+		ui.hide_shipyard()
 	quest.reset()
 	if ui.journal_open():
 		ui.toggle_journal(self)
@@ -7214,6 +7297,10 @@ func _make_world(index: int, arriving: bool) -> void:
 func _update_skiff() -> void:
 	if skiff == null:
 		return
+	if not classic_skiff:
+		skiff.ensure_door()                     # (a ship forged before the pocket came in gets its door)
+	if frame % 120 == 0 and items.has("skiff"):
+		items["hull_cells"] = maxi(int(items.get("hull_cells", 0)), skiff.hull_count())   # (the quest: how far it's been built out)
 	_use_grid(player)
 	var pl = skiff.pilot()
 	if pl == null and not in_grid(skiff.pos, 40.0):
@@ -7312,13 +7399,22 @@ func _update_cabin(m: Mage) -> void:
 	build_prev = {}
 	if sk == null or m.aboard != sk:
 		return
+	var piece := build_piece()
+	if not piece.is_empty() and Build.HULL_KINDS.has(String(piece["kind"])):
+		if not cabin_cast:
+			_cabin_latch = false
+		_update_hull(m, sk, piece)
+		return
+	_cabin_edit(m, sk)
+
+## Building in a body's room: the skiff's cabin, or the pocket dimension's isle (pocket.gd; the same pieces,
+## blocks, back walls, furniture and the Remove tab, in its own cells)
+func _cabin_edit(m: Mage, sk) -> void:
+	build_prev = {}
 	if not cabin_cast:
 		_cabin_latch = false
 	var piece := build_piece()
 	if piece.is_empty():
-		return
-	if Build.HULL_KINDS.has(String(piece["kind"])):
-		_update_hull(m, sk, piece)
 		return
 	var kind: String = piece["kind"]
 	var b: Vector2 = sk.to_body(m.input.aim) + sk.com
@@ -7382,6 +7478,7 @@ func _update_cabin(m: Mage) -> void:
 				if ok:
 					for c2 in cells:
 						sk.deco[int(c2[1]) * sk.w + int(c2[0])] = int(c2[2]) + 1
+						sk.touch(int(c2[0]), int(c2[1]))
 					for cm in cost:
 						m.inv[int(cm)] -= int(cost[cm])
 					sk.dirty = true
@@ -7403,7 +7500,7 @@ func _update_cabin(m: Mage) -> void:
 					if not sk.in_room(i3, j3):
 						continue
 					var k3: int = j3 * sk.w + i3
-					var has_front: bool = sk.made[k3] == 1 and sk.cells[k3] != 0
+					var has_front: bool = sk.can_take(k3)
 					var has_back: bool = sk.bg[k3] != 0 and sk.bg[k3] != sk.design_bg[k3]
 					var has_furn: bool = sk.deco[k3] != 0
 					if (layer in ["front", "all"] and has_front) or (layer in ["back", "all"] and has_back) or (layer in ["furn", "all"] and has_furn):
@@ -7416,7 +7513,7 @@ func _update_cabin(m: Mage) -> void:
 				for c3 in cells:
 					var cv: Vector2i = c3
 					var k4: int = cv.y * sk.w + cv.x
-					if layer in ["front", "all"] and sk.made[k4] == 1:
+					if layer in ["front", "all"] and sk.can_take(k4):
 						var got: int = sk.remove(cv.x, cv.y, false)
 						if got != 0:
 							m.inv[got] += 1
@@ -7424,8 +7521,10 @@ func _update_cabin(m: Mage) -> void:
 						var gb: int = sk.bg[k4]
 						sk.bg[k4] = sk.design_bg[k4]          # (what was there as forged comes back: the glass pane)
 						m.inv[gb] += 1
+						sk.touch(cv.x, cv.y)
 					if layer in ["furn", "all"] and sk.deco[k4] != 0:
 						sk.deco[k4] = 0
+						sk.touch(cv.x, cv.y)
 						furn += 1
 					cabin_stats["removed"] += 1
 				if furn > 0:
@@ -7436,7 +7535,7 @@ func _update_cabin(m: Mage) -> void:
 		_:
 			if cabin_cast and not _cabin_latch:
 				_cabin_latch = true
-				ui.toast("Inside the skiff: blocks, back walls and furniture (the Remove tab takes them out)", Color(1, 0.7, 0.5), 2.0)
+				ui.toast(("In the pocket" if pocket.active else "Inside the skiff") + ": blocks, back walls and furniture (the Remove tab takes them out)", Color(1, 0.7, 0.5), 2.0)
 
 ## a piece of furniture's cells in the cabin with its left at x0 (resting on the floor under row cj, unless
 ## it hangs on a wall): [[[i, j, palette index]...], whether every one is free room]
@@ -7479,6 +7578,59 @@ func _skiff_exhaust() -> void:
 			14 + randi() % 10, Color8(150, 170, 255), true, 0.0)
 	if not space.active:
 		lights.append([stern, 40.0, Color(0.6, 0.7, 1.3)])
+
+# ------------------------------------------------------ the pocket's ways in ---
+## (user, 24 Nov: "a return to ship function/return home function ... as a spell"; chose: the pocket is home):
+## WISP RECALL, a channel of RECALL_CHANNEL ticks (hurt breaks it), takes you into your ship's pocket from
+## anywhere; the arch takes you back where you cast it. THE DOOR: F by the ship's door cell (`Skiff.door_world`),
+## on foot or walking its deck, steps in.
+const RECALL_CHANNEL := 45
+const DOOR_REACH := 14.0
+var _recall_now := false
+
+func _begin_recall(m: Mage, cost: float) -> void:
+	if pocket.active:
+		ui.toast("You're in the pocket already", Color(0.85, 0.75, 1.0), 1.2)
+		spell_used(m, "recall", 20)
+		return
+	if not items.has("skiff"):
+		ui.toast("Wisp Recall takes you into your ship's pocket: you have no ship yet", Color(1, 0.7, 0.5), 2.0)
+		spell_used(m, "recall", 20)
+		return
+	if m.recall_t > 0:
+		return
+	m.mana -= cost
+	spell_used(m, "recall", int(Defs.SPELLS["recall"]["cd"]))
+	m.recall_t = RECALL_CHANNEL
+	audio.play("blink", m.pos, 0.5)
+	vfx.spawn(Vfx.RUNE, m.pos + Vector2.ZERO, Vector2.ZERO, RECALL_CHANNEL + 10, Color(0.8, 0.62, 1.0), Color(0.5, 0.8, 1.0, 0.0), 14.0, 14.0)
+
+## each tick (planet and space): the channel's motes, and at its end into the pocket (at the next tick's start,
+## so nothing else moves you after)
+func recall_tick(m: Mage) -> void:
+	if m.recall_t <= 0:
+		return
+	m.recall_t -= 1
+	if frame % 2 == 0:
+		var a := randf() * TAU
+		var p: Vector2 = m.pos + Vector2.from_angle(a) * (10.0 + randf() * 8.0)
+		_particle(p, (m.pos - p) * 0.06, 16, Color(0.8, 0.65, 1.0), true, 0.0)
+	if m.recall_t == 0 and m.local and not m.dead:
+		_recall_now = true
+
+## the ship's door within reach of m (on foot, or walking its deck): F steps into the pocket
+func door_in_reach(m: Mage) -> bool:
+	if pocket.active or skiff == null or not items.has("skiff") or skiff.door_cell.x < 0:
+		return false
+	if m.aboard != null and not m.deck:
+		return false
+	return m.pos.distance_to(skiff.door_world()) < DOOR_REACH
+
+func _door_interact(m: Mage) -> bool:
+	if not door_in_reach(m):
+		return false
+	pocket.enter(m, "door")
+	return true
 
 ## a rider sits in their seat: they go where the skiff goes, breathe its air, and don't fall
 func _ride(m: Mage) -> void:
@@ -7742,6 +7894,8 @@ func save_game() -> void:
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
+	if pocket != null:
+		pocket.save()
 
 func _load_save():
 	var path := _save_path()
@@ -7905,6 +8059,15 @@ func save_world_async(without_skiff := false) -> void:
 
 ## the planet's own state as saved with its cells: where you are, the skiff, chests, doors, time
 func _world_meta(without_skiff: bool) -> String:
+	# (saved from the pocket dimension: you're kept where you stepped in from)
+	var in_pocket_at: Vector2 = player.pos
+	if pocket.active:
+		player.pos = pocket.back.get("pos", player.pos)
+	var meta := _world_meta_body(without_skiff)
+	player.pos = in_pocket_at
+	return meta
+
+func _world_meta_body(without_skiff: bool) -> String:
 	planet_state["player"] = [player.pos.x, player.pos.y]
 	if space.active:
 		# (saved while out in space: you, and the skiff, are kept just above where you'd come back down)

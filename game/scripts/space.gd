@@ -363,6 +363,7 @@ func _tick() -> void:
 	if m.cast_cd > 0:
 		m.cast_cd -= 1
 	game.tick_spell_cds(m)
+	game.recall_tick(m)
 	if not m.input.cast:
 		m.cast_latch = false
 	_grow_disc()
@@ -457,7 +458,9 @@ func _tick() -> void:
 	if in_station != null and not m.dead:
 		_station_move(m, in_station)
 		if m.input.cast and not m.cast_latch:
-			if in_station.kind == "outpost":
+			if in_station.kind == "outpost" and String(m.known[clampi(m.sel, 0, m.known.size() - 1)]) == "recall":
+				game._cast(m, "recall", m.input.aim)       # (Wisp Recall is no spell of harm)
+			elif in_station.kind == "outpost":
 				# (an outpost is a peaceful place: no spells in its halls)
 				m.cast_latch = true
 				if game.frame - _cast_note > 240:
@@ -2904,10 +2907,11 @@ func reset_after_death() -> void:
 func _mend_cast(m) -> bool:
 	if m.known.is_empty() or not m.input.cast or m.dead:
 		return false
-	if String(m.known[clampi(m.sel, 0, m.known.size() - 1)]) != "mend":
+	var sid := String(m.known[clampi(m.sel, 0, m.known.size() - 1)])
+	if sid != "mend" and sid != "recall":
 		return false
 	if not m.cast_latch:
-		game._cast(m, "mend", m.input.aim)
+		game._cast(m, sid, m.input.aim)
 		m.cast_latch = true                  # (once a click)
 	return true
 
@@ -3480,7 +3484,7 @@ func _space_cast(m, st) -> void:
 	if not game.spell_ready(m, id) or m.mana < cost:
 		return
 	match id:
-		"mend":
+		"mend", "recall":
 			game._cast(m, id, m.input.aim)
 			return
 		"conjure":
