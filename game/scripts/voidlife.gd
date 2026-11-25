@@ -219,7 +219,7 @@ func tick(focus: Vector2) -> void:
 		if not m.dead:
 			var k: float = game.gear("space_mana", m)
 			if k > 1.0:
-				m.mana = minf(m.max_mana, m.mana + m.mana_regen * (k - 1.0))
+				m.mana = minf(m.max_mana, m.mana + game.mana_regen_of(m) * (k - 1.0))
 
 ## the first time you come upon each kind of thing: a word about it
 func _meet(focus: Vector2) -> void:

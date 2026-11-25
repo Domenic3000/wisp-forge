@@ -499,7 +499,7 @@ func _after_move(m, _a: float) -> void:
 		mine(m)
 	_wreck_near(m)
 	_trader_near(m)
-	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	m.mana = minf(m.max_mana, m.mana + game.mana_regen_of(m))
 	m.breath = minf(m.max_breath, m.breath + 4.0)       # (inside the wisp bubble)
 	if m.iframes > 0:
 		m.iframes -= 1
@@ -1952,7 +1952,7 @@ func _mine_at(m, p: Vector2, r: float) -> void:
 				if Defs.HARD[t] > m.tier:
 					hard = true
 					continue
-				if randf() > minf(0.95, 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2) * game.dig_speed(m)):
+				if randf() > minf(0.95, 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2) * game.dig_speed(m, false)):
 					continue
 				a.take(ck)
 				m.inv[t] += 1

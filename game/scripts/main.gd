@@ -2530,10 +2530,10 @@ func _update_player(m: Mage) -> void:
 		m.breath = minf(m.max_breath, m.breath + 4.0)
 	if m.iframes > 0:
 		m.iframes -= 1
-	var regen: float = m.mana_regen
+	var regen: float = mana_regen_of(m)
 	if sky_ev == "aurora" and m.local and exposed and m.mana < m.max_mana:
+		sky_stats["aurora_mana"] = float(sky_stats.get("aurora_mana", 0.0)) + regen
 		regen *= 2.0                                   # (under the aurora)
-		sky_stats["aurora_mana"] = float(sky_stats.get("aurora_mana", 0.0)) + m.mana_regen
 	m.mana = minf(m.max_mana, m.mana + regen)
 	if m.mana_spent_t > 0:
 		m.mana_spent_t -= 1
@@ -2702,7 +2702,13 @@ func _reach(m: Mage, aim: Vector2) -> Vector2:
 # ----------------------------------------------------------- shaping is magic --
 ## (user, 22 Nov: "tie excavating and removing blocks to mana ... everything ideally would be tied into the
 ## fact that we are using magic"; chose mana per cell, harder costs more, and a little to place things)
-const DIG_MANA := 0.08         # mana a cell of soft ground costs to take; each step of hardness adds 1.5x that
+const DIG_MANA := 0.068        # mana a cell of soft ground costs to take; each step of hardness adds 1.5x that
+## (user, 24 Nov: a better staff dug faster and so drained mana faster; "slow down the mana drain from digging
+## a bit and also make digging just a bit slower ... dont have to run out of mana and wait as much ... but i do
+## want mana to run out if you just spam digging"): each focus makes a cell cheaper (the Core Siphon about half)
+## and brings mana back a little faster (`mana_regen_of`), and digging is `DIG_PACE` of what it was
+const DIG_TIER_COST := [1.0, 1.0, 0.78, 0.62, 0.48]
+const TIER_REGEN := 0.05       # mana a tick more for each focus past the plain staff
 const PLACE_MANA := 0.04       # mana a cell put in place costs (conjured, laid, built), on top of the material
 const TORCH_MANA := 2.0
 const STATION_MANA := 8.0
@@ -2710,7 +2716,11 @@ const MANA_FLOOR := 1.0        # below this you can't dig, take away or conjure
 
 ## the mana a cell of material t costs to take away
 func dig_mana(t: int) -> float:
-	return DIG_MANA * (1.0 + 1.5 * float(Defs.HARD[t])) * gear("mana_cost", player)
+	return DIG_MANA * (1.0 + 1.5 * float(Defs.HARD[t])) * float(DIG_TIER_COST[clampi(player.tier, 0, 4)]) * gear("mana_cost", player)
+
+## the mana that comes back to m a tick: its own (the Mana Crystal, gear) and each focus's share
+func mana_regen_of(m: Mage) -> float:
+	return m.mana_regen + TIER_REGEN * float(maxi(0, m.tier - 1))
 
 func place_mana(cells: int) -> float:
 	return PLACE_MANA * float(cells) * gear("mana_cost", player)
@@ -4802,10 +4812,13 @@ func landed_on(i: int) -> bool:
 ## full rate (user, 23 Nov: "slow is fine in the beggining but should get more powerful through progression"):
 ## each focus digs faster (a plain staff 0.55, the Copper Focus 0.9, the Obsidian 1.3, the Core Siphon 1.8),
 ## each Delver's Rune forged 30% faster again (`items["delve"]` 0..3), and the Fire Opal gear on top.
+## Digging on a planet goes at `DIG_PACE` of that (user, 24 Nov: a little slower, so mana lasts longer and you
+## wait less); asteroids out in space cost no mana, so they're mined at the full rate (`paced` false).
 const DIG_TIER := [0.55, 0.55, 0.9, 1.3, 1.8]
 const DELVE := 1.3
-func dig_speed(m: Mage) -> float:
-	return float(DIG_TIER[clampi(m.tier, 0, 4)]) * pow(DELVE, float(int(m.items.get("delve", 0)))) * gear("dig_rate", m)
+const DIG_PACE := 0.7
+func dig_speed(m: Mage, paced := true) -> float:
+	return float(DIG_TIER[clampi(m.tier, 0, 4)]) * pow(DELVE, float(int(m.items.get("delve", 0)))) * gear("dig_rate", m) * (DIG_PACE if paced else 1.0)
 
 func recipe_done(r: Dictionary) -> bool:
 	if r.has("spell"):
@@ -5163,14 +5176,14 @@ func craft(r: Dictionary) -> bool:
 		"wide": dig_r = 11.0
 		"delve1", "delve2", "delve3":
 			items["delve"] = maxi(int(items.get("delve", 0)), int(String(r["id"]).substr(5)))
-			ui.toast("Your staff bites deeper: you dig %d%% as fast as you started" % int(round(dig_speed(player) / 0.55 * 100.0)), Color(1, 0.82, 0.23), 4.0)
+			ui.toast("Your staff bites deeper: you dig %d%% as fast as you started" % int(round(dig_speed(player) / (DIG_TIER[1] * DIG_PACE) * 100.0)), Color(1, 0.82, 0.23), 4.0)
 		"vital":
 			max_hp += 50
 			hp = max_hp
 			items["vital"] = true
 		"mana":
 			max_mana += 70
-			mana_regen = 0.32
+			mana_regen += 0.1
 			items["mana_crystal"] = true
 		"ward": heat_ward = true
 		"hearth", "sunveil", "fenmask", "tidecharm", "engine", "beam", "levitate", "sail", "harness":
@@ -7429,7 +7442,7 @@ func _ride(m: Mage) -> void:
 	m.air_time = 0
 	m.facing = skiff.facing
 	m.breath = minf(m.max_breath, m.breath + 4.0)
-	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	m.mana = minf(m.max_mana, m.mana + mana_regen_of(m))
 	if m.iframes > 0:
 		m.iframes -= 1
 
@@ -8124,7 +8137,7 @@ func _deck_move(m: Mage) -> void:
 	m.floating = false
 	m.in_liquid = false
 	m.breath = minf(m.max_breath, m.breath + 4.0)
-	m.mana = minf(m.max_mana, m.mana + m.mana_regen)
+	m.mana = minf(m.max_mana, m.mana + mana_regen_of(m))
 	if m.iframes > 0:
 		m.iframes -= 1
 	# walked out of an opening in the hull, or off an open deck: off the ship, with its speed

@@ -1122,10 +1122,10 @@ const LEARN := {
 	"sandstone": {"find": [SAND]},
 	"obsid": {"find": [LAVA, OBSIDIAN]}, "spark": {"find": [COPPER]}, "levitate": {"find": [WISP]},
 	"potion": {"find": [CRYSTAL]}, "vital": {"find": [SHROOM]}, "frost": {"find": [FROST]},
-	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "radward": {"find": [HULL]}, "rimeprow": {"find": [XENITE]}, "beam": {"find": [STARIRON]}, "delve1": {"find": [COPPERBAR]}, "delve2": {"find": [WISPBAR]}, "delve3": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
+	"ward": {"find": [EMBER]}, "tier3": {"find": [OBSIDIAN]}, "drive": {"find": [CORE]}, "radward": {"find": [HULL]}, "rimeprow": {"find": [XENITE]}, "beam": {"find": [STARIRON]}, "delve1": {"find": [COPPERBAR]}, "delve2": {"find": [WISPBAR]}, "mana": {"find": [WISPBAR]}, "delve3": {"find": [STARIRON]}, "sail": {"find": [STARIRON]}, "harness": {"find": [VOIDESS]},
 	"cinder": {"find": [EMBERCORE]}, "tidal": {"find": [TIDECORE]}, "sunlance": {"find": [SUNCORE]}, "mire": {"find": [MIRECORE]},
 	"glacier": {"find": [RIMECORE]}, "thorns": {"find": [WILDCORE]}, "sovereign": {"find": [CROWNCORE]}, "leviathan": {"find": [ABYSSCORE]},
-	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1}, "mana": {"scroll": 1},
+	"fireball": {"scroll": 1}, "tide": {"scroll": 1}, "wide": {"scroll": 1},
 	"quake": {"scroll": 2}, "blink": {"scroll": 2}, "mend": {"scroll": 2}, "starfall": {"scroll": 3},
 	"skiff": {"guardians": PLAN_HALVES},     # (user, 24 Nov: a quest, sure to come: two guardians' halves of its plans)
 	"hearth": {"shop": "shop", "kind": "frozen", "price": 45, "hoard": true},
@@ -1592,7 +1592,7 @@ const RECIPES := [
 	{"id": "thorns", "cat": "Core Arts", "name": "Thornburst", "cost": {WILDCORE: 10, WOOD: 12, LEAF: 12}, "spell": "thorns"},
 	{"id": "sovereign", "cat": "Core Arts", "name": "Sovereign Bolt", "cost": {CROWNCORE: 10, CRYSTAL: 6, WISPBAR: 4}, "spell": "sovereign"},
 	{"id": "leviathan", "cat": "Core Arts", "name": "Leviathan's Wrath", "cost": {ABYSSCORE: 10, ABYSSPEARL: 10, STARIRON: 6}, "spell": "leviathan"},
-	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava, and you dig faster. Copper ingots come from a Smelter (build mode, Workshops)."},
+	{"id": "tier2", "cat": "Staff & Body", "name": "Copper Focus", "cost": {COPPERBAR: 6, STONE: 20}, "desc": "Staff tier 2: Deepstone, Ember, Wisp, Brick, Lava; you dig faster for less mana, and mana comes back quicker. Copper ingots come from a Smelter (build mode, Workshops)."},
 	# Delver's Runes (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it ... slow is fine in the
 	# beggining but should get more powerful through progression"): each digs 30% faster (main `dig_speed`), the
 	# second and third building on the one before
@@ -1601,10 +1601,10 @@ const RECIPES := [
 	{"id": "delve3", "cat": "Staff & Body", "name": "Delver's Rune III", "cost": {STARIRON: 4, WISPBAR: 4, CORE: 2}, "desc": "Another 30% faster digging, on top of the second rune."},
 	{"id": "wide", "cat": "Staff & Body", "name": "Wide Excavation", "cost": {COPPERBAR: 3, CRYSTAL: 10}, "desc": "Bigger excavation radius (7.5 to 11)."},
 	{"id": "vital", "cat": "Staff & Body", "name": "Vital Bloom", "cost": {SHROOM: 16, LEAF: 12}, "desc": "+50 max health."},
-	{"id": "mana", "cat": "Staff & Body", "name": "Mana Crystal", "cost": {WISPBAR: 3, CRYSTAL: 8}, "desc": "+70 max mana, faster regeneration."},
+	{"id": "mana", "cat": "Staff & Body", "name": "Mana Crystal", "cost": {WISPBAR: 3, CRYSTAL: 8}, "desc": "+70 max mana, and it comes back almost half again as fast."},
 	{"id": "ward", "cat": "Staff & Body", "name": "Heat Ward", "cost": {EMBER: 15, FROST: 10, OBSIDIAN: 6}, "desc": "Survive the mantle heat."},
-	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISPBAR: 2}, "desc": "Staff tier 3: Obsidian and Magma Rock, and you dig faster still."},
-	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISPBAR: 5}, "desc": "Staff tier 4: harvest the Planet Core, and dig fastest of all. Needs the Ember Heart."},
+	{"id": "tier3", "cat": "Staff & Body", "name": "Obsidian Focus", "cost": {OBSIDIAN: 15, EMBER: 12, WISPBAR: 2}, "desc": "Staff tier 3: Obsidian and Magma Rock; faster and cheaper digging still, and quicker mana."},
+	{"id": "tier4", "cat": "Staff & Body", "name": "Core Siphon", "cost": {OBSIDIAN: 20, WISPBAR: 5}, "desc": "Staff tier 4: harvest the Planet Core; the fastest, cheapest digging and the quickest mana. Needs the Ember Heart."},
 	# wards: each bears one kind of planet's hazard (HAZARDS); a guardian's relic can do it instead
 	{"id": "hearth", "cat": "Wards", "name": "Hearth Charm", "cost": {EMBER: 10, COAL: 16, COPPERBAR: 2}, "desc": "Keeps a frozen world's cold off you under the open sky."},
 	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPERBAR: 2}, "desc": "Shades you from a desert world's midday sun."},

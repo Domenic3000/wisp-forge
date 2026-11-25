@@ -6268,6 +6268,39 @@ func _test_start() -> void:
 	var st_mono: bool = st_speeds[0] < st_speeds[1] and st_speeds[1] < st_speeds[2] and st_speeds[2] < st_speeds[3]
 	_ok("digging speeds up with each focus and each Delver's Rune", st_mono and st_d_ok,
 		"by tier %s; with the Copper Focus and three runes %.2f" % [str(st_speeds), st_last])
+	# (user, 24 Nov): a better focus makes a cell cheaper and brings mana back faster, so the drain a second
+	# grows far less than the speed; the Mana Crystal adds to regeneration (it used to set it, losing gear's)
+	var st_cost := []
+	var st_regen := []
+	var st_drain := []
+	g.items.erase("delve")
+	for st_t2 in [1, 2, 3, 4]:
+		g.player.tier = st_t2
+		st_cost.append(g.dig_mana(Defs.STONE))
+		st_regen.append(g.mana_regen_of(g.player))
+		st_drain.append(g.dig_speed(g.player) * g.dig_mana(Defs.STONE) / g.mana_regen_of(g.player))
+	var st_r0: float = g.player.mana_regen
+	var st_mx0: float = g.player.max_mana
+	var st_cr0: bool = g.items.has("mana_crystal")
+	var st_mrec: Dictionary = st_recipes.get("mana", {})
+	g.items.erase("mana_crystal")
+	g.player.max_mana = 100.0
+	g.player.mana_regen = st_r0 + 0.08                   # (as if a Sunstone Circlet were forged first)
+	for st_cm2 in st_mrec.get("cost", {}):
+		g.player.inv[int(st_cm2)] += int(st_mrec["cost"][st_cm2])
+	g.learn("mana", "test")
+	g.craft(st_mrec)
+	var st_cr_ok: bool = absf(g.player.mana_regen - (st_r0 + 0.18)) < 0.001
+	g.player.mana_regen = st_r0
+	g.player.max_mana = st_mx0
+	if not st_cr0:
+		g.items.erase("mana_crystal")
+	var st_m_ok: bool = st_cost[3] < st_cost[0] * 0.55 and st_regen[3] > st_regen[0] * 1.5 and st_drain[3] < st_drain[0] * 1.3 \
+		and g.dig_speed(g.player, false) > g.dig_speed(g.player) * 1.3 and st_cr_ok and Defs.learn_of({"id": "mana"}).has("find")
+	_ok("each focus makes digging cheaper and mana quicker to come back; the Mana Crystal adds to it", st_m_ok,
+		"a stone cell %s mana, regen %s a tick, digging's pull on mana (x regen) %s by tier; asteroids at %.2f; the crystal on a circlet: %s" % [
+		str(st_cost.map(func(v): return snappedf(v, 0.001))), str(st_regen.map(func(v): return snappedf(v, 0.001))),
+		str(st_drain.map(func(v): return snappedf(v, 0.01))), g.dig_speed(g.player, false), st_cr_ok])
 	g.player.tier = st_tier0
 	if st_delve0 == null:
 		g.items.erase("delve")
@@ -10441,7 +10474,7 @@ func _test_quest() -> void:
 	g.workshops.list = []
 	g.quest_test = true
 	# ---- a bare start
-	for key in ["skiff", "drive", "skiff_plans", "st_altar", "levitate", "heart", "quest", "qdone", "qfin", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
+	for key in ["skiff", "drive", "skiff_plans", "st_altar", "levitate", "mana_crystal", "heart", "quest", "qdone", "qfin", "st_kiln", "wisp_lantern", "wisp_sense", "wisp_ward", "wisp_hands", "cinderheart"]:
 		g.items.erase(key)
 	g.items["landed"] = {"0": true}
 	for key2 in g.items.keys():
@@ -10452,7 +10485,7 @@ func _test_quest() -> void:
 	g.tier = 1
 	g.known.erase("spark")
 	g.heat_ward = false
-	g.items["quest"] = {"ch": 0, "at": 0, "v": 3}
+	g.items["quest"] = {"ch": 0, "at": 0, "v": 4}
 	g.items["coins"] = 0
 	q.reset()
 	await _frames(31)
@@ -10588,7 +10621,7 @@ func _test_quest() -> void:
 	q.reset()
 	await _frames(31)
 	var cid: String = String(q.steps[q.at]["id"]) if q.at < q.steps.size() else "-"
-	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 3
+	var ok5: bool = g.items.has("wisp_lantern") and not g.items.has("wisp_ward") and int(g.items.get("coins", 0)) == 0 and (cid == "heat" or cid == "vulkhar") and int((g.items["quest"] as Dictionary).get("v", 0)) == 4
 	rows.append("%san old journey (skiff, Obsidian Focus, a quest from before the barriers) caught up to \"%s\", lantern %s, ward %s, %d coins given" % ["" if ok5 else "(!) ", cid, g.items.has("wisp_lantern"), g.items.has("wisp_ward"), int(g.items.get("coins", 0))])
 	ok = ok and ok5
 	# ---- a later world's chapter leads to the next world of the round, and the key to its barrier first

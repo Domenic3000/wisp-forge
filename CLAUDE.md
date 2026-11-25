@@ -580,7 +580,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   "tier", "item", "landed" planet index (main `landed_on`: `items["landed"]`, set by `_make_world`'s `note_landed`;
   a save from before gets every planet it has a world file for), "landed_other" (any round planet but c[1]),
   "landed_sys" (any planet of another system than c[1]), "count" items key n, "station" kind (set down or carried), "learned", "heat").
-  Chapter 0 (`_first_chapter`, 18 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, Obsidian Focus,
+  Chapter 0 (`_first_chapter`, 19 steps: dig, Spark Bolt, Kiln, smelt, Copper Focus, Levitation, the Mana Crystal
+  (learned on finding a Wisp Ingot; the Obsidian Focus also ticks it off), Obsidian Focus,
   a Summoning Altar, a guardian beaten (half the skiff's plans), a second (the plans whole: the skiff's recipe),
   Heat Ward, Vulkhar, Core Siphon, 30 core, Core Drive, the skiff, star iron, the voyage to
   `open_target(0)`: the round's first world with no barrier); a later planet you land on gets `_world_chapter(i)`
@@ -590,7 +591,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   Chapters follow the planet you're on in any order: one not finished (`items["qfin"]`) is taken up when you land
   there; a step done once (`items["qdone"]` "ch:id") stays done and never pays twice. Each step: "title" (the
   HUD's gold line, ui `quest_lbl`), "say" (the wisp, overlay `_bubble` over `main.wisp`; a toast instead out in
-  space), "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at, v: 3};
+  space), "how" (the journal), "reward" (coins / potion / cells), "power". Saved as `items["quest"]` {ch, at, v: 4};
   a game with none, or with an older "v" (the steps moved), catches up QUIETLY from the top (no rewards, the powers
   earned granted), so old saves are fine. `quest.reset()` on
   `start_game`. In the test mode it only runs while `quest_test` is set.
@@ -822,7 +823,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   `workshop_panel.png`).
 
 ## Shaping the world is magic (user, 22 Nov: "tie excavating and removing blocks to mana ... everything ideally would be tied into the fact that we are using magic including vfx")
-- Mana per cell, harder costs more: main `dig_mana(t)` = `DIG_MANA` (0.08) x (1 + 1.5 x HARD) x gear("mana_cost");
+- Mana per cell, harder costs more: main `dig_mana(t)` = `DIG_MANA` (0.068) x (1 + 1.5 x HARD) x `DIG_TIER_COST` by
+  staff tier (1, 1, 0.78, 0.62, 0.48) x gear("mana_cost"); mana comes back `mana_regen_of(m)` a tick = `m.mana_regen`
+  (0.22; the Mana Crystal +0.1, gear) + `TIER_REGEN` (0.05) per focus past the plain staff (user, 24 Nov: a better
+  staff dug faster and drained faster; less waiting, but spamming still runs dry; never read `m.mana_regen` directly);
   `_apply_counts` spends it for everything the GPU brushes collected this frame (dig, deconstruct, plants) and
   `place_mana(cells)` (`PLACE_MANA` 0.04) for what conjuring / back-wall painting placed (C_PLACED), and lights
   the HUD's mana bar (`Mage.mana_spent_t`). `has_mana(m, need, p, what)`: below `MANA_FLOOR` (1) digging,
@@ -1231,7 +1235,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   into a brick hut; Bramblehorn calls boars, roused; Vulkhar calls imps in reach). Since bosses break in, a test
   that expects one to "come" accepts it getting to you either way.
 - Digging speed grows (user, 23 Nov: "Mining is a little slow and i dont see anyway to upgrade it"): main
-  `dig_speed(m)` = `DIG_TIER` by staff tier (0.55, 0.55, 0.9, 1.3, 1.8) x `DELVE` (1.3) per Delver's Rune
+  `dig_speed(m)` = `DIG_TIER` by staff tier (0.55, 0.55, 0.9, 1.3, 1.8) x `DIG_PACE` (0.7 on a planet; asteroids,
+  which cost no mana, `dig_speed(m, false)`) x `DELVE` (1.3) per Delver's Rune
   (`items["delve"]`, recipes delve1-3: copper ingots, then wisp ingots and obsidian, then star iron and core;
   each learned on first finding its ingot / star iron) x gear "dig_rate". Used by the excavation brush and
   asteroid mining (space `_mine_at`), not the Remove tool. Test: in `_test_start`.

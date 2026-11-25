@@ -57,7 +57,7 @@ func tick() -> void:
 	var first := q.is_empty()
 	# (a journey from before the barriers, 24 Nov: its chapters were laid out by index, so it catches up
 	# again from the top, quietly)
-	var quiet := first or int(q.get("v", 1)) < 3
+	var quiet := first or int(q.get("v", 1)) < 4
 	if quiet and not first:
 		q = {"ch": int(q.get("ch", 0)), "at": 0}
 	var ch := int(q.get("ch", 0))
@@ -84,7 +84,7 @@ func tick() -> void:
 		if not game.items.has("qfin"):
 			game.items["qfin"] = {}
 		(game.items["qfin"] as Dictionary)[str(chapter)] = true
-	game.items["quest"] = {"ch": chapter, "at": at, "v": 3}
+	game.items["quest"] = {"ch": chapter, "at": at, "v": 4}
 	if first:
 		say(("I'm your wisp. I'll guide you from here. " + String(steps[at]["say"])) if at < steps.size() else "I'm your wisp. I'll light your way.")
 	elif moved:
@@ -235,6 +235,9 @@ func _first_chapter() -> Array:
 		{"id": "levitate", "title": "Forge Levitation", "need": [["item", "levitate"]], "reward": {"potion": 1},
 			"say": "Deeper down, wisp ore glows blue: the Copper Focus cuts it. Three copper ingots, four wisp ore and ten leaves forge Levitation.",
 			"how": "Wisp ore lies deep, glowing blue; only the Copper Focus cuts it. Levitation is at the Wisp Forge (C, Staff & Body). Hold jump in the air to float on your mana. Smelt wisp ore too (3 to an ingot): you'll want Wisp Ingots."},
+		{"id": "mana", "title": "Forge the Mana Crystal", "need": [["item", "mana_crystal"], ["tier", 3]], "reward": {"potion": 1},
+			"say": "Your first Wisp Ingot! Three of them and eight prism crystals forge a Mana Crystal: more mana, and it comes back faster.",
+			"how": "At the Wisp Forge (C), Staff & Body: the Mana Crystal (3 Wisp Ingots, 8 Prism Crystal). Prism crystal glows pink-violet in the rock. +70 max mana, and mana comes back almost half again as fast. Each new focus also makes digging cheaper and brings mana back faster."},
 		{"id": "obsidian", "title": "Forge the Obsidian Focus", "need": [["tier", 3]], "reward": {"coins": 20},
 			"say": "Deeper still you'll need the Obsidian Focus: obsidian (or ash and sand fired in a kiln), ember crystals and two wisp ingots.",
 			"how": "Obsidian forms where lava meets water deep down, or fire ash and sand together in a Kiln. Ember crystals glow red in the deep. Forge the Obsidian Focus (C, Staff & Body): it cuts obsidian and magma rock."},
