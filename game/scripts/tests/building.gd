@@ -512,6 +512,8 @@ func _test_hand() -> void:
 	var m = g.player
 	var sel0: int = g.sel
 	var mat0: int = g.mat
+	var inv0: PackedInt32Array = m.inv.duplicate()      # (put back after: later checks count on their stock)
+	var furn0: Array = m.furn.duplicate(true)
 	var ha := atan2(m.pos.y, m.pos.x) + 0.2
 	var hup := Vector2(cos(ha), sin(ha))
 	var c0: Vector2i = Build.cell_of(hup * (g.gpu.surf_at(ha).x + 150.0))
@@ -685,6 +687,8 @@ func _test_hand() -> void:
 	g.hand_shape = 0
 	g.sel = sel0
 	g.mat = mat0
+	m.inv = inv0
+	m.furn = furn0
 	# take the slab and what's on it away again
 	var clr := PackedInt32Array()
 	clr.resize(SW * (SH + 40))
@@ -1100,9 +1104,10 @@ func _test_crafting() -> void:
 	var cr_sel0: int = g.sel
 	g.hold_carried("station", -1, "kiln")
 	var held: Dictionary = g.hand_piece()
+	var cr_conj: bool = g.conjuring(g.player)
 	g.hand_item = {}
 	g.sel = cr_sel0
-	var ok1: bool = made_k == 1 and in_sat and g.conjuring(g.player) and String(held.get("station", "")) == "kiln"
+	var ok1: bool = made_k == 1 and in_sat and cr_conj and String(held.get("station", "")) == "kiln"
 	rows.append("%sa Kiln forged into the satchel %s, in hand to set down %s" % ["" if ok1 else "(!) ", in_sat, String(held.get("name", "-"))])
 	ok = ok and ok1
 	if g.build_on:
