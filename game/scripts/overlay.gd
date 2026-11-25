@@ -10,6 +10,7 @@ const MageRig := preload("res://scripts/mage_rig.gd")
 const BossArt := preload("res://scripts/boss_art.gd")
 const FolkArt := preload("res://scripts/folk_art.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
+const Speech := preload("res://scripts/speech.gd")
 const Ecology := preload("res://scripts/ecology.gd")
 
 var _art_jobs := {}         # foe type -> [worker task, {"fr", "gaps"}] (`_boss_art`)
@@ -682,7 +683,7 @@ func _draw_skiff() -> void:
 		draw_rect(Rect2(Vector2(dc) - sk.com, Vector2(1, 1)), Color(1.0, 0.92, 1.0, 0.6 + pul * 0.4))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
 	if game.door_in_reach(game.player):
-		_bubble(sk.door_world(), "[F] Step into the pocket", 0.9)
+		_bubble(sk.door_world(), "[F] Step into the pocket", 0.9, "door", Speech.PROMPT)
 
 ## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the
 ## light streaming from the staff, and the reticle.
@@ -736,43 +737,17 @@ func _draw() -> void:
 	game.prof_add("drawing sprites", Time.get_ticks_usec() - t_draw)
 
 ## a speech bubble over someone's head: a rounded box with a little tail, the words wrapped to a width
-func _bubble(wpos: Vector2, text: String, alpha: float) -> void:
-	var px: float = float(game.scale_px)
-	var head: Vector2 = game.world_to_screen(wpos - game.basis_d(atan2(wpos.y, wpos.x)) * 13.0)
-	var f: Font = PixelFont.make()
-	var u: int = game.ui.U
-	var sz := PixelFont.SIZE * u
-	var maxw := 150.0 * u
-	# wrap the words into lines no wider than maxw (in screen pixels)
-	var lines := []
-	var cur := ""
-	for word in text.split(" "):
-		var tryl := word if cur == "" else cur + " " + word
-		if f.get_string_size(tryl, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x > maxw and cur != "":
-			lines.append(cur)
-			cur = word
-		else:
-			cur = tryl
-	if cur != "":
-		lines.append(cur)
-	var wmax := 0.0
-	for ln in lines:
-		wmax = maxf(wmax, f.get_string_size(ln, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x)
-	var lh := float(sz + u)
-	var pad := 4.0 * u
-	var bw := (wmax + pad * 2.0) / px
-	var bh := (lh * lines.size() - u + pad * 2.0) / px
-	var x0 := clampf(head.x - bw * 0.5, 2.0, float(game.VW) - bw - 2.0)
-	var y0 := head.y - bh - 4.0 / px
-	var bg := Color(0.98, 0.96, 0.9, 0.92 * alpha)
-	var edge := Color(0.18, 0.14, 0.1, 0.9 * alpha)
-	draw_rect(Rect2(x0 - 1.0 / px, y0 - 1.0 / px, bw + 2.0 / px, bh + 2.0 / px), edge)
-	draw_rect(Rect2(x0, y0, bw, bh), bg)
-	draw_colored_polygon(PackedVector2Array([Vector2(head.x - 3.0 / px * 2.0, y0 + bh), Vector2(head.x + 3.0 / px * 2.0, y0 + bh), Vector2(head.x, y0 + bh + 5.0 / px * 2.0)]), bg)
-	draw_set_transform(Vector2(x0, y0), 0.0, Vector2.ONE / px)
-	for li in lines.size():
-		draw_string(f, Vector2(pad, pad + float(PixelFont.ASCENT * u) + li * lh), lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0.15, 0.11, 0.08, alpha))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+## a speech bubble over a world point (speech.gd: it pops in, types out and speaks at `pitch`; style
+## Speech.SPEECH, WISP or PROMPT; `key` says who's speaking, so it's remembered from frame to frame)
+func _bubble(wpos: Vector2, text: String, alpha: float, key := "", style := 0, pitch := 1.0) -> void:
+	var head: Vector2 = game.world_to_screen(wpos - _down_at(wpos) * 13.0)
+	game.speech.draw(self, head, text, alpha, key, style, wpos, pitch)
+
+## down at a world point: toward the planet's centre (the pocket's down is the screen's)
+func _down_at(wpos: Vector2) -> Vector2:
+	if game.pocket.active:
+		return Vector2(0, 1)
+	return game.basis_d(atan2(wpos.y, wpos.x))
 
 ## the sky events' own pictures (main `sky_fx`, `sky_wisps`): shooting stars, lightning bolts, rockets,
 ## will-o'-wisps, and a tint over the whole view (a sandstorm's haze, an eruption's glow)
@@ -888,9 +863,9 @@ func _draw_all() -> void:
 		if v2.fade > 0:
 			continue
 		if v2.say_t > 0 and v2.say != "":
-			bubbles.append([v2.pos, v2.say, clampf(float(v2.say_t) / 30.0, 0.0, 1.0)])
+			bubbles.append([v2.pos, v2.say, clampf(float(v2.say_t) / 30.0, 0.0, 1.0), "f%d" % v2.fseed, Speech.SPEECH, Speech.pitch_of(v2.fseed)])
 		elif v2.keeper and (v2.pos as Vector2).distance_to(game.player.pos) < 60.0:
-			bubbles.append([v2.pos, "%s · %s  [F]" % [v2.name, Defs.SHOPS[v2.role]["title"]], 0.75])
+			bubbles.append([v2.pos, "%s · %s  [F]" % [v2.name, Defs.SHOPS[v2.role]["title"]], 0.85, "k%d" % v2.fseed, Speech.PROMPT, 1.0])
 		else:
 			_folk_mark(v2)
 
@@ -907,7 +882,7 @@ func _draw_all() -> void:
 				"stone": at = md["stones"][int(nr["i"])]["pos"]
 				"pillar": at = md["pillars"][int(nr["i"])]["pos"]
 				"vault": at = md["vault"]
-			bubbles.append([at - game.basis_d(atan2(at.y, at.x)) * 6.0, mp, 0.85])
+			bubbles.append([at - game.basis_d(atan2(at.y, at.x)) * 6.0, mp, 0.85, "mystery", Speech.PROMPT, 1.0])
 	tq = _part("draw: words, carcasses", tq)
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	var vr := Rect2(-120.0, -120.0, float(game.VW) + 240.0, float(game.VH) + 240.0)
@@ -985,8 +960,9 @@ func _draw_all() -> void:
 		var blink: bool = game.iframes > 0 and (game.iframes / 4) % 2 == 0
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)
+	bubbles.append_array(game.test_bubbles)
 	for bb in bubbles:
-		_bubble(bb[0], bb[1], bb[2])
+		_bubble(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
 	tq = _part("draw: mages", tq)
 	# the skiff (over its riders: the hull hides their legs, the canopy is glass)
 	_draw_skiff()
@@ -1005,7 +981,7 @@ func _draw_all() -> void:
 			draw_rect(Rect2((ws + Vector2(cos(wa), sin(wa)) * wr).floor(), Vector2.ONE), Color(0.7, 0.92, 1.0, 0.35))
 	_draw_sense()
 	if game.quest != null and game.quest.say_t > 0 and game.quest.say_text != "":
-		_bubble(game.wisp + game.basis_d(atan2(game.wisp.y, game.wisp.x)) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0))
+		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
 	# particles (the light read where each is in the picture: near enough, the light is soft)
 	var pxf: Transform2D = game.screen_xf()
 	var paff: bool = game.screen_xf_ok()

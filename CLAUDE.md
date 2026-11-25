@@ -934,6 +934,18 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   (`_cost_chip`); shops in two columns. Test: `_test_ui` ("ui": the font has every character the game writes,
   whole-pixel scale, satchel and spell bar on screen; pictures `ui_hud/forge/settings/shop/title.png`).
 
+## Speech bubbles (scripts/speech.gd; user, 25 Nov: "make the text boxes for speech look a little nicer with an animation and talking sound effects")
+- main `speech` draws every bubble: overlay `_bubble(wpos, text, alpha, key, style, pitch)` (villagers "f<seed>",
+  keepers' and the door's prompts, the mystery's prompt, the wisp "wisp"; `test_bubbles` for the tests), the
+  pocket's prompts and space.gd's spacers ("s<seed>") and their prompts. Kept by `key` while drawn (forgotten after
+  `FORGET` frames unseen, or when the words change): it POPS open out of its tail (`POP` frames, a small overshoot),
+  then TYPES `CPS` letters a frame (pauses after . ! ? and , ; :), with a BLIP (audio "talk", the wisp's "talk_wisp")
+  every `BLIP_EVERY` letters at the speaker's pitch (`pitch_of(seed)` 0.78..1.3). The box is laid out for the
+  whole text first, so it never resizes while typing. Styles SPEECH (parchment), WISP (deep blue, glowing edge,
+  corner twinkles, a slight bob), PROMPT (dark ink, gold edge; words shown at once, silent); words in [brackets]
+  take the accent colour. Test: `_test_speech` ("speech"; in the full run after `_test_ui`; pictures
+  `speech_typing.png`, `speech_wisp.png`, `speech_kinds.png`).
+
 ## Building the game to share (Build game.bat; user, 22 Nov: "build the game into an easily distributable .exe")
 - `Build game.bat` (repo root): finds the console Godot in engine/, works out the template version from
   `--version` (4.7.2.stable -> templates "4.7.2.stable", release "4.7.2-stable"), and if Godot's export templates
@@ -1463,7 +1475,7 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms
   frame ...` for any frame over 150 ms (the game's process, drawing, GPU wait).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "cabin", "stations", "fuel", "hull", "shipyard", "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

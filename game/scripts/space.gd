@@ -2493,12 +2493,13 @@ func _draw_top_parts() -> void:
 				_top_text(xf * sgn, String(Outpost.OP_ROOMS[skp.shop]).to_upper(), Outpost.SHOP_COL[skp.shop])
 	if near_trader != null and near_keeper != null:
 		var kw: Vector2 = near_trader.to_world(near_keeper.b + Vector2(0.0, -34.0) - near_trader.com)
-		_top_text(xf * kw, "[F] trade with %s, %s" % [near_keeper.name, String(Outpost.OP_ROOMS[near_keeper.shop]).to_lower()], Color(1.0, 0.88, 0.5))
+		game.speech.draw(_top, xf * kw, "[F] trade with %s, %s" % [near_keeper.name, String(Outpost.OP_ROOMS[near_keeper.shop]).to_lower()], 1.0, "trade", game.Speech.PROMPT)
 	for f2 in folk:
+		# (what spacers say: speech bubbles that pop in, type out and speak in their own voice)
 		if f2.say_t > 0:
-			_top_text(xf * (f2.world() - f2.op.axis_y() * 16.0), f2.say, Color(0.92, 0.95, 1.0))
+			game.speech.draw(_top, xf * (f2.world() - f2.op.axis_y() * 12.0), f2.say, clampf(float(f2.say_t) / 30.0, 0.0, 1.0), "s%d" % f2.fseed, game.Speech.SPEECH, f2.world(), game.Speech.pitch_of(f2.fseed))
 		elif f2 == near_folk:
-			_top_text(xf * (f2.world() - f2.op.axis_y() * 16.0), "[F] talk to %s" % f2.name, Color(1.0, 0.88, 0.5))
+			game.speech.draw(_top, xf * (f2.world() - f2.op.axis_y() * 12.0), "[F] talk to %s" % f2.name, 1.0, "talkto", game.Speech.PROMPT)
 	if near_cache != null and near_wreck != null:
 		var cp: Vector2 = xf * (near_wreck.cache_pos(near_cache) as Vector2)
 		var f2: Font = PixelFont.make()

@@ -1670,10 +1670,12 @@ func run() -> void:
 			_go(Vector2(cos(hzo_a), sin(hzo_a)) * (g.gpu.surf_at(hzo_a).x + 12.0))
 			await _frames(60)
 			await _test_hazards()
-		elif only == "ui":
+		elif only == "ui" or only == "speech":
 			_go(g.player.pos)
 			await _frames(60)
-			await _test_ui()
+			if only == "ui":
+				await _test_ui()
+			await _test_speech()
 		elif only == "mines":
 			for mi_info in g.builds.infos:
 				if mi_info["meta"].has("mine") and int(mi_info.get("unsound", 0)) > 0:
@@ -3831,6 +3833,7 @@ func run() -> void:
 	await _test_quest()
 	await _test_recipes()
 	await _test_ui()
+	await _test_speech()
 	_ok("the Wisp Forge lists recipes and crafts", cards == shown and crafted, "%d of %d recipe cards (%d hidden until their ore is found), crafting %s" % [cards, shown, g.recipes.size() - shown, "works" if crafted else "failed"])
 
 	# ---- a building left hanging comes down as a whole once you dig at any part of it ----
@@ -10930,6 +10933,73 @@ func _test_pocket() -> void:
 		pk.leave(g.player)
 	print("[pocket] " + "\n[pocket] ".join(rows))
 	_ok("the ship's pocket dimension: in by the door and by Wisp Recall (a blow breaks it), walked, built on, grown, out by the arch and by the ship, kept", ok, "; ".join(rows))
+
+## (user, 25 Nov: "make the text boxes for speech look a little nicer with an animation and talking sound
+## effects"): the wisp's words pop in and type out with blips, a villager's in their own voice
+func _test_speech() -> void:
+	var rows := []
+	var ok := true
+	var sp = g.speech
+	var Sp = load("res://scripts/speech.gd")
+	g.player.dead = false
+	_go(g.player.pos)
+	await _frames(20)
+	var b0: int = int(sp.stats["blips"])
+	var line := "Well met, mage. The stones remember a song; listen, and they'll teach it to you."
+	g.quest.say_text = line
+	g.quest.say_t = 600
+	await _frames(3)
+	var popping: bool = sp.st.has("wisp") and int(sp.st["wisp"]["age"]) < 6
+	await _frames(14)
+	var typing: bool = sp.typing("wisp")
+	var part: int = int(sp.st["wisp"]["shown"]) if sp.st.has("wisp") else -1
+	_shot("speech_typing.png")
+	for w in 240:
+		if not sp.typing("wisp"):
+			break
+		await _frames(1)
+	var done: bool = sp.st.has("wisp") and not sp.typing("wisp")
+	var blips: int = int(sp.stats["blips"]) - b0
+	await _frames(10)
+	_shot("speech_wisp.png")
+	var ok0: bool = popping and typing and part > 0 and part < line.length() and done and blips >= 15 and blips <= 50
+	rows.append("%sthe wisp: popped in %s, typing %s (%d of %d letters), all said %s, %d blips" % ["" if ok0 else "(!) ", popping, typing, part, line.length(), done, blips])
+	ok = ok and ok0
+	g.quest.say_t = 0
+	await _frames(20)
+	var forgot: bool = not sp.st.has("wisp") or Engine.get_process_frames() - int(sp.st["wisp"]["seen"]) > 10
+	# a villager speaking (one stood beside you), in their own voice
+	var ok1 := true
+	var vtxt := ""
+	if not g.towns.folk.is_empty():
+		var v = g.towns.folk[0]
+		v.fade = 0
+		v.say = "Fine weather for digging, isn't it? Mind the caves past the old well."
+		v.say_t = 400
+		var keep_pos: Vector2 = v.pos
+		v.pos = g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 30.0
+		await _frames(90)
+		var vk := "f%d" % v.fseed
+		ok1 = sp.st.has(vk)
+		vtxt = "a villager speaking %s (pitch %.2f)" % [ok1, Sp.pitch_of(v.fseed)]
+		_shot("speech_villager.png")
+		v.say_t = 0
+		v.pos = keep_pos
+	else:
+		vtxt = "no villager about to speak"
+	# a villager's parchment bubble and a prompt, side by side
+	var r: Vector2 = g.basis_r(atan2(g.player.pos.y, g.player.pos.x))
+	g.test_bubbles = [[g.player.pos - r * 40.0, "Fine weather for digging, isn't it? Mind the caves past the old well.", 1.0, "tv", Sp.SPEECH, 0.9],
+		[g.player.pos + r * 45.0, "[F] Step into the pocket", 1.0, "tp", Sp.PROMPT, 1.0]]
+	await _frames(100)
+	var both: bool = sp.st.has("tv") and sp.st.has("tp") and not sp.typing("tv") and not sp.typing("tp")
+	_shot("speech_kinds.png")
+	g.test_bubbles = []
+	ok1 = ok1 and both
+	rows.append("%s%s; forgotten once it stops %s; a parchment bubble and a prompt %s" % ["" if ok1 and forgot else "(!) ", vtxt, forgot, both])
+	ok = ok and ok1 and forgot
+	print("[speech] " + "\n[speech] ".join(rows))
+	_ok("speech bubbles pop in, type out with a voice, and are forgotten when they stop", ok, "; ".join(rows))
 
 ## paints (or cuts) from cell a to b of the ship as it was (`at` says where such a cell is now), a little at a
 ## time as you would by hand

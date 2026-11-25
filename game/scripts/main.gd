@@ -28,6 +28,7 @@ const WorkshopArt := preload("res://scripts/workshop_art.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 const Pocket := preload("res://scripts/pocket.gd")
 const Shipyard := preload("res://scripts/shipyard.gd")
+const Speech := preload("res://scripts/speech.gd")
 const Weather := preload("res://scripts/weather.gd")
 # (the test script is loaded only in test mode, at run time: if it fails to load, the game says so
 # and quits instead of failing to load itself and leaving a blank window open)
@@ -275,6 +276,8 @@ var overlay
 var space                 # above the orbit band: the space view and the staff-jet flight (space.gd)
 var pocket                # inside your ship: a pocket dimension, an isle in a nebula (pocket.gd)
 var shipyard              # the ship builder, where the ship is parked (shipyard.gd; state "shipyard")
+var speech = Speech.new()  # every speech bubble: its pop, its typing, its voice (speech.gd)
+var test_bubbles := []     # (the tests: [world point, text, alpha, key, style, pitch] drawn as bubbles)
 var classic_skiff := false   # (the test mode: the skiff is forged as before, not as a bare keel)
 var towns                 # the living villages' folk, talk and trade (towns.gd)
 var workshops             # the workshop stations on this planet (workshops.gd)
@@ -666,6 +669,7 @@ func _ready() -> void:
 	workshops = Workshops.new(self)
 	summoning = Summoning.new(self)
 	pix.add_child(space)
+	speech.game = self
 	pocket = Pocket.new()
 	pocket.game = self
 	pix.add_child(pocket)

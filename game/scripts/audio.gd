@@ -33,7 +33,7 @@ var _mood := ""
 var _fade := 1.0
 
 const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak": 50, "rumble": 25, "land": 8,
-	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8, "croak": 18, "chirp": 10, "song": 90, "glyph": 6}
+	"place": 5, "levitate": 14, "splash": 10, "ui_hover": 3, "swing": 8, "bow": 6, "screech": 12, "crack": 6, "thud": 6, "zap": 8, "croak": 18, "chirp": 10, "song": 90, "glyph": 6, "talk": 3, "talk_wisp": 3}
 
 func _ready() -> void:
 	for k in 10:
@@ -292,6 +292,10 @@ func _build_sfx() -> void:
 	# a frog's croak: a low buzzing saw falling in pitch, softened; a startled bird's chirp
 	sfx["croak"] = _wav(_lowpass(_mix(_sweep(0.16, 210.0, 130.0, "saw", 11.0, 0.2), _sweep(0.12, 420.0, 260.0, "saw", 16.0, 0.06)), 0.35))
 	sfx["chirp"] = _wav(_mix(_sweep(0.07, 2400.0, 3300.0, "sine", 22.0, 0.09), _sweep(0.06, 3000.0, 2500.0, "sine", 26.0, 0.06)))
+	# speech blips (speech.gd): a soft, rounded "bup" under a breath of square, and the wisp's little chime;
+	# played at each speaker's own pitch
+	sfx["talk"] = _wav(_lowpass(_mix(_sweep(0.055, 420.0, 380.0, "square", 38.0, 0.07), _sweep(0.05, 840.0, 760.0, "sine", 44.0, 0.08)), 0.3))
+	sfx["talk_wisp"] = _wav(_mix(_chime([1567.98], 0.0, 0.09, 0.05), _sweep(0.05, 2350.0, 2600.0, "sine", 50.0, 0.035)))
 	sfx["land"] = _wav(_mix(_noise(0.12, 0.08, 30.0, 0.9), _sweep(0.1, 120.0, 60.0, "sine", 30.0, 0.4)))
 	sfx["jump"] = _wav(_sweep(0.12, 260.0, 520.0, "sine", 14.0, 0.28))
 	sfx["levitate"] = _wav(_mix(_noise(0.25, 0.05, 6.0, 0.25), _sweep(0.25, 600.0, 640.0, "sine", 8.0, 0.06)))

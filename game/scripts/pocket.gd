@@ -517,15 +517,4 @@ func _draw_top() -> void:
 		at = isle.to_world(Vector2(float(cx + Isle.HEART_DX) + 0.5, isle.top_at(cx + Isle.HEART_DX, 0) - 30.0))
 	if txt == "":
 		return
-	var sp: Vector2 = game.world_to_screen(at)
-	var f: Font = PixelFont.make()
-	var px: float = float(game.scale_px)
-	var u: int = game.ui.U
-	var sz := PixelFont.SIZE * u
-	var wd := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
-	top.draw_set_transform(sp.round(), 0.0, Vector2.ONE / px)
-	var r := Rect2(Vector2(-wd * 0.5 - 4.0 * u, -float(sz) - 3.0 * u), Vector2(wd + 8.0 * u, float(sz) + 6.0 * u))
-	top.draw_rect(r, Color(0.05, 0.03, 0.1, 0.85))
-	top.draw_rect(r, Color(0.56, 0.48, 0.88, 0.9), false, float(u))
-	top.draw_string(f, Vector2(-wd * 0.5, -2.0 * u), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0.95, 0.9, 1.0))
-	top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	game.speech.draw(top, game.world_to_screen(at), txt, 1.0, "pocket_" + near, game.Speech.PROMPT)
