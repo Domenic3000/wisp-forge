@@ -5540,7 +5540,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			if n < known.size():
 				sel = n
 		elif (k == KEY_Q or k == KEY_E) and not space.active:
-			_cycle_material(1 if k == KEY_E else -1)      # (out in space Q / E turn the view)
+			# (out in space Q / E turn the view) along the item belt; with nothing on it, through what you own
+			if not belt_step(1 if k == KEY_E else -1):
+				_cycle_material(1 if k == KEY_E else -1)
 		elif k == KEY_N:
 			settings["minimap"] = not bool(settings.get("minimap", true))
 			_save_settings()
@@ -5845,7 +5847,92 @@ func hand_hint() -> String:
 ## lately, newest first (the hand's own at [0]), shown under the hand bar to click back into your hand.
 ## ids: "m<material>", "f:<furniture name>", "s:<workshop kind>".
 var hand_recent := []
-const QUICK_N := 6
+const QUICK_N := 12
+
+## The item belt (user, 25 Nov: "is there an easy way to select the recent materials that i conjured other than
+## clicking them? and maybe we add a quickbar for satchel items for when we add controller support"; chose an
+## item belt beside the spells): BELT_N slots over the spell bar. Things you pin (right-click in the satchel)
+## keep their slot, saved with the journey (items["belt"]); the empty slots fill with what you held lately.
+## Q / E step along it (out in space they turn the view); 1-9 and the wheel still pick spells. (For a
+## controller later: the D-pad for the belt, the bumpers for spells.)
+const BELT_N := 8
+
+func belt_pins() -> Array:
+	var bp: Array = items.get("belt", [])
+	while bp.size() < BELT_N:
+		bp.append("")
+	return bp
+
+## do you still have it?
+func belt_has(id: String) -> bool:
+	if id.begins_with("m"):
+		return player.inv[int(id.substr(1))] > 0
+	if id.begins_with("f:"):
+		return _furn_index(id.substr(2)) >= 0
+	if id.begins_with("s:"):
+		return int(items.get("st_" + id.substr(2), 0)) > 0
+	return false
+
+## the belt's slots: [id, pinned] (id "" for an empty slot)
+func belt() -> Array:
+	var bp := belt_pins()
+	var out := []
+	var on := {}
+	for id in bp:
+		if String(id) != "":
+			on[String(id)] = true
+	var rec := []
+	for id2 in hand_recent:
+		if not on.has(String(id2)) and belt_has(String(id2)):
+			rec.append(String(id2))
+	for k in BELT_N:
+		if String(bp[k]) != "":
+			out.append([String(bp[k]), true])
+		elif not rec.is_empty():
+			out.append([String(rec.pop_front()), false])
+		else:
+			out.append(["", false])
+	return out
+
+## pin it to the belt (the first free slot, or over the last), or unpin it if it's pinned
+func belt_pin(id: String) -> void:
+	var bp := belt_pins()
+	var k := bp.find(id)
+	if k >= 0:
+		bp[k] = ""
+		ui.toast("Unpinned from the belt", Color(0.8, 0.8, 0.9), 1.2)
+	else:
+		k = bp.find("")
+		if k < 0:
+			k = BELT_N - 1
+		bp[k] = id
+		ui.toast("Pinned to the belt (Q / E)", Color(0.95, 0.85, 0.55), 1.5)
+	items["belt"] = bp
+
+## Q / E: the next thing along the belt that you still have, into your hand. False if the belt is empty.
+func belt_step(dir: int) -> bool:
+	var b := belt()
+	var have := []
+	for k in BELT_N:
+		if String(b[k][0]) != "" and belt_has(String(b[k][0])):
+			have.append(k)
+	if have.is_empty():
+		return false
+	var cur := -1
+	var hid := hand_id()
+	for k2 in BELT_N:
+		if String(b[k2][0]) == hid and hid != "":
+			cur = k2
+	var pick: int = have[0] if dir > 0 else have[have.size() - 1]
+	# (from what's in your hand, if it's on the belt and you're holding Conjure; else from the belt's end)
+	var pos := have.find(cur)
+	if pos >= 0 and conjuring(player):
+		pick = have[posmod(pos + dir, have.size())]
+	quick_take(String(b[pick][0]))
+	stats_belt_steps += 1
+	return true
+
+var stats_belt_steps := 0             # (for the tests)
 
 func hand_id() -> String:
 	if hand_item.is_empty():
@@ -5859,9 +5946,10 @@ func hand_id() -> String:
 
 func _note_hand() -> void:
 	var id := hand_id()
-	if id == "" or (not hand_recent.is_empty() and hand_recent[0] == id):
+	# (something already on the list keeps its place: stepping along the belt mustn't shuffle its slots;
+	# only something new comes in at the front)
+	if id == "" or hand_recent.has(id):
 		return
-	hand_recent.erase(id)
 	hand_recent.push_front(id)
 	if hand_recent.size() > QUICK_N:
 		hand_recent.resize(QUICK_N)

@@ -707,11 +707,12 @@ func _test_hand() -> void:
 
 ## The in-world interface, second pass (user, 25 Nov: "C summons the forge into the world", the recipe book a
 ## grimoire, workshops that show what they're doing, the staff's gem showing your mana, "Send to the Kiln", a
-## quick bar): the forge rises beside you and fades when shut, and what's forged flies from it; a recipe
+## quick bar, then the item belt): the forge rises beside you and fades when shut, and what's forged flies from it; a recipe
 ## learned sends a page flying into your book and inks in as the book next opens; a locked page's sketch; a
 ## kiln on a slab in the air shows its glass on a tray, F takes it (no panel), F with sand in hand drops it
-## in, then F opens the panel; a process sent to the kiln from the book; the gem dims and flares; the quick
-## bar gives back what you held. A picture of the forge (`forge.png`). The slab taken away after.
+## in, then F opens the panel; a process sent to the kiln from the book; the gem dims and flares; the item
+## belt (pinned things keep their slot, what you held lately fills the rest, Q / E step along it). A picture
+## of the forge (`forge.png`). The slab taken away after.
 func _test_inworld() -> void:
 	var m = g.player
 	var iw_back: Vector2 = m.pos
@@ -824,17 +825,36 @@ func _test_inworld() -> void:
 	var flare: Color = g.overlay._gem_now(m, gem)
 	ok["gem"] = dim.get_luminance() < gem.get_luminance() * 0.6 and g.overlay.stats_gem_flares == fl0 + 1 and flare.get_luminance() > gem.get_luminance()
 	txt.append("gem: %.2f drained, %.2f lit, %.2f flaring" % [dim.get_luminance(), gem.get_luminance(), flare.get_luminance()])
-	# ---- the quick bar
+	# ---- the item belt: pinned things keep their slot, what you held lately fills the rest, Q / E step along it
+	g.items.erase("belt")
+	var recent0: Array = g.hand_recent.duplicate()
+	g.hand_recent = []
 	m.inv[Defs.DIRT] += 10
+	m.inv[Defs.STONE] += 10
 	g.select_material(Defs.SAND)
 	g._note_hand()
 	g.select_material(Defs.DIRT)
 	g._note_hand()
 	var ql: Array = g.quick_list()
 	var has_sand: bool = ql.has("m%d" % Defs.SAND) and not ql.has("m%d" % Defs.DIRT)
-	g.quick_take("m%d" % Defs.SAND)
-	ok["quick"] = has_sand and g.mat == Defs.SAND and g.hand_recent[0] == "m%d" % Defs.SAND
-	txt.append("quick bar %s, took sand back: %s" % [str(ql), g.mat == Defs.SAND])
+	g.belt_pin("m%d" % Defs.STONE)
+	var bl: Array = g.belt()
+	var pinned_first: bool = bl[0][0] == "m%d" % Defs.STONE and bl[0][1]
+	var recent_in: bool = bl[1][0] == "m%d" % Defs.DIRT and bl[2][0] == "m%d" % Defs.SAND and not bl[1][1]
+	# (holding dirt, the slot after the stone: E goes on to sand, Q back to dirt, Q again to the stone)
+	var st0: int = g.stats_belt_steps
+	g.belt_step(1)
+	var e_sand: bool = g.mat == Defs.SAND
+	g.belt_step(-1)
+	g.belt_step(-1)
+	var q_stone: bool = g.mat == Defs.STONE and g.stats_belt_steps == st0 + 3
+	g.belt_pin("m%d" % Defs.STONE)
+	var unpinned: bool = not (g.belt()[0][1] as bool)
+	# (stepping along it left its slots where they were)
+	var still: bool = g.belt()[1][0] == "m%d" % Defs.DIRT and g.belt()[2][0] == "m%d" % Defs.SAND
+	g.hand_recent = recent0
+	ok["belt"] = still and has_sand and pinned_first and recent_in and e_sand and q_stone and unpinned and g.items.has("belt")
+	txt.append("belt %s; recent %s; E -> sand %s, Q Q -> stone %s (%s), slots kept %s, unpinned %s" % [str(bl.slice(0, 3)), str(ql), e_sand, q_stone, Defs.NAMES[g.mat], still, unpinned])
 	# ---- put back
 	ws.list.erase(kiln)
 	while ws.list.size() > ws_n0:
@@ -862,7 +882,7 @@ func _test_inworld() -> void:
 		if not ok[k]:
 			all_ok = false
 			bad.append(k)
-	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the quick bar", all_ok,
+	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the item belt", all_ok,
 		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
 
 func _test_stairs() -> void:

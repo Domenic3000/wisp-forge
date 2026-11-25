@@ -97,5 +97,5 @@ Notes for development sessions on this part of the game. The rules that apply ev
   colour dims toward dark glass as `m.mana / m.max_mana` falls (by the square of what's spent), and flashes white
   for 24 frames as it fills up again (`_gem_was` per mage; `stats_gem_flares`). The HUD's mana bar stays.
 - The forge panel is on the right of the screen now (crafting.md, "The forge, the book and the workshops in the
-  world"); the quick bar is under the hand bar (building.md).
+  world"); the item belt sits over the spell bar (building.md).
 

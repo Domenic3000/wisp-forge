@@ -148,10 +148,21 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Test: `_test_hand` ("hand"; in the full run after `_test_harvest`; pictures `hand_line.png`, `hand_ghost.png`).
 
 ## The in-world interface, second pass (user, 25 Nov: "can you think of any other ways to make it feel more inside the world", then "yes all of that sounds pretty great", "alright lets do it")
-- The quick bar: main `hand_recent` (ids "m<material>", "f:<furniture name>", "s:<workshop kind>", newest first,
-  `QUICK_N` 6; `_note_hand()` each tick while Conjure is held, and from `quick_take`). `quick_list()` is the ones
-  you still have, not the one in hand; ui.gd draws them as slots under the hand bar (`quick_row`, in
-  `_update_hand_bar`; `mouse_over_ui` counts it so a click there doesn't cast); a click calls `quick_take(id)`.
+- The item belt (user, 25 Nov: "is there an easy way to select the recent materials that i conjured other than
+  clicking them? and maybe we add a quickbar for satchel items for when we add controller support and to make it
+  faster to select the things i use the most"; chose an item belt beside the spells): main `BELT_N` (8) slots over
+  the spell bar. `belt_pins()` (saved as `items["belt"]`, "" for a free slot) keep their slot; `belt()` gives
+  [id, pinned] per slot, the free ones filled from `hand_recent` (ids "m<material>", "f:<furniture name>",
+  "s:<workshop kind>", newest first, `QUICK_N` 12; `_note_hand()` each tick while Conjure is held; a thing already listed keeps its place, so stepping never shuffles the slots) with what you
+  still have (`belt_has`). `belt_pin(id)` pins to the first free slot (or over the last) or unpins; right-click
+  in the satchel (ui `_on_mat_input`, `_place_id` for the "To set down" ones) or on the belt. Q / E call
+  `belt_step(dir)` (from what's in your hand, along the slots you still have; `quick_take(id)` puts it in your
+  hand), falling back to `_cycle_material` with nothing on the belt; out in space Q / E still turn the view.
+  ui `belt_pan` / `_update_belt` (hidden in build mode, aboard, or when empty; pinned slots have a gold dot, what
+  you've run out of is dimmed; `mouse_over_ui` counts it). For a controller later: the D-pad for the belt.
+- The satchel's pouch (closed) is sized to what it holds each frame (ui `update_hud`, as the minimap): a
+  container never shrinks by itself, so it kept the open satchel's size (user, 25 Nov: "when i close the
+  satchel its very big").
 - The summoned forge, the grimoire, workshops that show their work, the gem: see crafting.md and ui.md.
 - Test: `_test_inworld` ("inworld"; in the full run after `_test_hand`; pictures `forge.png`, `tray.png`).
 

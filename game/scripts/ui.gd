@@ -43,7 +43,9 @@ var build_box: VBoxContainer
 var hand_bar: PanelContainer        # what's in your hand and how it goes down (Conjure held)
 var hand_box: VBoxContainer
 var _hand_key := ""
-var quick_row: BoxContainer = null
+var belt_pan: PanelContainer = null     # the item belt (main `belt()`)
+var belt_row: BoxContainer = null
+var _belt_key := ""
 var _build_key := ""
 var satchel: VBoxContainer         # the open satchel: a heading and a grid per section
 var satchel_slots := 0             # (slots in it, for the tests)
@@ -529,14 +531,17 @@ func _build_hud() -> void:
 	hand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hand_bar.visible = false
 	hb.add_child(hand_bar)
-	var hcol := _box(true, 2)
-	hand_bar.add_child(hcol)
 	hand_box = _box(true, 1)
-	hcol.add_child(hand_box)
-	# (the quick bar: the last few things you held, click one to hold it again: `_update_hand_bar`)
-	quick_row = _box(false, 3)
-	quick_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	hcol.add_child(quick_row)
+	hand_bar.add_child(hand_box)
+	# (the item belt over the spell bar: what you pinned and what you held lately, Q / E: `_update_belt`)
+	belt_pan = _panel(Color(0.045, 0.04, 0.1, 0.72), TRIM_DIM, 3)
+	belt_pan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	belt_pan.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	belt_pan.visible = false
+	hb.add_child(belt_pan)
+	belt_row = _box(false, 2)
+	belt_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	belt_pan.add_child(belt_row)
 	hot_name = _head("", 12, CREAM)
 	hot_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hb.add_child(hot_name)
@@ -1588,11 +1593,9 @@ func hide_forge() -> void:
 ## (main `hand_hint`), just over the spell bar
 func _update_hand_bar(g) -> void:
 	var txt: String = g.hand_hint()
-	var ql: Array = g.quick_list()
-	var key := txt + "|" + ",".join(ql)
-	if key == _hand_key:
+	if txt == _hand_key:
 		return
-	_hand_key = key
+	_hand_key = txt
 	for c in hand_box.get_children():
 		c.queue_free()
 	var ls := txt.split("\n")
@@ -1600,34 +1603,68 @@ func _update_hand_bar(g) -> void:
 		var hl := _label(ls[i], 12, GOLD if i == 0 else CREAM)
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hand_box.add_child(hl)
-	for c2 in quick_row.get_children():
-		c2.queue_free()
-	quick_row.visible = not ql.is_empty()
-	for id in ql:
-		var sid := String(id)
-		var ic: Texture2D = null
-		var nm := ""
-		var cnt := ""
-		if sid.begins_with("m"):
-			var mt := int(sid.substr(1))
-			ic = Icons.mat(mt)
-			nm = String(Defs.NAMES[mt])
-			cnt = str(g.player.inv[mt])
-		elif sid.begins_with("f:"):
-			nm = sid.substr(2)
-			var fi: int = g._furn_index(nm)
-			var rows: Array = g.player.furn[fi].get("rows", []) if fi >= 0 else []
-			ic = Icons.prop_rows(rows) if not rows.is_empty() else Icons.item("chair")
-		else:
-			var sk := sid.substr(2)
-			ic = Icons.station(sk)
-			nm = String(Defs.STATIONS[sk]["name"]) if Defs.STATIONS.has(sk) else sk
-			cnt = str(int(g.items.get("st_" + sk, 0)))
-		var sl := _slot(ic, cnt, false, "%s\nClick: back in your hand" % nm)
+
+## The item belt (main `belt()`): a slot each, pinned ones with a gold pin, the one in your hand chosen, what
+## you've run out of dimmed; click to hold it, right-click to pin or unpin; Q and E at its ends
+func _belt_icon(g, sid: String) -> Array:
+	if sid.begins_with("m"):
+		var mt := int(sid.substr(1))
+		return [Icons.mat(mt), String(Defs.NAMES[mt]), g.player.inv[mt]]
+	if sid.begins_with("f:"):
+		var nm := sid.substr(2)
+		var fi: int = g._furn_index(nm)
+		var n := 0
+		for it in g.player.furn:
+			if String(it["name"]) == nm:
+				n += 1
+		var rows: Array = g.player.furn[fi].get("rows", []) if fi >= 0 else []
+		return [Icons.prop_rows(rows) if not rows.is_empty() else Icons.item("chair"), nm, n]
+	var sk := sid.substr(2)
+	return [Icons.station(sk), String(Defs.STATIONS[sk]["name"]) if Defs.STATIONS.has(sk) else sk, int(g.items.get("st_" + sk, 0))]
+
+func _update_belt(g) -> void:
+	var b: Array = g.belt()
+	var hid: String = g.hand_id() if g.conjuring(g.player) else ""
+	var key := hid
+	for e in b:
+		key += "|" + String(e[0]) + ("*" if e[1] else "") + (str(_belt_icon(g, String(e[0]))[2]) if String(e[0]) != "" else "")
+	if key == _belt_key:
+		return
+	_belt_key = key
+	for c in belt_row.get_children():
+		belt_row.remove_child(c)
+		c.queue_free()
+	belt_row.add_child(_label("Q", 11, DIM))
+	for e2 in b:
+		var sid := String(e2[0])
+		if sid == "":
+			var empty := _slot(Icons.item("coin"), "", false, "An empty slot: right-click something in the satchel (I) to pin it here")
+			empty.get_child(0).modulate.a = 0.0
+			empty.modulate.a = 0.45
+			belt_row.add_child(empty)
+			continue
+		var info := _belt_icon(g, sid)
+		var pinned: bool = e2[1]
+		var sl := _slot(info[0], _count(int(info[2])), sid == hid, "%s  ×%d\nClick or Q / E: in your hand\nRight-click: %s" % [info[1], int(info[2]), "unpin" if pinned else "pin it here"])
+		if int(info[2]) <= 0:
+			sl.modulate = Color(1, 1, 1, 0.4)
+		if pinned:
+			var pin := ColorRect.new()
+			pin.color = GOLD
+			pin.custom_minimum_size = Vector2(2, 2)
+			pin.size = Vector2(2, 2)
+			pin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pin.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN     # (a gold dot in its top left corner)
+			pin.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			sl.add_child(pin)
 		sl.gui_input.connect(func(ev: InputEvent):
-			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-				game.quick_take(sid))
-		quick_row.add_child(sl)
+			if ev is InputEventMouseButton and ev.pressed:
+				if ev.button_index == MOUSE_BUTTON_LEFT and game.belt_has(sid):
+					game.quick_take(sid)
+				elif ev.button_index == MOUSE_BUTTON_RIGHT:
+					game.belt_pin(sid))
+		belt_row.add_child(sl)
+	belt_row.add_child(_label("E", 11, DIM))
 
 ## The building bar: the categories (Q/E), the pieces of the chosen one (wheel or 1-9; dimmed
 ## when the satchel can't pay), and the chosen piece's cost.
@@ -1774,7 +1811,15 @@ func update_hud(g) -> void:
 	minimap_panel.offset_left = -5.0 - mms.x
 	minimap_panel.offset_top = 4.0
 	minimap_panel.offset_bottom = 4.0 + mms.y
-	satchel_panel.position.y = (4.0 + mms.y + 3.0) if mm_on else 4.0
+	# (the satchel too, sized to what it holds each frame: a container never shrinks by itself, so closed
+	# after being open the pouch kept the open satchel's size; user, 25 Nov: "when i close the satchel its
+	# very big")
+	var sat_y: float = (4.0 + mms.y + 3.0) if mm_on else 4.0
+	var sms: Vector2 = satchel_panel.get_combined_minimum_size()
+	satchel_panel.offset_right = -5.0
+	satchel_panel.offset_left = -5.0 - sms.x
+	satchel_panel.offset_top = sat_y
+	satchel_panel.offset_bottom = sat_y + sms.y
 	hp_bar.max_value = g.max_hp
 	hp_bar.value = g.hp
 	hp_lbl.text = "%d / %d" % [int(ceil(g.hp)), int(g.max_hp)]
@@ -1879,6 +1924,13 @@ func update_hud(g) -> void:
 	var hand_on: bool = g.hand_bar_on()
 	build_bar.visible = g.build_on
 	hand_bar.visible = hand_on
+	var belt_any := false
+	for be in g.belt():
+		if String(be[0]) != "":
+			belt_any = true
+	belt_pan.visible = belt_any and not g.build_on and g.state == "play" and g.player.aboard == null
+	if belt_pan.visible:
+		_update_belt(g)
 	if g.build_on:
 		_update_build_bar(g)
 	elif hand_on:
@@ -2035,7 +2087,7 @@ func _update_satchel(g) -> void:
 		var gr := _sat_section(["Blocks", "Nature", "Ores & ingots"][gi2])
 		for m2 in groups[gi2]:
 			var can: bool = Defs.PLACE[m2] != 0
-			var tip := "%s  ×%d\n%s" % [Defs.NAMES[m2], g.player.inv[m2], "Click: Conjure places it" if can else "Kept for forging and trade"]
+			var tip := "%s  ×%d\n%s" % [Defs.NAMES[m2], g.player.inv[m2], "Click: Conjure places it\nRight-click: pin it to the belt" if can else "Kept for forging and trade"]
 			var sl := _sat_slot(gr, Icons.mat(m2), _count(g.player.inv[m2]), m2 == g.mat, tip, String(Defs.NAMES[m2]))
 			if can:
 				sl.gui_input.connect(_on_mat_input.bind(m2))
@@ -2070,10 +2122,12 @@ func _update_satchel(g) -> void:
 	if not placing.is_empty():
 		var gp := _sat_section("To set down")
 		for pl in placing:
-			var psl := _sat_slot(gp, pl[3], str(pl[4]), false, "%s  ×%d\nClick: in your hand, to set down" % [pl[5], pl[4]], String(pl[5]))
+			var psl := _sat_slot(gp, pl[3], str(pl[4]), false, "%s  ×%d\nClick: in your hand, to set down\nRight-click: pin it to the belt" % [pl[5], pl[4]], String(pl[5]))
 			psl.gui_input.connect(func(ev: InputEvent):
 				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-					game.hold_carried(String(pl[0]), int(pl[1]), String(pl[2])))
+					game.hold_carried(String(pl[0]), int(pl[1]), String(pl[2]))
+				elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
+					game.belt_pin(_place_id(pl)))
 			n += 1
 	# draughts and sigils
 	var used := []
@@ -2434,9 +2488,22 @@ func _on_hot_input(ev: InputEvent, idx: int) -> void:
 	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 		game.sel = idx
 
+## the belt's id for a "To set down" entry [what, idx, sk, ...]
+func _place_id(pl: Array) -> String:
+	match String(pl[0]):
+		"torch":
+			return "m%d" % Defs.TORCH
+		"door":
+			return "m%d" % Defs.WOODDOOR
+		"furn":
+			return "f:" + String(game.player.furn[int(pl[1])]["name"])
+	return "s:" + String(pl[2])
+
 func _on_mat_input(ev: InputEvent, m: int) -> void:
 	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 		game.select_material(m)
+	elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
+		game.belt_pin("m%d" % m)             # (pinned to the item belt)
 
 func _on_craft(r: Dictionary) -> void:
 	var ok: bool = game.craft_many(r, craft_amount) > 0
@@ -2472,6 +2539,6 @@ func mouse_over_ui(slots := true) -> bool:
 		return true
 	if build_bar and build_bar.visible and _on_screen(build_bar).has_point(m):
 		return true
-	if quick_row and quick_row.is_visible_in_tree() and _on_screen(quick_row).has_point(m):
-		return true                         # (the quick bar under the hand bar)
+	if belt_pan and belt_pan.is_visible_in_tree() and _on_screen(belt_pan).has_point(m):
+		return true                         # (the item belt over the spell bar)
 	return false

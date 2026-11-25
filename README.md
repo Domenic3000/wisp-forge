@@ -31,7 +31,7 @@ one. Every journey grows a new star system of its own.
 | 1–9 / mouse wheel | Choose a spell |
 | Right mouse | Dig: pulls matter into your satchel (costs mana, more for harder stuff) |
 | Shift + right mouse | Take back walls, furniture, torches and workshops (furniture and workshops come whole) |
-| Q / E | Choose what's in your hand for Conjure (in space: turn the view) |
+| Q / E | Step along the item belt over the spell bar: what you pinned (right-click it in the satchel) and what you held lately (in space: turn the view) |
 | H | Drink a Healing Draught (health doesn't come back by itself) |
 
 **Menus**
