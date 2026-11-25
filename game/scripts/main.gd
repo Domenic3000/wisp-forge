@@ -842,9 +842,9 @@ func _save_settings() -> void:
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 1080000:
-		# a test run that hasn't finished in 18 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 18 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 1320000:
+		# a test run that hasn't finished in 22 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 22 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:

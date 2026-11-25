@@ -1430,10 +1430,10 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - Packed ground: gen.comp `settleSafe` generates powder that couldn't rest (over caves, on steep faces, around
   building sites, to a wobbling depth) as its packed solid (sand -> SANDSTONE). render.comp draws SANDSTONE without
   ST_BUILT as natural wavy strata and only built sandstone as dressed blocks; conjured solids are marked built.
-- Test mode quits by itself after 18 minutes (a full run takes about 14), so a broken run never leaves the game open;
+- Test mode quits by itself after 22 minutes (a full run takes about 18), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
   up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
-  script it preloads failed to compile: 25 s), or that passes 19 minutes. tests.gd is loaded at run
+  script it preloads failed to compile: 25 s), or that passes 23 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).

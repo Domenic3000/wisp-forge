@@ -7074,6 +7074,11 @@ func _test_remove() -> void:
 func _test_harvest() -> void:
 	var hv_back: Vector2 = g.player.pos
 	var m = g.player
+	# (clear weather: rain puts a torch's flame out)
+	var hv_w0 := [g.rain, g.rain_target, g.weather_timer]
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
 	var ha := atan2(m.pos.y, m.pos.x) - 0.16
 	var hup := Vector2(cos(ha), sin(ha))
 	var c0: Vector2i = Build.cell_of(hup * (g.gpu.surf_at(ha).x + 150.0))
@@ -7129,8 +7134,21 @@ func _test_harvest() -> void:
 	g._pick_miss_t = -9999
 	var p1: bool = g._pick_up_furniture(m, _cell_pos(flame_c.x, flame_c.y - 2))
 	await _frames(6)
+	# (the sconce hangs in the open air with nothing behind it, and a cell or two of its flame can go out:
+	# point at its highest flame cell still burning)
+	var sc_aim := Vector2i(cx + 32, fl - 8)
+	var rs: Dictionary = g.gpu.read_rect(posmod(cx + 29, Defs.NS), fl - 9, 7, 9)
+	for sj in 9:
+		var hit := false
+		for si in 7:
+			if (int(rs["bg"][sj * 7 + si]) & 255) == Defs.TORCH:
+				sc_aim = Vector2i(cx + 29 + si, fl - 9 + sj)
+				hit = true
+				break
+		if hit:
+			break
 	g._pick_miss_t = -9999
-	var p2: bool = g._pick_up_furniture(m, _cell_pos(cx + 32, fl - 8))
+	var p2: bool = g._pick_up_furniture(m, _cell_pos(sc_aim.x, sc_aim.y))
 	await _frames(6)
 	g._pick_miss_t = -9999
 	var p3: bool = g._pick_up_furniture(m, _cell_pos(cx + 42, fl - 2))
@@ -7196,6 +7214,9 @@ func _test_harvest() -> void:
 	clr.resize(SW * (SH + 20))
 	clr.fill(0xFF00 | 0x40000)
 	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 20, "w": SW, "h": SH + 20, "data": clr})
+	g.rain = float(hv_w0[0])
+	g.rain_target = float(hv_w0[1])
+	g.weather_timer = int(hv_w0[2])
 	_go(hv_back)
 	await _frames(30)
 	var all_ok := true
