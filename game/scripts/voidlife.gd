@@ -688,7 +688,9 @@ func well_force(p: Vector2, v: Vector2, who: String) -> Vector2:
 			game.audio.play("boom", p, 0.8)
 			game.vfx.spawn(Vfx.RING, w["pos"], Vector2.ZERO, 22, Color(1.0, 0.7, 0.4), Color(0.6, 0.2, 1.0, 0.0), 10.0, 70.0)
 			if who == "skiff":
-				sp.skiff_hit(game.skiff, p - dir * 4.0, 4.0, 12.0)
+				# (on the hull facing the heart, whichever way the skiff lies: its middle can be the cabin's air)
+				var sk = game.skiff
+				sp.skiff_hit(sk, sp._first_cell(sk, p + dir * float(maxi(sk.w, sk.h)), p), 4.0, 12.0)
 			else:
 				game.hurt(game.player, 18.0, -dir * 4.0, true)
 			game.ui.toast("The well's heart spat you out" + ("" if harness else ". (A Void Harness would hold you at its edge)"), Color(1.0, 0.65, 0.45), 3.5)
@@ -1028,10 +1030,10 @@ func draw_markers(xf: Transform2D) -> void:
 	var at: Vector2 = game.player.pos
 	var w = nearest_well(at, 30000.0)
 	if w != null:
-		sp._marker(xf, w["pos"], 180.0, "Gravity well", Color(1.0, 0.7, 0.45))
+		sp._marker(xf, w["pos"], 180.0, "Gravity well", Color(1.0, 0.7, 0.45), 5, "well")
 	var r = nearest_rift(at, 30000.0)
 	if r != null:
-		sp._marker(xf, r["pos"], 60.0, rift_name(r), Color(0.85, 0.6, 1.0))
+		sp._marker(xf, r["pos"], 60.0, rift_name(r), Color(0.85, 0.6, 1.0), 5, "rift")
 	var best = null
 	var bd := 30000.0
 	for a in sp.rocks:
@@ -1041,7 +1043,7 @@ func draw_markers(xf: Transform2D) -> void:
 				bd = d
 				best = a
 	if best != null:
-		sp._marker(xf, best.pos, best.reach(), "Ancient monolith" + (" (open)" if best.opened else ""), Color(0.8, 0.65, 1.0))
+		sp._marker(xf, best.pos, best.reach(), "Ancient monolith" + (" (open)" if best.opened else ""), Color(0.8, 0.65, 1.0), 5, "monolith")
 
 ## an eel's body: [world point, radius] from its head back, along where its head has been
 func _segments(b: Beast) -> Array:

@@ -124,13 +124,13 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   diagonal the live planet is rendered (`live`; space.gd, drawn UNDER the picture, shows its stars past the band);
   beyond it the GPU does nothing (`_process` skips `_gpu_frame`), `view_c` follows `cam_c`, and space.gd draws the
   stars (two depths of drift, so speed shows), the sun (a small disc toward the screen's edge, as in the planet's
-  sky), the other planets (procedural discs from their biomes, `_disc_image`, or the pictures taken as you left
-  them, a Sprite2D masked to a disc, placed by the world->screen affine) and markers at the edge pointing to each.
+  sky) and the other planets (procedural discs from their biomes, `_disc_image`, or the pictures taken as you left
+  them, a Sprite2D masked to a disc, placed by the world->screen affine); where things are is on the minimap.
   Back below `R_SPACE - 10` moving inward: `exit()`, a short cooldown. Space shares the world coordinates of `space.home` (the planet the GPU holds, at
   the origin while you're near it: see The galaxy); every planet's place is `Defs.planet_g(i)` (`Defs.SYSTEM`, a
   round of five, is a star system), and `bodies` are the planets of the systems near you. The nearest planet (`near`, `centre`)
-  pulls, sets the zoom, and turns the view (`view_ang`, eased; `main.view_angle()` uses it in space); the skiff's
-  `centre` is set to it so it levels over that planet.
+  pulls and, close in, turns the view upright (`view_ang`; `main.view_angle()` uses it in space; see "Space's view
+  turns only when you turn it"); the skiff's `centre` is set to it so it levels over that planet.
 - Travel: once another planet is clearly nearer (`NEARER` of home's distance), `space.travel(i)` saves the old
   world (`save_world_async(without_skiff)`: read back 8 MB a frame by `gpu.read_world_async`, written on a thread;
   the skiff you ride goes with you), then awaits `main.arrive_planet(i)`: `_make_world(i, true)` makes the planet a
@@ -1244,13 +1244,35 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
   away while he mined), and a "Your skiff" marker points to it while you're off it. A quick right-click's
   `dig_tap` counts down in `_read_local_input` (it counted down only on the planet, so in space one click kept
   mining).
-- Space's view holds still (user, 23 Nov: "the camera keeps reorienting"): space `_find_near` points `centre` at the
-  nearest planet only within `VIEW_NEAR` (4000) of its air (or a station's floor, `_station_frame`); further out
-  "down" holds as it was. `pull` measures from the planet itself (`near["pos"]`), not `centre`.
-- Markers (user, 23 Nov: "hard to see them when they stack and go under the ui"): `_marker` only gathers
-  (`_marks`, prio 1 your skiff / waypoint, 2 pirates, 5 the rest); `_flush_marks` keeps `MARK_MAX` (7), sets them
-  on an oval inset from the edges (out of the HUD's corners and off the spell bar), spreads them `MARK_GAP`
-  apart, each arrow (inked) pointing the true way.
+- Space's view turns only when you turn it (user, 23 Nov: "the camera keeps reorienting"; 24 Nov: still "spinning
+  around on its own especially near a derelict"; "how do we make it so you cant land upside down"): in deep space
+  `centre` is 400000 under the VIEW (`p - from_angle(view_ang) * 400000`), and Q / E (`PlayerInput.turn`, main
+  `test_turn`; Q / E don't cycle Conjure's material out there) turn `view_ang` by `TURN_RATE` a tick
+  (`_manual_turn`). Within `VIEW_NEAR` (4000) of a planet's air `centre` is the planet and `_follow` eases the view
+  upright, harder the closer (`near_best`; fully by `UPRIGHT_NEAR` 900), and the turn keys only give a note; at a
+  station (`frame_st`) its floor holds it the same way. Physics never follows the view: the pull, the skiff's
+  levelling and landing go by the planet. `_align_far` (every 10 ticks) turns stations and outposts that are off
+  screen (and not docked at, nor with the skiff beside them) to stand upright in the view, so coming up to one
+  never turns it (they were set upright for the view they streamed in with, often near home). `pull` measures
+  from the planet itself (`near["pos"]`), not `centre`.
+- The MINIMAP replaces the edge arrows (user, 24 Nov: "get rid of arrows on the hud and just use the map, and maybe
+  add a mini map for all of the hud stuff currently in space and use it for planetary things as well. waypoints
+  and such"; chose the side view on a planet): scripts/minimap.gd, a Control in ui.gd's `minimap_panel` (top
+  right, pinned by its offsets; the satchel's pouch under it; hidden while the satchel grid is open, on the map
+  and in menus; N toggles setting "minimap"). In space a radar turned like the screen, logarithmic
+  (`_rad`: 1k, 5k, 25k rings, `SP_FAR` on the rim): space.gd's `_marker` now only gathers everything that had an
+  arrow (on screen or not; with a "kind": planet, star, waypoint, skiff, pirate, outpost, station, wreck, rock,
+  well, rift, monolith) and `_flush_marks` hands them over as `map_marks`; plus every rock and hull streamed in and
+  the void's beasts; "N" the chart's north. On a planet a side view (`CELLS` 12 a pixel, turned like the screen,
+  `_side`): the ground's line from `gpu.surf_at` in its biome's top colour, the sea, home, the skiff, villages
+  seen, workshops and altars, charted lairs and crypts, the party, the waypoint; past the edge a pip pointing the
+  way. You are an arrow the way you face (main `facing_dir(m)`: a ship's nose, or the screen side you look to);
+  pointing at it names a thing; under it the waypoint's distance. The map's "You" is that arrow too
+  (map_view `_you`, `you_dir`). PLANET WAYPOINTS: a click on the planet map (`set_planet_waypoint`: put on the
+  ground under a point in the air), a right click or Backspace clears; `planet_state["waypoint"]`, shown on the
+  map with a line and on the minimap, cleared within `WAYPOINT_REACH` (`_check_planet_waypoint`). Test:
+  `_test_minimap` ("minimap"; in the full run right after the skiff's own check; pictures `minimap_planet.png`,
+  `map_waypoint.png`, `minimap_space.png`, `map_space_facing.png`).
 - Loading a game leaves space altogether (space `reset_for_load`, from `start_game`; user, 23 Nov: reloaded by a
   derelict, the station came down with him). Stepping off the skiff out there picks a spot clear of every hull
   (`clear_spot`), `_shortest_out` searches up to 24 cells, and a derelict's dock says it's for drifting in on

@@ -270,10 +270,10 @@ func _first_chapter() -> Array:
 			"how": "At the Wisp Forge, Travel: the Wisp Skiff (it needs the Core Drive). K calls it beside you, F boards or steps out. Steer with the movement keys (W up), or hold cast toward the cursor."},
 		{"id": "star", "title": "Mine Star Iron from an asteroid", "need": [["found", Defs.STARIRON], ["landed_other", 0]], "reward": {"potion": 1},
 			"say": "Fly the skiff up out of the sky. The metallic asteroids above hold Star Iron at their hearts: step out (F) and dig.",
-			"how": "Fly straight up out of the atmosphere. Asteroids hang above the planet (a marker points to the nearest). Step out with F, push yourself with the staff's jet (hold cast) and dig the dark metallic rock; Star Iron glints blue-white inside. The skiff's fittings and the keys to the barriers round other worlds need it."},
+			"how": "Fly straight up out of the atmosphere. Asteroids hang above the planet (the minimap, top right, shows the nearest). Step out with F, push yourself with the staff's jet (hold cast) and dig the dark metallic rock; Star Iron glints blue-white inside. The skiff's fittings and the keys to the barriers round other worlds need it."},
 		{"id": "voyage", "title": "Fly to %s" % nxt, "need": [["landed_other", 0]], "reward": {"coins": 50},
-			"say": "Fly up, and on to %s: no barrier stands round it. The marker shows the way. I'll be with you." % nxt,
-			"how": "Fly up out of the sky and head for %s (its marker at the edge of the screen). Once it's clearly nearer than home the journey begins, and you come down into its sky. Worlds wrapped in a barrier (a storm belt, a radiation belt, a shard ring...) need a key forged at the Wisp Forge: their markers say which." % nxt},
+			"say": "Fly up, and on to %s: no barrier stands round it. The minimap shows the way. I'll be with you." % nxt,
+			"how": "Fly up out of the sky and head for %s (on the minimap, top right; point at it for its name). Once it's clearly nearer than home the journey begins, and you come down into its sky. Worlds wrapped in a barrier (a storm belt, a radiation belt, a shard ring...) need a key forged at the Wisp Forge: the minimap names which." % nxt},
 	]
 
 ## a later world's chapter: its ore, its hazards' wards, then on: the next world of the system you haven't
@@ -319,7 +319,7 @@ func _world_chapter(ch: int) -> Array:
 				"say": "%s %s. Forge the %s and the skiff passes every %s, round any world." % [tn, String(bd["tell"]), String(bd["key_name"]), String(bd["name"])],
 				"how": "At the Wisp Forge, Travel: the %s. %s" % [String(bd["key_name"]), _recipe_desc(key)]})
 		out.append({"id": "voyage_%d" % tg, "title": "Fly to %s" % tn, "need": [["landed", tg]], "reward": {"coins": 60},
-			"say": "On to %s. The marker shows the way." % tn,
+			"say": "On to %s. The minimap shows the way." % tn,
 			"how": "Fly up out of the sky and head for %s; once it's clearly nearer than where you came from, the journey begins." % tn})
 	else:
 		out.append_array([
@@ -418,7 +418,7 @@ func mystery_steps() -> Array:
 		{"title": "Forge the Tempest Keel", "done": game.items.has("keel") or been,
 			"how": "A maelstrom spins round %s and hurls ships back out. Abyss pearls lie in an ocean world's seabed; with star iron and hull plating (salvage from wrecks) the Wisp Forge makes a Tempest Keel that rides it out." % nm},
 		{"title": "Fly to %s" % nm, "done": been,
-			"how": "Through the maelstrom (its marker at the screen's edge) and down onto one of its islands. Its sea is hundreds of cells deep: below 160 the abyss crushes you without the Depth Seal (Wards, from abyss pearls), and it's dark: bring light."},
+			"how": "Through the maelstrom (on the minimap) and down onto one of its islands. Its sea is hundreds of cells deep: below 160 the abyss crushes you without the Depth Seal (Wards, from abyss pearls), and it's dark: bring light."},
 		{"title": "Read the tide-stones (%d/5)" % nk, "done": nk >= 5 or solved,
 			"how": "Standing stones on the islands and the shallow shelves, each carved with a glyph and with dots for its place in a song of five notes. F beside one reads it."},
 		{"title": "Sing the Drowned Choir's song", "done": solved,

@@ -386,6 +386,7 @@ var test_cast := false       # test mode: hold the left button
 var test_dig := false        # test mode: hold the right button
 var test_sail := false       # test mode: hold Shift (the Starsail)
 var test_mend := false       # test mode: hold R (mend the skiff)
+var test_turn := 0.0         # test mode: hold Q (-1) or E (1): turn the view out in space
 var test_calm := false       # test mode: the biome guardians stay asleep (except while their own test runs)
 ## (the test mode's world seed for a new journey: 0, the classic system, but in the "newgame" check)
 var test_seed := 0
@@ -467,6 +468,7 @@ class PlayerInput:
 	var decon := false         # deconstructing background tiles (Shift + right mouse)
 	var sail := false          # Shift held: the skiff's Starsail, out in space
 	var mend := false          # R held: mend the skiff's hull (beside it or aboard)
+	var turn := 0.0            # Q / E held out in space: turn the view (space.gd `_manual_turn`)
 	var aim := Vector2.ZERO    # world position of the cursor
 
 class Mage extends Body:
@@ -1859,6 +1861,13 @@ func view_angle() -> float:
 	var c := _view()
 	return atan2(c.y, c.x)
 
+## the way m faces in the world: aboard a ship its nose, on foot the side of the screen it looks to
+## (the map and the minimap draw it)
+func facing_dir(m: Mage) -> Vector2:
+	if m.aboard != null:
+		return Vector2.from_angle(m.aboard.ang) * float(m.aboard.facing)
+	return basis_r(view_angle()) * float(m.facing)
+
 func world_to_screen(p: Vector2) -> Vector2:
 	var c := _view()
 	var a := view_angle()
@@ -2282,6 +2291,11 @@ func _read_local_input(m: Mage) -> void:
 	inp.decon = can_act and rmb and shift
 	inp.sail = (shift and state == "play") or test_sail
 	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on) or test_mend
+	inp.turn = 0.0
+	if space.active and state == "play" and not build_on:
+		inp.turn = (1.0 if Input.is_key_pressed(KEY_Q) else 0.0) - (1.0 if Input.is_key_pressed(KEY_E) else 0.0)
+	if test_turn != 0.0:
+		inp.turn = test_turn
 	# (building inside the skiff: the cast button builds, it doesn't steer or fire)
 	cabin_cast = false
 	if build_on and m.aboard != null:
@@ -2307,6 +2321,8 @@ func _tick() -> void:
 		return
 	_update_skiff()
 	_mend_skiff(player)
+	if frame % 15 == 0:
+		_check_planet_waypoint()
 	var tm := Time.get_ticks_usec()
 	for m in players:
 		if m.cast_cd > 0:
@@ -5288,8 +5304,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 			var n := k - KEY_1
 			if n < known.size():
 				sel = n
-		elif k == KEY_Q or k == KEY_E:
-			_cycle_material(1 if k == KEY_E else -1)
+		elif (k == KEY_Q or k == KEY_E) and not space.active:
+			_cycle_material(1 if k == KEY_E else -1)      # (out in space Q / E turn the view)
+		elif k == KEY_N:
+			settings["minimap"] = not bool(settings.get("minimap", true))
+			_save_settings()
 		elif k == KEY_H:
 			_drink(player)
 		elif k == KEY_F:
@@ -6708,6 +6727,8 @@ func _map_key(k: int) -> void:
 			map_view.centre_on_you()
 		elif k == KEY_BACKSPACE or k == KEY_DELETE:
 			space.waypoint = null
+	elif k == KEY_BACKSPACE or k == KEY_DELETE:
+		planet_state.erase("waypoint")
 	elif k == KEY_W or k == KEY_UP or k == KEY_EQUAL or k == KEY_KP_ADD:
 		map_zoom_i -= 1
 		_map_camera()
@@ -6715,13 +6736,46 @@ func _map_key(k: int) -> void:
 		map_zoom_i += 1
 		_map_camera()
 
+## A waypoint on this planet (user, 24 Nov: "waypoints and such" for planets too): set by a click on the
+## planet map, kept in planet_state (saved with the world), shown on the map and the minimap, cleared
+## by a right click or when you get there. A point in the open air is put down on the ground under it.
+const WAYPOINT_REACH := 40.0
+func set_planet_waypoint(p: Vector2) -> void:
+	var a := atan2(p.y, p.x)
+	var rs: float = gpu.surf_at(a).x
+	var r := p.length()
+	if r > rs:
+		r = rs + 2.0
+	r = clampf(r, Defs.R_IN + 10.0, Defs.R_TOP)
+	planet_state["waypoint"] = [cos(a) * r, sin(a) * r]
+
+func planet_waypoint() -> Variant:
+	var wp = planet_state.get("waypoint", null)
+	if wp is Array and (wp as Array).size() == 2:
+		return Vector2(float(wp[0]), float(wp[1]))
+	return null
+
+func _check_planet_waypoint() -> void:
+	var wp = planet_waypoint()
+	if wp != null and player != null and (wp as Vector2).distance_to(player.pos) < WAYPOINT_REACH:
+		planet_state.erase("waypoint")
+		ui.toast("Waypoint reached", Color(1.0, 0.85, 0.4), 2.0)
+		audio.play("coin", null, 0.5)
+
 func _map_mouse(ev: InputEvent) -> void:
 	if map_tab == "space":
 		_space_chart_mouse(ev)
 		return
 	if ev is InputEventMouseButton:
 		if ev.button_index == MOUSE_BUTTON_LEFT:
+			if ev.pressed:
+				_map_moved = 0.0
+			elif _map_drag and _map_moved < 3.0:
+				set_planet_waypoint(screen_to_world(ev.position / float(scale_px)))
+				audio.play("ui_click", null, 0.5)
 			_map_drag = ev.pressed
+		elif ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
+			planet_state.erase("waypoint")
 		elif ev.pressed and ev.button_index == MOUSE_BUTTON_WHEEL_UP:
 			map_zoom_i -= 1
 			_map_camera()
@@ -6729,6 +6783,7 @@ func _map_mouse(ev: InputEvent) -> void:
 			map_zoom_i += 1
 			_map_camera()
 	elif ev is InputEventMouseMotion and _map_drag and map_tab == "planet":
+		_map_moved += (ev.relative / float(scale_px)).length()
 		# (the planet follows the mouse: dragging right turns it so what was on the left comes over)
 		map_ang += ev.relative.x / float(scale_px) * zoom / maxf(player.pos.length(), 200.0)
 		_map_camera()

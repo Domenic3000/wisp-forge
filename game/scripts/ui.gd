@@ -45,6 +45,8 @@ var satchel: VBoxContainer         # the open satchel: a heading and a grid per 
 var satchel_slots := 0             # (slots in it, for the tests)
 var _sat_name: Label               # the name of what the pointer's over
 var satchel_panel: PanelContainer
+var minimap_panel: PanelContainer
+var minimap: Control            # minimap.gd: the radar out in space, the land round you on a planet (N hides it)
 const SAT_COLS := 8                # the open satchel's columns
 var satchel_open := false          # (I or Tab) the whole satchel; closed, a pouch
 var pouch: HBoxContainer
@@ -529,6 +531,15 @@ func _build_hud() -> void:
 	build_box = _box(true, 2)
 	build_bar.add_child(build_box)
 
+	# the minimap, top right (the satchel's pouch goes under it)
+	minimap_panel = _panel(Color(0.045, 0.04, 0.1, 0.82), TRIM, 4)
+	minimap_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	minimap_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	minimap_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(minimap_panel)
+	minimap = preload("res://scripts/minimap.gd").new()
+	minimap.ui = self
+	minimap_panel.add_child(minimap)
 	# the satchel: a grid of slots
 	var sw := _panel(Color(0.05, 0.04, 0.09, 0.86), TRIM, 4)
 	sw.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -1349,7 +1360,7 @@ func show_map(g) -> void:
 		map_hint.text = "WASD or drag: move    wheel or + / -: zoom    click: waypoint (right click clears)    H: you    Tab: the planet    M: close"
 	else:
 		map_title.text = "Map of %s" % String(g.planet.get("name", ""))
-		map_hint.text = "A / D or drag: turn    W / S or wheel: zoom    Tab: the galaxy    M or Esc: close"
+		map_hint.text = "A / D or drag: turn    W / S or wheel: zoom    click: waypoint (right click clears)    Tab: the galaxy    M or Esc: close"
 	map_bar.visible = true
 
 func hide_map() -> void:
@@ -1502,6 +1513,17 @@ func update_toasts() -> void:
 func update_hud(g) -> void:
 	if not hud.visible:
 		return
+	# the minimap (hidden while the satchel's grid is open: that goes to the top)
+	minimap.game = g
+	var mm_on: bool = bool(g.settings.get("minimap", true)) and not satchel_open and (g.state == "play" or g.state == "dead")
+	minimap_panel.visible = mm_on
+	# (kept 5 in from the right edge whatever size it is: the radar and the side view differ)
+	var mms: Vector2 = minimap_panel.get_combined_minimum_size()
+	minimap_panel.offset_right = -5.0
+	minimap_panel.offset_left = -5.0 - mms.x
+	minimap_panel.offset_top = 4.0
+	minimap_panel.offset_bottom = 4.0 + mms.y
+	satchel_panel.position.y = (4.0 + mms.y + 3.0) if mm_on else 4.0
 	hp_bar.max_value = g.max_hp
 	hp_bar.value = g.hp
 	hp_lbl.text = "%d / %d" % [int(ceil(g.hp)), int(g.max_hp)]

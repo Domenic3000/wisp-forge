@@ -197,6 +197,16 @@ var docked_st = null            # the derelict station whose docking bay the ski
 var near_wreck = null
 # derelict stations (station.gd) and their aliens (alien.gd)
 const VIEW_NEAR := 4000.0       # "down" turns to the nearest planet within this of its air, and holds still further out
+## Turning the view by hand (user, 24 Nov: the camera spinning on its own near a derelict "felt a little weird";
+## "if we add turn keys ... how do we make it so you cant land upside down"): out in deep space Q / E turn it
+## (`_manual_turn`); within VIEW_NEAR of a planet's air the planet takes it back, easing it upright harder the
+## closer you come (fully by UPRIGHT_NEAR), so the ground is under you long before you land; a station's floor
+## does the same once you're at it. Stations and outposts turn to match the view while you're away from them
+## (`_align_far`, off screen), so arriving never turns it.
+const TURN_RATE := 0.03         # radians a tick while Q or E is held
+const UPRIGHT_NEAR := 900.0     # within this of a planet's air the view is held fully upright
+var near_best := 1e30           # how far you are from the nearest planet's air (this tick)
+var _turn_note := -10000
 const STATION_DOWN := 400000.0  # inside a station, "down" is its floor: `centre` is put this far under it
 const ST_JET := 0.085           # a dead room's jet: the movement keys push you (cast casts)
 const ST_JET_MANA := 0.12
@@ -345,6 +355,7 @@ func _tick() -> void:
 	_galaxy(focus)
 	focus = sk.pos if m.aboard != null else m.pos      # (moved over if space's origin just followed you)
 	_pmark("galaxy")
+	_manual_turn(m)
 	_find_near(focus)
 	_station_frame(focus)
 	_pmark("near")
@@ -359,6 +370,8 @@ func _tick() -> void:
 	_stream(focus)
 	_pmark("streaming")
 	_update_rocks()
+	if game.frame % 10 == 3:
+		_align_far(focus)
 	_pmark("rocks")
 	_update_aliens(focus)
 	_update_folk(focus)
@@ -510,12 +523,47 @@ func _after_move(m, _a: float) -> void:
 	if _landing(m.pos, vel):
 		exit()
 
+## Q / E out in deep space turn the view (and with it "down": the skiff levels to it, you stand up in it).
+## Near a planet or at a station it's theirs to hold: a note says so.
+func _manual_turn(m) -> void:
+	var t: float = m.input.turn
+	if t == 0.0 or m.dead:
+		return
+	if frame_st != null or near_best <= VIEW_NEAR or live:
+		if game.frame - _turn_note > 300:
+			_turn_note = game.frame
+			game.ui.toast("The station's floor holds the view" if frame_st != null else "The planet's pull holds the view: its ground is down", Color(0.8, 0.85, 1.0), 2.5)
+		return
+	view_ang = wrapf(view_ang + t * TURN_RATE, -PI, PI)
+	stats["turned"] = int(stats.get("turned", 0)) + 1
+
+## Stations and outposts out of sight turn to stand upright in the view, so coming up to one never turns
+## the view (one you're at, the skiff is docked in, or that's on screen keeps still).
+func _align_far(focus: Vector2) -> void:
+	var up := Vector2.from_angle(view_ang)
+	var want := Vector2(up.y, -up.x).angle()
+	var scr: float = Vector2(game.VW, game.VH).length() * 0.5 * maxf(game.zoom, 1.0)
+	var sk = game.skiff
+	for a in rocks:
+		if (a.kind != "station" and a.kind != "outpost") or a == frame_st or a == docked_st:
+			continue
+		if absf(wrapf(a.ang - want, -PI, PI)) < 0.0005:
+			continue
+		var reach: float = a.reach()
+		if a.pos.distance_to(focus) < reach + scr + 300.0:
+			continue
+		if sk != null and a.pos.distance_to(sk.pos) < reach + 80.0:
+			continue                     # (the skiff left beside it: it mustn't swing into it)
+		a.ang = want
+		stats["aligned"] = int(stats.get("aligned", 0)) + 1
+
 ## the nearest planet (by its atmosphere's edge): it pulls, and the view turns toward it
 func _find_near(p: Vector2) -> void:
 	if bodies.is_empty():
-		# (deep space, no planet near: "down" stays the way it was)
+		# (deep space, no planet near: "down" is the view's down, which you turn with Q / E)
 		near = {}
-		centre = p + (centre - p).normalized() * 400000.0 if centre != p else p + Vector2(0, 400000.0)
+		near_best = 1e30
+		centre = p - Vector2.from_angle(view_ang) * 400000.0
 		return
 	var best := 1e30
 	for b in bodies:
@@ -525,8 +573,9 @@ func _find_near(p: Vector2) -> void:
 			near = b
 	# (the nearest planet pulls; but the view only turns to it close in: out between them "down" holds still,
 	# or flying past a planet, or another becoming the nearest, swung the view round; user, 23 Nov)
+	near_best = best
 	if best > VIEW_NEAR:
-		centre = p + (centre - p).normalized() * 400000.0 if centre != p else p + Vector2(0, 400000.0)
+		centre = p - Vector2.from_angle(view_ang) * 400000.0
 	else:
 		centre = near["pos"]
 
@@ -1188,7 +1237,12 @@ func _follow(m) -> void:
 	if live:
 		view_ang = va
 	else:
-		view_ang = lerp_angle(view_ang, va, 0.03)
+		if frame_st != null:
+			view_ang = lerp_angle(view_ang, va, 0.08)          # (a station's floor: it lined up with you, a nudge at most)
+		elif near_best <= VIEW_NEAR:
+			# (a planet near: it rights the view, gently far out and firmly close in, so you never come down upside down)
+			var k := clampf((VIEW_NEAR - near_best) / (VIEW_NEAR - UPRIGHT_NEAR), 0.0, 1.0)
+			view_ang = lerp_angle(view_ang, va, 0.012 + 0.16 * k * k)
 		game.view_c = game.cam_c         # (nothing from the GPU to line the sprites up with)
 	visible = true
 	game.view_rect.visible = live
@@ -1361,12 +1415,12 @@ func _draw_space() -> void:
 		var bi := int(b2["index"])
 		if not reachable(bi):
 			hc = Color(0.62, 0.6, 0.66)
-		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · %s: needs a %s" % [barrier_name(bi), barrier_key_name(bi)]), hc)
+		_marker(xf, b2["pos"], b2["top"], String(b2["name"]) + ("" if reachable(bi) else " · %s: needs a %s" % [barrier_name(bi), barrier_key_name(bi)]), hc, 5, "planet")
 	# the nearest other systems, by their stars (at most three)
 	for k3 in mini(3, others.size()):
 		var o3: Array = others[k3]
 		var sp3: Vector2 = game.cam_c + (o3[2] as Vector2)
-		_marker(xf, sp3, 0.0, "%s system" % Galaxy.star_name(int(o3[1])), Galaxy.star_col(int(o3[1])))
+		_marker(xf, sp3, 0.0, "%s system" % Galaxy.star_name(int(o3[1])), Galaxy.star_col(int(o3[1])), 5, "star")
 	# a waypoint from the map
 	if waypoint != null:
 		var wl: Vector2 = game.cam_c + Defs.g_rel(waypoint, galaxy_of(game.cam_c))
@@ -1375,31 +1429,30 @@ func _draw_space() -> void:
 			var wb := 0.7 + 0.3 * sin(tw * 3.0)
 			draw_colored_polygon(PackedVector2Array([wsp + Vector2(0, -5), wsp + Vector2(4, 0), wsp + Vector2(0, 5), wsp + Vector2(-4, 0)]), Color(1.0, 0.82, 0.3, wb))
 			_label(wsp + Vector2(0, -8), "Waypoint")
-		else:
-			_marker(xf, wl, 0.0, "Waypoint", Color(1.0, 0.82, 0.3), 1)
+		_marker(xf, wl, 0.0, "Waypoint", Color(1.0, 0.82, 0.3), 1, "waypoint")
 	var nr = nearest_rock(game.player.pos, 20000.0)
 	if nr != null:
-		_marker(xf, nr.pos, nr.reach(), "Comet" if not nr.orbit.is_empty() else "Asteroid", Color(0.95, 0.82, 0.62))
+		_marker(xf, nr.pos, nr.reach(), "Comet" if not nr.orbit.is_empty() else "Asteroid", Color(0.95, 0.82, 0.62), 5, "rock")
 	# this system's trading outpost (from the galaxy: you can find it before its sector comes in)
 	if near_sys >= 0:
 		var opl: Vector2 = game.cam_c + Defs.g_rel(Galaxy.system_outpost(near_sys), galaxy_of(game.cam_c))
-		_marker(xf, opl, 120.0, Galaxy.outpost_name(near_sys) + " · trading post", Color(1.0, 0.82, 0.45))
+		_marker(xf, opl, 120.0, Galaxy.outpost_name(near_sys) + " · trading post", Color(1.0, 0.82, 0.45), 5, "outpost")
 		# and its derelict station
 		if frame_st == null:
 			var stl: Vector2 = game.cam_c + Defs.g_rel(Galaxy.system_station(near_sys), galaxy_of(game.cam_c))
-			_marker(xf, stl, 200.0, "Derelict " + Galaxy.station_name(near_sys), Color(0.75, 0.55, 1.0))
+			_marker(xf, stl, 200.0, "Derelict " + Galaxy.station_name(near_sys), Color(0.75, 0.55, 1.0), 5, "station")
 	for smk in scan_marks:
 		_marker(xf, game.cam_c + Defs.g_rel(smk[0], galaxy_of(game.cam_c)), 100.0, String(smk[1]), smk[2])
 	for pa in rocks:
 		if pa.kind == "pirate":
-			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4), 2)
+			_marker(xf, pa.pos, pa.reach(), "%s, %s" % [String(pa.spec()["name"]).capitalize(), pa.wname], Color(1.0, 0.45, 0.4), 2, "pirate")
 	var nwk = nearest_wreck(game.player.pos)
 	if nwk != null:
-		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85))
+		_marker(xf, nwk.pos, nwk.reach(), "Wreck of " + String(nwk.wname), Color(0.75, 0.9, 0.85), 5, "wreck")
 	# your own ship, while you're off it (it waits where you left it)
 	var own = game.skiff
 	if own != null and game.player.aboard != own and own.pos.length() > Defs.R_SPACE - 9.5:
-		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff [K]", Color(0.55, 0.9, 1.0), 1)
+		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff [K]", Color(0.55, 0.9, 1.0), 1, "skiff")
 	vl.draw_markers(xf)
 	_flush_marks()
 	_top.queue_redraw()
@@ -1582,67 +1635,20 @@ func _sprite_for(idx: int) -> Sprite2D:
 	sprites[idx] = spr
 	return spr
 
-## Markers for what's off the screen (user, 23 Nov: "the arrow system isn't great because its hard to see them
-## when they stack and go under the ui"): gathered while drawing (`_marks`, prio: lower comes first; 1 your skiff
-## and the waypoint, 2 pirates, 5 the rest), then `_flush_marks` keeps the `MARK_MAX` most wanted, sets them on an
-## oval inset from the screen's edges (out of the corners, where the HUD and the satchel are, and clear of the
-## spell bar), spreads apart those that would sit on each other, and draws each arrow pointing the true way.
-const MARK_MAX := 7
-const MARK_GAP := 15.0          # (game pixels between two markers along the oval)
+## What's out there for the minimap (user, 24 Nov: "get rid of arrows on the hud and just use the map, and
+## maybe add a mini map for all of the hud stuff"; minimap.gd draws `map_marks`): gathered while drawing,
+## everything that used to get an arrow at the screen's edge, on screen or off ({pos (space's coordinates),
+## rad, text, col, prio (lower first: 1 your skiff and the waypoint, 2 pirates, 5 the rest), kind, dist}).
 var _marks := []
-func _marker(xf: Transform2D, wpos: Vector2, rad: float, text: String, col: Color, prio := 5) -> void:
-	var w := float(game.VW)
-	var h := float(game.VH)
-	var sp: Vector2 = xf * wpos
-	var rpx: float = rad / game.zoom
-	if sp.x + rpx > 0.0 and sp.y + rpx > 0.0 and sp.x - rpx < w and sp.y - rpx < h:
-		return                                   # (on screen: it shows itself)
+var map_marks := []
+func _marker(_xf: Transform2D, wpos: Vector2, rad: float, text: String, col: Color, prio := 5, kind := "") -> void:
 	var dist: float = (wpos - game.player.pos).length() - rad
-	_marks.append({"sp": sp, "dist": maxf(dist, 0.0), "text": text, "col": col, "prio": prio})
+	_marks.append({"pos": wpos, "rad": rad, "dist": maxf(dist, 0.0), "text": text, "col": col, "prio": prio, "kind": kind})
 
 func _flush_marks() -> void:
-	if _marks.is_empty():
-		return
 	_marks.sort_custom(func(x, y): return int(x["prio"]) < int(y["prio"]) or (int(x["prio"]) == int(y["prio"]) and float(x["dist"]) < float(y["dist"])))
-	if _marks.size() > MARK_MAX:
-		_marks.resize(MARK_MAX)
-	var w := float(game.VW)
-	var h := float(game.VH)
-	var ctr := Vector2(w, h) * 0.5
-	var rx := maxf(w * 0.5 - 34.0, 40.0)
-	var ry := maxf(h * 0.5 - 26.0, 30.0)
-	for mk in _marks:
-		mk["dir"] = ((mk["sp"] as Vector2) - ctr).normalized()
-		mk["a"] = (mk["dir"] as Vector2).angle()
-	# (spread along the oval: neighbours closer than MARK_GAP are pushed apart, a few passes)
-	_marks.sort_custom(func(x, y): return float(x["a"]) < float(y["a"]))
-	var n := _marks.size()
-	for it in 8:
-		var moved := false
-		for k in n:
-			var m0: Dictionary = _marks[k]
-			var m1: Dictionary = _marks[(k + 1) % n]
-			if n < 2:
-				break
-			var p0 := ctr + Vector2(cos(float(m0["a"])) * rx, sin(float(m0["a"])) * ry)
-			var p1 := ctr + Vector2(cos(float(m1["a"])) * rx, sin(float(m1["a"])) * ry)
-			if p0.distance_to(p1) < MARK_GAP:
-				var push := (MARK_GAP - p0.distance_to(p1)) / maxf(rx, ry) * 0.6 + 0.01
-				m0["a"] = float(m0["a"]) - push
-				m1["a"] = float(m1["a"]) + push
-				moved = true
-		if not moved:
-			break
-	for mk2 in _marks:
-		var at := ctr + Vector2(cos(float(mk2["a"])) * rx, sin(float(mk2["a"])) * ry)
-		var dir: Vector2 = mk2["dir"]
-		var side := Vector2(-dir.y, dir.x)
-		var ink := Color(0.02, 0.02, 0.05, 0.8)
-		draw_colored_polygon(PackedVector2Array([at + dir * 5.5, at - dir * 3.0 + side * 4.2, at - dir * 3.0 - side * 4.2]), ink)
-		draw_colored_polygon(PackedVector2Array([at + dir * 4.0, at - dir * 2.0 + side * 3.0, at - dir * 2.0 - side * 3.0]), mk2["col"])
-		# (the label further in than the arrow, and to its inner side: never over the arrow itself)
-		_label(at - dir * 13.0 + Vector2(0.0, 4.0 if dir.y < 0.0 else -1.0), "%s  %.0fk" % [mk2["text"], float(mk2["dist"]) / 1000.0])
-	_marks.clear()
+	map_marks = _marks
+	_marks = []
 
 func _label(at: Vector2, text: String) -> void:
 	var f: Font = PixelFont.make()

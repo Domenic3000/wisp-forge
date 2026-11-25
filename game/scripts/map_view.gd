@@ -55,13 +55,24 @@ func _draw_planet() -> void:
 		if m == g.player:
 			continue
 		_dot(g.world_to_screen(m.pos), Color(0.6, 1.0, 0.7), "")
-	# you, last (on top), blinking gently
-	var you: Vector2 = g.world_to_screen(g.player.pos)
+	# the waypoint (a click sets it, a right click clears it)
 	var on := 0.75 + 0.25 * sin(float(Time.get_ticks_msec()) * 0.006)
+	var you: Vector2 = g.world_to_screen(g.player.pos)
+	var wp = g.planet_waypoint()
+	if wp != null:
+		var wsp: Vector2 = g.world_to_screen(wp)
+		var wd: float = (wp as Vector2).distance_to(g.player.pos)
+		if wsp.x < 0.0 or wsp.y < 0.0 or wsp.x > g.VW or wsp.y > g.VH:
+			_edge_arrow(wsp, "Waypoint %s" % _dist(wd), Color(1.0, 0.82, 0.3, on))
+		else:
+			draw_dashed_line(you, wsp, Color(1.0, 0.82, 0.3, 0.4), 1.0, 3.0)
+			draw_colored_polygon(PackedVector2Array([wsp + Vector2(0, -5), wsp + Vector2(4, 0), wsp + Vector2(0, 5), wsp + Vector2(-4, 0)]), Color(1.0, 0.82, 0.3, on))
+			_label(wsp + Vector2(0, -8), "Waypoint · %s" % _dist(wd), Color(1.0, 0.85, 0.45))
+	# you, last (on top), blinking gently, pointing the way you face
 	if you.x < 0.0 or you.y < 0.0 or you.x > g.VW or you.y > g.VH:
 		_edge_arrow(you, "You", Color(1, 1, 1, on))
 	else:
-		_dot(you, Color(1.0, 1.0, 1.0, on), "You")
+		_you(you, g.world_to_screen(g.player.pos + g.facing_dir(g.player) * 40.0 * g.zoom) - you, on)
 
 ## a cell's middle (surface column, row), for markers: exact in the surface shell, near enough below
 static func _cell_world(col: float, row: float) -> Vector2:
@@ -74,6 +85,21 @@ func _dot(at: Vector2, col: Color, text: String) -> void:
 	draw_rect(Rect2(p - Vector2(1, 1), Vector2(3, 3)), col)
 	if text != "":
 		_label(p + Vector2(0, -6), text, col)
+
+## you: an arrow the way you face (user, 24 Nov: "the map doesnt show whick way your currently facing")
+var you_dir := Vector2.ZERO      # (the way it pointed on screen, for the tests)
+func _you(at: Vector2, face: Vector2, on: float) -> void:
+	var p := at.round()
+	var d := face.normalized() if face.length() > 0.001 else Vector2.UP
+	you_dir = d
+	var side := Vector2(-d.y, d.x)
+	var pts := PackedVector2Array([p + d * 6.0, p - d * 3.5 + side * 4.0, p - d * 1.5, p - d * 3.5 - side * 4.0])
+	var ink := PackedVector2Array()
+	for pt in pts:
+		ink.append(pt + (pt - p).normalized() * 1.2)
+	draw_colored_polygon(ink, Color(0, 0, 0, 0.8))
+	draw_colored_polygon(pts, Color(1, 1, 1, on))
+	_label(p + Vector2(0, -8), "You", Color(1, 1, 1, on))
 
 func _house(at: Vector2, col: Color) -> void:
 	var p := at.round()
@@ -353,7 +379,7 @@ func _draw_space() -> void:
 	if you.x < 0.0 or you.y < 0.0 or you.x > w or you.y > h:
 		_edge_arrow(you, "You", Color(1, 1, 1, on))
 	else:
-		_dot(you, Color(1.0, 1.0, 1.0, on), "You")
+		_you(you, g.facing_dir(g.player), on)      # (the chart is north up: space's own directions)
 	# a scale bar
 	var units := [1000.0, 5000.0, 25000.0, 100000.0, 500000.0, 2000000.0, 10000000.0]
 	var bar: float = units[0]

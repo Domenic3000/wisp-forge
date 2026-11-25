@@ -1584,6 +1584,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_voidlife()
+		elif only == "minimap":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_minimap()
 		elif only == "spacebench":
 			_go(g.player.pos)
 			await _frames(60)
@@ -4268,6 +4272,7 @@ func run() -> void:
 		sf_forged and sf_called and sf_settle >= 0 and sf_drift < 1.5 and sf_board and sf_up >= 0 and sf_back >= 0 and sf_land >= 0 and sf_with and sf_out and absf(sf_above) < 200.0 and sf_vmax < float(Skiff.CRUISE_HIGH) + 0.5 and sf_land > 40 and sf_scale.min() > 0.99 and sf_scale.max() < 1.01,
 		"forged %s, called %s (%d x %d cells, %.0f mass); settled after %d ticks (then moved %.1f); aboard %s; out in space after %d ticks of flying up (from radius %.0f), %.0f past the band after 1.5 s more; back in the band after %d ticks; landed %d ticks later (fastest through the air %.1f a tick), %.0f above the ground line, you still aboard %s; stepped out %s; drawn cells per pixel while climbing %s" % [sf_forged, sf_called, sf_sk.w, sf_sk.h, sf_sk.mass, sf_settle, sf_drift, sf_board, sf_up, sf_r0, sf_far, sf_back, sf_land, sf_vmax, sf_above, sf_with, sf_out, str(sf_scale)])
 
+	await _test_minimap()
 	await _test_wrecks()
 	await _test_pirates()
 	await _test_outposts()
@@ -9509,6 +9514,211 @@ func _test_cabin() -> void:
 
 # ------------------------------------------------------------------ derelict stations ---
 ## (user, 23 Nov: "Derelict space stations and everything with aliens and such to fight"; "Both, by section")
+## The minimap and the view in space (user, 24 Nov: the camera "spinning around on its own especially near a
+## derelict"; "the map doesnt show whick way your currently facing"; "get rid of arrows on the hud and just
+## use the map ... a mini map ... for planetary things as well. waypoints and such"): on the planet the side
+## view, the arrow the way you face (here and on the map), a waypoint set by a click on the map, shown and
+## cleared when you get there; out in space the radar, Q / E turning the view in deep space but not near a
+## planet, a far station turned to match the view so coming up to it doesn't turn it, the chart's arrow,
+## and a planet righting the view as you come down.
+func _test_minimap() -> void:
+	var rows := []
+	var ok := true
+	var G = load("res://scripts/galaxy.gd")
+	g.player.dead = false
+	g.test_god = true
+	g.state = "play"
+	var mm = g.ui.minimap
+	await _frames(10)
+	# ---- on the planet: the side view, and the arrow the way you face
+	var fa := []
+	for fs in [1.0, -1.0]:
+		g.test_aim = g.player.pos + g.basis_r(g.view_angle()) * 60.0 * fs
+		await _frames(6)
+		fa.append([g.player.facing, mm.facing.x])
+	g.test_aim = Vector2.ZERO
+	var cols: int = int(mm.stats.get("columns", 0))
+	var ok1: bool = g.ui.minimap_panel.visible and mm.mode == "planet" and cols == int(mm._size_for("planet").x) and fa[0][0] == 1 and fa[0][1] > 0.9 and fa[1][0] == -1 and fa[1][1] < -0.9
+	rows.append("%son the planet: the minimap %s, a side view of %d columns; facing right %s -> its arrow %.2f, left %s -> %.2f" % ["" if ok1 else "(!) ", "shown" if g.ui.minimap_panel.visible else "hidden", cols, fa[0][0], fa[0][1], fa[1][0], fa[1][1]])
+	ok = ok and ok1
+	# ---- a waypoint: a click on the planet map (the ground under the click), the map's arrow, the minimap
+	var p0: Vector2 = g.player.pos
+	var a0 := atan2(p0.y, p0.x)
+	var wa := a0 + 220.0 / Defs.RS0
+	var target: Vector2 = Vector2.from_angle(wa) * (g.gpu.surf_at(wa).x + 60.0)
+	g.planet_state.erase("waypoint")
+	g.open_map()
+	await _frames(30)
+	var you_dir: Vector2 = g.map_view.you_dir
+	var want_dir: Vector2 = g.world_to_screen(g.player.pos + g.facing_dir(g.player) * 200.0) - g.world_to_screen(g.player.pos)
+	var sp: Vector2 = g.world_to_screen(target)
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = sp * float(g.scale_px)
+	g._map_mouse(ev)
+	var ev2: InputEventMouseButton = ev.duplicate()
+	ev2.pressed = false
+	g._map_mouse(ev2)
+	await _frames(20)
+	_shot("map_waypoint.png")
+	var wp = g.planet_waypoint()
+	g.close_map()
+	await _frames(30)
+	var on_ground: bool = wp != null and absf((wp as Vector2).length() - g.gpu.surf_at(atan2(wp.y, wp.x)).x) < 4.0 and absf(wrapf(atan2(wp.y, wp.x) - wa, -PI, PI)) * Defs.RS0 < 30.0
+	var wp_mm: int = int(mm.stats.get("waypoint", 0))
+	_shot("minimap_planet.png")
+	var cleared := false
+	if wp != null:
+		_go(wp + (wp as Vector2).normalized() * 8.0)
+		for wk in 60:
+			await _frames(1)
+			if g.planet_waypoint() == null:
+				cleared = true
+				break
+	var ok2: bool = you_dir.dot(want_dir.normalized()) > 0.9 and on_ground and wp_mm == 1 and cleared
+	rows.append("%sthe map's arrow points the way you face %s; a click set a waypoint on the ground under it %s; on the minimap %s; cleared when you got there %s" % ["" if ok2 else "(!) ", you_dir.dot(want_dir.normalized()) > 0.9, on_ground, wp_mm == 1, cleared])
+	ok = ok and ok2
+	# ---- up into space in the skiff
+	if g.skiff == null or not g.items.has("skiff"):
+		var sf_rec: Dictionary = {}
+		for sr in g.recipes:
+			if sr["id"] == "skiff":
+				sf_rec = sr
+		for sk_k in sf_rec.get("cost", {}):
+			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		g.craft(sf_rec)
+	g.call_skiff()
+	await _frames(60)
+	var sk = g.skiff
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var up0: Vector2 = sk.pos.normalized()
+	sk.pos = up0 * (Defs.R_SPACE - 11.0)
+	sk.vel = up0 * 6.0
+	sk.grounded = false
+	g.test_cast = true
+	for k in 240:
+		g.test_aim = sk.pos + sk.pos.normalized() * 400.0
+		await _frames(1)
+		if g.space.active:
+			break
+	g.test_cast = false
+	g.test_aim = Vector2.ZERO
+	# just out of the air: Q / E do nothing, the planet holds the view (held 600 over the band, or it drops back in)
+	var hold_at: Vector2 = sk.pos.normalized() * (Defs.R_SPACE + 600.0)
+	for kh in 12:
+		sk.pos = hold_at
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	var v_near: float = g.space.view_ang
+	g.test_turn = 1.0
+	for kh2 in 30:
+		sk.pos = hold_at
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+	g.test_turn = 0.0
+	var held_near: bool = absf(wrapf(g.space.view_ang - v_near, -PI, PI)) < 0.05 and g.space.near_best <= g.space.VIEW_NEAR
+	# ---- out to the system's derelict: it comes in with its sector
+	var sl: Vector2 = g.space.local_of(G.system_station(0))
+	var st = null
+	for k1 in 300:
+		sk.pos = sl + Vector2(-1400.0, 0.0)
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		for a in g.space.rocks:
+			if a.kind == "station":
+				st = a
+		if st != null:
+			break
+	if st == null:
+		_ok("the minimap, the map's arrow, waypoints, and a view that turns only when you turn it", false, "; ".join(rows) + "; (!) no station came in (in space %s, aboard %s, the skiff %.0f from the middle, the band at %.0f)" % [g.space.active, g.player.aboard == sk, sk.pos.length(), Defs.R_SPACE])
+		return
+	# well away from it, in deep space: Q turns the view, the station turns to match while you're away
+	sk.pos = st.pos + Vector2(7000.0, 2500.0)
+	sk.vel = Vector2.ZERO
+	await _frames(20)
+	var v0: float = g.space.view_ang
+	g.test_turn = 1.0
+	await _frames(40)
+	g.test_turn = 0.0
+	var turned: float = absf(wrapf(g.space.view_ang - v0, -PI, PI))
+	await _frames(30)
+	var upv := Vector2.from_angle(g.space.view_ang)
+	var want_st := Vector2(upv.y, -upv.x).angle()
+	var st_aligned: bool = absf(wrapf(st.ang - want_st, -PI, PI)) < 0.01
+	# the minimap out here: what's round you, you pointing the way the skiff's nose points
+	var mm_ok: bool = mm.mode == "space" and int(mm.stats.get("planet", 0)) + int(mm.stats.get("star", 0)) >= 1 and int(mm.stats.get("rock", 0)) >= 1
+	var xf: Transform2D = g.screen_xf()
+	var face_ok: bool = mm.facing.dot(xf.basis_xform(g.facing_dir(g.player)).normalized()) > 0.95
+	g.space.zoom_i = 2
+	await _frames(40)
+	_shot("minimap_space.png")
+	g.space.zoom_i = 0
+	# the chart's arrow: north up, the way you face in space's own directions
+	g.open_map()
+	await _frames(20)
+	var chart_ok: bool = g.map_tab == "space" and g.map_view.you_dir.dot(g.facing_dir(g.player).normalized()) > 0.95
+	_shot("map_space_facing.png")
+	g.close_map()
+	await _frames(20)
+	# up to it: the view doesn't turn (it was already upright for you)
+	var fb := Vector2(float(st.w) * 0.5, -12.0)
+	sk.pos = st.to_world(fb - st.com)
+	sk.vel = Vector2.ZERO
+	var va0: float = g.space.view_ang
+	var spin := 0.0
+	for k2 in 90:
+		sk.vel = Vector2.ZERO
+		await _frames(1)
+		spin = maxf(spin, absf(wrapf(g.space.view_ang - va0, -PI, PI)))
+	var framed: bool = g.space.frame_st == st
+	var ok3: bool = held_near and turned > 0.9 and st_aligned and mm_ok and face_ok and chart_ok and framed and spin < 0.03
+	rows.append("%sin space: Q held near the planet left the view %s; out in deep space it turned it %.2f rad; the derelict turned to match while away %s; the radar (%s) %s; its arrow the skiff's way %s; the chart's arrow %s; came up to the derelict (at it %s) and the view turned %.3f rad" % [
+		"" if ok3 else "(!) ", "held" if held_near else "turned", turned, st_aligned, str(mm.stats), mm_ok, face_ok, chart_ok, framed, spin])
+	ok = ok and ok3
+	# ---- back to the planet, upside down: it rights the view before you get there
+	var ha: Vector2 = g.space.home_at()
+	var dir: Vector2 = (sk.pos - ha).normalized()
+	sk.pos = ha + dir * (Defs.R_SPACE + 9000.0)
+	sk.vel = Vector2.ZERO
+	await _frames(30)
+	g.space.view_ang = wrapf((sk.pos - ha).angle() + 2.6, -PI, PI)
+	var off0: float = absf(wrapf(g.space.view_ang - (g.cam_c - ha).angle(), -PI, PI))
+	var off1 := 0.0
+	for k3 in 400:
+		sk.vel = -dir * 18.0
+		await _frames(1)
+		if not g.space.active:
+			break
+		if (sk.pos - ha).length() < Defs.R_SPACE + 1200.0:
+			off1 = absf(wrapf(g.space.view_ang - (g.cam_c - ha).angle(), -PI, PI))
+			break
+	var ok4: bool = off0 > 2.0 and off1 < 0.12
+	rows.append("%scoming down upside down (%.2f rad off): by 1200 over the orbit band the view was %.3f off upright" % ["" if ok4 else "(!) ", off0, off1])
+	ok = ok and ok4
+	# down and out of the skiff, as the checks after this expect
+	for k4 in 300:
+		sk.vel = -sk.pos.normalized() * 8.0
+		await _frames(1)
+		if not g.space.active:
+			break
+	sk.pos = sk.pos.normalized() * (g.gpu.surf_at(atan2(sk.pos.y, sk.pos.x)).x + 30.0)
+	sk.vel = Vector2.ZERO
+	g.test_down = true
+	for k5 in 300:
+		await _frames(1)
+		if sk.grounded:
+			break
+	g.test_down = false
+	await _frames(20)
+	if g.player.aboard == sk:
+		g._skiff_interact(g.player)
+	await _frames(20)
+	_ok("the minimap, the map's arrow, waypoints, and a view that turns only when you turn it", ok, "; ".join(rows))
+
 func _test_stations() -> void:
 	var rows := []
 	var ok := true
