@@ -973,8 +973,8 @@ claude.ai project doc `claude/roadmap-and-decisions.md`.
 - A burrower whose ground is dug away round it (`Enemy.was_in`: it was in its ground last frame) is not
   deleted: `Ecology.unearth` throws it out onto the ground (`stranded_t` = `STRANDED` 150), `_stranded`
   writhes it there (hittable), then digs back into soft ground under it, or crawls (`goal_p`) to the
-  nearest ground deep enough within ~48 cells (the bottom of your hole may be too shallow), or stays out
-  on rock and looks again. A burrower spawned in the open still sinks as before.
+  nearest ground deep enough within ~48 cells (the bottom of your hole may be too shallow), tunnelling
+  straight into it when it's within 14 (a pit's side), or stays out on rock and looks again. A burrower spawned in the open still sinks as before.
 - Carried furniture of one name is ONE entry in build mode's Satchel tab (`Build.carried_pieces(..., pick)`:
   "items" the Mage.furn indices, "carried" the count, "item" the design shown); R shows the next design
   (main `carried_pick`), `select_carried(idx)` picks a stack showing that item (the tests use it).

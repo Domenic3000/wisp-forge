@@ -895,6 +895,10 @@ static func _stranded(g, e, tgt, gacc: float) -> void:
 		return
 	var dpt := depth(e)
 	var s := surface_under(g, e.pos, 8.0, 30.0)
+	# (deep enough ground a short way off, the side of the hole: it tunnels straight into it)
+	if e.on_ground and e.goal_p != Vector2.ZERO and absf((e.goal_p - e.pos).dot(br)) <= 14.0 \
+			and absf(e.goal_p.length() - e.pos.length()) <= 16.0 and diggable(g, e.goal_p, dpt):
+		s = e.goal_p
 	if e.on_ground and s.is_finite() and diggable(g, s, dpt):
 		e.stranded_t = 0
 		e.under = true

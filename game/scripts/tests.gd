@@ -7198,17 +7198,47 @@ func _test_harvest() -> void:
 	g.stamps.append({"x0": posmod(ec.x - 6, Defs.NS), "y0": ec.y - 6, "w": 12, "h": 12, "data": hole})
 	var out_seen := false
 	var back_in := false
-	for f2 in 400:
+	for f2 in 600:
 		await _frames(1)
 		if e.dead:
 			break
+		if f2 % 40 == 0:
+			var eo: Vector2i = Build.cell_of(e.pos) - Vector2i(cx, fl)
+			print("[harvest] burrower f%d at %s from the slab, under %s, stranded %d, ground %s, goal %s, act '%s', asleep %s" % [f2, str(eo),
+				e.under, e.stranded_t, e.on_ground, str(Build.cell_of(e.goal_p) - Vector2i(cx, fl)) if e.goal_p != Vector2.ZERO else "-", e.act, e.asleep])
 		if not e.under and e.stranded_t > 0:
 			out_seen = true
 		elif out_seen and e.under:
 			back_in = true
 			break
-	ok["burrower"] = in0 and out_seen and back_in and not e.dead
-	txt.append("in its sand %s; dug round: thrown out %s, dug back in %s, alive %s" % [in0, out_seen, back_in, not e.dead])
+	# again with a pit too deep to dig into at its bottom (3 rows of sand left over the stone): it tunnels
+	# into the pit's side
+	var back2 := false
+	var out2 := false
+	if back_in and not e.dead:
+		await _frames(20)
+		var ec2: Vector2i = Build.cell_of(e.pos)
+		var pit_top := fl - 2
+		var pit_h := (top + 13) - pit_top
+		var pit := PackedInt32Array()
+		pit.resize(12 * pit_h)
+		pit.fill(0xFF00)
+		g.stamps.append({"x0": posmod(ec2.x - 6, Defs.NS), "y0": pit_top, "w": 12, "h": pit_h, "data": pit})
+		for f3 in 600:
+			await _frames(1)
+			if e.dead:
+				break
+			if f3 % 60 == 0:
+				var eo2: Vector2i = Build.cell_of(e.pos) - Vector2i(cx, fl)
+				print("[harvest] in the pit f%d at %s, under %s, stranded %d, ground %s, goal %s" % [f3, str(eo2), e.under, e.stranded_t, e.on_ground,
+					str(Build.cell_of(e.goal_p) - Vector2i(cx, fl)) if e.goal_p != Vector2.ZERO else "-"])
+			if not e.under and e.stranded_t > 0:
+				out2 = true
+			elif out2 and e.under:
+				back2 = true
+				break
+	ok["burrower"] = in0 and out_seen and back_in and out2 and back2 and not e.dead
+	txt.append("in its sand %s; dug round: thrown out %s, dug back in %s; a pit too deep: out %s, into its side %s; alive %s" % [in0, out_seen, back_in, out2, back2, not e.dead])
 	e.dead = true
 	g.enemies.erase(e)
 	g.test_no_wild = wasnt_wild
