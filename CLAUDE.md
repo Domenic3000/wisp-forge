@@ -43,7 +43,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | `docs/effects.md` | Spell effects (vfx.gd) |
 | `docs/ui.md` | The UI style, font, icons, HUD, forge cards, speech bubbles, the satchel, the minimap, the Esc pause |
 | `docs/creatures.md` | Wild life (tempers, hunting, sleep, habitats), wild creatures, foe AI, pathfinding |
-| `docs/bosses.md` | Summoning guardians, biome guardians and lairs, wardens, Vulkhar, bosses that come to you and hunt you down |
+| `docs/bosses.md` | Summoning guardians, biome guardians and lairs, heart bosses per kind of world, wardens, Vulkhar, bosses that come to you and hunt you down |
 | `docs/player.md` | The mage's art and rig, the starting power, spells' cooldowns, digging speed, health |
 | `docs/physics.md` | Rigid chunks (felled trees, falling building pieces), standing on the curved world, chests at rest, scaffold |
 | `docs/performance.md` | Making a planet quickly, the profiler, the benchmarks, quality levels for lower-end PCs, hot paths, no stalls, read-back |

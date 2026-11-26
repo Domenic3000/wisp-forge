@@ -732,16 +732,25 @@ void main() {
 		if (r < rs + 115.0) bgm = flora(p, r, th, floraType, wet, false);
 	}
 
-	// the mantle guardian's arena
+	// the heart boss's chamber, lined by the world's kind (P.p[121].z, Defs.HEART_CHAMBER): its floor half of
+	// one stone, flecks of another round the rest; 7 (the deep ocean world's) is flooded
 	vec4 boss = P.p[120];
 	if (boss.y > 0.0) {
 		vec2 bd = vec2(cos(boss.x), sin(boss.x));
 		vec2 q = p - bd * boss.y;
 		float u = dot(q, vec2(-bd.y, bd.x)), v = dot(q, bd);
 		float e = u * u / (boss.z * boss.z) + v * v / (boss.w * boss.w);
-		if (e < 1.0) { m = 0u; bgm = 0u; }
-		else if (e < 1.22 && v < 0.0) m = M_OBSIDIAN;
-		else if (e < 1.22 && h2(ivec2(x, y), SEED + 50) < 0.12) m = M_EMBER;
+		int th = int(P.p[121].z + 0.5);
+		uint lining = M_OBSIDIAN, fleck = M_EMBER;
+		if (th == 1 || th == 7) { lining = M_DEEPSTONE; fleck = M_CRYSTAL; }
+		else if (th == 2) { lining = M_SANDSTONE; fleck = M_CRYSTAL; }
+		else if (th == 3) { lining = M_MOSSBLOCK; fleck = M_SHROOM; }
+		else if (th == 4) { lining = M_ICE; fleck = M_FROST; }
+		else if (th == 5) { lining = M_MOSSBLOCK; fleck = M_AMBER; }
+		else if (th == 6) { lining = M_MASONRY; fleck = M_RUNESTONE; }
+		if (e < 1.0) { m = th == 7 ? M_WATER : 0u; bgm = 0u; }
+		else if (e < 1.22 && v < 0.0) m = lining;
+		else if (e < 1.22 && h2(ivec2(x, y), SEED + 50) < 0.12) m = fleck;
 	}
 
 	uint v = hashu(uint(x) * 2654435761u ^ uint(y) * 40503u ^ uint(s) * 977u) & 255u;

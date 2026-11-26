@@ -1,4 +1,4 @@
-# Wisp Forge: Bosses: guardians, summoning, wardens, Vulkhar, pursuit
+# Wisp Forge: Bosses: guardians, summoning, heart bosses, wardens, Vulkhar, pursuit
 
 Notes for development sessions on this part of the game. The rules that apply everywhere are in
 `CLAUDE.md` at the top of the repo; read it first.
@@ -89,6 +89,35 @@ Notes for development sessions on this part of the game. The rules that apply ev
   liquid test reversed). Lairs' test: `_test_lairs` ("lairs": banners, background, chest per lair; pictures
   `lair_<biome>_bp.png` (the whole blueprint) and `lair_<biome>_mid/_a/_b.png` in the game). Test: `_test_far_biomes` ("biomes": enters Cindrel and Thalassa, `_test_guardians(["ashland"])`
   etc., the sanctum under water, the swimmers in the sea).
+
+## Heart bosses (user, 26 Nov: "i would like different bosses at the heart of different kinds of worlds"; chose every kind its own with Vulkhar staying on temperate worlds, a storm boss at the gas giant's Eye, and each giving its own relic)
+- `Defs.HEARTS` (kind -> a guardian-style definition: body plan and features, stats, `go`, moves/rage, "biome" (whose
+  fighters `_call_type` calls), "relic", "loot", "wet"/"swim" for the deep ocean world's): Pyrrhax the Molten Wyrm
+  (volcanic, serpent), Kharybdos the Deep Maw (ocean, toad), Ankhet the Sun Sphinx (desert, beast), Gulgoth the Mire
+  Wyrm (marsh, serpent), Hiemora the Glacier Queen (frozen, bird), Gorrath the Elder Beast (wild, beast), Aurelis the
+  Gryphon King (realm, bird), Nhal'Zuur the Abyssal Eye (the deep ocean world, a swimming serpent in a flooded
+  chamber), Tempestra the Storm Roc (the gas giant, bird). `Defs.heart_type(kind)`: "heart_<kind>", or "golem"
+  (Vulkhar) for temperate and any kind without one. `heart_enemy` (via `enemy_def`, prefix "heart_"): "boss",
+  "heart", "hall" (it wakes only with you inside its chamber: boss_ai's wake test, as a warden's `_in_hall`), "key".
+- main `_spawn_heart_boss` (where Vulkhar was spawned, unless `planet_state["boss_dead"]`): on the chamber's floor,
+  `tether` = the chamber's half width - 12, `ceil` its height - 8, `home` where it stands. The gas giant's (its heart
+  can't be reached) over the Eye of the Storm (`builds.mystery["hall"]` + 110 up), `arena` 260, tether 420, ceil 260,
+  and no "hall" (it wakes as you come near). Beaten: `_heart_falls` (main's `_kill_enemy` routes "heart" there):
+  `boss_dead`, its relic (max health / mana / regen given once, `_apply_gear`), its loot, 24 of the world's ore, a
+  recipe, 120 coins, `_roll_loot(6, 2.0)`. Guardians' moves, chase (pursuit), wall-breaking and calls all apply.
+- Relics with "mods" (`Defs.RELICS`: moltenheart, deeppearl, sunankh, mireeye, frostplume, elderheart, gryphoncrown,
+  abyssallure, stormheart): gear's stats, summed in main `gear` (max_hp, max_mana and mana_regen excepted: given
+  once when won).
+- The chamber's lining by kind (`Defs.HEART_CHAMBER` -> gpu `chamber_theme` -> gen.comp P.p[121].z): obsidian and
+  embers (temperate, volcanic, as before), deep stone and crystal (ocean), sandstone (desert), moss and glowcaps
+  (marsh), ice and frost (frozen), moss and amber (wild), masonry and runestone (realm), and flooded (the deep ocean
+  world). Only worlds generated from now on; GEN_VERSION not bumped, so worlds already made keep obsidian.
+- A charge that reaches its bounds (`tether`) brakes there (`vx` 0.4 of its way) before it recovers: it used to
+  slide ~30 cells on past the edge (guardians too).
+- The quest: a later world's core step names its heart boss. Test: `_test_hearts` ("hearts"; after
+  `_test_guardians`): the mapping, each one's frames, and each that fights on land set down on clear ground near
+  the start in a chamber's bounds (asleep with you outside, wakes with you in, moves, in bounds, clear of the ground,
+  falls, relic), and a relic's mods in `gear`; pictures `heart_<kind>.png`.
 
 ## Wardens
 - Dungeon wardens: the reliquary's neighbour nearest the way in (never the entrance) is the warden's hall, as big

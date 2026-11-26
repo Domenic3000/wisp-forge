@@ -315,9 +315,15 @@ func _world_chapter(ch: int) -> Array:
 	var kc: int = Defs.kind_core(pl)
 	if kc != Defs.CORE:
 		var kn: String = Defs.NAMES[kc]
+		# (and who guards it: each kind of world's own heart boss, Defs.HEARTS; user, 26 Nov)
+		var hk := String(pl.get("kind", ""))
+		var guard := ""
+		if Defs.HEARTS.has(hk):
+			var hb: Dictionary = Defs.HEARTS[hk]
+			guard = (" Over the Eye of the Storm flies %s, %s; beat it for its relic." if hk == "giant" else " %s, %s, waits in the chamber by the heart; beat it for its relic.") % [hb["name"], hb["title"]]
 		out.append({"id": "core", "title": "Harvest 10 %s" % kn, "need": [["held", kc, 10]], "reward": {"coins": 30},
-			"say": "The heart of %s is its own: %s. Siphon it, and the Core Arts at the Wisp Forge make a spell and a piece of gear from it." % [nm, kn],
-			"how": "Dig to the middle of %s with the Core Siphon: its heart gives %s. The Wisp Forge's Core Arts turn it into a spell and a piece of gear found nowhere else; rarer worlds have rarer cores." % [nm, kn]})
+			"say": "The heart of %s is its own: %s. Siphon it, and the Core Arts at the Wisp Forge make a spell and a piece of gear from it.%s" % [nm, kn, guard],
+			"how": "Dig to the middle of %s with the Core Siphon: its heart gives %s. The Wisp Forge's Core Arts turn it into a spell and a piece of gear found nowhere else; rarer worlds have rarer cores.%s" % [nm, kn, guard]})
 	var sys := Defs.system_of(ch)
 	var tg := next_target(sys, ch)
 	if tg >= 0:

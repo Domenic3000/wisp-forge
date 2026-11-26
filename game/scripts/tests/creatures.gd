@@ -997,6 +997,112 @@ func _test_pursuit() -> void:
 	await _frames(20)
 	_ok("a boss struck from where it can't follow comes to you: onto a ledge, or blasting in beside you; Vulkhar too; and they hunt you down, smash in and call help", pu_good, "; ".join(pu_lines))
 
+## The heart bosses (Defs.HEARTS; user, 26 Nov: "different bosses at the heart of different kinds of worlds"):
+## each kind's comes to the right world (`heart_type`: Vulkhar on temperate worlds), its frames grow from its body,
+## and each one that fights on land is set down on clear ground here, kept to a chamber's bounds round it: it
+## wakes only with you inside, fights with its moves, stays clear of the ground and in bounds, falls and gives up its
+## relic (whose powers then count in `gear`). (The deep ocean world's swims, so it's only grown and mapped here.)
+func _test_hearts() -> void:
+	var hb_items0: Dictionary = g.items.duplicate()
+	var hb_hp0: float = g.max_hp
+	var hb_mana0: float = g.max_mana
+	var hb_regen0: float = g.mana_regen
+	var hb_dead0 = g.planet_state.get("boss_dead", false)
+	var hb_god0: bool = g.test_god
+	var hb_back: Vector2 = g.player.pos
+	g.test_god = true
+	g.test_calm = false
+	var hb_rows := []
+	var hb_ok := true
+	# who waits where
+	var hb_map_ok: bool = Defs.heart_type("temperate") == "golem" and Defs.heart_type("giant") == "heart_giant"
+	for hk0 in ["volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss"]:
+		hb_map_ok = hb_map_ok and Defs.heart_type(hk0) == "heart_" + hk0
+	hb_rows.append("each kind's own at its heart, Vulkhar on temperate worlds: %s" % hb_map_ok)
+	hb_ok = hb_ok and hb_map_ok
+	var BA = load("res://scripts/boss_art.gd")
+	var hb_st := _clear_stretch(Build.cell_of(start_pos).x + 60, 200, 110, 6)
+	var hb_mid := hb_st.x + 100
+	for hk in Defs.HEARTS:
+		var hd: Dictionary = Defs.HEARTS[hk]
+		var hb_fr: Dictionary = BA.frames("heart_" + hk, hd["body"])
+		if hb_fr.is_empty():
+			hb_rows.append("(!) %s: no frames" % hk)
+			hb_ok = false
+			continue
+		if hd.get("swim", false):
+			hb_rows.append("%s (%s): %d frames, a swimmer (fought in its flooded chamber)" % [hk, hd["name"], hb_fr.size()])
+			continue
+		# set down as in its chamber (main `_spawn_heart_boss`): on the floor, kept to 88 either way and 76 up
+		var hb_row: int = g.builds.ground_row(hb_mid)
+		var hb_floor: Vector2 = _cell_pos(hb_mid, hb_row - 1)
+		var hb_up: Vector2 = hb_floor.normalized()
+		var hb_e = g.spawn_enemy("heart_" + hk, hb_floor + hb_up * (float(hd["h"]) * 0.5 + 2.0))
+		hb_e.tether = 88.0
+		hb_e.ceil = 76.0
+		hb_e.home = hb_e.pos
+		# (it stays asleep while you're outside its chamber)
+		_go(_cell_pos(hb_mid + 160, g.builds.ground_row(hb_mid + 160) - 12))
+		g.player.dead = false
+		await _frames(30)
+		var hb_slept: bool = not hb_e.awake
+		_go(_cell_pos(hb_mid - 40, g.builds.ground_row(hb_mid - 40) - 12))
+		g.player.dead = false
+		var hb_lg0: Vector2 = g.to_grid(hb_e.pos)
+		var hb_stuck: bool = g.box_solid(hb_lg0.x - hb_e.w * 0.5 + 1.0, hb_lg0.y - hb_e.h * 0.5 + 1.0, hb_e.w - 2.0, hb_e.h - 3.0)
+		var hb_walk := 0.0
+		var hb_out := 0.0
+		var hb_last: Vector2 = hb_e.pos
+		var hb_br: Vector2 = g.basis_r(atan2(hb_e.home.y, hb_e.home.x))
+		for hb_f in 240:
+			await _frames(1)
+			if hb_f == 150:
+				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("heart_%s.png" % hk))
+			if hb_e.dead:
+				break
+			hb_walk += hb_e.pos.distance_to(hb_last)
+			hb_last = hb_e.pos
+			hb_out = maxf(hb_out, absf((hb_e.pos - hb_e.home).dot(hb_br)) - hb_e.tether)
+			g.player.hp = g.player.max_hp
+		var hb_awake: bool = hb_e.awake
+		var hb_moves: int = hb_e.moves_done
+		var hb_rel: String = hd["relic"]
+		g._hurt_enemy(hb_e, 99999.0, 0.0, 0.0)
+		await _frames(2)
+		var hb_got: bool = g.items.has(hb_rel)
+		var hb_dead: bool = bool(g.planet_state.get("boss_dead", false))
+		g.planet_state["boss_dead"] = hb_dead0
+		var hb_good: bool = hb_slept and hb_awake and hb_moves >= 1 and hb_got and hb_dead and not hb_stuck and hb_walk > 20.0 and hb_out < 20.0
+		hb_ok = hb_ok and hb_good
+		hb_rows.append("%s%s (%s): asleep outside %s, woke %s, %d moves, moved %.0f, past its bounds %.0f, clear %s, relic %s" % ["" if hb_good else "(!) ", hk, hd["name"],
+			hb_slept, hb_awake, hb_moves, hb_walk, hb_out, not hb_stuck, hb_got])
+		for o in g.enemies.duplicate():
+			if o.summoner == null and not o.boss and o.pos.distance_to(hb_floor) < 300.0:
+				g.enemies.erase(o)          # (what it called, so the next has a clear field)
+	# a relic's powers count in gear: the Sunscale Ankh digs two fifths faster
+	g.items["sunankh"] = true
+	var hb_dig: float = g.gear("dig_rate")
+	g.items.erase("sunankh")
+	var hb_dig0: float = g.gear("dig_rate")
+	var hb_gear_ok: bool = absf(hb_dig / maxf(hb_dig0, 0.001) - 1.4) < 0.01
+	hb_ok = hb_ok and hb_gear_ok
+	hb_rows.append("a relic's powers in gear: dig %.2f with the ankh, %.2f without" % [hb_dig, hb_dig0])
+	for hb_r in Defs.RELICS:
+		if not hb_items0.has(hb_r):
+			g.items.erase(hb_r)
+	g.max_hp = hb_hp0
+	g.hp = minf(g.hp, hb_hp0)
+	g.max_mana = hb_mana0
+	g.mana_regen = hb_regen0
+	g._apply_gear()
+	g.planet_state["boss_dead"] = hb_dead0
+	g.test_god = hb_god0
+	g.test_calm = true
+	g.boss_clouds.clear()
+	_go(hb_back)
+	await _frames(60)
+	_ok("each kind of world's heart boss: the right one at each heart, grown, asleep till you come in, fights, falls, gives its relic", hb_ok, "; ".join(hb_rows))
+
 func _test_guardians(only_biomes := []) -> void:
 	# ---- the biome guardians: each called at a Summoning Altar built in its biome with its sigil; it comes
 	# at a clear spot (never in the ground), fights with its moves, falls, gives its relic ----

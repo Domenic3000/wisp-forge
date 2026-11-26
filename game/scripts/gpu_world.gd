@@ -347,6 +347,8 @@ func generate(spawn_angle: float, boss: Vector4, sites: Array) -> void:
 
 ## The generation of a whole planet, set up and split into its row bands: each band can run on its
 ## own (`generate_band`), so a planet can also be made a band a frame while the game goes on.
+var chamber_theme := 0.0      # how the heart's chamber is lined (Defs.HEART_CHAMBER; main sets it before a planet is made)
+
 func generate_prepare(spawn_angle: float, boss: Vector4, sites: Array) -> Array:
 	flush()
 	var sd := PackedFloat32Array()
@@ -361,7 +363,7 @@ func generate_prepare(spawn_angle: float, boss: Vector4, sites: Array) -> Array:
 	rd.buffer_update(sites_buf, 0, sb.size(), sb)
 	rd.buffer_clear(seen_buf, 0, seen_bytes())      # (a new planet: none of it seen yet)
 	setp(120, boss)
-	setp(121, Vector4(spawn_angle, 0, 0, 0))
+	setp(121, Vector4(spawn_angle, 0, chamber_theme, 0))
 	_upload_params()
 	var jobs := []
 	for s in Defs.NSH:

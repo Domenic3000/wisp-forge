@@ -2749,7 +2749,95 @@ const RELICS := {
 	"lionheart": {"name": "Lionheart", "desc": "+40 max health."},
 	"sunidol": {"name": "Sun Idol", "desc": "Your spells hit a quarter harder, and a desert world's sun can't scorch you."},
 	"lantern": {"name": "Glowcap Lantern", "desc": "A soft light goes with you."},
+	# the heart bosses' (HEARTS): what they do is in "mods", the gear's stats (main `gear` reads them too)
+	"moltenheart": {"name": "Molten Heart", "desc": "Fireball strikes half again as hard, and fire and lava can't hurt you.",
+		"mods": {"spell_fireball": 1.5, "fire_dmg": 0.0, "lava_dmg": 0.0}},
+	"deeppearl": {"name": "Pearl of the Deep Maw", "desc": "You swim half again as fast, hold your breath three times as long, and draughts heal half again as much.",
+		"mods": {"swim": 1.5, "breath": 3.0, "draught_heal": 1.5}},
+	"sunankh": {"name": "Sunscale Ankh", "desc": "Your staff digs two fifths faster and reaches a quarter further.",
+		"mods": {"dig_rate": 1.4, "reach": 1.25}},
+	"mireeye": {"name": "Eye of the Mire Wyrm", "desc": "You take a sixth less damage and are barely knocked about.",
+		"mods": {"dmg_taken": 0.85, "knock": 0.4}},
+	"frostplume": {"name": "Glacier Plume", "desc": "Levitation costs half the mana, you jump a third higher, and Frostbite bites half again as hard.",
+		"mods": {"levitate": 0.5, "jump": 1.33, "spell_frost": 1.5}},
+	"elderheart": {"name": "Heart of the Elder Beast", "desc": "+50 max health, and you run a sixth faster.",
+		"mods": {"max_hp": 50.0, "speed": 1.16}},
+	"gryphoncrown": {"name": "Gryphon's Crown", "desc": "Spells cost a fifth less mana, and Spark Bolts strike a third harder.",
+		"mods": {"mana_cost": 0.8, "spell_spark": 1.33}},
+	"abyssallure": {"name": "Abyssal Lure", "desc": "A cold light goes with you, +40 max mana, and mana comes back faster.",
+		"mods": {"light": 1.0, "max_mana": 40.0, "mana_regen": 0.5}},
+	"stormheart": {"name": "Heart of the Tempest", "desc": "You run a quarter faster and jump half again as high.",
+		"mods": {"speed": 1.25, "jump": 1.5}},
 }
+
+## The bosses at the hearts of the other kinds of world (user, 26 Nov: "i would like different bosses at the heart
+## of different kinds of worlds"; chose: every kind its own, Vulkhar stays on temperate worlds, a storm boss at the
+## gas giant's Eye, each with a relic of its own). Grown from the guardians' body plans and moved by their moves
+## (boss_ai.gd), in the heart's chamber (main `heart_type`; the gas giant's flies over the Eye of the Storm). Each is
+## stronger than a guardian. "biome": whose fighters it calls; "chamber": how the chamber is lined (gen.comp, for
+## worlds made from now on: `HEART_CHAMBER`); "wet": the chamber is flooded and it swims.
+const HEARTS := {
+	"volcanic": {"name": "Pyrrhax", "title": "the Molten Wyrm", "col": Color(1.0, 0.45, 0.15), "biome": "ashland",
+		"body": {"plan": "serpent", "segs": 15, "rad": 8.5, "base": "#5a1a10", "belly": "#ff9a3a", "accent": "#ffd23a", "dark": "#200806", "eye": "#fff27a", "teeth": true},
+		"w": 18.0, "h": 16.0, "hp": 900.0, "dmg": 18.0, "go": "slither", "speed": 2.3, "fly": true,
+		"moves": {"spit": {"proj": "efire", "n": 3, "spread": 0.2}, "dive": {}, "erupt": {"mat": MAGMAROCK, "col": Color(1.0, 0.45, 0.1)}},
+		"rage": {"rain": {"proj": "efire", "n": 8}},
+		"relic": "moltenheart", "loot": {EMBER: 30, OBSIDIAN: 30, MAGMAROCK: 40}},
+	"ocean": {"name": "Kharybdos", "title": "the Deep Maw", "col": Color(0.3, 0.75, 0.95), "biome": "ocean",
+		"body": {"plan": "toad", "len": 42, "tall": 26, "base": "#1c4a66", "belly": "#8ad0d8", "accent": "#3affd8", "dark": "#0a2030", "eye": "#e8ff7a", "skin": "spots"},
+		"w": 34.0, "h": 26.0, "hp": 920.0, "dmg": 17.0, "go": "hop", "speed": 1.0,
+		"moves": {"slam": {"far": true}, "spit": {"proj": "surge", "n": 5, "spread": 0.22}, "gust": {}},
+		"rage": {"spit2": {"proj": "surge", "n": 7, "spread": 0.16}, "slam2": {"far": true}},
+		"relic": "deeppearl", "loot": {CRYSTAL: 16, SAND: 30, WATER: 40}},
+	"desert": {"name": "Ankhet", "title": "the Sun Sphinx", "col": Color(1.0, 0.82, 0.4), "biome": "desert",
+		"body": {"plan": "beast", "len": 42, "tall": 18, "leg": 16, "head": 11, "neck": 6, "base": "#c89a4a", "belly": "#f0d898",
+			"accent": "#2a6ab0", "dark": "#4a3212", "eye": "#5af0ff", "skin": "scales", "mane": true, "tail": "long", "ears": true},
+		"w": 32.0, "h": 30.0, "hp": 900.0, "dmg": 18.0, "go": "walk", "speed": 1.15,
+		"moves": {"charge": {}, "rain": {"proj": "sandball", "n": 8}, "spit": {"proj": "sandball", "n": 4, "spread": 0.25}},
+		"rage": {"roar": {}, "charge2": {}},
+		"relic": "sunankh", "loot": {SANDSTONE: 40, CRYSTAL: 12, SAND: 40}},
+	"marsh": {"name": "Gulgoth", "title": "the Mire Wyrm", "col": Color(0.55, 0.75, 0.35), "biome": "marsh",
+		"body": {"plan": "serpent", "segs": 14, "rad": 8.0, "base": "#4a5a28", "belly": "#a8a868", "accent": "#c86a2a", "dark": "#1e2410", "eye": "#ffd23a", "teeth": true},
+		"w": 18.0, "h": 16.0, "hp": 900.0, "dmg": 17.0, "go": "slither", "speed": 2.0, "fly": true,
+		"moves": {"spit": {"proj": "mudball", "n": 5, "spread": 0.25}, "dive": {}, "summon": {"type": "slime", "n": 2, "max": 4}},
+		"rage": {"cloud": {}, "summon2": {"type": "slime", "n": 3, "max": 5}},
+		"relic": "mireeye", "loot": {MUD: 40, SHROOM: 16, MOSSBLOCK: 20}},
+	"frozen": {"name": "Hiemora", "title": "the Glacier Queen", "col": Color(0.65, 0.9, 1.0), "biome": "tundra",
+		"body": {"plan": "bird", "len": 32, "span": 46, "base": "#c8e0f0", "belly": "#f4faff", "accent": "#5ac8ff", "dark": "#4a6a8a", "eye": "#3affff", "skin": "fur"},
+		"w": 28.0, "h": 22.0, "hp": 860.0, "dmg": 17.0, "go": "fly", "speed": 2.6, "fly": true,
+		"moves": {"rain": {"proj": "ice", "n": 9}, "dive": {}, "gust": {}},
+		"rage": {"spit": {"proj": "ice", "n": 5, "spread": 0.14}, "dive2": {}},
+		"relic": "frostplume", "loot": {ICE: 40, FROST: 20, CRYSTAL: 10}},
+	"wild": {"name": "Gorrath", "title": "the Elder Beast", "col": Color(0.75, 0.6, 0.35), "biome": "forest",
+		"body": {"plan": "beast", "len": 46, "tall": 21, "leg": 17, "head": 12, "neck": 7, "base": "#4e3a26", "belly": "#8a7050",
+			"accent": "#c8a03a", "dark": "#20160c", "eye": "#ff5a2a", "skin": "fur", "antlers": 5, "tusks": true, "tail": "tuft"},
+		"w": 34.0, "h": 36.0, "hp": 960.0, "dmg": 19.0, "go": "walk", "speed": 1.05,
+		"moves": {"charge": {}, "slam": {"far": true}, "roar": {}},
+		"rage": {"charge2": {}, "erupt": {"mat": WOOD, "col": Color(0.45, 0.32, 0.18)}},
+		"relic": "elderheart", "loot": {WOOD: 40, AMBER: 10, LEAF: 20}},
+	"realm": {"name": "Aurelis", "title": "the Gryphon King", "col": Color(1.0, 0.88, 0.5), "biome": "mountain",
+		"body": {"plan": "bird", "len": 32, "span": 44, "base": "#d8b050", "belly": "#f8ecc8", "accent": "#b8c8e8", "dark": "#5a3e14", "eye": "#4ab0ff", "skin": "fur"},
+		"w": 28.0, "h": 22.0, "hp": 880.0, "dmg": 18.0, "go": "fly", "speed": 2.7, "fly": true,
+		"moves": {"dive": {}, "rain": {"proj": "rock", "n": 6}, "gust": {}},
+		"rage": {"dive2": {}, "roar": {}},
+		"relic": "gryphoncrown", "loot": {SILVER: 12, MASONRY: 30, CRYSTAL: 10}},
+	"abyss": {"name": "Nhal'Zuur", "title": "the Abyssal Eye", "col": Color(0.4, 0.55, 1.0), "biome": "abyss", "wet": true,
+		"body": {"plan": "serpent", "segs": 16, "rad": 8.5, "base": "#141a3a", "belly": "#5a6ab8", "accent": "#5affe8", "dark": "#06081a", "eye": "#c8ff5a", "teeth": true},
+		"w": 18.0, "h": 16.0, "hp": 1000.0, "dmg": 19.0, "go": "slither", "speed": 2.2, "fly": true, "swim": true,
+		"moves": {"dive": {}, "spit": {"proj": "surge", "n": 5, "spread": 0.2}, "summon": {"type": "c_lanterneel", "n": 2, "max": 3}},
+		"rage": {"gust": {}, "spit2": {"proj": "venom", "n": 6, "spread": 0.16}},
+		"relic": "abyssallure", "loot": {CRYSTAL: 20, ABYSSPEARL: 8, DEEPSTONE: 30}},
+	"giant": {"name": "Tempestra", "title": "the Storm Roc", "col": Color(0.75, 0.8, 1.0), "biome": "giant",
+		"body": {"plan": "bird", "len": 36, "span": 52, "base": "#5a5e8a", "belly": "#c8ccf0", "accent": "#fff27a", "dark": "#1c1e3a", "eye": "#fff27a", "skin": "fur"},
+		"w": 30.0, "h": 24.0, "hp": 940.0, "dmg": 18.0, "go": "fly", "speed": 3.0, "fly": true,
+		"moves": {"dive": {}, "gust": {}, "rain": {"proj": "ice", "n": 8}},
+		"rage": {"dive2": {}, "spit": {"proj": "spore", "n": 3, "spread": 0.5}},
+		"relic": "stormheart", "loot": {VOIDESS: 6, STARIRON: 8, CRYSTAL: 12}},
+}
+## how each kind's heart chamber is lined, for gen.comp (P.p[121].z): 0 obsidian and embers (as it always was;
+## temperate and volcanic), 1 deep stone and crystal, 2 sandstone and crystal, 3 moss and glowcaps, 4 ice and frost,
+## 5 moss and amber, 6 masonry and runestone, 7 deep stone and crystal, flooded
+const HEART_CHAMBER := {"ocean": 1, "desert": 2, "marsh": 3, "frozen": 4, "wild": 5, "realm": 6, "abyss": 7}
 
 # ------------------------------------------------------------- creatures ---
 ## The wild creatures of each biome and each depth underground: small cousins of the guardians, grown
@@ -2948,12 +3036,31 @@ func warden_enemy(type: String) -> Dictionary:
 	_warden_enemy[type] = d
 	return d
 
-## any foe's definition (the fixed ones, a creature, a guardian or a warden)
+## a heart boss as a foe ("heart_<kind>"): a boss like a guardian, kept to its chamber ("hall": it wakes only
+## with you inside), "key" what marks it beaten
+var _heart_enemy := {}
+func heart_enemy(type: String) -> Dictionary:
+	if _heart_enemy.has(type):
+		return _heart_enemy[type]
+	var b: Dictionary = HEARTS[type.trim_prefix("heart_")]
+	var d := {"w": b["w"], "h": b["h"], "hp": b["hp"], "dmg": b["dmg"], "fly": bool(b.get("fly", false)), "spr": type,
+		"boss": true, "heart": true, "hall": true, "drops": [], "def": b, "biome": String(b.get("biome", "")), "key": type, "ai": {"sight": 400.0}}
+	_heart_enemy[type] = d
+	return d
+
+## who waits at the heart of a world of this kind: "golem" (Vulkhar, on temperate worlds and any kind without
+## its own) or "heart_<kind>"
+static func heart_type(kind: String) -> String:
+	return "heart_" + kind if HEARTS.has(kind) else "golem"
+
+## any foe's definition (the fixed ones, a creature, a guardian, a heart boss or a warden)
 func enemy_def(type: String) -> Dictionary:
 	if ENEMY.has(type):
 		return ENEMY[type]
 	if type.begins_with("c_"):
 		return creature_enemy(type)
+	if type.begins_with("heart_"):
+		return heart_enemy(type)
 	return warden_enemy(type) if type.begins_with("warden_") else boss_enemy(type)
 
 func sprite_texture(key: String) -> ImageTexture:

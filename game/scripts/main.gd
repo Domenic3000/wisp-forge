@@ -3614,7 +3614,10 @@ func _kill_enemy(e: Enemy) -> void:
 			player.inv[int(dr[0])] += n
 			ui.toast("+%d %s" % [n, Defs.NAMES[int(dr[0])]], Defs.COLOR[int(dr[0])])
 	if e.boss and e.d.has("def"):
-		_guardian_falls(e)
+		if e.d.get("heart", false):
+			_heart_falls(e)
+		else:
+			_guardian_falls(e)
 	if e.type == "golem":
 		items["heart"] = true
 		planet_state["boss_dead"] = true
@@ -3624,6 +3627,65 @@ func _kill_enemy(e: Enemy) -> void:
 		ui.toast("+40 Ember Crystal, +20 Obsidian. The Core Siphon can now be forged.", Color(1, 0.85, 0.3), 6.0)
 		shake = 18.0
 		save_game()
+
+## Whoever waits at this world's heart (Defs.heart_type: Vulkhar on temperate worlds, each other kind its own;
+## user, 26 Nov): in the heart's chamber, kept to it (it wakes only with you inside: "hall"), or on a gas giant,
+## whose heart can't be reached, over the Eye of the Storm, roaming the sky round it.
+func _spawn_heart_boss() -> Enemy:
+	var ht := Defs.heart_type(String(planet.get("kind", "temperate")))
+	var bd := Vector2(cos(boss_info.x), sin(boss_info.x))
+	if ht == "golem":
+		return spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
+	var d: Dictionary = Defs.heart_enemy(ht)
+	var e: Enemy
+	if String(planet.get("kind", "")) == "giant" and builds.mystery.has("hall"):
+		var hp0: Vector2 = builds.mystery["hall"]
+		var at: Vector2 = hp0 + hp0.normalized() * 110.0
+		e = spawn_enemy(ht, at)
+		e.tether = 420.0
+		e.ceil = 260.0
+		e.arena = 260.0
+		e.d = d.duplicate()
+		e.d.erase("hall")               # (the sky round the Eye is its arena: it wakes as you come near)
+	else:
+		# on the chamber's floor (its middle, boss_info.y; half as tall as boss_info.w), a little over it
+		var floor_p: Vector2 = bd * (boss_info.y - boss_info.w)
+		e = spawn_enemy(ht, floor_p + bd * (float(d["h"]) * 0.5 + 2.0))
+		e.tether = boss_info.z - 12.0
+		e.ceil = boss_info.w * 2.0 - 8.0
+	e.home = e.pos
+	return e
+
+## A heart boss is beaten: its relic and a great hoard (this world's ore, a recipe, coins); it stays dead here
+## (`boss_dead`, as Vulkhar does).
+func _heart_falls(e: Enemy) -> void:
+	var bd: Dictionary = e.d["def"]
+	planet_state["boss_dead"] = true
+	var rid: String = bd["relic"]
+	var rel: Dictionary = Defs.RELICS[rid]
+	ui.toast("%s, %s, falls!" % [bd["name"], bd["title"]], bd["col"], 6.0)
+	if not items.has(rid):
+		items[rid] = true
+		var mods: Dictionary = rel.get("mods", {})
+		max_hp += float(mods.get("max_hp", 0.0))
+		hp += float(mods.get("max_hp", 0.0))
+		max_mana += float(mods.get("max_mana", 0.0))
+		mana_regen += float(mods.get("mana_regen", 0.0))
+		_apply_gear()
+		ui.toast("RELIC: %s. %s" % [rel["name"], rel["desc"]], Color(1.0, 0.88, 0.45), 8.0)
+	var loot: Dictionary = bd["loot"]
+	for mt in loot:
+		player.inv[int(mt)] += int(loot[mt])
+	_hoard_ore(24)
+	_hoard_recipe()
+	items["coins"] = int(items.get("coins", 0)) + 120
+	_roll_loot(6, 2.0)
+	shake = 18.0
+	audio.play("rare")
+	for o in enemies:
+		if o.summoner == e:
+			o.summoner = null
+	save_game()
 
 ## A biome guardian is beaten: its relic is yours, with its hoard; it stays dead on this planet.
 func _guardian_falls(e: Enemy) -> void:
@@ -5297,6 +5359,13 @@ func gear(stat: String, m: Mage = null) -> float:
 		var mods2: Dictionary = Defs.WORK_GEAR[id2]["mods"]
 		if mods2.has(stat) and who.items.has(id2):
 			v = v + float(mods2[stat]) if add else v * float(mods2[stat])
+	# (the heart bosses' relics carry gear's stats too; max health, max mana and regen are given once, as they're won)
+	for rid in Defs.RELICS:
+		var rr: Dictionary = Defs.RELICS[rid]
+		if rr.has("mods") and who.items.has(rid) and not (stat == "max_hp" or stat == "max_mana" or stat == "mana_regen"):
+			var mods4: Dictionary = rr["mods"]
+			if mods4.has(stat):
+				v = v + float(mods4[stat]) if add else v * float(mods4[stat])
 	for bid in who.buffs:
 		var mods3: Dictionary = Defs.DRAUGHTS[bid]["mods"]
 		if mods3.has(stat):
@@ -8375,6 +8444,7 @@ func _make_world(index: int, arriving: bool) -> void:
 	var boss_a := fposmod(spawn_angle + PI, TAU)
 	var mag: float = gpu.surf_at(boss_a).w
 	boss_info = Vector4(boss_a, mag - 6.0, 100.0, 42.0)
+	gpu.chamber_theme = float(Defs.HEART_CHAMBER.get(String(planet.get("kind", "temperate")), 0))
 	planet_state = {}
 	var loaded := _load_world(index)
 	if loaded and int(planet_state.get("gen", 1)) != GEN_VERSION:
@@ -8489,9 +8559,8 @@ func _make_world(index: int, arriving: bool) -> void:
 	_guards_alive.clear()
 	projs.clear()
 	parts.clear()
-	var bd := Vector2(cos(boss_a), sin(boss_a))
 	if not planet_state.get("boss_dead", false):
-		spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
+		_spawn_heart_boss()
 	_spawn_guardians()
 	_gt("foes")
 	if loaded:

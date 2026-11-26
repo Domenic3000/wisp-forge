@@ -70,7 +70,10 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 			return
 	elif not e.awake:
 		var in_arena: bool = e.arena > 0.0 and absf(_off(g, e, tgt.pos)) < e.arena and absf((tgt.pos - e.home).dot(e.home.normalized())) < e.ceil
-		if (dist < WAKE or in_arena) and not tgt.dead and not g.test_calm and (not e.d.get("warden", false) or _in_hall(g, e, tgt)):
+		# (a warden, and a heart boss in its chamber, "hall", wake only with you inside: through the rock round
+		# the chamber they'd only rage at the stone)
+		var walled: bool = e.d.get("warden", false) or e.d.get("hall", false)
+		if (dist < WAKE or in_arena) and not tgt.dead and not g.test_calm and (not walled or _in_hall(g, e, tgt)):
 			wake(g, e)
 		else:
 			_rest(g, e, gacc)
@@ -732,7 +735,10 @@ static func _going(g, e, tgt, dx: float, dy: float, k: String, pr: Dictionary, s
 				# something low in the way (a step of the shrine, a stub of a pillar): over it, still
 				# charging (it used to stand pushing against it until the charge ran out)
 				e.vy = -sqrt(2.0 * gacc * (float(wh) + 3.0))
-			if e.act_t <= 0 or (dx * dirx < -60.0) or (e.tether > 0.0 and _off(g, e, e.pos) * dirx > e.tether + 6.0):
+			if e.tether > 0.0 and _off(g, e, e.pos) * dirx > e.tether + 6.0:
+				e.vx = dirx * 0.4               # (it digs in its heels at the edge: it slid 30 cells on past it)
+				FoeAI.start(e, "recover", 26)
+			elif e.act_t <= 0 or (dx * dirx < -60.0):
 				FoeAI.start(e, "recover", 26)
 		"slam":
 			if e.on_ground and e.act_t < 136:

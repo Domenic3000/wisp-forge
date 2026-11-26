@@ -65,6 +65,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_guardians()
+		elif only == "hearts":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_hearts()
 		elif only == "stairs":
 			_go(g.player.pos)
 			await _frames(60)
@@ -2551,6 +2555,7 @@ func run() -> void:
 	g.chunks.clear()
 
 	await _test_guardians()
+	await _test_hearts()
 	await _test_wardens()
 
 	await _test_creatures()
