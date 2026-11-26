@@ -73,6 +73,7 @@ const CLASSES := {
 		"desc": "A plated warship with a turret: it shrugs off hits and its cannon fires two bolts at once."},
 }
 var klass := "skiff"
+const RIG := 1                  # (the ships' look: 1 = sails, 26 Nov; a ship saved with less is grown again on load)
 
 func cls() -> Dictionary:
 	return CLASSES.get(klass, CLASSES["skiff"])
@@ -1058,11 +1059,14 @@ func save_cells() -> Dictionary:
 	d["marks"] = Array(seat_marks)
 	d["door"] = [door_cell.x, door_cell.y]
 	d["klass"] = klass
+	d["rig"] = RIG
 	return d
 
 func load_cells(d: Dictionary) -> bool:
-	if String(d.get("klass", "skiff")) != klass or bool(d.get("designed", false)):
-		return false                    # (another class's cells, or a hull built in the old builder: forged afresh)
+	if String(d.get("klass", "skiff")) != klass or bool(d.get("designed", false)) or int(d.get("rig", 0)) < RIG:
+		# (another class's cells, a hull built in the old builder, or one saved with the glass canopy before the
+		# sails: forged afresh, whole)
+		return false
 	var nw := int(d.get("w", w))
 	var nh := int(d.get("h", h))
 	if bool(d.get("designed", false)) and (nw != w or nh != h):
