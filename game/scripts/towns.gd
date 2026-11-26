@@ -441,6 +441,10 @@ func _walk(v) -> void:
 		elif (v.idle_t > 0 or absf(v.vx) < 0.05) and (game.frame + v.fseed) % 12 == 0 and _crowd_side(v) != 0.0:
 			# (standing on top of someone: step aside, a little way)
 			var aside := _crowd_side(v)
+			# (not into a wall or off a drop when the other side is open: 26 Nov, one kept stepping toward a wall
+			# two cells off and stood stuck on the other. `aside` counts columns; basis_r points to fewer)
+			if _blocked(v, -aside) and not _blocked(v, aside):
+				aside = -aside
 			v.goal_c = float(_col(p)) + aside * randf_range(8.0, 16.0)
 			v.idle_t = 0
 			stats["stepped_aside"] = int(stats.get("stepped_aside", 0)) + 1
@@ -579,6 +583,18 @@ func _drop_ahead(v, dir: float) -> bool:
 		if Defs.KIND[t] == Defs.K_SOLID or Defs.KIND[t] == Defs.K_POWDER:
 			return false
 	return true
+
+## a wall at body height or a drop within a few cells, going `dir` (basis_r terms, as `_drop_ahead`)
+func _blocked(v, dir: float) -> bool:
+	if _drop_ahead(v, dir):
+		return true
+	var a := atan2(v.pos.y, v.pos.x)
+	for k in [3.0, 6.0, 9.0]:
+		for up in [-3.0, 2.0]:
+			var t: int = game.type_at(v.pos + game.basis_r(a) * dir * k + game.basis_d(a) * up)
+			if Defs.KIND[t] == Defs.K_SOLID:
+				return true
+	return false
 
 func _foe_near(p: Vector2, r: float):
 	for e in game.enemies:

@@ -13,7 +13,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
   house their `job`; `MAX_FOLK`), each put where `want_place(v, hour)` says: home asleep 22-6, some still in bed
   before 7, the job 9-16 (three in four), the tavern of an evening if there is one, else the street. `hour_at(p)`
   is the local hour (noon = sun overhead; `time_for_hour` for tests). main `Villager` (a Body): seed -> look
-  (folk_art.gd `frames`: a 13 x 21 figure from parts; overlay caches "folk_<seed>_stand/walk0/walk1") and name
+  (folk_art.gd `frames`: a 19 x 21 figure from parts, the same draws from the seed as the old 13-wide one; every
+  frame is the same parts in a pose from `POSES`, overlay caches "folk_<seed>_<frame>" and `_folk_frame` picks:
+  user, 26 Nov, "villagers are still basic animations": a four-step walk with the body down a pixel at each
+  stride, running from a foe with both arms up, talking with a hand out then at the chest, a keeper waving as you
+  come within 60 cells (`greet_t`), the smith's hammer raised and struck in time with towns.gd's sparks by day,
+  standing with a slow breath and a blink, eyes shut lying asleep ("sleep")) and name
   (`name_for`); `inside` (a house dict or {} = `STREET`), `job`, `asleep`, `fade` (`_step`: they fade out at a
   house's side and in at `fade_to`, going in, out, or PAST a house in the way: houses block the street; stuck for
   90 ticks they step to where they're going). `_walk`: keepers face you; in the street residents wander the

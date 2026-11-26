@@ -99,36 +99,36 @@ func _draw_pages() -> void:
 			draw_rect(Rect2(bo, Vector2(1, 4) * c), Color(0.3, 0.12, 0.1, a))
 			draw_rect(Rect2(bo + Vector2(3, 1) * c, Vector2(2, 2) * c), Color(1.0, 0.85, 0.4, a))
 
-## What's in your hand, floating at your shoulder while Conjure is held (user, 25 Nov): a little block of the
-## material (or of the piece's colour), bobbing, with a faint glow.
-func _draw_hand() -> void:
-	var m = game.player
-	if game.build_on or m.dead or m.aboard != null or not game.conjuring(m) or game.hand_name() == "":
-		return
-	var z: float = game.zoom
-	var up: Vector2 = -(game.basis_d(game.view_angle()) if game.pocket.active else _down_at(m.pos))
-	var side: Vector2 = Vector2(-up.y, up.x) * float(-m.facing)
-	var bob := sin(float(game.frame) * 0.07) * 1.0
-	var at: Vector2 = m.pos + up * (12.0 + bob) + side * 6.0
-	var sp: Vector2 = game.world_to_screen(at)
-	var cols := []
+## What's in your hand, carried out in front of the mage while Conjure is held (user, 25 Nov; held in his
+## hand, not floating over his head, 26 Nov): mage_rig.gd draws it (`carry`) with his near arm; here is what it
+## is and its colours, or {} when nothing is carried.
+func _carry_of(m) -> Dictionary:
+	if m != game.player or game.build_on or m.dead or m.aboard != null or not game.conjuring(m) or game.hand_name() == "":
+		return {}
 	if game.hand_item.is_empty():
 		var mt: int = game.mat
-		for k in 3:
-			cols.append(Color.hex((Defs.PAL[mt * 4 + k] << 8) | 0xff))
-	else:
-		var base := Color(0.85, 0.62, 0.38) if String(game.hand_item["what"]) == "station" else Color(0.72, 0.5, 0.3)
-		cols = [base.lightened(0.25), base, base.darkened(0.3)]
-	var c := 1.0 / z
-	var o := (sp - Vector2(1.5, 1.5) * c).floor()
-	var glow := HAND_COL
-	glow.a = 0.18 + 0.08 * sin(float(game.frame) * 0.1)
-	draw_rect(Rect2(o - Vector2(2, 2) * c, Vector2(7, 7) * c), glow)
-	draw_rect(Rect2(o - Vector2.ONE * c, Vector2(5, 5) * c), Color(0.06, 0.05, 0.1, 0.9))
-	for j in 3:
-		for i in 3:
-			var shade: int = 0 if j == 0 else (1 if i < 2 and j == 1 else 2)
-			draw_rect(Rect2(o + Vector2(i, j) * c, Vector2.ONE * c), cols[shade])
+		var base := Color(0, 0, 0)
+		for k in 4:
+			base += Color.hex((Defs.PAL[mt * 4 + k] << 8) | 0xff) * 0.25
+		base.a = 1.0
+		var kind := "solid"
+		if mt == Defs.TORCH:
+			kind = "torch"
+		elif mt == Defs.WOODDOOR:
+			kind = "door"
+		elif Defs.KIND[mt] == Defs.K_POWDER:
+			kind = "powder"
+		elif Defs.KIND[mt] == Defs.K_LIQUID or Defs.KIND[mt] == Defs.K_GAS:
+			kind = "liquid"
+		return {"kind": kind, "cols": [base.lightened(0.28), base, base.darkened(0.32)]}
+	if String(game.hand_item["what"]) == "plan":
+		return {"kind": "plan", "cols": []}
+	var pc := Color(0.85, 0.62, 0.38) if String(game.hand_item["what"]) == "station" else Color(0.72, 0.5, 0.3)
+	return {"kind": "piece", "cols": [pc.lightened(0.25), pc, pc.darkened(0.3)]}
+
+## (the old floating block is gone: the mage carries it, `_carry_of`)
+func _draw_hand() -> void:
+	pass
 
 ## "+3 Sand" rising from where it was dug, fading (main `popups`)
 func _draw_popups() -> void:
@@ -697,6 +697,15 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	var origin := Vector2(-floorf(ts.x * 0.5) + 1.0, -ts.y + 2.0)
 	MageRig.draw_pixels(self, m.rig.back_pixels(), origin, 1.0, mod, _masks[key])
 	draw_texture(t, Vector2(-floorf(ts.x * 0.5), -ts.y + 1.0), mod)
+	m.rig.carry = _carry_of(m)
+	var cm: Vector2 = m.rig.carry_mid()
+	if cm.is_finite():
+		# a faint glow of the staff's light round what's carried (it rests on mana over his palm)
+		var glow := HAND_COL
+		glow.a = (0.07 + 0.03 * sin(float(game.frame) * 0.1)) * mod.a
+		# (two crossed rects, so it's round-cornered and brightest in the middle, not a hard square)
+		draw_rect(Rect2(origin + cm - Vector2(3, 4), Vector2(6, 8)), glow)
+		draw_rect(Rect2(origin + cm - Vector2(4, 3), Vector2(8, 6)), glow)
 	MageRig.draw_pixels(self, m.rig.front_pixels(_gem_now(m, gem)), origin, 1.0, mod, _masks[key])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -1240,11 +1249,38 @@ func _draw_folk() -> void:
 			for fn in fr:
 				_make_tex(fk + "_" + fn, fr[fn])
 		if v.lying:
-			_lying(v, tex[fk + "_stand"])
+			_lying(v, tex[fk + "_sleep"])
 			continue
-		var walking: bool = absf(v.vx) > 0.08
-		var frn := ("_walk%d" % (int(v.anim) % 2)) if walking else "_stand"
-		_sprite(fk + frn, v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), false, v.w)
+		_sprite(fk + "_" + _folk_frame(v), v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), false, v.w)
+
+## Which of a villager's frames (folk_art.gd POSES) to show (user, 26 Nov: "villagers are still basic
+## animations"): running from a foe with both arms up; a four-step walk; talking to you (a hand out, then at
+## the chest); a keeper waving as you come up; the smith hammering at the anvil by day, the blow landing with
+## towns.gd's sparks; otherwise standing, breathing slowly and blinking now and then.
+func _folk_frame(v) -> String:
+	var ph: int = game.frame + v.fseed % 97
+	var spd := absf(v.vx)
+	if spd > 0.08:
+		var step := int(v.anim * 2.0) % 4
+		return ("flee%d" if spd > 1.0 else "walk%d") % step
+	var near: bool = v.pos.distance_to(game.player.pos) < 60.0 and not game.player.dead
+	if near and not v.near_you and v.keeper:
+		v.greet_t = 70
+	v.near_you = near
+	if v.say_t > 0 or v.talk_t > 0:
+		return "talk%d" % ((ph / 12) % 2)
+	if v.greet_t > 0:
+		v.greet_t -= 1
+		return "wave%d" % ((v.greet_t / 9) % 2)
+	if v.keeper and v.role == "smithy" and v.pos.distance_to(game.player.pos) < 320.0:
+		var hk: float = game.towns.hour_at(v.pos)
+		if hk > 8.0 and hk < 18.0:
+			# (towns.gd throws the sparks when game.frame % 45 == fseed % 45: the hammer comes down then)
+			var k := posmod(game.frame - v.fseed % 45, 45)
+			return "work1" if k < 10 else ("work0" if k > 24 else "stand")
+	if ph % 230 < 7:
+		return "blink"
+	return "breathe" if (ph / 50) % 2 == 1 else "stand"
 
 ## The workshop stations (workshops.gd): the body, lit by the world; a lit one's fire over it, unlit and
 ## flickering (two frames), as bright as it is hot; a Still's jar coloured by what it's steeping.

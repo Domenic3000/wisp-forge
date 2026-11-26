@@ -9,6 +9,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - `scripts/mage_rig.gd` simulates the hat tip, beard end and scarf (Verlet chains: rest shape, gravity,
   the body's inertia, air drag) and the staff (an angular spring that points where he casts). overlay.gd
   and title_screen.gd draw them as crisp pixels in the sprite's own transform, with the sprite outline.
+- What's in your hand (Conjure held) is carried in his near arm, drawn by the rig too (`carry`, `_carry_pixels`;
+  docs/building.md "The hand").
 
 ## Power, health, spells and digging
 - A modest start (user, 21 Nov: "make the starting power of the player lower"): a new journey knows only the

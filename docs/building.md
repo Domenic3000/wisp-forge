@@ -139,8 +139,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - It looks like magic (user, 25 Nov, "inside the world"): the hand's ghost is drawn in the staff's mana-blue
   light with a faint line of light from the staff tip (overlay `_draw_build_preview`); matter streams out of the
   satchel along the staff to where it goes (`vfx.stream(m, to, col, n)`, from `_conjure`, the wall brush,
-  `_update_shape` and `_update_build` as a piece goes down); what's held floats at your shoulder as a little
-  block of its colours (overlay `_draw_hand`). Reminders come from the wisp (`wisp_note(text)`: out of
+  `_update_shape` and `_update_build` as a piece goes down); what's held is carried out in front of you
+  (26 Nov, user: "the main character holding blocks is just it sitting on his head"): mage_rig.gd `carry` draws
+  the near arm out over the beard, a gold cuff, the palm up in front of the staff and the thing resting just over
+  it, bobbing, in a faint glow of the staff's light: a block of a solid, a heap of a powder, a round drop of a
+  liquid, a lit torch held by its stick, a little door, a banded crate for furniture or a workshop, a rolled-up
+  plan (overlay `_carry_of` says which, with its colours; the old floating `_draw_hand` is empty). Reminders come from the wisp (`wisp_note(text)`: out of
   something, out of reach, too little for a shape, the last of a stack; the same words wait 5 s; overlay draws
   them in the wisp's bubble, over you in the pocket). Dug matter pops up where it was dug (`_pick_acc` from
   `_apply_counts`, flushed every 24 ticks by `_pick_flush` into `popups` [world point, "+3 Sand", colour,

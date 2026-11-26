@@ -77,6 +77,14 @@ var staff_w := 0.0
 var _prev_v := Vector2.ZERO
 var _t := 0.0
 var _anch := {}
+## What he carries out in front of him (user, 26 Nov: "the main character holding blocks is just it sitting on
+## his head"): the near arm reaches out over the beard and the thing in hand rests just over his palm, bobbing.
+## {} = nothing; else {"kind": "solid" | "powder" | "liquid" | "torch" | "door" | "piece" | "plan",
+## "cols": [light, mid, dark]} (overlay `_carry_of` fills it each frame from the hand).
+var carry := {}
+const SLEEVE := [Color("#213488"), Color("#3657bd"), Color("#6690f0"), Color("#a9c5ff")]
+const CARRY_X := 15          # the held thing's left column, in front of the staff
+const CARRY_Y := 11          # its top row (one over the palm, which is at row 16)
 
 ## One frame of motion. vel: the body's velocity in sprite space (x forward, y down, cells per
 ## frame). pose: the frame's name (for its anchors). aim: the casting direction in sprite space
@@ -143,7 +151,104 @@ func front_pixels(gem: Color) -> Dictionary:
 	var hi := Vector2i(floori(hand.x), floori(hand.y))
 	px[hi] = SKIN[0]
 	px[hi + Vector2i(1, 0)] = SKIN[1]
+	if not carry.is_empty():
+		_carry_pixels(px)
 	return px
+
+## the near arm out over the beard, the palm up in front of the staff, and what's in hand over it
+func _carry_pixels(px: Dictionary) -> void:
+	for a in [[9, 14, 1], [10, 14, 2], [9, 15, 1], [10, 15, 2], [10, 16, 1], [11, 16, 2], [12, 16, 2], [13, 16, 2], [14, 16, 3]]:
+		px[Vector2i(a[0], a[1])] = SLEEVE[a[2]]
+	px[Vector2i(15, 16)] = GOLD                   # (the cuff, like the robe's trim)
+	px[Vector2i(16, 16)] = SKIN[0]
+	px[Vector2i(17, 16)] = SKIN[0]
+	px[Vector2i(17, 15)] = SKIN[1]                 # (the thumb)
+	var cols: Array = carry.get("cols", [Color.WHITE, Color.GRAY, Color.DIM_GRAY])
+	var hi: Color = cols[0]
+	var mid: Color = cols[1]
+	var lo: Color = cols[2]
+	var bob := 1 if sin(_t * 0.07) > 0.3 else 0
+	var x0 := CARRY_X
+	var y0 := CARRY_Y - bob
+	match String(carry.get("kind", "solid")):
+		"torch":
+			# held by its stick, the flame flickering over it
+			for j in 4:
+				px[Vector2i(17, y0 + 1 + j)] = WOOD[1] if j % 2 == 1 else WOOD[0]
+			var fl := int(_t * 0.25) % 3
+			px[Vector2i(17, y0)] = Color("#fff2b0")
+			px[Vector2i(16, y0)] = Color("#e2521c")
+			px[Vector2i(18, y0)] = Color("#e2521c")
+			px[Vector2i(17, y0 - 1)] = Color("#ffb53a")
+			px[Vector2i(17 + (fl - 1), y0 - 2)] = Color("#e2521c")
+		"plan":
+			# a rolled-up plan, tied at both ends
+			for i in 5:
+				px[Vector2i(14 + i, y0 + 2)] = Color("#efe2b4")
+				px[Vector2i(14 + i, y0 + 3)] = Color("#c9b27a")
+			for e in [14, 18]:
+				px[Vector2i(e, y0 + 1)] = Color("#8a2a12")
+				px[Vector2i(e, y0 + 4)] = Color("#8a2a12")
+		"door":
+			# a little door: planks, a dark seam and a gold knob
+			for j in 5:
+				for i in 3:
+					px[Vector2i(x0 + i, y0 - 1 + j)] = hi if i == 0 else (lo if i == 2 or j == 4 else mid)
+			px[Vector2i(x0 + 2, y0 + 1)] = GOLD
+		"liquid":
+			# a round drop held in the air, a glint on it, wobbling
+			var wob := int(_t * 0.15) % 2
+			for j in 4:
+				for i in 4:
+					if (i == 0 or i == 3) and (j == 0 or j == 3):
+						continue
+					px[Vector2i(x0 + i, y0 + j)] = lo if (i == 3 or j == 3) else mid
+			px[Vector2i(x0 + 1, y0 + 1)] = hi
+			if wob == 1:
+				px[Vector2i(x0 + 4, y0 + 2)] = mid
+			else:
+				px[Vector2i(x0 + 1, y0 + 4)] = lo
+		"powder":
+			# a little heap of grains, loose at the top
+			for j in 4:
+				for i in 4:
+					if j == 0 and (i == 0 or i == 3):
+						continue
+					var c := mid
+					if (i + j * 3 + int(_t * 0.05)) % 4 == 0:
+						c = hi
+					elif i == 3 or j == 3:
+						c = lo
+					px[Vector2i(x0 + i, y0 + j)] = c
+		"piece":
+			# a crate-like piece in its colour, banded
+			for j in 4:
+				for i in 4:
+					var c2 := mid
+					if j == 0:
+						c2 = hi
+					elif j == 3 or i == 3:
+						c2 = lo
+					elif j == 1:
+						c2 = mid.darkened(0.2)
+					px[Vector2i(x0 + i, y0 + j)] = c2
+		_:
+			# a block of the material: lit from the top left
+			for j in 4:
+				for i in 4:
+					var c3 := mid
+					if j == 0 or (i == 0 and j < 3):
+						c3 = hi
+					if i == 3 or j == 3:
+						c3 = lo
+					px[Vector2i(x0 + i, y0 + j)] = c3
+
+## the held thing's middle, in sprite space (for its glow), or NAN when nothing is held
+func carry_mid() -> Vector2:
+	if carry.is_empty():
+		return Vector2(NAN, NAN)
+	var bob := 1 if sin(_t * 0.07) > 0.3 else 0
+	return Vector2(CARRY_X + 2.0, CARRY_Y - bob + 2.0)
 
 ## the crystal's position (for a light), in sprite space
 func crystal() -> Vector2:

@@ -127,6 +127,8 @@ class Villager extends Body:
 	var lie_head := Vector2.ZERO # (where their head is, lying)
 	var lie_ok := false          # (lying put down on the floor or mattress the world really has there)
 	var wake_at := Vector2.ZERO  # (where they stand up again)
+	var greet_t := 0             # (a keeper waving as you come up: overlay `_folk_frame`)
+	var near_you := false
 
 func new_chest():
 	return Chest.new()
