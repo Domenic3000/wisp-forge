@@ -75,8 +75,8 @@ why things are the way they are (quoted, with the date), the names in the code, 
   the names. Leave it empty when done.
 - `Check scripts.bat` checks the scripts for parse errors (`saves/check.txt`; "Identifier not found: Defs" is
   expected).
-- Some checks fail now and then in the full run but pass alone (the felled tree, digging a pit, the wild-life
-  checks, recipes, a village's sleepers); run one alone before chasing it.
+- Some checks fail now and then in the full run but pass alone (recipes, a village's sleepers; the felled tree,
+  digging a pit and the wild-life checks were fixed 26 Nov, see docs/testing.md); run one alone before chasing it.
 
 ## Keeping these notes
 - A new system or a change to one goes in its file in `docs/` (or a new file there, added to the table above),
