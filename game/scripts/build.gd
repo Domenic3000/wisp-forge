@@ -46,6 +46,14 @@ const FLAT_W := 160
 const TORCH_R := 60.0
 const SCONCE := [".t.", "ttt", ".t.", "yIy", ".W.", ".w.", ".i."]
 const STANDING := [".t.", "ttt", ".t.", "yIy", ".W.", ".w.", ".W.", ".w.", ".W.", ".w.", ".d.", "ddd"]
+## (26 Nov, "more kinds of light (lanterns...)"): pointed up just under a ceiling, a torch hangs from it on a
+## chain as a LANTERN: an iron cage with gold rims and panes of glass round its flame. Its light is steadier and
+## wider (LANTERN_R, main `_torch_lights`); picked up, it's a torch again.
+## (close under the ceiling, one row of flame: a flame hangs only three cells from what holds it, or it
+## crumbles away; support.comp, SPAN)
+const LANTERN := [".iIi.", "iyyyi", "utttu", "iyyyi", ".iIi."]
+const LANTERN_FLAME := 2
+const LANTERN_R := 92.0
 const TORCH_FLAME := 1          # the row of the flame's middle (from the top)
 const TORCH_CELLS_MAX := 40     # (a piece this small with torch cells in it is a torch: picked up, a torch again)
 

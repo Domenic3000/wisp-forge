@@ -411,6 +411,27 @@ func _draw_lenses(md: Dictionary, view: Rect2) -> void:
 			var mp: Vector2 = sa.lerp(sb, u)
 			draw_rect(Rect2(mp.floor(), Vector2.ONE * 2.0), Color(1.0, 0.95, 0.7, 0.8 * fade * (1.0 - u * (0.0 if not end or game.mystery.path_eye else 0.9))))
 
+## the wisplights (main `_wisplight`): a little orb of wisp-fire each, breathing, with motes circling it
+func _draw_wisplights() -> void:
+	var wl: Array = game.planet_state.get("wisplights", [])
+	if wl.is_empty() or game.space.active:
+		return
+	var view := Rect2(-12.0, -12.0, float(game.VW) + 24.0, float(game.VH) + 24.0)
+	var t := float(game.frame)
+	for k in wl.size():
+		var sp: Vector2 = game.world_to_screen(Vector2(float(wl[k][0]), float(wl[k][1])))
+		if not view.has_point(sp):
+			continue
+		var br := 0.85 + 0.15 * sin(t * 0.06 + float(k) * 2.1)
+		var c := sp.floor()
+		draw_rect(Rect2(c - Vector2(2, 2), Vector2(5, 5)), Color(0.55, 0.85, 1.0, 0.35 * br))
+		draw_rect(Rect2(c - Vector2(1, 2), Vector2(3, 5)), Color(0.7, 0.92, 1.0, 0.7 * br))
+		draw_rect(Rect2(c - Vector2(2, 1), Vector2(5, 3)), Color(0.7, 0.92, 1.0, 0.7 * br))
+		draw_rect(Rect2(c - Vector2(1, 1), Vector2(3, 3)), Color(0.92, 1.0, 1.0, br))
+		for q in 3:
+			var a := t * 0.04 + float(q) / 3.0 * TAU + float(k)
+			draw_rect(Rect2((sp + Vector2(cos(a), sin(a) * 0.6) * 6.0).floor(), Vector2.ONE), Color(0.75, 0.95, 1.0, 0.6))
+
 ## a pixel flame standing on screen point sp (s: its size), flickering
 func _flame(sp: Vector2, s: float, fseed: int, view: Rect2) -> void:
 	if not view.has_point(sp):
@@ -1068,6 +1089,7 @@ func _draw_all() -> void:
 			_folk_mark(v2)
 
 	_draw_carcasses()
+	_draw_wisplights()
 	# a deep ocean world's mystery: the pillars' glyphs, and what F would do in reach
 	if game.mystery != null and not game.mystery.data().is_empty():
 		_draw_mystery()
@@ -1322,6 +1344,8 @@ func _draw_folk() -> void:
 ## the chest); a keeper waving as you come up; the smith hammering at the anvil by day, the blow landing with
 ## towns.gd's sparks; otherwise standing, breathing slowly and blinking now and then.
 func _folk_frame(v) -> String:
+	if v.role == "guard" and v.strike_t > 24:
+		return "jab"                      # (a guard's spear thrust out: towns.gd `_guard`)
 	var ph: int = game.frame + v.fseed % 97
 	var spd := absf(v.vx)
 	if spd > 0.08:

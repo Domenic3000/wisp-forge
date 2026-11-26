@@ -133,3 +133,11 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Sand x4 (4 stone, Materials, known from the start): a world with no desert, ocean or village had no sand, so no
   glass (user: "is there a way to get sand if there is no desert biome?").
 
+
+## More workshop secrets (26 Nov, built while the user was away)
+- Kiln: KINDLED STONE (3 stone + an ember crystal -> 3 magma rock). Smelter: RECLAIMED STAR IRON (3 hull plating + a
+  coal -> a star iron), the EMBER SEAL (once; 3 obsidian, 2 embers, a copper ingot: `WORK_GEAR["emberseal"]`, fire
+  half, lava 0.6). Still: STONESKIN DRAUGHT (gravel, glowcaps, water: `d_stone`, damage 0.7, barely knocked about)
+  and DELVER'S BREW (coal, dry grass, water: `d_delve`, digging half again as fast). Each with a hint villagers tell.
+  `_test_lights` checks every mix is its station's only one of those kinds (a station works only an exact mix) and
+  every secret's draught or gear is real.

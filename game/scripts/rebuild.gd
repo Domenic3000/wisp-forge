@@ -48,7 +48,7 @@ func tick() -> void:
 		stats["checked"] = int(stats["checked"]) + 1
 		var built := int(h.get("built_n", 0))
 		if built > 0 and float(miss.size()) >= float(built) * DAMAGED:
-			_start(h, _look["town"], miss)
+			_start(h, _look["town"], miss, r)
 		else:
 			h["rest_until"] = game.frame + CHECK_EVERY * 4
 		_look = {}
@@ -97,10 +97,11 @@ static func _want_front(v: int) -> int:
 		return 0
 	return f
 
-## ... and behind (back walls; never furniture or torches: they're yours to take)
-static func _want_back(v: int) -> int:
+## ... and behind (back walls; never furniture or torches: they're yours to take. A NEW house, a village
+## growing, gets its furniture too: towns.gd `_maybe_grow`)
+static func _want_back(v: int, furnish := false) -> int:
 	var b := (v >> 8) & 255
-	if b == 255 or b == 0 or b == Defs.DECOR or b == Defs.TORCH or b == Defs.OPENCHEST:
+	if b == 255 or b == 0 or b == Defs.TORCH or b == Defs.OPENCHEST or (b == Defs.DECOR and not furnish):
 		return 0
 	return b
 
@@ -114,6 +115,7 @@ func _missing(h: Dictionary, r: Dictionary) -> PackedInt32Array:
 	var bg: PackedInt32Array = r["bg"]
 	var out := PackedInt32Array()
 	var n_built := 0
+	var furnish := bool(h.get("new", false))
 	for j in range(hh - 1, -1, -1):
 		var row := j * w
 		for i in w:
@@ -124,17 +126,53 @@ func _missing(h: Dictionary, r: Dictionary) -> PackedInt32Array:
 				var wf: int = fg[k] & 255
 				if wf == Defs.AIR or wf == Defs.FIRE or wf == Defs.SMOKE or wf == Defs.STEAM:
 					out.append(k * 2)
-			if _want_back(v) != 0:
+			if _want_back(v, furnish) != 0:
 				n_built += 1
 				if (bg[k] & 255) == 0:
 					out.append(k * 2 + 1)
 	h["built_n"] = n_built
 	return out
 
-func _start(h: Dictionary, t: Dictionary, miss: PackedInt32Array) -> void:
+func _start(h: Dictionary, t: Dictionary, miss: PackedInt32Array, r := {}) -> void:
 	job = {"house": h, "town": t, "missing": miss, "i": 0, "rid": -1, "rid_at": game.frame, "reads": 0}
 	stats["started"] = int(stats["started"]) + 1
+	if bool(h.get("new", false)):
+		if not r.is_empty():
+			_clear_site(h, r)
+		game.ui.toast("The folk of %s set about building a new house" % String(t.get("name", "the village")), Color(0.95, 0.85, 0.55), 3.5)
+		return
 	game.ui.toast("The folk of %s set about rebuilding a house" % String(t.get("name", "the village")), Color(0.95, 0.85, 0.55), 3.5)
+
+## a new house's site: the trees, roots and undergrowth growing where it will stand are cleared first (what's
+## left of a tree standing half on it comes down as a felled one does)
+const PLANTS := [Defs.WOOD, Defs.LEAF, Defs.ROOT, Defs.CACTUS, Defs.CAP, Defs.STALK, Defs.DRYGRASS, Defs.SHROOM]
+func _clear_site(h: Dictionary, r: Dictionary) -> void:
+	var st: Dictionary = h["struct"]
+	var data: PackedInt32Array = st["data"]
+	var bg: PackedInt32Array = r.get("bg", PackedInt32Array())
+	var fg: PackedInt32Array = r.get("fg", PackedInt32Array())
+	if bg.size() != data.size():
+		return
+	var clear := PackedInt32Array()
+	clear.resize(data.size())
+	clear.fill(0xffff)
+	var n := 0
+	for k in data.size():
+		var v: int = data[k]
+		if (v & 0xffff) == 0xffff:
+			continue
+		var cv := 0xffff
+		if PLANTS.has(bg[k] & 255):
+			cv = (cv & 0xff) | 0x0000             # (the back layer: nothing)
+			n += 1
+		if PLANTS.has(fg[k] & 255):
+			cv = (cv & 0xff00) | Defs.AIR          # (in front: air)
+			n += 1
+		clear[k] = cv
+	if n == 0:
+		return
+	game.stamps.append({"x0": int(st["x0"]), "y0": int(st["y0"]), "w": int(st["w"]), "h": int(st["h"]), "data": clear, "ax": int(st["ax"]), "aw": int(st["aw"])})
+	stats["cleared"] = int(stats.get("cleared", 0)) + n
 
 func _work() -> void:
 	var h: Dictionary = job["house"]
@@ -233,5 +271,12 @@ func _done() -> void:
 	var h: Dictionary = job["house"]
 	h["rest_until"] = game.frame + RESTS
 	stats["done"] = int(stats["done"]) + 1
+	if bool(h.get("new", false)):
+		h.erase("new")
+		stats["grown"] = int(stats.get("grown", 0)) + 1
+		game.ui.toast("%s has grown: a new house stands, and a family moves in" % String(job["town"].get("name", "The village")), Color(1.0, 0.88, 0.5), 4.5)
+		towns.move_in(job["town"], h)
+		job = {}
+		return
 	game.ui.toast("%s's house stands again" % String(job["town"].get("name", "The village")), Color(0.95, 0.85, 0.55), 3.0)
 	job = {}

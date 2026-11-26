@@ -1812,6 +1812,39 @@ func _town(x: int, b: String, ruined: bool, build: bool) -> bool:
 	labels.append({"x0": posmod(x - span / 2, N0), "w": span, "ymin": ground_row(x) - 170, "ymax": ground_row(x) + 4, "name": tname})
 	return true
 
+## A village grows (26 Nov, "a village that grows as you help it"; towns.gd `_maybe_grow`): its k-th new house, a
+## home planned at one end of it (alternating ends, a few tries outward), from the village's own seed and k, so
+## planning it again on loading puts it in the same place. Only planned and finished for its cells (the house's
+## "struct": rebuild.gd lays it, its folk building it a course at a time); the village is widened over it.
+## Returns the house ({} if there was no room).
+func grow_house(t: Dictionary, k: int) -> Dictionary:
+	var keep := rng
+	rng = RandomNumberGenerator.new()
+	rng.seed = hash([int(t["seed"]), k, 77])
+	var b := Defs.base_biome(String(t.get("biome", "forest")))
+	var out := {}
+	for tries in 6:
+		var side := 1 if (k + tries / 2) % 2 == 0 else -1
+		var w := rng.randi_range(44, 56)
+		var tw := w + 2 * YARD + 4
+		var gap := rng.randi_range(14, 30) + (tries / 2) * 40
+		var x: int = int(t["x0"]) + int(t["w"]) + gap + tw / 2 if side > 0 else int(t["x0"]) - gap - tw / 2
+		_house = {}
+		if _cottage(x, b, false, false, false, w, "home"):
+			finish_all()
+			if not _house.is_empty() and _house.has("struct"):
+				out = _house
+				out["grown"] = true
+				(t["houses"] as Array).append(out)
+				if side > 0:
+					t["w"] = int(t["w"]) + gap + tw
+				else:
+					t["x0"] = posmod(int(t["x0"]) - gap - tw, N0)
+					t["w"] = int(t["w"]) + gap + tw
+				break
+	rng = keep
+	return out
+
 const TOWN_A := ["Ash", "Brook", "Clay", "Dun", "Elder", "Fern", "Glen", "Hollow", "Ivy", "Kettle", "Lark", "Mill", "Nether",
 	"Oak", "Pebble", "Quill", "Rush", "Stone", "Thorn", "Umber", "Vale", "Willow", "Wren", "Yarrow", "Bright", "Cold", "High", "Low", "Red", "Green"]
 const TOWN_B := ["ford", "bury", "wick", "stead", "ton", "dale", "mere", "field", "holm", "by", "well", "brook", "cross", "hythe", "worth", "combe"]

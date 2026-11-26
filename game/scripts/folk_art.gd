@@ -42,7 +42,11 @@ const POSES := {
 	"flee1": {"lift": 1, "back": ["up", 1], "front": ["up", 0], "mouth": true},
 	"flee2": {"sw": -1, "dy": 1, "back": ["up", 0], "front": ["up", 1], "mouth": true},
 	"flee3": {"lift": -1, "back": ["up", 1], "front": ["up", 0], "mouth": true},
+	"jab": {"front": ["jab", 0], "mouth": true, "sw": 1},
 }
+## (26 Nov) a village's guard (towns.gd `_guard`): an iron kettle helmet, a tabard in the village's colour over
+## mail, and a spear held upright (thrust out level in "jab")
+const TABARD := ["#8a2a2a", "#2a4a8a", "#2a6a3a", "#7a5a1a", "#5a2a6a"]
 
 ## the frames for a villager of this seed (and trade: a keeper wears an apron)
 static func frames(fseed: int, role: String) -> Dictionary:
@@ -59,6 +63,12 @@ static func frames(fseed: int, role: String) -> Dictionary:
 	var beard := r.randf() < 0.3
 	var dress := r.randf() < 0.35
 	var apron: String = APRON.get(role, "")
+	var guard := role == "guard"
+	if guard:
+		top = "helm"
+		dress = false
+		cloth = Color.html(TABARD[r.randi_range(0, TABARD.size() - 1)])
+		legs = Color(0.36, 0.37, 0.42)
 	var out := {}
 	for fr in POSES:
 		var f: Dictionary = POSES[fr]
@@ -95,13 +105,22 @@ static func frames(fseed: int, role: String) -> Dictionary:
 			_rect(img, 2, 16 + dy, 9, 1, cloth.darkened(0.12))
 		_rect(img, 3, 12 + dy, 7, 1, belt)
 		_px(img, 6, 12 + dy, Color(0.78, 0.62, 0.3))
+		if guard:
+			# (mail at the shoulders and hem, a pale cross on the tabard)
+			_rect(img, 3, 9 + dy, 7, 1, IRON)
+			_rect(img, 3, 14 + dy, 7, 1, IRON_DK)
+			_rect(img, 6, 10 + dy, 1, 4, cloth.lightened(0.45))
+			_rect(img, 5, 11 + dy, 3, 1, cloth.lightened(0.45))
 		if apron != "":
 			var ac := Color.html(apron)
 			_rect(img, 4, 10 + dy, 5, 6, ac)
 			_rect(img, 4, 12 + dy, 5, 1, ac.darkened(0.25))
 		# arms and hands
 		_arm(img, 2, -1, f.get("back", ["down", 0]), cloth.darkened(0.08), skin, dy)
-		_arm(img, 10, 1, f.get("front", ["down", 0]), cloth.darkened(0.22), skin.darkened(0.1), dy)
+		var front: Array = f.get("front", ["down", 0])
+		if guard and String(front[0]) != "jab" and String(front[0]) != "up":
+			front = ["spear", 0]
+		_arm(img, 10, 1, front, cloth.darkened(0.22), skin.darkened(0.1), dy)
 		# neck and head
 		_rect(img, 5, 8 + dy, 3, 1, skin.darkened(0.12))
 		_rect(img, 4, 3 + dy, 5, 5, skin)
@@ -147,6 +166,11 @@ static func frames(fseed: int, role: String) -> Dictionary:
 			"kerchief":
 				_rect(img, 4, 2 + dy, 5, 2, hat_col)
 				_px(img, 3, 3 + dy, hat_col.darkened(0.2))
+			"helm":
+				_rect(img, 4, 1 + dy, 5, 2, IRON)
+				_rect(img, 3, 3 + dy, 7, 1, IRON_DK)
+				_px(img, 5, 1 + dy, IRON_HI)
+				_px(img, 6, 0 + dy, IRON)
 		if top == "short" or top == "long" or top == "bun":
 			_px(img, 5, 2 + dy, hair.lightened(0.3))       # (a shine on the hair)
 		_outline(img)
@@ -183,6 +207,21 @@ static func _arm(img: Image, x: int, side: int, pose: Array, col: Color, hand: C
 			_px(img, x + side, 4 + dy, HANDLE)
 			_rect(img, x if side > 0 else x - 2, 2 + dy, 3, 2, IRON)
 			_px(img, x + side, 2 + dy, IRON_HI)
+		"spear":
+			# (upright beside them, the hand at its middle)
+			_rect(img, x, 9 + dy, 1, 3, col)
+			_px(img, x, 12 + dy, hand)
+			for j in range(1, 20):
+				_px(img, x + side, j, HANDLE if j > 3 else IRON)
+			_px(img, x + side, 0, IRON_HI)
+		"jab":
+			# (thrust out level)
+			_px(img, x, 9 + dy, col)
+			_px(img, x + side, 10 + dy, col)
+			_px(img, x + 2 * side, 10 + dy, hand)
+			for i in range(-4, 4):
+				_px(img, x + (2 + i) * side, 11 + dy, HANDLE if i < 2 else IRON)
+			_px(img, x + 5 * side, 11 + dy, IRON_HI)
 		"hammer_down":
 			_px(img, x, 9 + dy, col)
 			_px(img, x, 10 + dy, col)

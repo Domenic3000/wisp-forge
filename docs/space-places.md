@@ -232,3 +232,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
   both learned on finding Void Essence. HUD: "Lumen eels!", "Gravity well". Test: `_test_voidlife`
   ("voidlife"; in the full run after `_test_cargo`; pictures `void_mantas/eels/jellies/well/monolith/
   monolith_open/rift/map.png`).
+
+## Solar flares out in space (26 Nov, the roadmap's "radiation and flares", built while the user was away)
+- space.gd `_flare_tick` (every tick in space, never in a docked instance): one in `FLARE_EVERY` (14400) ticks, more
+  than `FLARE_SAFE` (2500) above every planet's air (`_air_dist`), `start_flare(300)`: a warning, then `FLARE_DUR`
+  (900) ticks of flare: streaks of its light from the sun's way (`sun_ang`); unless a planet stands between you and
+  the star (`in_shadow`: its disc of radius "top" across the line to the sun), aboard the skiff is holed every 45 ticks
+  (`skiff_hit`, the Wisp Shield takes one as ever) unless it carries the Radiation Ward ("radward": its lining turns
+  flares too), and on foot you're scorched (0.05 a tick). `flare_stats`. The HUD says "The star stirs" / "Solar
+  flare!". Test: in `_test_voidlife`, out in deep space.

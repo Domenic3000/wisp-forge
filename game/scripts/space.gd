@@ -141,6 +141,17 @@ var near := {}                  # the nearest planet (one of `bodies`): it pulls
 var centre := Vector2.ZERO      # (its centre)
 var view_ang := 0.0             # the view's turn out here (main.world_to_screen uses it)
 var sun_ang := 0.0              # where the sun is (it turns once a day, as on the planet)
+## Solar flares out in space (26 Nov, "radiation and flares"): now and then (one in FLARE_EVERY ticks, never docked
+## in an instance or within FLARE_SAFE of a planet's air) the star stirs (`flare_warn`, a warning), then flares for
+## FLARE_DUR ticks: its light from the sun's way (sun_ang) scorches whatever stands in it: on foot your health, aboard
+## the hull, holed now and then, unless the skiff carries the Radiation Ward (its lining turns it). A planet between
+## you and the star (`in_shadow`) shelters you. The HUD says "Solar flare!".
+var flare := 0
+var flare_warn := 0
+var flare_stats := {"burns": 0, "hull": 0, "shadowed": 0}
+const FLARE_DUR := 900
+const FLARE_EVERY := 14400
+const FLARE_SAFE := 2500.0
 var _bodies_for := -1
 var _discs := {}                # (each planet's disc picture, kept between journeys: [texture, sun angle])
 var rocks := []                 # the asteroids near home (asteroid.gd), in its coordinates
@@ -447,6 +458,7 @@ func _tick() -> void:
 		if sk.thrusting:
 			game._skiff_exhaust()
 	_pmark("skiff")
+	_flare_tick(m, sk, focus)
 	_age_bolts()
 	_update_shots()
 	_update_foe_shots()
@@ -713,6 +725,68 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 			var tell: String = "is wrapped in a Thunderhead of endless lightning" if thunder else String(bd["tell"])
 			game.ui.toast("%s %s. The %s (Wisp Forge, Travel) carries the skiff through every %s." % [b["name"], tell, String(bd["key_name"]), barrier_name(bi2) if not thunder else "storm belt"], col.lightened(0.4), 5.0)
 	return v
+
+func _flare_tick(m, sk, focus: Vector2) -> void:
+	if inst != null or m.dead:
+		flare = 0
+		flare_warn = 0
+		return
+	if flare <= 0 and flare_warn <= 0:
+		if not game.testing and randf() < 1.0 / float(FLARE_EVERY) and _air_dist(focus) > FLARE_SAFE:
+			start_flare(300)
+		return
+	if flare_warn > 0:
+		flare_warn -= 1
+		if flare_warn == 0:
+			flare = FLARE_DUR
+			_flash = maxf(_flash, 0.35)
+			game.shake = maxf(game.shake, 5.0)
+			game.audio.play("rumble", null, 0.9)
+			game.ui.toast("Solar flare! Its light scorches everything in the open out here.", Color(1.0, 0.8, 0.45), 4.0)
+		return
+	flare -= 1
+	var sd := Vector2(cos(sun_ang), sin(sun_ang))         # (toward the star)
+	var aboard: bool = m.aboard != null and sk != null
+	var p: Vector2 = sk.pos if aboard else m.pos
+	# streaks of its light, across the view from the star's way
+	if game.frame % 2 == 0:
+		var span := Vector2(game.VW, game.VH).length() * float(game.zoom) * 0.6
+		var at: Vector2 = p + sd * span + sd.orthogonal() * randf_range(-span, span)
+		game._particle(at, -sd * randf_range(6.0, 10.0), 30, Color(1.0, 0.85, 0.5), true, 0.0)
+	if in_shadow(p, sd):
+		flare_stats["shadowed"] = int(flare_stats["shadowed"]) + 1
+		return
+	_flash = maxf(_flash, 0.05)
+	if aboard:
+		if game.items.has("radward"):
+			return                                    # (the Radiation Ward's lining turns it)
+		if game.frame % 45 == 0:
+			skiff_hit(sk, _first_cell(sk, sk.pos + sd * 140.0, sk.pos), 1.5, 2.0)
+			flare_stats["hull"] = int(flare_stats["hull"]) + 1
+		return
+	game.hurt(m, 0.05, Vector2.ZERO, false)
+	flare_stats["burns"] = int(flare_stats["burns"]) + 1
+
+## a flare starts: a warning now, the flare itself `warn` ticks later (the tests start one too)
+func start_flare(warn: int) -> void:
+	flare_warn = maxi(1, warn)
+	game.ui.toast("The star stirs: a solar flare is coming. Get behind a planet, or line the hull with a Radiation Ward.", Color(1.0, 0.8, 0.45), 5.0)
+
+## is p in a planet's shadow from the star (the way sd)?
+func in_shadow(p: Vector2, sd: Vector2) -> bool:
+	for b in bodies:
+		var o: Vector2 = (b["pos"] as Vector2) - p
+		var t := o.dot(sd)
+		if t > 0.0 and (o - sd * t).length() < float(b["top"]):
+			return true
+	return false
+
+## how far p is above the nearest planet's air (a big number when none is near)
+func _air_dist(p: Vector2) -> float:
+	var best := 1e12
+	for b in bodies:
+		best = minf(best, (p - (b["pos"] as Vector2)).length() - float(b["space"]))
+	return best
 
 func col_of(b: Dictionary) -> Color:
 	return b["belt"]

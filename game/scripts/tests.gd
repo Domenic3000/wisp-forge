@@ -163,6 +163,14 @@ func run() -> void:
 			await _test_abyss()
 		elif only == "giant":
 			await _test_giant()
+		elif only == "lights":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_lights()
+		elif only == "guards":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_guards()
 		elif only == "star":
 			await _test_star()
 		elif only == "void":
@@ -1474,6 +1482,7 @@ func run() -> void:
 	await _test_crafting()
 	await _test_indoors()
 	await _test_remove()
+	await _test_lights()
 	await _test_harvest()
 	await _test_hand()
 	await _test_audio()
@@ -1882,6 +1891,7 @@ func run() -> void:
 	var spv := Vector2(cos(g.spawn_angle), sin(g.spawn_angle))
 	_go(spv * (g.gpu.surf_at(g.spawn_angle).x + 25.0))
 	await _frames(40)
+	g.quiet_until = 0          # (an area cleared by an earlier check stays quiet a while: not this one)
 	var seen := 0
 	var made := 0
 	for depth_k in [0.0, 60.0]:
@@ -2396,6 +2406,7 @@ func run() -> void:
 			shown += 1               # (the workshops' mixes are pages of the book too: one card or secret page each)
 	await _test_gear()
 	await _test_towns()
+	await _test_guards()
 	await _test_vfx()
 	await _test_start()
 	await _test_quest()

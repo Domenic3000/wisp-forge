@@ -236,3 +236,19 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (`_ground_row`; the edge curves away under its smooth top); an isle saved before is mended on load
   (`_ground_features`: only empty cells straight under them, down to ground).
 
+
+## Lanterns and Wisplight (26 Nov; the roadmap's "more kinds of light (lanterns, a light spell)", built while the user was away)
+- A torch pointed just under a ceiling (solid within 4 rows above the cell) hangs from it as a LANTERN: main
+  `torch_plan` picks `Build.LANTERN` (an iron cage with gold rims, glass panes "u" and one row of flame cells; close
+  under the ceiling because a flame only hangs 3 cells from what holds it, support.comp SPAN), flame at
+  `LANTERN_FLAME`; `add_torch(flame, lantern)` keeps a 4th field 1, and `_torch_lights` gives it `LANTERN_R` (92, a
+  torch's 60), whiter and steadier. Taken up it's a torch again (`_pick_up_furniture`: a small piece with 3+ flame
+  cells). First tried with a chain and two rows of flame: the lower flames crumbled away (support).
+- WISPLIGHT (spell "wisplight": 10 mana, single; recipe in Spells: 4 wisp ore, 2 crystal, 2 glass, learned on
+  finding wisp ore): main `_wisplight` hangs a light where you point (within `WISPLIGHT_REACH`), kept in
+  `planet_state["wisplights"]` ([x, y]), at most `WISPLIGHT_MAX` (10, the oldest goes out); cast on one again and it
+  goes out. `_wisp_lights` (before `_torch_lights`, leaving the torches some of the 32 point lights) gives each
+  `WISPLIGHT_R` (110), cool; overlay `_draw_wisplights` draws a little breathing orb with motes. None in space.
+- Test: `_test_lights` (tests/building.gd, section "lights"; in the full run after `_test_remove`): a floor and a
+  ceiling up in open air, a lantern hung (its flame cells, its wider light), a torch stood, Wisplight hung, put out,
+  ten kept of twelve; the lantern taken up a torch; and the workshop mixes (below). Picture `lights_night.png`.

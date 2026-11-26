@@ -110,7 +110,7 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 	var mid_p: Vector2 = _cell_pos(mid, g.builds.ground_row(mid) - 14)
 	var res := []
 	for v in tw.folk:
-		if not v.keeper and int(v.town["seed"]) == int(t["seed"]):
+		if not v.keeper and v.role != "guard" and int(v.town["seed"]) == int(t["seed"]):
 			res.append(v)
 	# the schedule itself
 	var sched_ok := true
@@ -280,6 +280,7 @@ func _test_requests(t: Dictionary) -> void:
 	var c0: int = int(g.items.get("coins", 0))
 	var pot0: int = int(g.items.get("potion", 0))
 	g.planet_state["requests"] = []
+	tw.no_grow = true                     # (growing the village is `_test_guards`'s to check)
 	var asker = null
 	for v in tw.folk:
 		if v.asker and int(v.town["seed"]) == int(t["seed"]):
@@ -394,6 +395,7 @@ func _test_requests(t: Dictionary) -> void:
 			f.asker = f.idx == tw.asker_index(f.town)
 	g.items["coins"] = c0
 	g.items["potion"] = pot0
+	tw.no_grow = false
 	_ok("living towns: villagers' requests (bring, hunt, deliver) are taken, done and paid", ok, ("no asker in %s" % t["name"]) if asker == null else "; ".join(lines))
 
 ## each kind of planet's shops: the ward its danger needs, its fare, an imported ore, a better price for its own
@@ -406,6 +408,10 @@ func _test_rebuild(t: Dictionary) -> void:
 	var b2 = Bd.new()
 	b2.plan(g.planet, g.gpu.surface, g.spawn_angle, fposmod(g.spawn_angle + PI, TAU), false)
 	b2.finish_all()
+	var grn: Dictionary = g.planet_state.get("grown", {})
+	for tg in b2.towns:
+		for q in int(grn.get(str(tg["seed"]), 0)):
+			b2.grow_house(tg, q)            # (as towns.gd `replay_growth` does on loading)
 	var same: bool = b2.towns.size() == g.builds.towns.size() and b2.labels.size() == g.builds.labels.size()
 	var with_struct := 0
 	var same_cells := true
@@ -525,3 +531,145 @@ func _test_kind_trade() -> void:
 	if not got:
 		bad.append("a bought Sun Veil isn't yours")
 	_ok("living towns: each kind of planet's shops sell its own wares", bad.is_empty(), ("%d things for sale across %d kinds, all real" % [seen, Defs.PLANET_ORDER.size()]) if bad.is_empty() else "; ".join(bad))
+
+## Town guards and villages that grow (26 Nov): a living village's guards are out (as many as `guard_count`),
+## and one goes for a foe that comes into the village and strikes it; then, with enough requests done there, the
+## village grows: a new house planned at one end (planned again the same on loading), its folk build it course by
+## course, furniture and all, a family moves in and another guard comes. A picture: saves/shots/town_grown.png.
+func _test_guards() -> void:
+	var gd_rows := []
+	var gd_ok := true
+	g.towns.test_guards = true
+	var god0: bool = g.test_god
+	g.test_god = true
+	g.spawn_timer = 999999
+	var t = null
+	for tc in g.builds.towns:
+		if bool(tc["living"]) and t == null:
+			t = tc
+	if t == null:
+		_ok("town guards: out walking the village, after foes; a village grows as you help it", false, "no living village")
+		g.test_god = god0
+		return
+	var mid := int(t["x0"]) + int(t["w"]) / 2
+	var back: Vector2 = g.player.pos
+	var time0: float = g.time
+	g.time = g.towns.time_for_hour(_cell_pos(mid, 0), 12.0)
+	for e0 in g.enemies.duplicate():
+		if not e0.boss and e0.guard_id < 0:
+			g.enemies.erase(e0)
+	_go(_cell_pos(mid, g.builds.ground_row(mid) - 14))
+	await _frames(90)
+	var guards := []
+	for v in g.towns.folk:
+		if int(v.town["seed"]) == int(t["seed"]) and v.role == "guard" and not v.gone:
+			guards.append(v)
+	var want: int = g.towns.guard_count(t)
+	var ok1: bool = guards.size() == want and want >= 1
+	gd_rows.append("%s%s: %d guards out (%d wanted)" % ["" if ok1 else "(!) ", t["name"], guards.size(), want])
+	gd_ok = gd_ok and ok1
+	# a foe comes into the village: a guard goes for it and strikes it
+	var hits0: int = int(g.towns.stats.get("guard_hits", 0))
+	var foe = null
+	var dealt := 0.0
+	if not guards.is_empty():
+		var gv = guards[0]
+		for gq in guards:
+			if gq.pos.distance_to(g.player.pos) < gv.pos.distance_to(g.player.pos):
+				gv = gq
+		_go(gv.pos + gv.pos.normalized() * 2.0)
+		await _frames(20)
+		# (out in the street a little way along, never inside a house)
+		var fp: Vector2 = gv.pos
+		var gcol: int = g.towns._col(gv.pos)
+		for off in [36, -36, 50, -50, 64, -64, 24, -24]:
+			if g.towns._house_at(t, float(gcol + int(off))).is_empty():
+				fp = g.towns._street_at(float(gcol + int(off)))
+				break
+		foe = g.spawn_enemy("skeleton", g.free_spot(fp, 9.0, 18.0, 30))
+		foe.awake = true
+		var hp0: float = foe.hp
+		for f in 360:
+			await _frames(1)
+			if foe.dead:
+				break
+		dealt = hp0 - foe.hp if not foe.dead else hp0
+		_shot("town_guard.png")
+		if not foe.dead:
+			g.enemies.erase(foe)
+	var hits: int = int(g.towns.stats.get("guard_hits", 0)) - hits0
+	var ok2: bool = hits >= 1 and dealt > 0.0
+	gd_rows.append("%sa skeleton in the village: struck %d times by the guards, %.0f health taken" % ["" if ok2 else "(!) ", hits, dealt])
+	gd_ok = gd_ok and ok2
+	# requests done: the village grows a house, its folk build it
+	var rep: Dictionary = g.planet_state.get("town_rep", {})
+	var grown0: Dictionary = (g.planet_state.get("grown", {}) as Dictionary).duplicate()
+	var gk0: int = int(grown0.get(str(t["seed"]), 0))
+	rep[str(t["seed"])] = {"n": int(g.towns.GROW_AT[mini(gk0, g.towns.GROW_AT.size() - 1)]), "last": "a test"}
+	g.planet_state["town_rep"] = rep
+	var nh0: int = (t["houses"] as Array).size()
+	var w0: int = int(t["w"])
+	var rb = g.towns.rebuild
+	rb.job = {}
+	rb._look = {}
+	var grew: bool = g.towns._maybe_grow(int(t["seed"]))
+	var nh: Dictionary = (t["houses"] as Array).back() if grew else {}
+	var started := false
+	for f2 in 60:
+		await _frames(1)
+		if not rb.job.is_empty():
+			started = true
+			break
+	var waited := 0
+	while not rb.job.is_empty() and waited < 6000:
+		await _frames(30)
+		waited += 30
+	var built: bool = grew and started and rb.job.is_empty() and not nh.has("new")
+	var furn := 0
+	if not nh.is_empty():
+		var st: Dictionary = nh["struct"]
+		var r2: Dictionary = g.gpu.read_rect(int(st["x0"]), int(st["y0"]), int(st["w"]), int(st["h"]), int(st["ax"]), int(st["aw"]))
+		for b in r2.get("bg", PackedInt32Array()):
+			if (int(b) & 255) == Defs.DECOR:
+				furn += 1
+	var movers := 0
+	var guards2 := 0
+	for v2 in g.towns.folk:
+		if int(v2.town["seed"]) == int(t["seed"]) and not v2.gone:
+			if v2.house == nh and not nh.is_empty():
+				movers += 1
+			if v2.role == "guard":
+				guards2 += 1
+	var ok3: bool = built and (t["houses"] as Array).size() == nh0 + 1 and int(t["w"]) > w0 and furn > 10 and movers >= 1 and guards2 == mini(guards.size() + 1, g.towns.GUARDS_MAX)
+	gd_rows.append("%sgrowing: planned %s, built %s in %d ticks (%d cells laid), %d furniture cells, houses %d -> %d, the village %d -> %d wide, %d moved in, guards %d -> %d" % [
+		"" if ok3 else "(!) ", grew, built, waited, int(rb.stats["laid"]), furn, nh0, (t["houses"] as Array).size(), w0, int(t["w"]), movers, guards.size(), guards2])
+	gd_ok = gd_ok and ok3
+	if not nh.is_empty():
+		var st2: Dictionary = nh["struct"]
+		var hm: int = int(st2["x0"]) + int(st2["w"]) / 2
+		_go(_cell_pos(hm, g.builds.ground_row(hm) - 14))
+		await _frames(30)
+		_shot("town_grown.png")
+	# planned again as on loading: the grown house comes out the same
+	var Bd = load("res://scripts/buildings.gd")
+	var b2 = Bd.new()
+	b2.plan(g.planet, g.gpu.surface, g.spawn_angle, fposmod(g.spawn_angle + PI, TAU), false)
+	b2.finish_all()
+	var same := false
+	for t2 in b2.towns:
+		if int(t2["seed"]) == int(t["seed"]) and not nh.is_empty():
+			for q2 in gk0:
+				b2.grow_house(t2, q2)
+			var h2: Dictionary = b2.grow_house(t2, gk0)
+			same = not h2.is_empty() and int(h2["struct"]["x0"]) == int(nh["struct"]["x0"]) and (h2["struct"]["data"] as PackedInt32Array) == (nh["struct"]["data"] as PackedInt32Array)
+	gd_rows.append("%splanned again as on loading: the same house %s" % ["" if same else "(!) ", same])
+	gd_ok = gd_ok and same
+	# (the grown house stays, and so does its count: planned again on loading it comes back where it is)
+	g.time = time0
+	g.test_god = god0
+	g.spawn_timer = 600
+	_go(back)
+	await _frames(30)
+	g.towns.test_guards = false
+	print("[guards] " + "\n[guards] ".join(gd_rows))
+	_ok("town guards: out walking the village, after foes; a village grows as you help it", gd_ok, "; ".join(gd_rows))

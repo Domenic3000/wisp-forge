@@ -128,6 +128,7 @@ class Villager extends Body:
 	var lie_ok := false          # (lying put down on the floor or mattress the world really has there)
 	var wake_at := Vector2.ZERO  # (where they stand up again)
 	var greet_t := 0             # (a keeper waving as you come up: overlay `_folk_frame`)
+	var strike_t := 0            # (a guard: ticks till the spear can strike again; towns.gd `_guard`)
 	var near_you := false
 
 func new_chest():
@@ -1130,6 +1131,7 @@ func _write_frame_params() -> void:
 		view_c = c
 		ustep = ustep_next
 	gpu.setp(1, Vector4(c.x, c.y, atan2(c.y, c.x), zoom))
+	_wisp_lights()
 	_torch_lights()                          # (before the count of lights goes in)
 	gpu.setp(2, Vector4(VW, VH, gpu.LS, mini(lights.size(), 32)))
 	var b := _biome_at(atan2(player.pos.y, player.pos.x))
@@ -2846,6 +2848,9 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 	if id == "recall":
 		_begin_recall(m, cost)
 		return
+	if id == "wisplight":
+		_wisplight(m, aim, cost)
+		return
 	if id == "blink":
 		if _blink(m, aim):
 			audio.play("blink", m.pos)
@@ -3803,6 +3808,7 @@ func _warden_falls(e: Enemy) -> void:
 func _spawn_guardians() -> void:
 	summoning.on_load(planet_state)          # (a guardian called when the world was saved: its sigil back)
 	mystery.load_from(planet_state)
+	towns.replay_growth()                    # (the houses villages grew as you helped them: planned again)
 	var dead_list: Array = planet_state.get("bosses_dead", [])
 	for lr in builds.lair_list:
 		var biome: String = lr["biome"]
@@ -7110,7 +7116,7 @@ func _update_build(m: Mage) -> void:
 		for c in tp["cells"]:
 			var ch2: String = c[2]
 			cells.append([Build.cell_pos(int(c[0]), int(c[1])), Color(1, 0.75, 0.3) if ch2 == "t" else Color.html(Build.Props.PALETTE[int(Build.Props.CHARS[ch2])])])
-		place = {"stamp": Build.prop_stamp(tp["cells"], 0), "torch": tp["flame"]}
+		place = {"stamp": Build.prop_stamp(tp["cells"], 0), "torch": tp["flame"], "lantern": tp["lantern"]}
 	elif kind == "platform":
 		for i in Build.PLATFORM_W:
 			var cx := cell.x - Build.PLATFORM_W / 2 + i
@@ -7152,7 +7158,7 @@ func _update_build(m: Mage) -> void:
 			stamps.append(place["stamp"])
 		build_last_stamp = place["stamp"]
 	if place.has("torch"):
-		add_torch(place["torch"])
+		add_torch(place["torch"], bool(place.get("lantern", false)))
 	if kind == "carried":
 		m.furn.remove_at(int(piece["item"]))      # it's set down: no longer carried
 	if place.has("station"):
@@ -7752,15 +7758,24 @@ func flatten_apply(m: Mage, plan: Dictionary, mt: int) -> Dictionary:
 func torch_plan(cell: Vector2i) -> Dictionary:
 	var rows: Array = Build.SCONCE
 	var bottom := cell.y + 3
-	# (pointed at a built back wall it hangs there; otherwise near a floor it stands on it)
-	var fl := -1 if _bg_at(cell.x, cell.y) == 2 else _floor_below(cell.x, cell.y, Build.STANDING.size())
-	if fl >= 0:
+	# (pointed just under a ceiling it hangs from it as a lantern; at a built back wall it hangs there as a
+	# sconce; otherwise near a floor it stands on it)
+	var ceil_row := -1
+	for k in range(1, 5):
+		if _solid_at(cell.x, cell.y - k):
+			ceil_row = cell.y - k
+			break
+	var fl := -1 if _bg_at(cell.x, cell.y) == 2 or ceil_row >= 0 else _floor_below(cell.x, cell.y, Build.STANDING.size())
+	if ceil_row >= 0:
+		rows = Build.LANTERN
+		bottom = ceil_row + rows.size()
+	elif fl >= 0:
 		rows = Build.STANDING
 		bottom = fl
 	var pc := Build.prop_cells(rows, cell.x, bottom, false)
 	var ok := true
 	var why := ""
-	var held := rows == Build.STANDING
+	var held := rows == Build.STANDING or rows == Build.LANTERN
 	var cp := Build.cell_pos(cell.x, cell.y)
 	var under: bool = cp.length() < gpu.surf_at(atan2(cp.y, cp.x)).x - 6.0     # (a cave: its wall is behind)
 	for c in pc:
@@ -7779,7 +7794,9 @@ func torch_plan(cell: Vector2i) -> Dictionary:
 			why = "nothing to hang it on: point at a wall, or near a floor"
 		ok = false
 	var top := bottom - rows.size() + 1
-	return {"ok": ok, "why": why, "cells": pc, "flame": Build.cell_pos(cell.x, top + Build.TORCH_FLAME), "standing": rows == Build.STANDING}
+	var lantern := rows == Build.LANTERN
+	return {"ok": ok, "why": why, "cells": pc, "flame": Build.cell_pos(cell.x, top + (Build.LANTERN_FLAME if lantern else Build.TORCH_FLAME)),
+		"standing": rows == Build.STANDING, "lantern": lantern}
 
 ## puts a torch down where `p` is (Conjure with torches chosen, or build mode); true if it went down
 func place_torch(m: Mage, p: Vector2) -> bool:
@@ -7795,14 +7812,14 @@ func place_torch(m: Mage, p: Vector2) -> bool:
 		return false
 	stamps.append(Build.prop_stamp(tp["cells"], 0))
 	m.inv[Defs.TORCH] -= 1
-	add_torch(tp["flame"])
+	add_torch(tp["flame"], bool(tp["lantern"]))
 	vfx.place_flash(tp["flame"], 8.0)
 	audio.play("place", p, 0.6, 1.2)
 	return true
 
-func add_torch(flame: Vector2) -> void:
+func add_torch(flame: Vector2, lantern := false) -> void:
 	var tl: Array = planet_state.get("torches", [])
-	tl.append([flame.x, flame.y, frame])
+	tl.append([flame.x, flame.y, frame, 1 if lantern else 0])
 	planet_state["torches"] = tl
 
 ## every so often: a torch whose flame is gone (burnt, dug, taken up, fallen) is forgotten
@@ -7820,6 +7837,59 @@ func _check_torches() -> void:
 		var bga := _bg_at(Build.cell_of(fp).x, Build.cell_of(fp).y)
 		if bga == 0 or bga == 2:
 			tl.remove_at(k)
+
+# --------------------------------------------------------------- wisplights --
+## Wisplight (26 Nov, "more kinds of light (lanterns, a light spell)"): a light of wisp-fire hung where you
+## point (within WISPLIGHT_REACH), kept with the planet (planet_state["wisplights"]: [x, y]), up to
+## WISPLIGHT_MAX (the oldest goes out). Cast it on one again and it goes out. Each lights WISPLIGHT_R across
+## (`_wisp_lights`), cool and steady; overlay `_draw_wisplights` draws its little flame.
+const WISPLIGHT_MAX := 10
+const WISPLIGHT_R := 110.0
+const WISPLIGHT_REACH := 150.0
+func _wisplight(m: Mage, aim: Vector2, cost: float) -> void:
+	if space.active:
+		if m.local:
+			ui.toast("A wisplight needs a world to hang over", Color(0.7, 0.9, 1.0), 1.5)
+		spell_used(m, "wisplight", 10)
+		return
+	var p := aim
+	if p.distance_to(m.pos) > WISPLIGHT_REACH:
+		p = m.pos + (aim - m.pos).normalized() * WISPLIGHT_REACH
+	var wl: Array = planet_state.get("wisplights", [])
+	for k in wl.size():
+		if Vector2(float(wl[k][0]), float(wl[k][1])).distance_to(p) < 14.0:
+			var gone := Vector2(float(wl[k][0]), float(wl[k][1]))
+			wl.remove_at(k)
+			planet_state["wisplights"] = wl
+			vfx.spawn(Vfx.RING, gone, Vector2.ZERO, 16, Color(0.7, 0.9, 1.0), Color(0.4, 0.6, 1.0, 0.0), 6.0, 1.0)
+			audio.play("blink", gone, 0.4, 0.7)
+			spell_used(m, "wisplight", 10)
+			return
+	m.mana -= cost
+	spell_used(m, "wisplight", int(Defs.SPELLS["wisplight"]["cd"]))
+	wl.append([p.x, p.y])
+	if wl.size() > WISPLIGHT_MAX:
+		wl.remove_at(0)
+		if m.local:
+			ui.toast("Your oldest wisplight goes out (ten at most)", Color(0.7, 0.9, 1.0), 2.0)
+	planet_state["wisplights"] = wl
+	vfx.stream(m, p, Color(0.7, 0.92, 1.0), 10)
+	vfx.spawn(Vfx.RING, p, Vector2.ZERO, 22, Color(0.85, 0.97, 1.0), Color(0.4, 0.7, 1.0, 0.0), 2.0, 16.0)
+	vfx.light(p, 60.0, Color(0.8, 1.0, 1.3), 20)
+	audio.play("blink", p, 0.6, 1.4)
+
+func _wisp_lights() -> void:
+	var wl: Array = planet_state.get("wisplights", [])
+	if wl.is_empty() or space.active:
+		return
+	var reach := float(VW + VH) * 0.5 * maxf(zoom, 0.01) + WISPLIGHT_R
+	for k in wl.size():
+		if lights.size() >= 24:
+			return                          # (leave the torches some of the 32)
+		var wp := Vector2(float(wl[k][0]), float(wl[k][1]))
+		if wp.distance_to(cam_c) < reach:
+			var pu := 0.95 + 0.05 * sin(time * 0.05 + float(k) * 2.1)
+			lights.append([wp, WISPLIGHT_R * pu, Color(1.0, 1.35, 1.6) * pu])
 
 ## the torches near the view as point lights, nearest first, into whatever of the 32 is left
 func _torch_lights() -> void:
@@ -7842,7 +7912,13 @@ func _torch_lights() -> void:
 		var fp2: Vector2 = near[q][1]
 		var ph := float(near[q][2]) * 1.7
 		var fl := 0.93 + 0.04 * sin(time * 0.31 + ph) + 0.03 * sin(time * 0.77 + ph * 2.3)
-		lights.append([fp2, Build.TORCH_R * fl, Color(1.8, 1.2, 0.58) * fl])
+		var tq: Array = tl[int(near[q][2])]
+		if tq.size() > 3 and int(tq[3]) == 1:
+			# (a lantern: behind glass its flame barely flickers, and it lights further and whiter)
+			var fl2 := 0.98 + 0.02 * sin(time * 0.23 + ph)
+			lights.append([fp2, Build.LANTERN_R * fl2, Color(1.7, 1.42, 0.95) * fl2])
+		else:
+			lights.append([fp2, Build.TORCH_R * fl, Color(1.8, 1.2, 0.58) * fl])
 
 ## is a mage or a foe standing at this world position (a block laid there would trap them)?
 func _body_in(wp: Vector2) -> bool:

@@ -3156,6 +3156,55 @@ func _test_voidlife() -> void:
 	var ok8: bool = made == 2 and g.items.has("harness") and absf(g.gear("space_mana") - 2.0) < 0.001 and regen > g.mana_regen * 60.0 * 1.5
 	rows.append("%sforged the Void Harness and the Mantle of the Void (%d of 2): mana back %.1f in a second out here (%.1f without)" % ["" if ok8 else "(!) ", made, regen, g.mana_regen * 60.0])
 	ok = ok and ok8
+	# ---- solar flares (26 Nov): a warning, then the flare: aboard it holes the hull, not with the Radiation Ward;
+	# on foot it scorches you; a planet between you and the star shelters you
+	var flr_fl_rows := []
+	var flr_sp = g.space
+	var flr_rw0 = g.items.get("radward", null)
+	g.items.erase("radward")
+	sk.mend(100000)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
+	var flr_fs0: Dictionary = flr_sp.flare_stats.duplicate()
+	flr_sp.start_flare(5)
+	var flr_warned: bool = flr_sp.flare_warn > 0
+	await _frames(10)
+	var flr_flaring: bool = flr_sp.flare > 0
+	await _frames(200)
+	var flr_hull1: int = int(flr_sp.flare_stats["hull"]) - int(flr_fs0["hull"])
+	g.items["radward"] = true
+	var flr_fs1: Dictionary = flr_sp.flare_stats.duplicate()
+	await _frames(150)
+	var flr_hull2: int = int(flr_sp.flare_stats["hull"]) - int(flr_fs1["hull"])
+	g._skiff_interact(g.player)          # (out, on foot)
+	g.player.pos = sk.pos + Vector2(0.0, -60.0)
+	g.test_god = false
+	g.player.hp = g.player.max_hp
+	await _frames(120)
+	var flr_lost: float = g.player.max_hp - g.player.hp
+	g.test_god = true
+	g.player.hp = g.player.max_hp
+	var flr_sd := Vector2(cos(flr_sp.sun_ang), sin(flr_sp.sun_ang))
+	var flr_shade := false
+	var flr_lit := false
+	for flr_b in flr_sp.bodies.slice(0, 1):
+		if true:
+			flr_shade = flr_sp.in_shadow((flr_b["pos"] as Vector2) - flr_sd * (float(flr_b["space"]) + 3000.0), flr_sd)
+			flr_lit = not flr_sp.in_shadow((flr_b["pos"] as Vector2) + flr_sd * (float(flr_b["space"]) + 3000.0), flr_sd)
+	flr_sp.flare = 0
+	flr_sp.flare_warn = 0
+	if flr_rw0 == null:
+		g.items.erase("radward")
+	else:
+		g.items["radward"] = flr_rw0
+	g.player.pos = sk.pos
+	g._skiff_interact(g.player)
+	await _frames(10)
+	var flr_fl_ok: bool = flr_warned and flr_flaring and flr_hull1 >= 2 and flr_hull2 == 0 and flr_lost > 2.0 and flr_shade and flr_lit
+	_ok("solar flares out in space: a warning, the hull holed (not with the Radiation Ward), you scorched on foot, a planet's shadow", flr_fl_ok,
+		"warned %s, flaring %s; aboard: %d hull hits in 200 ticks, %d with the ward; on foot: %.1f health in 2 s; behind a planet in shadow %s, before it in the light %s" % [flr_warned, flr_flaring, flr_hull1, flr_hull2, flr_lost, flr_shade, flr_lit])
+	sk.mend(100000)
 	# ---- tidy up, home again, and down
 	vl.allow_hostile = false
 	vl.clear_test()

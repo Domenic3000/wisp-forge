@@ -1896,6 +1896,8 @@ func update_hud(g) -> void:
 				wn += " · Starsail"
 		if g.space.active and g.space.pirate_count() > 0:
 			wn = ("" if wn == "Clear" else wn + " · ") + "Pirates!"
+		if g.space.active and (g.space.flare > 0 or g.space.flare_warn > 0):
+			wn = ("" if wn == "Clear" else wn + " · ") + ("Solar flare!" if g.space.flare > 0 else "The star stirs")
 		if g.space.active and g.space.vl.hunting() > 0:
 			wn = ("" if wn == "Clear" else wn + " · ") + "Lumen eels!"
 		if g.space.active and g.space.vl.nearest_well(g.space.galaxy_focus_local(), 2400.0) != null:

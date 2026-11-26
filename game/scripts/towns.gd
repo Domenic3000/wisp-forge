@@ -23,6 +23,27 @@ const HURRY := 0.8           # (going somewhere: home, to work, to the tavern)
 const MAX_FOLK := 10         # residents a village (keepers besides)
 const FADE := 18             # ticks to fade out (and in again) stepping through a house's side
 const STREET := {}           # (the place "out in the street")
+## Guards (26 Nov, "town guards"): every living village has GUARDS_MIN of them (one more for four houses or more,
+## and one more for each house it has grown, up to GUARDS_MAX). They walk the village end to end day and night
+## (with a lantern after dark), and go for any foe that comes within GUARD_SIGHT of them inside the village (or
+## GUARD_ROAM past its ends): never a guardian or other boss, nor wild things that leave folk alone (prey and the
+## neutral, unless they've been roused). Their spear strikes for GUARD_HIT every GUARD_EVERY ticks. They can't be
+## killed. `guard_count`, `_guard`, `_guard_target`; folk_art.gd's "guard" look; overlay's "jab".
+const GUARDS_MIN := 1
+const GUARDS_MAX := 4
+const GUARD_SIGHT := 170.0
+const GUARD_ROAM := 90
+const GUARD_REACH := 12.0
+const GUARD_HIT := 9.0
+const GUARD_EVERY := 34
+## A village grows as you help it (26 Nov): at GROW_AT requests done there (`town_rep`), its folk build a new house
+## at one end (buildings.gd `grow_house`, laid by rebuild.gd a course at a time, furniture and all); a family moves
+## in and another guard walks it. `planet_state["grown"]`: village seed -> houses grown, planned again on loading
+## (`replay_growth`).
+const GROW_AT := [2, 5, 9]
+const GUARD_LINES := ["Keep your wits about you out there, mage. We'll see off whatever comes in.", "Nothing gets past this spear. Well, nothing small.",
+	"Quiet night so far. I like quiet.", "If you see wolves on the road, send them my way.", "The village sleeps easier with us walking it.",
+	"I'd fight a guardian if they let me. They don't let me."]
 
 var game
 var folk: Array = []         # main.gd Villager bodies
@@ -30,6 +51,8 @@ var _peopled := {}           # village seed -> true
 var shop_of = null           # the keeper you're trading with (main state "shop")
 var stats := {}              # (counts for the tests)
 var rebuild                  # rebuild.gd: villages put back the houses knocked down (user, 23 Nov)
+var no_grow := false         # (the test mode's requests check: done requests don't grow the village)
+var test_guards := false     # (the test mode: guards stand by, so they don't spear the foes other checks set up)
 
 func _init(g) -> void:
 	game = g
@@ -170,12 +193,29 @@ func _fill(t: Dictionary) -> void:
 			if is_night(hr_now) and v.inside == v.house:
 				_lie_down(v, true)
 			n += 1
+	# its guards, out in the street whatever the hour
+	for gk in guard_count(t):
+		var gv = _add(t, {}, STREET, hseed(t, 900 + gk, 0), "folk", false)
+		gv.role = "guard"
+		gv.idx = -1 - gk
+		gv.asker = false
+		_place(gv, STREET)
 	stats["filled"] = int(stats.get("filled", 0)) + 1
 	var seen: Array = game.planet_state.get("towns_seen", [])
 	if not seen.has(int(t["seed"])):
 		seen.append(int(t["seed"]))
 		game.planet_state["towns_seen"] = seen
 		game.ui.toast("%s: a village. Talk to its folk (F), and trade at its shops." % t["name"], Color(0.95, 0.85, 0.6), 4.0)
+
+## how many guards walk a village: one, one more for four houses or more, one more for each house it has grown
+func guard_count(t: Dictionary) -> int:
+	var n := GUARDS_MIN
+	if (t["houses"] as Array).size() >= 4:
+		n += 1
+	for h in t["houses"]:
+		if bool(h.get("grown", false)) and not bool(h.get("new", false)):
+			n += 1                                   # (a house grown and built)
+	return mini(n, GUARDS_MAX)
 
 ## how many residents a village has (MAX_FOLK at most)
 static func resident_count(t: Dictionary) -> int:
@@ -349,6 +389,9 @@ func _walk(v) -> void:
 			v.asleep = true
 			return
 		_get_up(v)
+	if v.role == "guard":
+		_guard(v)
+		return
 	if not game.in_grid(v.pos, 12.0):
 		# outside the simulated neighbourhood (and the view): no walking, but they still keep the hours
 		if not v.keeper and game.frame % 30 == v.fseed % 30:
@@ -466,6 +509,94 @@ func _walk(v) -> void:
 		v.facing = 1 if want > 0.0 else -1
 		v.anim += absf(v.vx) * 0.16
 	game.move_body(v)
+
+# ------------------------------------------------------------------ guards ---
+## a guard's tick: after the nearest foe in the village (`_guard_target`), striking with the spear in reach;
+## else walking the village end to end, a while at each end; through a house in the way; a lantern after dark
+func _guard(v) -> void:
+	if v.strike_t > 0:
+		v.strike_t -= 1
+	if not game.in_grid(v.pos, 12.0):
+		return
+	var p: Vector2 = v.pos
+	var a := atan2(p.y, p.x)
+	var up := Vector2(cos(a), sin(a))
+	v.vy = minf(v.vy + 0.17 * game.gravity_at(p), 5.0)
+	var want := 0.0
+	v.asleep = false
+	if is_night(hour_at(p)) and p.distance_to(game.cam_c) < 500.0:
+		game.lights.append([p + up * 6.0, 44.0, Color(1.6, 1.15, 0.6)])
+	var foe = _guard_target(v)
+	if foe != null:
+		var d: Vector2 = foe.pos - p
+		var along := d.dot(game.basis_r(a))
+		v.facing = 1 if along > 0.0 else -1
+		if absf(along) < GUARD_REACH + foe.w * 0.5 and absf(d.dot(up)) < 16.0 + foe.h * 0.5:
+			if v.strike_t <= 0:
+				v.strike_t = GUARD_EVERY
+				game._hurt_enemy(foe, GUARD_HIT, float(v.facing) * 1.6, -0.5)
+				game.audio.play("hit", foe.pos, 0.6, 1.1)
+				for k in 5:
+					game._particle(foe.pos - game.basis_r(a) * float(v.facing) * foe.w * 0.4, game.basis_r(a) * float(v.facing) * randf_range(0.3, 1.2) + up * randf_range(-0.4, 0.6), 10 + randi() % 8, Color(1.0, 0.95, 0.8), true, 0.05)
+				stats["guard_hits"] = int(stats.get("guard_hits", 0)) + 1
+		else:
+			want = signf(along) * 1.25
+			if v.hit_wall and v.on_ground:
+				var s0 := -signf(along)                       # (in columns: basis_r points toward fewer)
+				var hb := _house_at(v.town, float(_col(p)) + s0 * 8.0)
+				if not hb.is_empty():
+					_step(v, _outside(hb, s0), STREET)
+					return
+				v.vy = -1.9
+		if v.say_t <= 0 and randf() < 0.008:
+			_say(v, ["For %s!" % String(v.town.get("name", "the village")), "Back, beast!", "Stand clear, mage!", "To me!"][randi() % 4], 90)
+	elif v.idle_t > 0:
+		v.idle_t -= 1
+	else:
+		var t: Dictionary = v.town
+		var ends := [float(int(t["x0"]) + 10), float(int(t["x0"]) + int(t["w"]) - 10)]
+		var dc := _dc(v.goal_c, p)
+		if absf(dc) < 3.0 or absf(dc) > float(int(t["w"])) + 40.0:
+			v.idle_t = randi_range(90, 260)
+			v.goal_c = ends[1] if absf(_dc(ends[0], p)) < absf(_dc(ends[1], p)) else ends[0]
+		else:
+			want = -signf(dc) * WALK
+			if v.hit_wall and v.on_ground:
+				var hb2 := _house_at(v.town, float(_col(p)) + signf(dc) * 8.0)
+				if not hb2.is_empty():
+					_step(v, _outside(hb2, signf(dc)), STREET)       # (through the house in the way)
+					return
+				v.vy = -1.75
+	v.vx += (want - v.vx) * 0.25
+	if absf(want) > 0.05:
+		v.facing = 1 if want > 0.0 else -1
+		v.anim += absf(v.vx) * 0.16
+	game.move_body(v)
+
+## the foe a guard goes for: the nearest within GUARD_SIGHT that's in the village or close to its ends; never a
+## boss, nor a wild thing that leaves folk alone (prey, the neutral) unless roused
+func _guard_target(v):
+	if game.testing and not test_guards:
+		return null
+	var t: Dictionary = v.town
+	var best = null
+	var bd := GUARD_SIGHT
+	for e in game.enemies:
+		if e.dead or e.boss or e.under:
+			continue
+		if e.type.begins_with("c_") and e.d.has("def"):
+			var tmp := String(e.d["def"].get("temper", "predator"))
+			if (tmp == "prey" or tmp == "neutral") and not e.provoked:
+				continue
+		var dd: float = (e.pos as Vector2).distance_to(v.pos)
+		if dd >= bd:
+			continue
+		var off := fposmod(float(_col(e.pos)) - float(int(t["x0"])) + float(GUARD_ROAM), float(Defs.NS))
+		if off > float(int(t["w"]) + 2 * GUARD_ROAM):
+			continue
+		bd = dd
+		best = e
+	return best
 
 ## step through a house's side: fade out here, come out (or in) at `to`
 func _step(v, to: Vector2, into: Dictionary) -> void:
@@ -685,6 +816,10 @@ func _hello(v, r: RandomNumberGenerator, hr: float) -> String:
 ## what someone says: a greeting, then (in turn, as you keep asking) a rumour about the nearest guardian, a
 ## dungeon, this world's ore, its danger, the village's shops, or just village talk
 func line_for(v) -> String:
+	if v.role == "guard":
+		var gr := RandomNumberGenerator.new()
+		gr.seed = v.fseed + v.talks * 977
+		return "%s, guard of %s. %s" % [v.name, String(v.town.get("name", "the village")), GUARD_LINES[gr.randi_range(0, GUARD_LINES.size() - 1)]]
 	if v.asleep:
 		return "Mmh... wha'? It's the middle of the night. Come back in the morning."
 	var r := RandomNumberGenerator.new()
@@ -907,6 +1042,7 @@ func _finish(rq: Dictionary, v) -> void:
 	var tr: Dictionary = game.planet_state.get("town_rep", {})
 	tr[str(rq["town"])] = {"n": int((tr.get(str(rq["town"]), {}) as Dictionary).get("n", 0)) + 1, "last": String(rq["who"])}
 	game.planet_state["town_rep"] = tr
+	_maybe_grow(int(rq["town"]))
 	for f in folk:
 		if int(f.town["seed"]) == int(rq["town"]) and not f.keeper:
 			f.asker = f.idx == asker_index(f.town)
@@ -916,6 +1052,68 @@ func _finish(rq: Dictionary, v) -> void:
 	game.ui.toast("Request done: +%d coins%s" % [int(rq["reward"]), extra], Color(1, 0.85, 0.4), 3.5)
 	stats["done"] = int(stats.get("done", 0)) + 1
 	game.save_game()
+
+## grow village `tseed` if you've helped it enough since it last grew (true if a house was planned)
+func _maybe_grow(tseed: int) -> bool:
+	var t := {}
+	for tt in game.builds.towns:
+		if int(tt["seed"]) == tseed and bool(tt["living"]):
+			t = tt
+	if t.is_empty() or no_grow:
+		return false
+	var gr: Dictionary = game.planet_state.get("grown", {})
+	var g := int(gr.get(str(tseed), 0))
+	var n := int((game.planet_state.get("town_rep", {}) as Dictionary).get(str(tseed), {}).get("n", 0))
+	if g >= GROW_AT.size() or n < int(GROW_AT[g]):
+		return false
+	var h: Dictionary = game.builds.grow_house(t, g)
+	if h.is_empty():
+		return false
+	gr[str(tseed)] = g + 1
+	game.planet_state["grown"] = gr
+	h["new"] = true
+	stats["growing"] = int(stats.get("growing", 0)) + 1
+	game.ui.toast("Word of your help spreads: %s is growing" % String(t["name"]), Color(1.0, 0.88, 0.5), 4.0)
+	if rebuild.job.is_empty() and rebuild._look.is_empty():
+		rebuild.look_at(h, t)
+	return true
+
+## planned again on loading: each village's grown houses, in the order they grew (the cells are in the world)
+func replay_growth() -> void:
+	var gr: Dictionary = game.planet_state.get("grown", {})
+	for tt in game.builds.towns:
+		var g := int(gr.get(str(tt["seed"]), 0))
+		for q in g:
+			game.builds.grow_house(tt, q)
+
+## a new house is built (rebuild.gd): a family moves in, and another guard comes to walk the village
+func move_in(t: Dictionary, h: Dictionary) -> void:
+	if not _peopled.has(int(t["seed"])):
+		return
+	var hi := (t["houses"] as Array).find(h)
+	var n := 0
+	for f in folk:
+		if int(f.town["seed"]) == int(t["seed"]) and not f.keeper and f.role != "guard":
+			n += 1
+	for k in 2:
+		if n >= MAX_FOLK + 2:
+			break
+		var v = _add(t, h, STREET, hseed(t, hi, k + 1), "folk", false)
+		v.idx = n
+		var beds: Array = h.get("beds", [])
+		if k < beds.size():
+			v.bed = beds[k]
+		_place(v, h)
+		n += 1
+	var ng := 0
+	for f2 in folk:
+		if int(f2.town["seed"]) == int(t["seed"]) and f2.role == "guard":
+			ng += 1
+	if ng < guard_count(t):
+		var gv = _add(t, {}, STREET, hseed(t, 900 + ng, 0), "folk", false)
+		gv.role = "guard"
+		gv.idx = -1 - ng
+		_place(gv, STREET)
 
 ## a letter for this keeper? Then it's handed over
 func _deliver_to(k) -> bool:

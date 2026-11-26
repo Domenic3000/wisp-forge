@@ -1236,6 +1236,7 @@ const LEARN := {
 	"sunveil": {"shop": "shop", "kind": "desert", "price": 45, "hoard": true},
 	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
 	"tidecharm": {"shop": "shop", "kind": "ocean", "price": 45, "hoard": true},
+	"wisplight": {"find": [WISP]},
 	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]}, "lattice": {"find": [STARIRON]},
 	"heatshield": {"find": [FIREOPAL]}, "solarshroud": {"find": [FIREOPAL, SUNSTONE]}, "voidanchor": {"find": [VOIDESS]},
 	# (the ship classes, user 25 Nov: "you can get recipes for different ships"): the Cutter and Hauler from an
@@ -1665,6 +1666,8 @@ const SPELLS := {
 	"blink": {"name": "Blink", "mana": 22.0, "cd": 30, "color": Color(0.55, 0.95, 1.0), "desc": "Step through space to the cursor."},
 	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "A falling star: a huge fiery blast."},
 	"mend": {"name": "Mending", "mana": 60.0, "cd": 600, "color": Color(0.55, 1.0, 0.62), "desc": "Knit your wounds: 30 health over a second. Ten seconds to recover."},
+	# (26 Nov, "more kinds of light (... a light spell)"): main `_wisplight`
+	"wisplight": {"name": "Wisplight", "mana": 10.0, "cd": 20, "single": true, "color": Color(0.7, 0.92, 1.0), "desc": "Hangs a light of wisp-fire where you point, and it stays (up to ten; the oldest goes out). Cast it on one again and it goes out."},
 	"recall": {"name": "Wisp Recall", "mana": 30.0, "cd": 1200, "single": true, "color": Color(0.8, 0.62, 1.0), "desc": "Hold still a moment and the wisp carries you into your ship's pocket, from anywhere. Its arch takes you back where you were. Being hurt breaks it. Twenty seconds to recover."},
 	# the core spells ("art": the glyph they share; "snd": their sound)
 	"cinder": {"name": "Cinderstorm", "mana": 30.0, "cd": 40, "single": true, "color": Color(1.0, 0.45, 0.12), "art": "fireball", "snd": "fire", "desc": "Three fireballs in a fan, each bursting into flame."},
@@ -1690,6 +1693,7 @@ const SPELL_FX := {
 	"starfall": {"core": Color(1.0, 1.0, 0.95), "glow": Color(1.0, 0.75, 0.35), "glow_r": 16.0, "trail": "star", "impact": "nova", "cast": "rune"},
 	"blink": {"core": Color(0.9, 1.0, 1.0), "glow": Color(0.45, 0.9, 1.0)},
 	"mend": {"core": Color(0.9, 1.0, 0.9), "glow": Color(0.45, 1.0, 0.55)},
+	"wisplight": {"core": Color(0.95, 1.0, 1.0), "glow": Color(0.55, 0.85, 1.0)},
 	"efire": {"core": Color(1.0, 0.85, 0.5), "glow": Color(1.0, 0.4, 0.15), "glow_r": 7.0, "trail": "ember"},
 	"lavabomb": {"core": Color(1.0, 0.8, 0.4), "glow": Color(1.0, 0.35, 0.05), "glow_r": 9.0, "trail": "flame"},
 	"meteor": {"core": Color(1.0, 0.95, 0.8), "glow": Color(1.0, 0.55, 0.2), "glow_r": 12.0, "trail": "star"},
@@ -1764,6 +1768,7 @@ const RECIPES := [
 	{"id": "frost", "cat": "Spells", "name": "Frostbite", "cost": {FROST: 10, SNOW: 10}, "spell": "frost"},
 	{"id": "quake", "cat": "Spells", "name": "Quake Orb", "cost": {WISP: 10, STONE: 40, COAL: 10}, "spell": "quake"},
 	{"id": "blink", "cat": "Spells", "name": "Blink", "cost": {WISP: 6, CRYSTAL: 6}, "spell": "blink", "scroll": "scroll_blink"},
+	{"id": "wisplight", "cat": "Spells", "name": "Wisplight", "cost": {WISP: 4, CRYSTAL: 2, GLASS: 2}, "spell": "wisplight"},
 	{"id": "mend", "cat": "Spells", "name": "Mending", "cost": {WISP: 8, SHROOM: 12, CRYSTAL: 4}, "spell": "mend", "scroll": "scroll_mend"},
 	{"id": "potion", "cat": "Potions", "name": "Healing Draught", "cost": {CRYSTAL: 2, SHROOM: 6, GLASS: 2}, "potion": 1, "desc": "Drink with H: 35 health over a moment."},
 	{"id": "starfall", "cat": "Spells", "name": "Starfall", "cost": {EMBER: 12, OBSIDIAN: 6, COAL: 10}, "spell": "starfall", "scroll": "scroll_starfall"},
@@ -1809,7 +1814,7 @@ const RECIPES := [
 	{"id": "lattice", "cat": "Travel", "name": "Storm Lattice", "cost": {COPPERBAR: 12, STARIRON: 6, GLASS: 8}, "desc": "A cage of copper and star iron round the skiff that grounds lightning: it carries the skiff through every storm belt (ocean worlds, and the Thunderhead round a gas giant). Needs the skiff."},
 	{"id": "heatshield", "cat": "Travel", "name": "Heat Shield", "cost": {FIREOPAL: 10, OBSIDIAN: 20, STARIRON: 6, HULL: 12}, "desc": "A prow of obsidian and fire opal over plating: the skiff passes through a star's corona and down onto its crust. Needs the skiff."},
 	{"id": "voidanchor", "cat": "Travel", "name": "Void Anchor", "cost": {VOIDESS: 20, XENITE: 8, STARIRON: 10, HULL: 10}, "desc": "An anchor of void essence that holds the skiff whole through a black hole's horizon: down into the Hollow inside. Needs the skiff."},
-	{"id": "radward", "cat": "Travel", "name": "Radiation Ward", "cost": {HULL: 12, WISPBAR: 8, CRYSTAL: 6, STARIRON: 4}, "desc": "Hull plating salvaged from wrecks, lined with wisp and crystal: it turns the burning light of every radiation belt (desert and volcanic worlds) from the skiff. Needs the skiff."},
+	{"id": "radward", "cat": "Travel", "name": "Radiation Ward", "cost": {HULL: 12, WISPBAR: 8, CRYSTAL: 6, STARIRON: 4}, "desc": "Hull plating salvaged from wrecks, lined with wisp and crystal: it turns the burning light of every radiation belt (desert and volcanic worlds), and a star's flares out in space, from the skiff. Needs the skiff."},
 	{"id": "rimeprow", "cat": "Travel", "name": "Rime Prow", "cost": {XENITE: 8, STARIRON: 10, HULL: 16}, "desc": "A ram of star iron and alien chitin on the skiff's bow: it shoulders through every shard ring (frozen worlds) without holing the hull. Needs the skiff."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars; it burns a Wisp Cell every few seconds (refined at a smelter from wisp ore and coal, or bought at an outpost). Needs the skiff."},
 	{"id": "beam", "cat": "Travel", "name": "Prospector's Beam", "cost": {STARIRON: 6, CRYSTAL: 3, GLASS: 8}, "desc": "Fitted to the skiff: hold dig while you fly it in space to mine asteroids at the cursor from aboard. Needs the skiff."},
@@ -1890,7 +1895,14 @@ const PROCESS := [
 		"name": "Kiln Obsidian", "hint": "Ash of a hearth fired with the stuff of glass sets black and hard as a vault's walls."},
 	{"id": "k_prism", "at": "kiln", "in": {GLASS: 3, SHROOM: 2}, "give": {CRYSTAL: 1}, "ticks": 420, "secret": true,
 		"name": "Grown Prism", "hint": "Glass fired round a glowing cap grows a prism of its own."},
+	# (26 Nov, "more secrets per station")
+	{"id": "k_kindled", "at": "kiln", "in": {STONE: 3, EMBER: 1}, "give": {MAGMAROCK: 3}, "ticks": 360, "secret": true,
+		"name": "Kindled Stone", "hint": "Plain stone fired round an ember crystal wakes with the glow of the deep rock."},
 	{"id": "s_copper", "at": "smelter", "in": {COPPER: 3}, "give": {COPPERBAR: 1}, "ticks": 200},
+	{"id": "s_reclaim", "at": "smelter", "in": {HULL: 3, COAL: 1}, "give": {STARIRON: 1}, "ticks": 480, "secret": true,
+		"name": "Reclaimed Star Iron", "hint": "A dead ship's plating, melted down hot enough, gives back the star iron it was made with."},
+	{"id": "s_seal", "at": "smelter", "in": {OBSIDIAN: 3, EMBER: 2, COPPERBAR: 1}, "item": "gear:emberseal", "ticks": 540,
+		"secret": true, "once": true, "name": "Ember Seal", "hint": "Obsidian and embers bound in a copper ring keep fire and lava off whoever wears it."},
 	{"id": "s_wisp", "at": "smelter", "in": {WISP: 3}, "give": {WISPBAR: 1}, "ticks": 260},
 	{"id": "s_cell", "at": "smelter", "in": {WISP: 2, COAL: 1}, "give": {WISPCELL: 2}, "ticks": 240},
 	{"id": "s_band", "at": "smelter", "in": {COPPERBAR: 2, WISPBAR: 2, CRYSTAL: 1}, "item": "gear:wispband", "ticks": 480,
@@ -1904,12 +1916,17 @@ const PROCESS := [
 		"name": "Swiftfoot Draught", "hint": "Desert flesh and green leaves, stilled together, put a spring in your step."},
 	{"id": "t_mana", "at": "still", "in": {WISP: 2, SHROOM: 2, WATER: 4}, "item": "d_mana", "ticks": 360, "secret": true,
 		"name": "Mana Draught", "hint": "Wisp ore stilled with a glowcap fills the head with light: spells cost less."},
+	{"id": "t_stone", "at": "still", "in": {GRAVEL: 3, SHROOM: 2, WATER: 4}, "item": "d_stone", "ticks": 360, "secret": true,
+		"name": "Stoneskin Draught", "hint": "Gravel and a glowcap stilled together set the skin like stone: blows land softer."},
+	{"id": "t_delve", "at": "still", "in": {COAL: 2, DRYGRASS: 3, WATER: 4}, "item": "d_delve", "ticks": 360, "secret": true,
+		"name": "Delver's Brew", "hint": "The miners' brew: coal and dry grass stilled black. The staff bites deeper for it."},
 	{"id": "t_moon", "at": "still", "in": {CRYSTAL: 1, SNOW: 4}, "item": "d_moon", "ticks": 420, "secret": true, "night": true,
 		"name": "Moonlit Draught", "hint": "Snow and a prism stilled under the night sky keep a light about you, and only then."},
 ]
 ## gear only a workshop makes (a secret's "gear:<id>"): read by main `gear()` with Defs.GEAR's
 const WORK_GEAR := {
 	"wispband": {"name": "Wispsteel Band", "mods": {"mana_cost": 0.8, "max_mana": 40.0}, "desc": "Spells cost a fifth less mana; +40 mana."},
+	"emberseal": {"name": "Ember Seal", "mods": {"fire_dmg": 0.5, "lava_dmg": 0.6}, "desc": "Fire hurts you half as much, and lava less."},
 	"staredge": {"name": "Starsteel Edge", "mods": {"spell_spark": 1.35, "spell_fireball": 1.25, "spell_frost": 1.25}, "desc": "Spark, Fireball and Frostbite hit a quarter harder or more."},
 }
 ## draughts from the Still, drunk from the satchel (click): each works for "dur" ticks through `gear()`
@@ -1917,6 +1934,8 @@ const DRAUGHTS := {
 	"d_ember": {"name": "Ember Draught", "col": Color(1.0, 0.45, 0.15), "dur": 3600, "mods": {"lava_dmg": 0.2, "fire_dmg": 0.2}, "desc": "Fire and lava hurt you a fifth as much, for a minute."},
 	"d_swift": {"name": "Swiftfoot Draught", "col": Color(0.5, 0.95, 0.35), "dur": 3600, "mods": {"speed": 1.35, "jump": 1.2}, "desc": "Run faster and jump higher, for a minute."},
 	"d_mana": {"name": "Mana Draught", "col": Color(0.45, 0.55, 1.0), "dur": 3600, "mods": {"mana_cost": 0.6}, "desc": "Spells cost 40% less mana, for a minute."},
+	"d_stone": {"name": "Stoneskin Draught", "col": Color(0.62, 0.6, 0.55), "dur": 3600, "mods": {"dmg_taken": 0.7, "knock": 0.4}, "desc": "You take less damage and are barely knocked about, for a minute."},
+	"d_delve": {"name": "Delver's Brew", "col": Color(0.35, 0.28, 0.22), "dur": 3600, "mods": {"dig_rate": 1.5}, "desc": "Your staff digs half again as fast, for a minute."},
 	"d_moon": {"name": "Moonlit Draught", "col": Color(0.8, 0.85, 1.0), "dur": 7200, "mods": {"light": 60.0, "dig_rate": 1.2}, "desc": "A soft light goes with you and you dig faster, for two minutes."},
 }
 const MASTERWORK := 1.25      # ore gear forged within ANVIL_REACH of an anvil (items["q_<id>"])

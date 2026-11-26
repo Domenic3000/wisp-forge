@@ -1538,3 +1538,144 @@ func _test_crafting() -> void:
 	g.ui.set_craft_amount(1)
 	print("[crafting] " + "\n[crafting] ".join(rows))
 	_ok("crafting together: workshops and furniture forged into the satchel, build mode for building, the book shows the workshops' mixes, a known mix loads itself, an amount to forge many", ok, "; ".join(rows))
+
+## More kinds of light and more workshop secrets (26 Nov): up in open air a floor of stone and a ceiling over it;
+## a torch pointed just under the ceiling hangs from it as a lantern (its flame real torch cells, a wider light
+## than a torch's, and it comes back as a torch when taken up); Wisplight hangs a light where you point, a second
+## cast there puts it out, and no more than ten are kept; and every workshop mix is its station's only one of those
+## kinds, every secret's draught or gear is real. A picture at night: saves/shots/lights_night.png.
+func _test_lights() -> void:
+	var lt_rows := []
+	var lt_ok := true
+	var m = g.player
+	var lt_back: Vector2 = m.pos
+	var lt_time0: float = g.time
+	var lt_a := atan2(m.pos.y, m.pos.x) - 0.12
+	var lt_up := Vector2(cos(lt_a), sin(lt_a))
+	var c0: Vector2i = Build.cell_of(lt_up * (g.gpu.surf_at(lt_a).x + 160.0))
+	var cx: int = c0.x
+	var top: int = c0.y                    # (the floor's top row)
+	var SW := 90
+	var GAP := 34                          # (open rows between the floor and the ceiling)
+	var slab := PackedInt32Array()
+	slab.resize(SW * 10)
+	slab.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
+	var ceil_top: int = top - GAP - 10
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top, "w": SW, "h": 10, "data": slab})
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": ceil_top, "w": SW, "h": 10, "data": slab})
+	_go(_cell_pos(cx + 45, top - 12))
+	await _frames(30)
+	# a lantern, hung from the ceiling
+	var ceil_under: int = ceil_top + 10       # (the first open row under the ceiling)
+	m.inv[Defs.TORCH] = 4
+	var lp: Dictionary = g.torch_plan(Vector2i(cx + 30, ceil_under + 2))
+	var placed: bool = g.place_torch(m, _cell_pos(cx + 30, ceil_under + 2))
+	var placed2: bool = g.place_torch(m, _cell_pos(cx + 60, top - 3))       # (and a standing torch, for comparison)
+	await _frames(20)
+	var tl: Array = g.planet_state.get("torches", [])
+	var lantern_k := -1
+	for k in tl.size():
+		if (tl[k] as Array).size() > 3 and int(tl[k][3]) == 1:
+			lantern_k = k
+	var rr: Dictionary = g.gpu.read_rect(posmod(cx + 24, Defs.NS), ceil_under, 12, 12)
+	var flames := 0
+	var glass := 0
+	for b in rr["bg"]:
+		if (int(b) & 255) == Defs.TORCH:
+			flames += 1
+		elif (int(b) & 255) == Defs.DECOR:
+			glass += 1
+	# (what's there, row by row: f a flame, d furniture, # solid in front, . open)
+	for jr in 12:
+		var ln := ""
+		for ir in 12:
+			var kk := jr * 12 + ir
+			var bq: int = int(rr["bg"][kk]) & 255
+			var fq: int = int(rr["fg"][kk]) & 255
+			ln += "f" if bq == Defs.TORCH else ("d" if bq == Defs.DECOR else ("#" if fq != 0 else ("~" if fq != 0 else ".")))
+			if fq != 0 and bq == 0:
+				ln[ln.length() - 1] = "#" if Defs.KIND[fq] == Defs.K_SOLID else "*"
+		print("[lights] %s" % ln)
+	g.lights.clear()
+	g._torch_lights()
+	var wide := 0
+	var narrow := 0
+	for L in g.lights:
+		if absf(float(L[1]) - Build.LANTERN_R) < 6.0:
+			wide += 1
+		elif absf(float(L[1]) - Build.TORCH_R) < 6.0:
+			narrow += 1
+	var ok1: bool = bool(lp.get("lantern", false)) and placed and placed2 and lantern_k >= 0 and flames >= 3 and glass >= 16 and wide >= 1
+	lt_rows.append("%sa lantern under the ceiling: planned as one %s, hung %s (a torch stood %s), remembered %s, %d flame and %d frame cells, its light %s (a torch's %s)" % [
+		"" if ok1 else "(!) ", lp.get("lantern", false), placed, placed2, lantern_k >= 0, flames, glass, wide >= 1, narrow >= 1])
+	lt_ok = lt_ok and ok1
+	# Wisplight: hung where you point, put out by a second cast there, ten at most
+	if not m.known.has("wisplight"):
+		m.known.append("wisplight")
+	g.planet_state["wisplights"] = []
+	var wp: Vector2 = _cell_pos(cx + 12, top - 20)
+	m.mana = m.max_mana
+	m.spell_cd.clear()
+	g._wisplight(m, wp, 10.0)
+	var n1: int = (g.planet_state["wisplights"] as Array).size()
+	g.lights.clear()
+	g._wisp_lights()
+	var wl_light := 0
+	for L2 in g.lights:
+		if absf(float(L2[1]) - g.WISPLIGHT_R) < 8.0:
+			wl_light += 1
+	g._wisplight(m, wp + Vector2(2, 0), 10.0)
+	var n2: int = (g.planet_state["wisplights"] as Array).size()
+	for k2 in 12:
+		m.mana = m.max_mana
+		g._wisplight(m, m.pos + lt_up * 24.0 + lt_up.orthogonal() * float(16 * (k2 - 6)), 10.0)
+	var n3: int = (g.planet_state["wisplights"] as Array).size()
+	var ok2: bool = n1 == 1 and wl_light == 1 and n2 == 0 and n3 == g.WISPLIGHT_MAX
+	lt_rows.append("%sWisplight: hung %d, its light %d, cast there again: %d left; twelve cast: %d kept" % ["" if ok2 else "(!) ", n1, wl_light, n2, n3])
+	lt_ok = lt_ok and ok2
+	# a picture at night between the slabs
+	var na: float = atan2(m.pos.y, m.pos.x)
+	g.time = fposmod((na + PI - g.spawn_angle + 1.1) / TAU * g.DAY_LEN, g.DAY_LEN)
+	_go(_cell_pos(cx + 30, top - 12))
+	await _frames(40)
+	_shot("lights_night.png")
+	# the lantern taken up is a torch again
+	var tor0: int = m.inv[Defs.TORCH]
+	var took: bool = g._pick_up_furniture(m, _cell_pos(cx + 30, ceil_under + 2))
+	await _frames(10)
+	var ok3: bool = took and m.inv[Defs.TORCH] == tor0 + 1
+	lt_rows.append("%sthe lantern taken up: %s, torches %d -> %d" % ["" if ok3 else "(!) ", took, tor0, m.inv[Defs.TORCH]])
+	lt_ok = lt_ok and ok3
+	# every workshop mix its station's only one of those kinds; every secret's draught or gear real
+	var seen := {}
+	var bad := []
+	var n_secret := 0
+	for pr in Defs.PROCESS:
+		var ks: Array = (pr["in"] as Dictionary).keys()
+		ks.sort()
+		var key := String(pr["at"]) + ":" + str(ks)
+		if seen.has(key):
+			bad.append("%s and %s share a mix" % [seen[key], pr["id"]])
+		seen[key] = pr["id"]
+		if bool(pr.get("secret", false)):
+			n_secret += 1
+			var it := String(pr.get("item", ""))
+			if it.begins_with("d_") and not Defs.DRAUGHTS.has(it):
+				bad.append("%s's draught %s" % [pr["id"], it])
+			if it.begins_with("gear:") and not Defs.WORK_GEAR.has(it.substr(5)):
+				bad.append("%s's gear %s" % [pr["id"], it])
+	var ok4: bool = bad.is_empty() and n_secret >= 12
+	lt_rows.append("%sworkshop mixes: %d, %d of them secrets; %s" % ["" if ok4 else "(!) ", Defs.PROCESS.size(), n_secret, "all their own" if bad.is_empty() else "; ".join(bad)])
+	lt_ok = lt_ok and ok4
+	# put things back: the slabs, the torches, the wisplights
+	var air := PackedInt32Array()
+	air.resize(SW * (GAP + 20))
+	air.fill(Defs.AIR | 0xFF00)
+	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": ceil_top, "w": SW, "h": GAP + 20, "data": air})
+	g.planet_state["wisplights"] = []
+	g.planet_state["torches"] = []
+	g.time = lt_time0
+	_go(lt_back)
+	await _frames(30)
+	print("[lights] " + "\n[lights] ".join(lt_rows))
+	_ok("more kinds of light (a lantern hung from a ceiling, Wisplight) and more workshop secrets", lt_ok, "; ".join(lt_rows))

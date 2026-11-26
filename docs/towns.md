@@ -80,3 +80,26 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - A plan made again (on loading) is the plan that was built: `_finish` draws the roughening's seed whether or
   not it builds. (It drew only when building, so a loaded world's towns, guards, wardens and labels drifted from
   the first structure on: villagers set out for houses that weren't there.) Checked in `_test_rebuild`.
+
+## Town guards (26 Nov, the roadmap's "town guards", built while the user was away)
+- towns.gd `_fill` puts out `guard_count(t)` guards (`GUARDS_MIN` 1, +1 for four houses or more, +1 for each house
+  grown, at most `GUARDS_MAX` 4): villagers with role "guard" (folk_art.gd: an iron kettle helmet, a tabard from
+  `TABARD` with a pale cross, mail, a spear upright; "jab" thrusts it level), idx negative (never the asker).
+  `_walk` hands them to `_guard`: they never sleep; they walk the village end to end (a while at each end), through
+  a house in the way as residents do, carrying a light after dark; `_guard_target` (the nearest foe within
+  `GUARD_SIGHT` inside the village or `GUARD_ROAM` past its ends: never a boss, nor prey or the neutral unless
+  provoked) draws them to it, and in reach the spear strikes for `GUARD_HIT` every `GUARD_EVERY` ticks
+  (`strike_t` on main's Villager; overlay shows "jab"). They can't be hurt. `line_for` gives a guard's lines
+  (`GUARD_LINES`). Test: `_test_guards` (tests/towns.gd, section "guards"; after `_test_towns`).
+
+## Villages that grow (26 Nov, the roadmap's "a village that grows as you help it")
+- `_finish` (a request done) calls `_maybe_grow`: at `GROW_AT` (2, 5, 9) requests done in a village
+  (`planet_state["town_rep"]`) its next house is planned: buildings.gd `grow_house(t, k)` (its own rng from the
+  village's seed and k; a home `_cottage` at one end, alternating, a few tries outward; planned and finished for
+  its cells only, `finish_all`, so the house has its "struct"; the village's x0/w widened over it). It's marked
+  "new" and rebuild.gd builds it as it rebuilds a house (`look_at` -> `_start`): first `_clear_site` stamps away the
+  trees, roots and undergrowth where it will stand (from the read), then course by course, its furniture too
+  (`_want_back(v, furnish)`), and at `_done` a family moves in (`move_in`: two residents, and a guard if one's due).
+  `planet_state["grown"]` (village seed -> houses grown) is planned again on loading (`replay_growth`, from main
+  `_spawn_guardians`), in order, so the houses come out where they were. Test `_test_guards`: grown, built (~2300
+  ticks), furnished, moved into, widened, and planned again the same.
