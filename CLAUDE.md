@@ -48,7 +48,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | `docs/physics.md` | Rigid chunks (felled trees, falling building pieces), standing on the curved world, chests at rest, scaffold |
 | `docs/performance.md` | Making a planet quickly, the profiler, the benchmarks, quality levels for lower-end PCs, hot paths, no stalls, read-back |
 | `docs/testing.md` | The test mode in full: time limits, running one section, the checks that sometimes fail |
-| `docs/release.md` | Building the shareable .exe, music, save slots, the window |
+| `docs/release.md` | Building the shareable .exe, music, sound effects and ambience, save slots, the window |
 
 ## Rules that hold everywhere
 - Everything is modular and procedural: structures, planets, ships, creatures and their art are grown from

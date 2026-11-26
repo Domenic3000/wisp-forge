@@ -162,11 +162,15 @@ func _test_hazards() -> void:
 	# (and digging what the staff can't cut no longer counts as star iron: the GPU's counters moved)
 	var hz_si0: int = g.player.inv[Defs.STARIRON]
 	var hz_up: Vector2 = g.player.pos.normalized()
-	g.brushes.append([hz_up * (g.gpu.surf_at(atan2(hz_up.y, hz_up.x)).x - 110.0), 6.0, 1, 0, 0, 0, 0, 0])
+	# (a few depths: one spot 110 down was a cave or soft ground now and then, with nothing hard to be blocked by)
 	var hz_blk := false
-	for hz_f in 8:
-		await _frames(1)
-		hz_blk = hz_blk or g.dig_blocked > 0
+	for hz_dd in [110.0, 140.0, 170.0, 200.0]:
+		g.brushes.append([hz_up * (g.gpu.surf_at(atan2(hz_up.y, hz_up.x)).x - hz_dd), 6.0, 1, 0, 0, 0, 0, 0])
+		for hz_f in 8:
+			await _frames(1)
+			hz_blk = hz_blk or g.dig_blocked > 0
+		if hz_blk:
+			break
 	var hz_si1: int = g.player.inv[Defs.STARIRON]
 	g.test_god = hz_god0
 	g.player.hp = g.player.max_hp
@@ -427,6 +431,32 @@ func _test_ui() -> void:
 		out.blend_rect(big, Rect2i(Vector2i.ZERO, big.get_size()), Vector2i(ox, 4 + sh - big.get_height()))
 		ox += big.get_width() + 8
 	out.save_png(dir.path_join("beasts.png"))
+	# and a few beasts' whole walk, then breathing and blinking, one row each (6x): saves/shots/beasts_walk.png
+	var rows_w := []
+	for bk2 in beasts:
+		if String(beasts[bk2]["plan"]) == "beast" and rows_w.size() < 5 and (rows_w.size() < 4 or bk2.begins_with("boss_")):
+			var fr2: Dictionary = BA.frames(bk2, beasts[bk2])
+			var row := []
+			for k6 in 6:
+				row.append(fr2["%s_walk%d" % [bk2, k6]])
+			row.append(fr2[bk2])
+			row.append(fr2[bk2 + "_breathe"])
+			row.append(fr2[bk2 + "_blink"])
+			rows_w.append(row)
+	var cw := 0
+	var chh := 0
+	for rw in rows_w:
+		for im4 in rw:
+			cw = maxi(cw, (im4 as Image).get_width() * 6)
+			chh = maxi(chh, (im4 as Image).get_height() * 6)
+	var sheet_w := Image.create((cw + 6) * 9 + 6, (chh + 6) * rows_w.size() + 6, false, Image.FORMAT_RGBA8)
+	sheet_w.fill(Color(0.35, 0.5, 0.62))
+	for ri in rows_w.size():
+		for ci in rows_w[ri].size():
+			var big2: Image = (rows_w[ri][ci] as Image).duplicate()
+			big2.resize(big2.get_width() * 6, big2.get_height() * 6, Image.INTERPOLATE_NEAREST)
+			sheet_w.blend_rect(big2, Rect2i(Vector2i.ZERO, big2.get_size()), Vector2i(6 + ci * (cw + 6), 6 + ri * (chh + 6) + chh - big2.get_height()))
+	sheet_w.save_png(dir.path_join("beasts_walk.png"))
 	# every creature's daily-life poses (ecology.gd), 3x, in rows: saves/shots/poses.png
 	var pz := []
 	for pc in Defs.CREATURES:
@@ -1113,3 +1143,84 @@ func _test_cores() -> void:
 	g.items = items0
 	g.test_god = god0
 	_ok("each kind of world's core: its own material, its spell and gear taught on finding it, the core spells fly and strike", ok, "; ".join(rows))
+
+## The audio pass (26 Nov, user: "can we do an audio pass"; audio.gd): every sound the scripts play exists (the
+## staff's fizzle had been played but never made); no effect or ambience loop clips (more than a few samples at
+## the limit) or is too quiet to hear; the twelve ambience loops are made on their thread and loop; the three buses
+## are there with their effects; and where you are is worked out (on the surface here, with some wind playing).
+func _test_audio() -> void:
+	var au = g.audio
+	var rows := []
+	var ok := true
+	# every name in audio.play("...") across the scripts
+	var re := RegEx.new()
+	re.compile("audio\\.play\\(\"([a-z_0-9]+)\"")
+	var missing := []
+	var used := {}
+	for fn in DirAccess.get_files_at("res://scripts"):
+		if not fn.ends_with(".gd"):
+			continue
+		var src := FileAccess.get_file_as_string("res://scripts/" + fn)
+		for mt in re.search_all(src):
+			var nm := mt.get_string(1)
+			used[nm] = true
+			if not au.sfx.has(nm) and not missing.has(nm):
+				missing.append(nm)
+	for st in ["soft", "stone", "sand", "snow", "wood", "metal"]:
+		if not au.sfx.has("step_" + st):
+			missing.append("step_" + st)
+	ok = ok and missing.is_empty()
+	rows.append("%d sounds played in the scripts, missing: %s" % [used.size(), str(missing)])
+	# loud enough and never clipping
+	var clipped := []
+	var quiet := []
+	for nm in au.sfx:
+		var pk := _au_peak(au.sfx[nm])
+		if pk[1] > 0.004:
+			clipped.append("%s (%.1f%%)" % [nm, pk[1] * 100.0])
+		if pk[0] < 0.02:
+			quiet.append("%s (%.3f)" % [nm, pk[0]])
+	# the ambience: made on its thread, then started
+	for k in 600:
+		if not au._amb.is_empty():
+			break
+		await _frames(1)
+	var amb_names: Array = au._amb.keys()
+	var amb_loops := 0
+	for nm2 in au._amb:
+		var st2: AudioStreamWAV = au._amb[nm2][0].stream
+		if st2.loop_mode == AudioStreamWAV.LOOP_FORWARD and st2.loop_end > 0:
+			amb_loops += 1
+		var pk2 := _au_peak(st2)
+		if pk2[1] > 0.004:
+			clipped.append("amb %s (%.1f%%)" % [nm2, pk2[1] * 100.0])
+		if pk2[0] < 0.02:
+			quiet.append("amb %s (%.3f)" % [nm2, pk2[0]])
+	ok = ok and clipped.is_empty() and quiet.is_empty() and amb_names.size() == 12 and amb_loops == 12
+	rows.append("clipping: %s; too quiet: %s" % [str(clipped), str(quiet)])
+	rows.append("ambience %d made (%d loop): %s" % [amb_names.size(), amb_loops, ", ".join(amb_names)])
+	# buses and where you are
+	var buses_ok := true
+	for bn in [au.BUS_SFX, au.BUS_AMB, au.BUS_MUSIC]:
+		var bi := AudioServer.get_bus_index(bn)
+		buses_ok = buses_ok and bi >= 0 and AudioServer.get_bus_effect_count(bi) >= 1
+	await _frames(240)
+	var place := String(au.here["place"])
+	var wind_v: float = float(au._amb["wind"][1]) if au._amb.has("wind") else 0.0
+	ok = ok and buses_ok and place == "surface" and (g.audio.sfx_volume <= 0.0 or wind_v > 0.0)
+	rows.append("buses %s; here: %s (biome %s, open %s, village %s, sea %.2f); wind %.3f; music list '%s'" % [buses_ok, place,
+		au.here["biome"], au.here["open"], au.here["village"], float(au.here["sea"]), wind_v, au._list])
+	_ok("the audio pass: every sound there, none clipping or too quiet, ambience loops, buses, where you are", ok, "; ".join(rows))
+
+## [the loudest sample (0..1), the share of samples at the limit] of a 16-bit wav
+func _au_peak(w: AudioStreamWAV) -> Array:
+	var d: PackedByteArray = w.data
+	var n := d.size() / 2
+	var mx := 0
+	var at := 0
+	for i in n:
+		var v := absi(d.decode_s16(i * 2))
+		mx = maxi(mx, v)
+		if v >= 31990:
+			at += 1
+	return [float(mx) / 32000.0, float(at) / float(maxi(1, n))]

@@ -163,7 +163,9 @@ func _carry_pixels(px: Dictionary) -> void:
 	px[Vector2i(16, 16)] = SKIN[0]
 	px[Vector2i(17, 16)] = SKIN[0]
 	px[Vector2i(17, 15)] = SKIN[1]                 # (the thumb)
-	var cols: Array = carry.get("cols", [Color.WHITE, Color.GRAY, Color.DIM_GRAY])
+	var cols: Array = carry.get("cols", [])
+	if cols.size() < 3:
+		cols = [Color.WHITE, Color.GRAY, Color.DIM_GRAY]          # (a plan or a torch has colours of its own)
 	var hi: Color = cols[0]
 	var mid: Color = cols[1]
 	var lo: Color = cols[2]

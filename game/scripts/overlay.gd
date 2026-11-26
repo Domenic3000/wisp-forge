@@ -428,7 +428,7 @@ func _boss_frame(e) -> String:
 	if plan == "serpent":
 		return id + "_head"
 	if not e.awake:
-		return id
+		return _beast_idle(e, id, plan)
 	if e.act == "windup":
 		return id + "_wind"
 	# its daily life (ecology.gd): grazing, asleep, croaking, growling at you
@@ -444,8 +444,20 @@ func _boss_frame(e) -> String:
 			return id + "_crouch"
 		return id
 	if absf(e.vx) > 0.1:
+		# (a beast walks in six steps, the others in four)
+		if tex.has(id + "_walk5"):
+			return "%s_walk%d" % [id, int(e.anim * 0.9) % 6]
 		return "%s_walk%d" % [id, int(e.anim * 0.6) % 4]
-	return id
+	return _beast_idle(e, id, plan)
+
+## standing still: a beast breathes slowly and blinks now and then, each in its own time (user, 26 Nov, the art pass)
+func _beast_idle(e, id: String, plan: String) -> String:
+	if plan != "beast" or absf(e.vx) > 0.1 or not tex.has(id + "_breathe"):
+		return id
+	var t: int = game.frame + int(e.phase * 977.0)
+	if t % 230 < 7:
+		return id + "_blink"
+	return id + "_breathe" if (t / 45) % 2 == 1 else id
 
 ## A creature's, guardian's or warden's frames, grown from parts on a worker thread the first time one is
 ## in the list of foes: true once they're made. (Grown all at once on the main thread as the planet's

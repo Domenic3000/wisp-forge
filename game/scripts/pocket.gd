@@ -413,7 +413,7 @@ func _move(m) -> void:
 		var a0: float = m.anim
 		m.anim += absf(v.x) * 0.13
 		if int(m.anim * 0.5) != int(a0 * 0.5):
-			game.audio.play("step", m.pos, 0.3)
+			game.audio.step(m.pos, m.h, 0.3, "metal" if place == "outpost" else "soft")
 	# (fallen off the isle into the nebula: it sets you gently back by the arch; out of an outpost's hangar mouth,
 	# its tractor beam sets you back on the hangar's floor)
 	if b.y > float(bd.h) + 40.0 or b.x < -80.0 or b.x > float(bd.w) + 80.0 or b.y < -80.0:
@@ -711,7 +711,7 @@ func _enter_outpost(m, o) -> void:
 	game.space.visible = false
 	game.weather.visible = false
 	stats["docked"] += 1
-	game.audio.play("blink", m.pos, 0.7)
+	game.audio.play("dock", m.pos, 0.7)
 	game.ui.toast("Docked at %s. Its shops are along the deck through the hangar's door; F at your ship to undock" % op.wname, Color(1.0, 0.85, 0.5), 4.5)
 
 ## your ship parked on the hangar's floor: [middle cell, floor row]
@@ -762,7 +762,7 @@ func _undock(m) -> void:
 	op_folk.clear()
 	near_keeper = null
 	near_folk = null
-	game.audio.play("blink", m.pos, 0.6)
+	game.audio.play("dock", m.pos, 0.6)
 	game.ui.toast("Undocked: you're aboard, by %s" % String(back.get("name", "the outpost")), Color(1.0, 0.85, 0.5), 2.5)
 
 func _op_tick(m) -> void:

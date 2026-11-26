@@ -51,7 +51,11 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `move_body`) and `air_on` (set by a jump, vy < -0.3, or a fall past 8 frames; held at least 3 frames) pick "_air"; `Ecology.hop` crouches 6 frames first (boss_ai `tick` plays
   `crouch_t` out, frame "_crouch"), `land_t` squashes on landing; a frog never shows walk frames. They float in
   water (`_fall`). Move "tongue" (boss_ai: out at you and back, stings and pulls; `e.tongue` along `e.aim`, drawn by
-  overlay `_eco_marks`). New frames: beast "_graze", "_sleep"; toad "_croak", "_crouch", "_sleep"; bird "_perch",
+  overlay `_eco_marks`). New frames: beast "_graze", "_sleep" (26 Nov, the art pass: a six-step walk "_walk0".."_walk5" with each
+  foot lifted as it swings forward and the body a pixel down as the feet land, overlay picks `int(anim * 0.9) % 6`;
+  standing, `_beast_idle` shows "_breathe" (the body a pixel up, the tail flicked) half of each 90 frames and
+  "_blink" (eyes shut) 7 frames in 230, each creature in its own time by `phase`; the walk cycles are drawn into
+  saves/shots/beasts_walk.png by `_test_ui`); toad "_croak", "_crouch", "_sleep"; bird "_perch",
   "_sleep" (`BossArt.bird_feet` puts it on its branch). Bats roost on cave roofs (`main._bat_roost`, "bat_hang").
 - Cornered (user, 21 Nov: prey chased into a wall kept running at it, some went up a house wall): `_flee` turns a
   walker or hopper round when it meets a wall it can't clear (`jump_reach`: about its own height, at most 24) or

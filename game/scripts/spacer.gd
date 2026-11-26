@@ -98,10 +98,19 @@ func step_aside(dir: int) -> void:
 	goal = clampf(b.x + float(dir) * float(_rng.randi_range(12, 22)), float(int(md["x0"]) + 6), float(int(md["x1"]) - 6))
 	wait = 0
 
+## their frame (folk_art.gd POSES, as a villager's: user, 26 Nov, the art pass): a four-step walk, talking with a
+## hand while they speak, else standing with a slow breath and a blink now and then
 func texture() -> ImageTexture:
 	var fr := "stand"
+	var t := int(Engine.get_process_frames()) + fseed % 97
 	if absf(v.x) > 0.1:
-		fr = "walk0" if int(anim * 0.5) % 2 == 0 else "walk1"
+		fr = "walk%d" % (int(anim) % 4)
+	elif say_t > 0:
+		fr = "talk%d" % ((t / 12) % 2)
+	elif t % 230 < 7:
+		fr = "blink"
+	elif (t / 50) % 2 == 1:
+		fr = "breathe"
 	if not _frames.has(fr):
 		var imgs: Dictionary = load("res://scripts/folk_art.gd").frames(fseed, "")
 		for kf in imgs:

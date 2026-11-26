@@ -2409,7 +2409,7 @@ func _fire_cannon(pl, sk) -> void:
 	stats["shots"] += 1
 	game.vfx.spawn(Vfx.GLOW, from, sk.vel, 8, Color(0.75, 0.95, 1.0), Color(0.4, 0.6, 1.0, 0.0), 6.0, 2.0)
 	game.vfx.spawn(Vfx.RING, from, sk.vel, 8, Color(0.6, 0.9, 1.0), Color(0.4, 0.6, 1.0, 0.0), 1.0, 7.0)
-	game.audio.play("zap", from, 0.5)
+	game.audio.play("cannon", from, 0.6)
 
 ## the bolts fly (in 2-cell steps, so none goes through a thin hull) and burst on rock or hull
 func _update_shots() -> void:
@@ -2590,7 +2590,7 @@ func skiff_hit(sk, p: Vector2, r: float, through: float) -> void:
 		shield_hit = 30
 		stats["shield_saves"] += 1
 		game.vfx.spawn(Vfx.RING, sk.pos, Vector2.ZERO, 18, Color(0.6, 0.95, 1.0), Color(0.4, 0.7, 1.0, 0.0), 30.0, 44.0)
-		game.audio.play("blink", sk.pos, 0.8)
+		game.audio.play("shield", sk.pos, 0.8)
 		return
 	stats["hull_hits"] += 1
 	var n: int = sk.damage(p, r)
@@ -3189,7 +3189,7 @@ func _enter_halls(m, h) -> void:
 		vel = Vector2.ZERO
 		m.on_ground = false
 		stats["halls"] = int(stats.get("halls", 0)) + 1
-		game.audio.play("creak", m.pos, 0.8)
+		game.audio.play("dock", m.pos, 0.8)
 		game.ui.toast("Aboard %s. %s Your ship holds over the breach: F beside it to leave" % [h.wname, h.fate], Color(0.8, 0.75, 0.65), 5.5)
 		return
 	_station_in(h)
@@ -3208,7 +3208,7 @@ func _enter_halls(m, h) -> void:
 	_st_w = m.pos
 	m.on_ground = false
 	stats["halls"] = int(stats.get("halls", 0)) + 1
-	game.audio.play("creak", m.pos, 0.8)
+	game.audio.play("dock", m.pos, 0.8)
 	game.ui.toast("Docked in %s's bay. %s F beside your ship undocks" % [h.wname, h.fate], Color(0.8, 0.7, 1.0), 5.5)
 
 ## on foot beside your ship in the halls' bay
@@ -3227,7 +3227,7 @@ func undock_station(m) -> void:
 		if sk.board(m):
 			m.aboard = sk
 	stats["undocked"] = int(stats.get("undocked", 0)) + 1
-	game.audio.play("blink", m.pos, 0.6)
+	game.audio.play("dock", m.pos, 0.6)
 	game.ui.toast("Undocked: you're aboard, by %s" % String(_inst_shell.wname if _inst_shell != null else "the station"), Color(0.8, 0.7, 1.0), 2.5)
 
 ## (the halls set aside, everything else back as it was; your ship where you left it)
@@ -3667,7 +3667,7 @@ func _station_move(m, st) -> void:
 		var a0: float = m.anim
 		m.anim += absf(bv.x) * 0.13
 		if int(m.anim * 0.5) != int(a0 * 0.5):
-			game.audio.play("step", m.pos, 0.3)
+			game.audio.step(m.pos, m.h, 0.3, "metal")
 	_st_jump = jump
 	m.pos = st.to_world(b - st.com)
 	_st_b = b

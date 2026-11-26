@@ -95,7 +95,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   puts you in the pocket instance (`place` "outpost", `op`): space waits (main hands the tick to pocket.gd), the halls
   lie at the origin like the isle (ang PI, com 0), you stand on the hangar's floor beside your ship (drawn parked,
   nose to the mouth), behind it all its own sky (`SKY` shader: stars, a haze, the star, a banded planet below, hue by
-  seed). Spacers (`op_folk`, spacer.gd on the halls) walk; keepers stand behind counters; `_op_tick` sets `near`
+  seed). Spacers (`op_folk`, spacer.gd on the halls) walk (spacer `texture`
+  picks folk_art.gd's frames as a villager's: four-step walk, talking while they speak, breathing and blinking; 26 Nov); keepers stand behind counters; `_op_tick` sets `near`
   ("ship", "keeper", "folk"); F trades (space `open_trade(op, kp)`), talks (`_folk_talk`), or at the ship undocks
   (`_undock`: aboard, where you were). Signs over the shops, prompts and speech on `top`; halos over glowing cells
   (`_gather_op_lights`). The HUD shows its name and the hold. Spells sheathed, nothing built; falling out of the

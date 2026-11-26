@@ -18,7 +18,7 @@ Notes for development sessions on this part of the game. The rules that apply ev
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "hand", "inworld", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "stations", "fuel", "ships" (also "shipyard" or "pocket"), "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "hand", "audio", "inworld", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "stations", "fuel", "ships" (also "shipyard" or "pocket"), "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -29,7 +29,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   within `trees` columns); the frog's hops are watched up to 720 frames (it sits and croaks between hops at random);
   the deer in the storm is watched 240 frames, 120 cells from you (at 220 it was outside the simulated
   neighbourhood, 192 cells each way, and stood frozen: `main.in_grid`); every creature gets 260 frames for its first
-  attack, and the report names any that failed ("(!) failed: ..."). A test that sets something up in the air takes it away again (`_test_indoors` clears its
+  attack, and the report names any that failed ("(!) failed: ..."). Later the same day: the felled tree's wood is
+  counted 320 columns either way and 40 rows down (a trunk rolled ~180 columns down a slope and counted as lost), and
+  the hazards check's too-hard dig tries 110, 140, 170 and 200 cells down (a cave or soft ground at 110 had nothing
+  hard to be blocked by). A test that sets something up in the air takes it away again (`_test_indoors` clears its
   slab and house).
 - The wild-life checks (`_test_creatures`, `_test_ecology`) are set up near `start_pos` (where you arrived), in clear
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms

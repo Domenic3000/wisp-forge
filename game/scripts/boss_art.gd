@@ -162,8 +162,12 @@ static func frames(id: String, b: Dictionary) -> Dictionary:
 	match String(b["plan"]):
 		"beast":
 			out[id] = _beast(b, sd, {})
-			for k in 4:
-				out["%s_walk%d" % [id, k]] = _beast(b, sd, {"phase": float(k) / 4.0, "bob": 1.0 if k % 2 == 1 else 0.0})
+			# (six steps, each foot lifted as it swings forward and the body down a pixel as the feet land: user,
+			# 26 Nov, the art pass; with four and the feet never leaving the ground they seemed to slide)
+			for k in 6:
+				out["%s_walk%d" % [id, k]] = _beast(b, sd, {"phase": float(k) / 6.0, "bob": 1.0 if k % 3 == 0 else 0.0})
+			out[id + "_breathe"] = _beast(b, sd, {"breath": 1.0, "tail": 0.12})
+			out[id + "_blink"] = _beast(b, sd, {"shut": 1.0})
 			out[id + "_wind"] = _beast(b, sd, {"lower": 1.0, "crouch": 0.6, "mouth": 1.0})
 			out[id + "_air"] = _beast(b, sd, {"tuck": 1.0, "mouth": 1.0})
 			# its daily life (ecology.gd): head down to the grass or the water, and asleep, lying down
@@ -325,9 +329,10 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var ground := float(H) - 2.0
 	var lie: float = pose.get("lie", 0.0)
 	var graze: float = pose.get("graze", 0.0)
+	var walking := pose.has("phase")
 	var lg := leg * (1.0 - 0.3 * crouch) * (1.0 - 0.35 * tuck) * (1.0 - 0.75 * lie)
 	var cx := 6.0 + pad + L * 0.5 + 2.0
-	var cy := ground - lg - T * 0.42 + bob - tuck * leg * 0.25
+	var cy := ground - lg - T * 0.42 + bob - tuck * leg * 0.25 - float(pose.get("breath", 0.0))
 	# the legs on the far side first, darker
 	var hips := [Vector2(cx - L * 0.32, cy + T * 0.18), Vector2(cx + L * 0.3, cy + T * 0.18)]
 	for side in [1, 0]:
@@ -336,6 +341,8 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 			var off := 0.5 * float(side) + 0.25 * float(hi)
 			var sw := sin(TAU * (ph + off)) * 0.5 * (1.0 - tuck)
 			var foot := Vector2(hip.x + sin(sw) * lg * 0.7 + tuck * (4.0 if hi == 0 else -4.0) * ks, minf(ground, hip.y + lg))
+			if walking:
+				foot.y -= maxf(0.0, cos(TAU * (ph + off))) * lg * 0.24          # (lifted as it swings forward)
 			if tuck > 0.0:
 				foot.y = hip.y + lg * 0.75
 			var knee := (hip + foot) * 0.5 + Vector2((2.5 if hi == 1 else -2.5) * (1.0 - tuck * 0.5) * ks, 0.0)
@@ -349,11 +356,11 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 	var tr0 := clampf(T * 0.3, 1.2, 3.0)
 	match tail:
 		"short":
-			_tail(c, tb, tl, tr0, 0.6, 0.0, ph, bob, base, skin, acc)
+			_tail(c, tb, tl, tr0, 0.6, 0.0, ph + float(pose.get("tail", 0.0)), bob, base, skin, acc)
 		"long":
-			_tail(c, tb, tl, tr0, -0.25, 0.7, ph, bob, base, skin, acc)
+			_tail(c, tb, tl, tr0, -0.25, 0.7, ph + float(pose.get("tail", 0.0)), bob, base, skin, acc)
 		"tuft":
-			var tip := _tail(c, tb, tl, tr0 * 0.6, -0.7, 0.6, ph, bob, base, "", acc)
+			var tip := _tail(c, tb, tl, tr0 * 0.6, -0.7, 0.6, ph + float(pose.get("tail", 0.0)), bob, base, "", acc)
 			c.blob(tip.x - 0.5, tip.y + 0.5, 2.6 * ks, 2.6 * ks, acc, "fur")
 	# the body
 	c.blob(cx, cy, L * 0.5, T * 0.5, base, skin, acc)
@@ -371,6 +378,8 @@ static func _beast(b: Dictionary, sd: int, pose: Dictionary) -> Image:
 		var hip2: Vector2 = hips[hi2]
 		var sw2 := sin(TAU * (ph + 0.25 * float(hi2))) * 0.5 * (1.0 - tuck)
 		var foot2 := Vector2(hip2.x + sin(sw2) * lg * 0.7 + tuck * (4.0 if hi2 == 0 else -4.0) * ks, minf(ground, hip2.y + lg))
+		if walking:
+			foot2.y -= maxf(0.0, cos(TAU * (ph + 0.25 * float(hi2)))) * lg * 0.24
 		if tuck > 0.0:
 			foot2.y = hip2.y + lg * 0.75
 		var knee2 := (hip2 + foot2) * 0.5 + Vector2((2.5 if hi2 == 1 else -2.5) * (1.0 - tuck * 0.5) * ks, 0.0)

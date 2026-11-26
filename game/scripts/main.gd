@@ -2677,7 +2677,7 @@ func _update_player(m: Mage) -> void:
 	if p.on_ground:
 		p.anim += absf(p.vx) * 0.13
 		if int(p.anim * 0.5) != int(a0 * 0.5):
-			audio.play("step", p.pos, 0.35)
+			audio.step(p.pos, p.h, 0.35)
 		if was_air > 18:
 			audio.play("land", p.pos, clampf(was_air / 60.0, 0.3, 1.0))
 	# hazards
@@ -2927,7 +2927,7 @@ func has_mana(m: Mage, need: float, p: Vector2, what: String) -> bool:
 		_mana_warn_t = frame + 50
 		ui.toast("Not enough mana to %s (%d of %d): wait for it to come back" % [what, int(m.mana), int(ceil(need))], Color(0.55, 0.75, 1.0), 1.6)
 		vfx.fizzle(p)
-		audio.play("fizzle" if audio.sfx.has("fizzle") else "hit", p, 0.35, 1.8)
+		audio.play("fizzle", p, 0.5)
 	return false
 
 ## spends mana if there is enough (true), else says so (false)
@@ -4604,6 +4604,9 @@ func _update_weather() -> void:
 	if b["weather"] == "rain" and rain > 0.6 and randf() < 0.0012 * float(clim.get("storm", 1.0)):
 		flash = 1.2
 		shake = 5.0
+		# (thunder a moment later: louder out under the sky, faint deep down)
+		var td: float = gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - player.pos.length()
+		audio.play("thunder", null, clampf(1.0 - td / 120.0, 0.15, 1.0) * (1.0 if exposed else 0.6))
 
 ## The planet's climate (Defs.climate): a wind that gusts harder in a storm and turns with each spell of
 ## weather, pushing you about in the open air; what it blows across the view (snow on a frozen world, sand in
@@ -9571,7 +9574,7 @@ func _deck_move(m: Mage) -> void:
 		var a0: float = m.anim
 		m.anim += absf(bv.x) * 0.13
 		if int(m.anim * 0.5) != int(a0 * 0.5):
-			audio.play("step", m.pos, 0.3)
+			audio.step(m.pos, m.h, 0.3, "wood")
 	m.deck_b = b
 	m.deck_v = bv
 	m.pos = sk.to_world(b - sk.com)

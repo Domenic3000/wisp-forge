@@ -89,6 +89,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_hand()
+		elif only == "audio":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_audio()
 		elif only == "inworld":
 			_go(g.player.pos)
 			await _frames(60)
@@ -1043,10 +1047,12 @@ func run() -> void:
 			var z0: String = zone.call(g.gpu.read_world())
 			# wood in the background all around (this tree and its neighbours): a felled tree should
 			# still be wood afterwards, lying where it fell, not a heap of timber grains
+			# (wide and deep enough for a trunk that rolls down a slope: 26 Nov one rolled ~180 columns off and its
+			# wood counted as lost)
 			var wood_round := func(raw: PackedByteArray) -> int:
 				var n := 0
-				for j in range(grt - 150, grt + 6):
-					for i in range(-170, 171):
+				for j in range(grt - 150, grt + 40):
+					for i in range(-320, 321):
 						var kw := Defs.raw_idx(j, posmod(tcol + i, N0)) * 4
 						if (raw.decode_u32(toff + kw) & 255) == Defs.WOOD or (raw.decode_u32(kw) & 255) == Defs.WOOD:
 							n += 1
@@ -1460,6 +1466,7 @@ func run() -> void:
 	await _test_remove()
 	await _test_harvest()
 	await _test_hand()
+	await _test_audio()
 	await _test_inworld()
 	await _test_spawns()
 
