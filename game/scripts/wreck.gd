@@ -34,6 +34,7 @@ var first := false        # (the wreck near home every journey finds first: its 
 var visited := false      # (you've been aboard: its name was told)
 var _bg_dirty := true
 var meta := {}            # (how it was laid out: the tests print it)
+var board_at := Vector2i(-1, -1)   # (the first breach's middle at the hull's top: where you board it, your ship above)
 
 ## its name, from its seed (the map names it before you've been near)
 static func name_of(sd: int) -> String:
@@ -41,10 +42,17 @@ static func name_of(sd: int) -> String:
 	rng.seed = sd
 	return "the %s %s" % [NAME_A[rng.randi_range(0, NAME_A.size() - 1)], NAME_B[rng.randi_range(0, NAME_B.size() - 1)]]
 
-static func make_wreck(sd: int, is_first := false) -> RefCounted:
+## (user, 25 Nov: "derelict ships and outposts and so on should be redesigned so that you press a button to dock
+## and go inside an instanced area so we can make them larger and more intricate"): `in_halls` grows the wreck you
+## board (space.gd `dock_station` with a wreck): about twice as long, three decks, more rooms and caches; the one
+## drifting out in space is its shell, with no caches (you board it with F).
+static func make_wreck(sd: int, is_first := false, in_halls := false) -> RefCounted:
 	var wk = load("res://scripts/wreck.gd").new()
+	wk.halls = in_halls
 	wk._build(sd, is_first)
 	return wk
+
+var halls := false        # (the wreck you board, an instance; else its shell out in space)
 
 ## a torn piece of hull plating drifting near a wreck (an ordinary rock of kind "scrap")
 static func scrap(sd: int, r: float) -> RefCounted:
@@ -89,6 +97,10 @@ func _build(sd: int, is_first: bool) -> void:
 	var L := rng.randi_range(128, 168)            # hull length
 	var hh := rng.randi_range(52, 70)             # hull height
 	var cab := rng.randi_range(18, 22)            # the bridge cabin over it
+	if halls:
+		L = rng.randi_range(280, 340)
+		hh = rng.randi_range(100, 110)
+		cab = rng.randi_range(24, 28)
 	var x0 := 4
 	var top := cab + 4
 	var bot := top + hh
@@ -126,13 +138,20 @@ func _build(sd: int, is_first: bool) -> void:
 	var floor_y := bot - 4                         # the lower deck's floor (first plating row under it)
 	var two := floor_y - in_top >= 56              # (two decks only where each is 27 high: room over a crate)
 	var deck := (in_top + floor_y) / 2 if two else -1
+	# (the boarded wreck: three decks, each about 30 high)
+	var nd := 3 if halls and floor_y - in_top >= 90 else (2 if two else 1)
+	var decks := []
+	for dk in range(1, nd):
+		decks.append(in_top + (floor_y - in_top) * dk / nd)
+	if not decks.is_empty():
+		deck = int(decks[0])
 	for j in range(in_top, floor_y):
 		for i in range(xs, xe):
 			_hollow(i, j)
-	if two:
+	for dy in decks:
 		for i in range(xs, xe):
-			put(i, deck, Defs.PLANK)
-			put(i, deck + 1, Defs.PLANK)
+			put(i, int(dy), Defs.PLANK)
+			put(i, int(dy) + 1, Defs.PLANK)
 	# the engine room, through a door in the stern bulkhead
 	var e_top := top + 8
 	var e_bot := floor_y - 2
@@ -155,7 +174,7 @@ func _build(sd: int, is_first: bool) -> void:
 		if i % 5 == 0:
 			put(i, e_top + 1, Defs.COPPERBAR)
 	# bulkheads across the hold, a doorway at each deck's floor
-	var nb := rng.randi_range(1, 2)
+	var nb := rng.randi_range(1, 2) if not halls else rng.randi_range(3, 5)
 	var walls := []
 	for b in nb:
 		var bx := xs + int(float(xe - xs) * float(b + 1) / float(nb + 1)) + rng.randi_range(-6, 6)
@@ -163,23 +182,26 @@ func _build(sd: int, is_first: bool) -> void:
 		for j in range(in_top, floor_y):
 			put(bx, j, Defs.HULL, 1)
 			put(bx + 1, j, Defs.HULL, 2)
-		for dfl in ([deck, floor_y] if two else [floor_y]):
+		for dfl in (decks + [floor_y]):
 			for j in range(int(dfl) - 24, int(dfl)):
 				_hollow(bx, j)
 				_hollow(bx + 1, j)
 	# the hatch between the decks: in the widest room, clear of its bulkheads, wide enough for you to
 	# drift through whichever way the wreck lies
-	if two:
-		var ed := [xs] + walls + [xe]
-		ed.sort()
+	var ed := [xs] + walls + [xe]
+	ed.sort()
+	for dy2 in decks:
+		# (each deck's hatch in a room of its own when it can: the widest first, then the next)
 		var r0 := 0
 		for rk in range(ed.size() - 1):
 			if int(ed[rk + 1]) - int(ed[rk]) > int(ed[r0 + 1]) - int(ed[r0]):
 				r0 = rk
+		if decks.size() > 1 and int(dy2) != int(decks[0]):
+			r0 = (r0 + 1 + rng.randi_range(0, maxi(0, ed.size() - 3))) % (ed.size() - 1)
 		var hx := rng.randi_range(int(ed[r0]) + 5, maxi(int(ed[r0]) + 5, int(ed[r0 + 1]) - 25))
 		for i in range(hx, mini(hx + 20, int(ed[r0 + 1]) - 1)):
-			_hollow(i, deck)
-			_hollow(i, deck + 1)
+			_hollow(i, int(dy2))
+			_hollow(i, int(dy2) + 1)
 	# ---- the bridge: a cabin raised over the hull near the bow, open down into the upper deck
 	var xb0 := x0 + int(float(L) * 0.5)
 	var xb1 := mini(x0 + int(float(L) * 0.72), xe + 6)
@@ -208,7 +230,10 @@ func _build(sd: int, is_first: bool) -> void:
 				bgv[k] = 0 if (i - xs) % 12 == 0 else ((j / 3 + i / 9) % 3)
 	for i in range(xs + 6, xe - 4, rng.randi_range(18, 26)):
 		var lit: bool = rng.randf() < 0.7
-		for lj in ([in_top, deck + 2] if two else [in_top]):
+		var lamp_rows := [in_top]
+		for dy3 in decks:
+			lamp_rows.append(int(dy3) + 2)
+		for lj in lamp_rows:
 			if at(i, int(lj)) == 0 and at(i, int(lj) - 1) != 0 and at(i + 1, int(lj) - 1) != 0:
 				put(i, int(lj), Defs.CRYSTAL if lit else Defs.COPPERBAR)
 				put(i + 1, int(lj), Defs.CRYSTAL if lit else Defs.COPPERBAR)
@@ -231,6 +256,7 @@ func _build(sd: int, is_first: bool) -> void:
 		hi = xe - 14
 	var bx0 := rng.randi_range(lo, maxi(lo, hi))
 	_breach(Vector2(bx0, top + 1), rng.randf_range(12.0, 14.0), noise)
+	board_at = Vector2i(bx0, top)
 	# (a tear or two more: at most one through the keel, smaller, so the floors stay mostly whole)
 	var keel := false
 	for b2 in rng.randi_range(1, 2):
@@ -245,7 +271,7 @@ func _build(sd: int, is_first: bool) -> void:
 		_breach(bc, rng.randf_range(6.0, 9.0) if side == 0 else rng.randf_range(6.0, 11.0), noise)
 	# ---- the caches: one under the bridge first (the best of them), one in the engine room, then a
 	# crate in each room on its floor (and on the upper deck)
-	var bfl := deck if two else floor_y
+	var bfl: int = int(decks[0]) if not decks.is_empty() else floor_y
 	if not _crate_near((xb0 + xb1) / 2 - CRATE_W / 2, bfl, "bridge", xs + 2, xe - 2):
 		_crate_near((xb0 + xb1) / 2 - CRATE_W / 2, floor_y, "bridge", xs + 2, xe - 2)
 	_crate_near(x0 + 16, e_bot, "engine", x0 + 12, xs - 3)
@@ -255,9 +281,10 @@ func _build(sd: int, is_first: bool) -> void:
 		var a1: int = int(edges[r + 1]) - 4 - CRATE_W
 		if a1 > a0:
 			_crate_near(rng.randi_range(a0, a1), floor_y, "hold", a0, a1 + CRATE_W)
-			if two and rng.randf() < 0.6:
-				_crate_near(rng.randi_range(a0, a1), deck, "hold", a0, a1 + CRATE_W)
-	meta = {"decks": 2 if two else 1, "xs": xs, "xe": xe, "walls": walls, "bridge": [xb0, xb1], "floor": floor_y, "deck": deck}
+			for dy4 in decks:
+				if rng.randf() < 0.6:
+					_crate_near(rng.randi_range(a0, a1), int(dy4), "hold", a0, a1 + CRATE_W)
+	meta = {"decks": nd, "xs": xs, "xe": xe, "walls": walls, "bridge": [xb0, xb1], "floor": floor_y, "deck": deck, "in_top": in_top}
 	rebuild()
 	rad = maxf(3.0, sqrt(mass / PI))
 	ang = rng.randf() * TAU
@@ -306,6 +333,8 @@ func _breach(c: Vector2, r: float, noise: FastNoiseLite) -> void:
 ## a crate standing on the floor row `floor_y` (its bottom just over it) at column x: only where the
 ## floor under it is whole and the space for it is open
 func _crate(x: int, floor_y: int, knd: String) -> bool:
+	if not halls and kind == "wreck":
+		return true                        # (the shell out in space: nothing in it; its caches are in the wreck you board)
 	var j0 := floor_y - CRATE_H
 	for i in range(x, x + CRATE_W):
 		if at(i, floor_y) == 0:
@@ -384,7 +413,8 @@ func back_texture() -> ImageTexture:
 
 func save() -> Dictionary:
 	var d := super.save()
-	d["wreck"] = {"name": wname, "fate": fate, "caches": caches, "first": first, "visited": visited,
+	d["wreck"] = {"name": wname, "fate": fate, "caches": caches, "first": first, "visited": visited, "halls": halls,
+		"board": [board_at.x, board_at.y],
 		"bg": Marshalls.raw_to_base64(bg), "bgv": Marshalls.raw_to_base64(bgv)}
 	return d
 
@@ -408,6 +438,9 @@ static func from_save(d: Dictionary) -> RefCounted:
 	wk.wname = String(x.get("name", "a wreck"))
 	wk.fate = String(x.get("fate", ""))
 	wk.first = bool(x.get("first", false))
+	wk.halls = bool(x.get("halls", false))
+	var ba = x.get("board", [-1, -1])
+	wk.board_at = Vector2i(int(ba[0]), int(ba[1])) if ba is Array and ba.size() == 2 else Vector2i(-1, -1)
 	wk.visited = bool(x.get("visited", false))
 	wk.caches = []
 	for c in x.get("caches", []):

@@ -1624,8 +1624,8 @@ func _interact() -> void:
 		return
 	if space.active and player.aboard != null and player.aboard == skiff and space.dock_target(player) != null:
 		var dt = space.dock_target(player)
-		if dt.kind == "station":
-			space.dock_station(player, dt)
+		if dt.kind == "station" or dt.kind == "wreck":
+			space.dock_station(player, dt)          # (a derelict station's halls, or a wreck you board)
 		else:
 			pocket.dock(player, dt)
 		return

@@ -71,7 +71,7 @@ static func make_station(sd: int, in_halls := false) -> RefCounted:
 	st._build_station(sd)
 	return st
 
-var halls := false          # (its halls, docked into; else the shell seen out in space)
+# (`halls`, from wreck.gd: its halls, docked into; else the shell seen out in space)
 
 ## its key in space.gd's station_state: the halls keep what you did in them (the shell keeps nothing)
 func state_key() -> String:

@@ -123,6 +123,17 @@ Notes for development sessions on this part of the game. The rules that apply ev
   stashed sectors' rocks too. `dock_station_now` docks at once (tests). Test: `_test_stations` (the shells sealed
   and empty, the halls sound, docks by F, alone in the halls, rooms, fights, the Broodmother, the vault, kept,
   undocks); the bench's station fight is in the halls.
+- BOARDING A DERELICT WRECK (26 Nov; the last of the three). The same instance as a station's halls (`dock_station`,
+  `_enter_halls`, `_leave_halls`, `inst`), for a sector's derelict (a wreck.gd of kind "wreck" with a sector: never a
+  beaten pirate's hulk). Out in space it's the SHELL (`make_wreck(seed, first)`: no crates; its breaches stay as its
+  look). Aboard near it, "[F] Board ..."; the wreck you board is `make_wreck(seed, first, true)` (`halls`: 280-340
+  long, 100-110 tall, three decks with a hatch each, 3-5 bulkheads, crates on every deck; the first wreck's bridge
+  still holds its part). `board_at` is the first breach's middle at the hull's top: your ship holds over it, you
+  start just under it in the upper hold, in no gravity as before. "[F] Back aboard" by your ship leaves. What you
+  did in it is kept whole in `wreck_halls` (seed -> its `save()`, with the progress, `_wreck_halls_now` while
+  you're in it) and it's grown from that next time. (`halls` and `board_at` live in wreck.gd, so station.gd and
+  outpost.gd, which extend it, share them.) Test: `_test_wrecks` (the boarded wrecks grown, shells empty, boards by
+  F, alone with it, the bridge's Shield Emitter, every cache, the hull holds, salvage, back aboard, kept).
 - DERELICT STATIONS AND ALIENS (scripts/station.gd, alien.gd; user, 23 Nov: "much bigger more complex outposts ...
   Derelict space stations and everything with aliens and such to fight"; inside, chosen "Both, by section"):
   `Station` extends wreck.gd, kind "station"; `make_station(seed)` lays out a grid (`cols` 4-6 x `rows` 2-3, a corner

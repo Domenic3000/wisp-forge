@@ -227,6 +227,7 @@ var _inst_back := {}
 var _st_task := -1
 var _st_made := []
 var _st_from = null
+var wreck_halls := {}           # a boarded wreck's seed (String) -> its save (wreck.gd `save`): kept as you left it
 var in_station = null           # the station the local mage is inside (its rooms), or null
 var frame_st = null             # the station whose floor is "down" now (you're within its bounds), or null
 var st_room := -1               # (the room you were in last: a note when you come into another)
@@ -552,7 +553,7 @@ func _manual_turn(m) -> void:
 	if frame_st != null or near_best <= VIEW_NEAR or live:
 		if game.frame - _turn_note > 300:
 			_turn_note = game.frame
-			game.ui.toast("The station's floor holds the view" if frame_st != null else "The planet's pull holds the view: its ground is down", Color(0.8, 0.85, 1.0), 2.5)
+			game.ui.toast(("The wreck's decks hold the view" if frame_st.kind == "wreck" else "The station's floor holds the view") if frame_st != null else "The planet's pull holds the view: its ground is down", Color(0.8, 0.85, 1.0), 2.5)
 		return
 	view_ang = wrapf(view_ang + t * TURN_RATE, -PI, PI)
 	stats["turned"] = int(stats.get("turned", 0)) + 1
@@ -1200,9 +1201,18 @@ func save_state() -> Dictionary:
 		if any:
 			ss[key] = keep
 	return {"seen": seen.keys(), "charted": charted.keys(), "waypoint": null if waypoint == null else [waypoint[0], waypoint[1]],
-		"sectors": ss, "stations": station_state, "void": vl.save_state()}
+		"sectors": ss, "stations": station_state, "void": vl.save_state(), "wreck_halls": _wreck_halls_now()}
+
+## the boarded wrecks as left (the one you're in, as it is now)
+func _wreck_halls_now() -> Dictionary:
+	var out := wreck_halls.duplicate()
+	if inst != null and inst.kind == "wreck":
+		out[str(inst.seed_)] = inst.save()
+	return out
 
 func load_state(d: Dictionary) -> void:
+	var wh = d.get("wreck_halls", {})
+	wreck_halls = wh if wh is Dictionary else {}
 	seen.clear()
 	charted.clear()
 	sect_state.clear()
@@ -2524,11 +2534,11 @@ func _draw_top_parts() -> void:
 				_top_text(xf * sgn, String(Outpost.OP_ROOMS[skp.shop]).to_upper(), Outpost.SHOP_COL[skp.shop])
 	if inst != null and by_ship(game.player):
 		var up_u: Vector2 = xf.basis_xform(-inst.axis_y()).normalized()
-		game.speech.draw(_top, xf * game.skiff.pos + up_u * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), "[F] Undock", 1.0, "undock", game.Speech.PROMPT)
+		game.speech.draw(_top, xf * game.skiff.pos + up_u * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), "[F] Back aboard" if inst.kind == "wreck" else "[F] Undock", 1.0, "undock", game.Speech.PROMPT)
 	var dt = dock_target(game.player) if game.pocket != null and not game.pocket.docking() and _st_task < 0 else null
 	if dt != null and game.skiff != null:
 		var up_d: Vector2 = xf.basis_xform(-dt.axis_y()).normalized()
-		game.speech.draw(_top, xf * game.skiff.pos + up_d * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), "[F] Dock at %s" % dt.wname, 1.0, "dock", game.Speech.PROMPT)
+		game.speech.draw(_top, xf * game.skiff.pos + up_d * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), ("[F] Board %s" if dt.kind == "wreck" else "[F] Dock at %s") % dt.wname, 1.0, "dock", game.Speech.PROMPT)
 	if near_trader != null and near_keeper != null:
 		var kw: Vector2 = near_trader.to_world(near_keeper.b + Vector2(0.0, -34.0) - near_trader.com)
 		game.speech.draw(_top, xf * kw, "[F] trade with %s, %s" % [near_keeper.name, String(Outpost.OP_ROOMS[near_keeper.shop]).to_lower()], 1.0, "trade", game.Speech.PROMPT)
@@ -3096,7 +3106,9 @@ func dock_target(m) -> Variant:
 	var op = nearest_outpost(sk.pos, 3000.0)
 	if op == null:
 		for a in rocks:
-			if a.kind == "station" and not a.halls and a.pos.distance_to(sk.pos) < a.reach() + DOCK_REACH:
+			# (a derelict station's shell, or a derelict wreck's out of a sector: not a beaten pirate's hulk)
+			var boardable: bool = (a.kind == "station" or (a.kind == "wreck" and a.get_script() == Wreck and a.sect != "")) and not a.halls
+			if boardable and a.pos.distance_to(sk.pos) < a.reach() + DOCK_REACH:
 				op = a
 				break
 	if op == null:
@@ -3114,8 +3126,13 @@ func dock_station(m, shell) -> bool:
 	_st_made = [null]
 	var sd: int = shell.seed_
 	var into: Array = _st_made
-	_st_task = WorkerThreadPool.add_task(func() -> void: into[0] = Station.make_station(sd, true))
-	game.ui.toast("Docking at %s..." % shell.wname, Color(0.8, 0.7, 1.0), 1.5)
+	if shell.kind == "wreck":
+		var saved: Dictionary = wreck_halls.get(str(sd), {})
+		var fst: bool = shell.first
+		_st_task = WorkerThreadPool.add_task(func() -> void: into[0] = Wreck.from_save(saved) if not saved.is_empty() else Wreck.make_wreck(sd, fst, true))
+	else:
+		_st_task = WorkerThreadPool.add_task(func() -> void: into[0] = Station.make_station(sd, true))
+	game.ui.toast(("Boarding %s..." if shell.kind == "wreck" else "Docking at %s...") % shell.wname, Color(0.8, 0.7, 1.0), 1.5)
 	game.audio.play("creak", m.pos, 0.6)
 	return true
 
@@ -3125,13 +3142,19 @@ func _dock_poll(m) -> void:
 	WorkerThreadPool.wait_for_task_completion(_st_task)
 	_st_task = -1
 	var h = _st_made[0]
+	if h == null and _st_from != null and _st_from.kind == "wreck":
+		h = Wreck.make_wreck(_st_from.seed_, _st_from.first, true)     # (a kept one that wouldn't load: grown afresh)
 	if h != null and m.aboard != null and not m.dead and rocks.has(_st_from):
 		_enter_halls(m, h)
 
 ## (the tests: docked at once)
 func dock_station_now(m, shell) -> void:
 	_st_from = shell
-	_enter_halls(m, Station.make_station(shell.seed_, true))
+	if shell.kind == "wreck":
+		var saved: Dictionary = wreck_halls.get(str(shell.seed_), {})
+		_enter_halls(m, Wreck.from_save(saved) if not saved.is_empty() else Wreck.make_wreck(shell.seed_, shell.first, true))
+	else:
+		_enter_halls(m, Station.make_station(shell.seed_, true))
 
 func _enter_halls(m, h) -> void:
 	var sh = _st_from
@@ -3152,11 +3175,24 @@ func _enter_halls(m, h) -> void:
 	foe_shots.clear()
 	sbolts.clear()
 	acid.clear()
-	_station_in(h)
 	if m.aboard != null:
 		sk.leave(m)
 		m.aboard = null
 		m.deck = false
+	if h.kind == "wreck":
+		# (a wreck: your ship holds over its first breach; you drift in just under it, inside its upper hold)
+		var ba: Vector2 = Vector2(h.board_at)
+		sk.ang = h.ang
+		sk.vel = Vector2.ZERO
+		sk.pos = h.to_world(Vector2(ba.x, ba.y - float(sk.h) * 0.5 - 6.0) - h.com)
+		m.pos = h.to_world(Vector2(ba.x, float(int(h.meta.get("in_top", int(ba.y) + 4))) + 14.0) - h.com)
+		vel = Vector2.ZERO
+		m.on_ground = false
+		stats["halls"] = int(stats.get("halls", 0)) + 1
+		game.audio.play("creak", m.pos, 0.8)
+		game.ui.toast("Aboard %s. %s Your ship holds over the breach: F beside it to leave" % [h.wname, h.fate], Color(0.8, 0.75, 0.65), 5.5)
+		return
+	_station_in(h)
 	# your ship parked in its bay, toward the mouth; you on the floor beside it, toward the station
 	var dm: Dictionary = h.mods[h.dock]
 	var mid := (float(int(dm["x0"])) + float(int(dm["x1"]))) * 0.5
@@ -3199,7 +3235,10 @@ func _leave_halls() -> void:
 	if inst == null:
 		return
 	var h = inst
-	_station_out(h)
+	if h.kind == "wreck":
+		wreck_halls[str(h.seed_)] = h.save()
+	else:
+		_station_out(h)
 	rocks = _inst_stash
 	_inst_stash = []
 	inst = null
@@ -3519,6 +3558,12 @@ func _station_frame(focus: Vector2) -> void:
 	in_station = null
 	var m = game.player
 	for a in _rocks_near(focus, 40.0):
+		if a == inst and a.kind == "wreck":
+			# (a wreck you've boarded: its decks hold the view level, as a station's floor does; still no gravity)
+			var bw: Vector2 = a.to_body(focus) + a.com
+			if bw.x > -60.0 and bw.y > -60.0 and bw.x < float(a.w) + 60.0 and bw.y < float(a.h) + 60.0:
+				frame_st = a
+			continue
 		if a.kind != "station" and a.kind != "outpost":
 			continue
 		var b: Vector2 = a.to_body(focus) + a.com

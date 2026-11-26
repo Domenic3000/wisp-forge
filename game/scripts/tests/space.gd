@@ -312,8 +312,16 @@ func _test_wrecks() -> void:
 	var wr_caches := 0
 	var wr_reach := 0
 	var wr_sizes := []
+	var wr_shells := 0
+	var wr_decks := 0
 	for q in 12:
-		var wq = W.make_wreck(7001 + q * 313, q == 0)
+		# (the shell out in space: nothing in it; the wreck you board: about twice the size, three decks; user,
+		# 25 Nov: boarded by a button into an instance)
+		if W.make_wreck(7001 + q * 313, q == 0).caches.is_empty():
+			wr_shells += 1
+		var wq = W.make_wreck(7001 + q * 313, q == 0, true)
+		if int(wq.meta.get("decks", 1)) == 3 and wq.w > 280:
+			wr_decks += 1
 		var got := _wreck_reach(wq, 8.0)
 		wr_n += 1
 		wr_sizes.append("%dx%d" % [wq.w, wq.h])
@@ -330,8 +338,8 @@ func _test_wrecks() -> void:
 				why.append("%s at %d,%d" % [c["kind"], int(c["i"]), int(c["j"])])
 		if not has_b or not why.is_empty():
 			print("[wrecks] seed %d %dx%d %s: bridge %s, not reached: %s" % [7001 + q * 313, wq.w, wq.h, str(wq.meta), has_b, ", ".join(why)])
-	var wr_ok1: bool = wr_bridge == wr_n and wr_caches >= wr_n * 3 and float(wr_reach) >= float(wr_caches) * 0.85
-	wr_rows.append("%s%d wrecks grown (%s): %d caches, a bridge cache in %d, %d of them reached by drifting in (a disc 17 across)" % ["" if wr_ok1 else "(!) ", wr_n, ", ".join(wr_sizes), wr_caches, wr_bridge, wr_reach])
+	var wr_ok1: bool = wr_bridge == wr_n and wr_caches >= wr_n * 6 and float(wr_reach) >= float(wr_caches) * 0.85 and wr_shells == wr_n and wr_decks == wr_n
+	wr_rows.append("%s%d wrecks grown to board (%s): three decks %d, %d caches, a bridge cache in %d, %d of them reached by drifting in (a disc 17 across); their shells empty %d" % ["" if wr_ok1 else "(!) ", wr_n, ", ".join(wr_sizes), wr_decks, wr_caches, wr_bridge, wr_reach, wr_shells])
 	wr_ok = wr_ok and wr_ok1
 	# ---- the skiff, up into space (as the galaxy's check goes)
 	g.player.dead = false
@@ -395,9 +403,27 @@ func _test_wrecks() -> void:
 	sk.vel = wk.vel
 	await _frames(20)
 	_shot("wreck_outside.png")
-	# ---- out of the skiff, into the wreck: the bridge cache
-	g._skiff_interact(g.player)
-	await _frames(4)
+	# ---- F boards it: the wreck you board grown in a worker, standing where its shell drifted, nothing else
+	# out here; your ship holds over its breach, you inside
+	var shell = wk
+	var ship_at: Vector2 = sk.pos
+	var can_board: bool = g.space.dock_target(g.player) == shell
+	g._interact()
+	var board_t := -1
+	for kb in 300:
+		await _frames(1)
+		if g.space.inst != null:
+			board_t = kb
+			break
+	if g.space.inst == null:
+		g.space.dock_station_now(g.player, shell)
+	wk = g.space.inst
+	await _frames(10)
+	var inside_now: bool = wk != null and wk.halls and g.player.aboard == null and g.space.rocks.size() == 1 and not _in_cells(wk, g.player.pos)
+	_shot("wreck_boarded.png")
+	var wr_okb: bool = can_board and board_t >= 0 and inside_now and wk.first
+	wr_rows.append("%sF boarded it %s (in %d ticks): inside %s, alone with it %s, %d caches" % ["" if wr_okb else "(!) ", can_board, board_t, inside_now, g.space.rocks.size() == 1, wk.caches.size() if wk != null else -1])
+	wr_ok = wr_ok and wr_okb
 	var bc: Dictionary = {}
 	for c2 in wk.caches:
 		if c2["kind"] == "bridge":
@@ -499,6 +525,29 @@ func _test_wrecks() -> void:
 	var wr_ok5b: bool = md_hp1 > md_hp0 + 20.0 and not md_jet
 	wr_rows.append("%sMending cast out in the open: health %.0f -> %.0f, the jet pushed %s" % ["" if wr_ok5b else "(!) ", md_hp0, md_hp1, md_jet])
 	wr_ok = wr_ok and wr_ok5b
+	# ---- back aboard: F by your ship over the breach; out by its shell where you were, the wreck you boarded kept
+	var halls_open := 0
+	for c6 in wk.caches:
+		if c6["open"]:
+			halls_open += 1
+	g.player.pos = sk.pos + (sk.pos - wk.pos).normalized() * 4.0
+	g.space.vel = Vector2.ZERO
+	await _frames(2)
+	var by_it: bool = g.space.by_ship(g.player)
+	g._interact()
+	await _frames(6)
+	var kept_d: Dictionary = g.space.wreck_halls.get(str(shell.seed_), {})
+	var kept_w = W.from_save(kept_d) if not kept_d.is_empty() else null
+	var kept_open := -1
+	if kept_w != null:
+		kept_open = 0
+		for c7 in kept_w.caches:
+			if c7["open"]:
+				kept_open += 1
+	var wr_okc: bool = by_it and g.space.inst == null and g.player.aboard == sk and sk.pos.distance_to(ship_at) < 1.0 and g.space.rocks.has(shell) and kept_open == halls_open and halls_open > 0
+	wr_rows.append("%sF by your ship back aboard %s, out by its shell %s; what you opened kept (%d of %d)" % ["" if wr_okc else "(!) ", by_it, g.space.rocks.has(shell), kept_open, halls_open])
+	wr_ok = wr_ok and wr_okc
+	wk = shell
 	# ---- the Wisp Shield: forged from the emitter, it takes a strike, then charges
 	var sh_rec: Dictionary = {}
 	var cn_rec: Dictionary = {}
@@ -510,8 +559,9 @@ func _test_wrecks() -> void:
 	for k5 in sh_rec.get("cost", {}):
 		g.player.inv[int(k5)] += int(sh_rec["cost"][k5])
 	var sh_ok: bool = g.craft(sh_rec) and g.items.has("shield") and not g.items.has("part_shield")
-	g.player.pos = sk.pos
-	g._skiff_interact(g.player)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
 	await _frames(4)
 	g.test_god = false
 	g.space.shield = 1.0
@@ -576,7 +626,7 @@ func _test_wrecks() -> void:
 		for c5 in wk2.caches:
 			if c5["open"]:
 				opened2 += 1
-	var wr_ok8: bool = wk2 != null and opened2 == opened_n and wk2.count() == cells1 and wk2.visited
+	var wr_ok8: bool = wk2 != null and opened2 == opened_n and wk2.count() == cells1 and (g.space.wreck_halls as Dictionary).has(str(shell.seed_))
 	wr_rows.append("%skept as you left it: its sector unloaded and saved, back with %d of %d caches open, %d cells (was %d)" % ["" if wr_ok8 else "(!) ", opened2, opened_n, wk2.count() if wk2 != null else -1, cells1])
 	wr_ok = wr_ok and wr_ok8
 	# ---- the map marks it
@@ -611,7 +661,7 @@ func _test_wrecks() -> void:
 		g._skiff_interact(g.player)          # (out of the skiff, as the checks after this expect)
 		await _frames(10)
 	print("[wrecks] " + "\n[wrecks] ".join(wr_rows))
-	_ok("derelict wrecks in deep space: found, drifted into, looted, salvaged; the skiff's shield and cannon", wr_ok, "; ".join(wr_rows))
+	_ok("derelict wrecks in deep space: found, boarded by F (an instance), looted, salvaged, left and kept; the skiff's shield and cannon", wr_ok, "; ".join(wr_rows))
 
 ## Pirates and the skiff's hull (pirate.gd, space.gd, skiff.gd; user, 23 Nov): ships grown from parts
 ## (each with guns and a strongbox you can drift up to); out in space a cutter comes for the skiff, works
