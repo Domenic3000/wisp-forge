@@ -1473,13 +1473,14 @@ func biome_index_at(pl: Dictionary, a: float) -> int:
 	return bi
 
 # ---------------------------------------------------------------- spells ----
-const SPELL_ORDER := ["mote", "spark", "conjure", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend", "recall",
+const SPELL_ORDER := ["mote", "spark", "conjure", "unmake", "fireball", "tide", "frost", "quake", "blink", "starfall", "mend", "recall",
 	"cinder", "tidal", "sunlance", "mire", "glacier", "thorns", "sovereign", "leviathan"]
 ## "single": one cast a click (let go and click again; holding the button doesn't repeat it: main `cast_latch`)
 const SPELLS := {
 	"mote": {"name": "Wisp Mote", "mana": 8.0, "cd": 34, "single": true, "color": Color(0.62, 0.9, 1.0), "desc": "A little drifting light a click. Stings foes; too weak to chip stone."},
 	"spark": {"name": "Spark Bolt", "mana": 12.0, "cd": 30, "single": true, "color": Color(1.0000, 0.9020, 0.5020), "desc": "One crackling bolt a click. Chips terrain, stings foes."},
-	"conjure": {"name": "Conjure", "mana": 0.0, "cd": 2, "color": Color(0.7451, 1.0000, 0.7451), "desc": "Place the selected material. Q/E to choose."},
+	"conjure": {"name": "Conjure", "mana": 0.0, "cd": 2, "color": Color(0.7451, 1.0000, 0.7451), "desc": "Place what's in your hand. Q/E step along the belt."},
+	"unmake": {"name": "Unmake", "mana": 0.0, "cd": 2, "color": Color(1.0, 0.55, 0.45), "desc": "Take away what's built or grown: press, drag, let go. G: line, rectangle, frame or level the ground; V: blocks, back walls, furniture or everything; [ ] thickness."},
 	"fireball": {"name": "Fireball", "mana": 18.0, "cd": 28, "color": Color(1.0000, 0.4706, 0.1569), "desc": "Explodes and ignites anything that burns."},
 	"tide": {"name": "Tidecall", "mana": 14.0, "cd": 22, "color": Color(0.3529, 0.6275, 1.0000), "desc": "Bursts into water. Cools lava into obsidian."},
 	"frost": {"name": "Frostbite", "mana": 12.0, "cd": 18, "color": Color(0.6667, 0.9412, 1.0000), "desc": "Freezes water and lava. Slows foes."},
@@ -1570,6 +1571,9 @@ const PROJ := {
 # ---------------------------------------------------------------- recipes ---
 const RECIPES := [
 	{"id": "plank", "cat": "Materials", "name": "Planks x4", "cost": {WOOD: 2}, "give": {PLANK: 4}, "desc": "Flammable building boards."},
+	# (user, 25 Nov: "is there a way to get sand if there is no desert biome?" and no village to buy glass: a world
+	# without a desert, an ocean or a village had no sand and so no glass, which the skiff needs)
+	{"id": "sand", "cat": "Materials", "name": "Sand x4", "cost": {STONE: 4}, "give": {SAND: 4}, "desc": "Stone ground fine by the forge: fire it into glass in a Kiln."},
 	{"id": "brick", "cat": "Materials", "name": "Bricks x4", "cost": {STONE: 3, DIRT: 1}, "give": {BRICK: 4}, "desc": "Tough blocks (staff tier 2 to carve)."},
 	{"id": "masonry", "cat": "Materials", "name": "Stone Blocks x4", "cost": {STONE: 4}, "give": {MASONRY: 4}, "desc": "Strong building blocks (span 28)."},
 	{"id": "torch", "cat": "Materials", "name": "Torches x4", "cost": {WOOD: 1, COAL: 1}, "give": {TORCH: 4}, "desc": "Light that never goes out."},
@@ -1615,7 +1619,7 @@ const RECIPES := [
 	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISPBAR: 3, GLASS: 6, COPPERBAR: 3}, "desc": "Bears the crushing deep of an ocean world's sea."},
 	{"id": "depthseal", "cat": "Wards", "name": "Depth Seal", "cost": {ABYSSPEARL: 8, GLASS: 6, WISPBAR: 2}, "desc": "Bears the abyss of a deep ocean world, far below where the Tide Charm holds (wear both)."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, WISP: 10, COPPERBAR: 4}, "desc": "Your world's heart, bound in copper and wisp ore: the engine a ship is built round. Forge it before the Wisp Skiff. Needs the Core Siphon (to harvest the Planet Core)."},
-	{"id": "skiff", "cat": "Travel", "name": "Wisp Keel", "cost": {PLANK: 82, WOOD: 32, WISP: 20, WISPBAR: 4, COPPERBAR: 3}, "desc": "The keel of your first ship, a Core Drive at its heart: a deck, a helm and a wisp engine. K calls it to you, F to board or step out. Parked, press B aboard to open the ship builder and build it out; F at its door steps into its pocket dimension. It flies out into space and on to other worlds: any without a barrier round it."},
+	{"id": "skiff", "cat": "Travel", "name": "Wisp Keel", "cost": {PLANK: 82, WOOD: 32, WISP: 20, WISPBAR: 4, COPPERBAR: 3}, "desc": "The keel of your first ship, a Core Drive at its heart: a deck, a helm and a wisp engine. K calls it to you, F to board or step out. Parked, press B aboard to open the ship builder and build it out; G aboard while parked goes below into its pocket dimension. It flies out into space and on to other worlds: any without a barrier round it."},
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
 	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},

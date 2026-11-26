@@ -154,7 +154,7 @@ func spawn_b(m) -> Vector2:
 		at.y -= 1.0
 	return at
 
-## Step in (by the ship's door, or by Wisp Recall from anywhere): the world outside waits.
+## Step in (G aboard the parked ship, "ship"; or by Wisp Recall from anywhere): the world outside waits.
 func enter(m, how: String) -> void:
 	if active:
 		return
@@ -194,7 +194,7 @@ func enter(m, how: String) -> void:
 			m.known.append("recall")
 		game.ui.toast("Your ship's pocket: an isle in a nebula, yours to build on. The wisp teaches you Wisp Recall: cast it anywhere to come back here", Color(0.85, 0.75, 1.0), 7.0)
 	else:
-		game.ui.toast("Your ship's pocket. [F] at the arch to leave, at the Isle Heart to grow the isle; B to build", Color(0.85, 0.75, 1.0), 3.5)
+		game.ui.toast("Your ship's pocket. [F] at the arch to go back, at the Isle Heart to grow the isle. Build here as outside: Conjure what's in your hand, Unmake to take away", Color(0.85, 0.75, 1.0), 4.0)
 
 ## is your ship where you could come out by it? (on this planet while you're on it, or out in space while you are)
 func ship_here() -> bool:
@@ -204,18 +204,22 @@ func ship_here() -> bool:
 	var in_space: bool = sk.pos.length() > Defs.R_SPACE - 9.5
 	return in_space == bool(back.get("space", false))
 
-## Step out: back where you came in from, or (`by_ship`) at the ship's door.
+## Step out: back where you came in from (aboard, if you came down from the ship), or (`by_ship`) aboard the ship.
 func leave(m, by_ship := false) -> void:
 	if not active:
 		return
+	game._raise_finish_all()             # (anything still rising into the isle goes up whole first)
 	save()
 	active = false
 	visible = false
 	game.build_on = false
 	game.build_prev = {}
 	var p: Vector2 = back.get("pos", m.pos)
-	if by_ship and ship_here():
-		p = game.skiff.door_world()
+	# (user, 25 Nov: in from inside the ship, not by a door on its hull): you came down from the ship, or G at the
+	# arch, so you go back up into it, aboard
+	var aboard_after: bool = (by_ship or String(back.get("how", "")) == "ship") and ship_here()
+	if aboard_after:
+		p = game.skiff.pos
 	m.pos = p
 	m.vx = 0.0
 	m.vy = 0.0
@@ -232,6 +236,8 @@ func leave(m, by_ship := false) -> void:
 	game.cam_c = m.pos
 	game.view_c = Vector2.ZERO
 	stats["left"] += 1
+	if aboard_after and game.skiff.board(m):
+		m.aboard = game.skiff
 	game.audio.play("blink", m.pos, 0.7)
 	game.vfx.blink(m.pos, m.pos)
 
@@ -258,8 +264,12 @@ func tick() -> void:
 	_move(m)
 	if game.build_on:
 		game._cabin_edit(m, isle)
+	elif game.unmaking(m):
+		game.pocket_unmake(m, isle)      # (Unmake takes away here as outside)
 	else:
-		game.hand_body(m, isle)          # (what's in your hand, with Conjure held, builds here)
+		game.hand_body(m, isle)          # (what's in your hand, with Conjure held, builds here: plans too)
+	if not game.raising.is_empty():
+		game._raise_tick()               # (a plan rising into the isle: the world's tick waits while you're here)
 	_near(m)
 	if _offer_t > 0:
 		_offer_t -= 1

@@ -130,6 +130,7 @@ float bogDepth(vec2 p, float r, float th, float rs, vec4 sb) {
 	return bog;
 }
 
+const float ORE_T = 0.025;          // how much rarer the common ores are than at first (25 Nov)
 float oreN(vec2 p, int k) { return fbm(p / 9.0 + vec2(float(k) * 17.3, float(k) * 9.1), SEED + 20 + k, 2); }
 
 uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
@@ -169,22 +170,24 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 
 	// ores and pockets
 	float rich = (P.p[7].w - 1.0) * 0.03;
+	// (ores a little rarer: user, 21 Nov; then about half as many veins again, 25 Nov: "ore is much too abundant
+	// ... i dont want it to be super hard to find but currently it is everywhere": ORE_T raises every threshold)
 	if (m == M_STONE) {
-		if (oreN(p, 0) > 0.832 - rich) return M_COPPER;     // (ores a little rarer: user, 21 Nov)
-		if (oreN(p, 1) > 0.83 - rich) return M_COAL;
-		if (ug == 1 && oreN(p, 2) > 0.805 - rich) return M_CRYSTAL;      // (prism crystal: rarer, for draughts and the focus)
-		if (ug == 2 && d < 200.0 && oreN(p, 3) > 0.775 - rich) return M_FROST;
-		if (ug == 3 && d < 160.0 && oreN(p, 4) > 0.785 - rich) return M_EMBER;
+		if (oreN(p, 0) > 0.832 + ORE_T - rich) return M_COPPER;
+		if (oreN(p, 1) > 0.83 + ORE_T - rich) return M_COAL;
+		if (ug == 1 && oreN(p, 2) > 0.805 + ORE_T - rich) return M_CRYSTAL;      // (prism crystal: rarer, for draughts and the focus)
+		if (ug == 2 && d < 200.0 && oreN(p, 3) > 0.775 + ORE_T - rich) return M_FROST;
+		if (ug == 3 && d < 160.0 && oreN(p, 4) > 0.785 + ORE_T - rich) return M_EMBER;
 		if (oreN(p, 6) > 0.82) return M_GRAVEL;
 		if (d < 100.0 && oreN(p, 7) > 0.82) return M_DIRT;
 	} else if (m == M_DEEPSTONE) {
 		float dd = (deepR - r) / max(deepR - magmaR, 1.0);
-		if (dd > 0.4 && oreN(p, 4) > 0.835 - rich) return M_EMBER;
-		if (oreN(p, 5) > 0.835 - rich) return M_WISP;
-		if (oreN(p, 2) > 0.875 - rich) return M_CRYSTAL;
-		if (oreN(p, 3) > 0.86 - rich) return M_FROST;
+		if (dd > 0.4 && oreN(p, 4) > 0.835 + ORE_T - rich) return M_EMBER;
+		if (oreN(p, 5) > 0.835 + ORE_T - rich) return M_WISP;
+		if (oreN(p, 2) > 0.875 + ORE_T - rich) return M_CRYSTAL;
+		if (oreN(p, 3) > 0.86 + ORE_T - rich) return M_FROST;
 	} else if (m == M_MAGMAROCK) {
-		if (oreN(p, 4) > 0.815 - rich) return M_EMBER;
+		if (oreN(p, 4) > 0.815 + ORE_T - rich) return M_EMBER;
 		if (oreN(p, 8) > 0.79) return M_OBSIDIAN;
 		if (oreN(p, 9) > 0.78) return M_DEEPSTONE;
 	}

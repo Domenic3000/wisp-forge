@@ -720,6 +720,7 @@ func _test_inworld() -> void:
 	var mat0: int = g.mat
 	var inv0: PackedInt32Array = m.inv.duplicate()
 	var items0: Dictionary = g.items.duplicate(true)
+	var furn0: Array = m.furn.duplicate(true)
 	var mana0: float = m.mana
 	var ws = g.workshops
 	var ws_n0: int = ws.list.size()
@@ -816,6 +817,43 @@ func _test_inworld() -> void:
 	ok["send"] = sent == 2 and int(kiln.store.get(Defs.SAND, 0)) == 8
 	txt.append("sent to the kiln: %d batches (%s)" % [sent, str(kiln.store)])
 	ws.unload(kiln, Defs.SAND)
+	# ---- (25 Nov, "forging large amounts in the wisp forge like 10 or more the game gets very sluggish"): how long
+	# forging 20 at once takes, by kind, with the forge open, and the frames after
+	var fg_rows := []
+	var fg_ok := true
+	# (one forged first: the run's first toast and sounds take a while to warm up, once)
+	var fg_warm: Dictionary = g.recipe_by_id("plank")
+	for fg_c0 in fg_warm["cost"]:
+		m.inv[int(fg_c0)] += int(fg_warm["cost"][fg_c0])
+	g.craft_many(fg_warm, 1)
+	await _frames(2)
+	for fg_id in ["plank", "furn_chair", "st_kiln", "potion"]:
+		var fg_r: Dictionary = g.recipe_by_id(fg_id)
+		if fg_r.is_empty():
+			continue
+		for fg_c in fg_r["cost"]:
+			m.inv[int(fg_c)] += int(fg_r["cost"][fg_c]) * 25
+		g.toggle_forge()
+		await _frames(5)
+		g.ui.craft_amount = 20
+		var fg_t0 := Time.get_ticks_usec()
+		var fg_made: int = g.craft_many(fg_r, 20)
+		var fg_t1 := Time.get_ticks_usec()
+		g.ui._refresh_forge()
+		var fg_t2 := Time.get_ticks_usec()
+		fg_ok = fg_ok and fg_made == 20 and float(fg_t2 - fg_t0) / 1000.0 < 50.0
+		var fg_worst := 0.0
+		for fg_f in 30:
+			var fg_ft := Time.get_ticks_usec()
+			await _frames(1)
+			fg_worst = maxf(fg_worst, float(Time.get_ticks_usec() - fg_ft) / 1000.0)
+		g.ui.craft_amount = 1
+		g.toggle_forge()
+		await _frames(5)
+		fg_rows.append("%s x%d: %.1f ms forging, %.1f ms the cards updated, worst frame after %.1f ms" % [fg_id, fg_made, float(fg_t1 - fg_t0) / 1000.0, float(fg_t2 - fg_t1) / 1000.0, fg_worst])
+	print("[forge20] " + "; ".join(fg_rows))
+	ok["forge20"] = fg_ok
+	txt.append("forging 20: " + "; ".join(fg_rows))
 	# ---- the gem: dim when drained, a flare as it fills
 	var gem := Color(0.3, 0.9, 1.0)
 	m.mana = m.max_mana * 0.15
@@ -898,24 +936,70 @@ func _test_inworld() -> void:
 	txt.append("a room plan: known %s, fits %s (%s), rising %s, casting %s, %d cells a few ticks in, %d at the end, raised %d, doors %d -> %d" % [known_room, room_fit, room_why, rising, posing, mid_n, end_n, g.stats_raised - raised0, doors0, g.doors.size()])
 	await _frames(20)
 	_shot("plan_room.png")
-	# a right-drag with stone laid as a rectangle cuts a rectangle of the slab
-	g.select_material(Defs.STONE)
-	g.hand_shape = 2
-	g.hand_thick = 1
-	g.hand_back = false
-	var cut0: int = g.stats_cut
+	# Unmake (user, 25 Nov: removal as its own spell beside Conjure): a rectangle of the slab taken away by a
+	# press, drag and let go; G and V change its shape and what it takes
+	if not g.known.has("unmake"):
+		g.known.insert(g.known.find("conjure") + 1, "unmake")
+	var un_sel0: int = g.sel
+	g.sel = g.known.find("unmake")
+	g.unmake_shape = 2
+	g.unmake_layer = 0
+	g.unmake_thick = 1
+	var un0: int = g.stats_unmade
 	g.test_aim = _cell_pos(cx + 6, top)
-	g.test_dig = true
+	await _frames(2)
+	var un_live: bool = g.hand_live and g.hand_bar_on() and g.hand_hint().begins_with("Unmake")
+	g.build_click = true
+	g.test_cast = true
 	await _frames(3)
 	g.test_aim = _cell_pos(cx + 10, top + 1)
 	await _frames(3)
-	g.test_dig = false
+	g.test_cast = false
 	await _frames(3)
 	g.test_aim = Vector2.ZERO
-	var cut_n: int = g.stats_cut - cut0
-	g.hand_shape = 0
-	ok["cut"] = cut_n >= 6
-	txt.append("a right-drag cut %d cells" % cut_n)
+	var cut_n: int = g.stats_unmade - un0
+	var un_g: bool = g._unmake_key(KEY_G) and g.unmake_shape == 3
+	var un_v: bool = g._unmake_key(KEY_V) and g.unmake_layer == 1
+	g.unmake_shape = 2
+	g.unmake_layer = 0
+	g.sel = un_sel0
+	ok["unmake"] = un_live and cut_n >= 6 and un_g and un_v
+	txt.append("Unmake: live %s, a rectangle took %d cells, G %s, V %s" % [un_live, cut_n, un_g, un_v])
+	# F between two rooms side by side: the first room's door open beside you, the second's shut just past it;
+	# facing it, F picks the shut one (user, 25 Nov: it couldn't be opened from that side)
+	var dr_keep: Array = g.doors
+	var dr_right: Vector2 = g.basis_r(atan2(m.pos.y, m.pos.x))
+	var dr_open := {"pos": m.pos + dr_right * 5.0, "open": true}
+	var dr_shut := {"pos": m.pos + dr_right * 13.0, "open": false}
+	g.doors = [dr_open, dr_shut]
+	var dr_face0: int = m.facing
+	m.facing = 1
+	var dr_pick_r: Dictionary = g._door_for_f(m)
+	m.facing = -1
+	var dr_pick_l: Dictionary = g._door_for_f(m)
+	m.facing = dr_face0
+	g.doors = dr_keep
+	ok["doors"] = dr_pick_r == dr_shut and dr_pick_l == dr_open
+	txt.append("F between two rooms: facing the shut door %s, facing away the open one %s" % [dr_pick_r == dr_shut, dr_pick_l == dr_open])
+	# wedged deep in rock (user, 25 Nov: levitating into a gap clipped him into the ground, then he rose through
+	# it to the surface): a block of stone too big to step out of, the mage in its middle, and he goes back to
+	# where he last stood clear
+	var wb := PackedInt32Array()
+	wb.resize(30 * 50)
+	wb.fill(Defs.STONE | 0xFF00 | 0x20000)
+	g.stamps.append({"x0": posmod(cx + 5, Defs.NS), "y0": top - 50, "w": 30, "h": 50, "data": wb})
+	await _frames(4)
+	var wb_mid: Vector2 = _cell_pos(cx + 20, top - 26)
+	var wb_clear: Vector2 = _cell_pos(cx + 20, top - 66)
+	_go(wb_mid)
+	m.free_pos = wb_clear
+	await _frames(2)
+	var wb_d: float = m.pos.distance_to(wb_clear)
+	var wb_rose: float = m.pos.length() - wb_mid.length()
+	ok["wedged"] = wb_d < 10.0
+	txt.append("wedged in rock: back where he stood clear %s (%.0f cells from it, %.0f above where he was wedged)" % [wb_d < 10.0, wb_d, wb_rose])
+	_go(_cell_pos(cx + 22, top - 12))
+	await _frames(10)
 	# B on the planet opens the satchel at its plans
 	var sat0: bool = g.ui.satchel_open
 	if sat0:
@@ -939,6 +1023,7 @@ func _test_inworld() -> void:
 	g.mat = mat0
 	g.hand_item = {}
 	m.inv = inv0
+	m.furn = furn0
 	g.items = items0
 	g.learned[r_id] = true
 	var clr := PackedInt32Array()
@@ -953,7 +1038,7 @@ func _test_inworld() -> void:
 		if not ok[k]:
 			all_ok = false
 			bad.append(k)
-	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the item belt, plans raised by a spell, cutting by right-drag", all_ok,
+	_ok("in the world: the summoned forge, pages into the book, a kiln's tray and F, Send to the Kiln, the staff's gem, the item belt, plans raised by a spell, the Unmake spell, doors between rooms, getting unwedged", all_ok,
 		"; ".join(txt) + ("" if all_ok else " (not working: %s)" % ", ".join(bad)))
 
 func _test_stairs() -> void:

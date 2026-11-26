@@ -685,7 +685,7 @@ func _build_forge() -> void:
 	forge_tabs.add_theme_constant_override("v_separation", 2)
 	forge_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	trow.add_child(forge_tabs)
-	trow.add_child(_amount_box(func(): _rerender_forge()))
+	trow.add_child(_amount_box(func(): _refresh_forge()))
 	var r := _rule(456)
 	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(r)
@@ -2024,7 +2024,7 @@ func _draw_slot_over(c: Control, k: int, id: String) -> void:
 func open_plans() -> void:
 	if not satchel_open:
 		toggle_satchel()
-	toast("Build from your hand: click a plan in the satchel (Plans) and Conjure raises it. Right-drag with a shaped block cuts; Shift + right-click takes furniture.", Color(0.95, 0.85, 0.55), 5.0)
+	toast("Build from your hand: click a plan in the satchel (Plans) and Conjure raises it. Taking away is the Unmake spell; Shift + right-click takes furniture whole.", Color(0.95, 0.85, 0.55), 5.0)
 
 func toggle_satchel() -> void:
 	satchel_open = not satchel_open
@@ -2220,7 +2220,50 @@ func _sat_slot(gr: GridContainer, t: Texture2D, count: String, chosen: bool, tip
 	return sl
 
 # ------------------------------------------------------------------ forge --
+## (user, 25 Nov: "When forging large amounts in the wisp forge like 10 or more the game gets very sluggish": every
+## Forge click built all ~150 cards again, about a fifth of a second with the layout after; now a click updates the
+## cards in place, `_refresh_forge`, and they're built again only when what's listed changes, `_forge_key`)
+var _cards := []          # the forge's cards: {r, b (its button), p (its panel), chips [[label, material, need]], live}
+var _forge_key := ""
+
+func _forge_shape() -> String:
+	var parts := PackedStringArray()
+	for r in game.recipes:
+		if game.recipe_hidden(r) or not game.knows(r):
+			continue
+		parts.append("%s%s%s" % [r["id"], "d" if game.recipe_done(r) else "", "u" if game.recipe_unlocked(r) else ""])
+	for wk in ["kiln", "smelter", "still"]:
+		parts.append(str(game.workshops.known_recipes(wk).size()))
+	return ",".join(parts)
+
+## after forging: the cards' costs, buttons and frames as they are now (all of it built again if what's listed
+## changed: a recipe learned, one forged for good)
+func _refresh_forge() -> void:
+	if not forge.visible:
+		return
+	if _forge_shape() != _forge_key:
+		_rerender_forge()
+		return
+	for cd in _cards:
+		for ch in cd["chips"]:
+			var lbl: Label = ch[0]
+			if not is_instance_valid(lbl):
+				continue
+			var have: int = game.inv[int(ch[1])]
+			lbl.text = "%s/%d" % [_count(have), int(ch[2])]
+			lbl.add_theme_color_override("font_color", GOOD if have >= int(ch[2]) else BAD)
+		if not cd.has("b") or not bool(cd["live"]) or not is_instance_valid(cd["b"]):
+			continue
+		var r: Dictionary = cd["r"]
+		var aff: bool = game.recipe_affordable(r)
+		var bt: Button = cd["b"]
+		bt.disabled = not aff
+		bt.text = "Forge ×%d" % craft_amount if game.recipe_repeatable(r) and craft_amount > 1 else "Forge"
+		(cd["p"] as PanelContainer).add_theme_stylebox_override("panel", _frame(Color(0.08, 0.065, 0.14, 0.97), MANA if aff else TRIM_DIM, 3))
+
 func _render_forge() -> void:
+	_cards = []
+	_forge_key = _forge_shape()
 	for c in forge_list.get_children():
 		c.queue_free()
 	for t in forge_tabs.get_children():
@@ -2378,7 +2421,9 @@ func _process_card(pr: Dictionary) -> Control:
 	costs.add_theme_constant_override("v_separation", 1)
 	v.add_child(costs)
 	for k in pr["in"]:
-		costs.add_child(_cost_chip(int(k), int(pr["in"][k])))
+		var pchip := _cost_chip(int(k), int(pr["in"][k]))
+		costs.add_child(pchip)
+		_cards.append({"chips": [[pchip.get_child(1), int(k), int(pr["in"][k])]]})
 	var at := _label("at the %s" % sname, 11, Color(0.95, 0.75, 0.5))
 	v.add_child(at)
 	# (user, 25 Nov: "Send to the Kiln"): loads the nearest one in reach from your satchel
@@ -2395,10 +2440,7 @@ func _on_send(pr: Dictionary) -> void:
 		_inv_key = ""
 		_hot_key = ""
 		if game.state == "forge":
-			var sv := _forge_scroll.scroll_vertical
-			_render_forge()
-			await get_tree().process_frame
-			_forge_scroll.scroll_vertical = sv
+			_refresh_forge()
 
 ## a workshop's secret not yet found: a page with its riddle once you've heard it
 func _secret_page(pr: Dictionary) -> Control:
@@ -2532,8 +2574,11 @@ func _recipe_card(r: Dictionary) -> Control:
 	costs.add_theme_constant_override("h_separation", 5)
 	costs.add_theme_constant_override("v_separation", 1)
 	v.add_child(costs)
+	var chips := []
 	for k in r["cost"]:
-		costs.add_child(_cost_chip(int(k), int(r["cost"][k])))
+		var chip := _cost_chip(int(k), int(r["cost"][k]))
+		costs.add_child(chip)
+		chips.append([chip.get_child(1), int(k), int(r["cost"][k])])
 	# every card ends in a button of the same size: Forge, or greyed out saying why not
 	var many: bool = game.recipe_repeatable(r) and craft_amount > 1
 	var b := _button("Forged" if done else ("Locked" if not unlocked else ("Forge ×%d" % craft_amount if many else "Forge")))
@@ -2541,6 +2586,7 @@ func _recipe_card(r: Dictionary) -> Control:
 	if not done and unlocked:
 		b.pressed.connect(_on_craft.bind(r))
 	v.add_child(b)
+	_cards.append({"r": r, "b": b, "p": p, "chips": chips, "live": not done and unlocked})
 	return p
 
 func _on_hot_input(ev: InputEvent, idx: int) -> void:
@@ -2569,10 +2615,7 @@ func _on_craft(r: Dictionary) -> void:
 	_inv_key = ""
 	_hot_key = ""
 	if ok and game.state == "forge":
-		var sv := _forge_scroll.scroll_vertical
-		_render_forge()
-		await get_tree().process_frame
-		_forge_scroll.scroll_vertical = sv
+		_refresh_forge()
 
 func _set_panel_style(p: PanelContainer, sb: StyleBox) -> void:
 	if is_instance_valid(p):

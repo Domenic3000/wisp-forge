@@ -878,6 +878,18 @@ func _test_quest() -> void:
 	# (shown on the minimap now, not in the world: user, 25 Nov; its stats are the last frame's)
 	var mm_ore: bool = n_ore == 0 or int(g.ui.minimap.stats.get("ore", 0)) > 0
 	rows.append("%sOre Sense: pulsed %s, %d ore cells marked round you, on the minimap %s" % ["" if pulsed and mm_ore else "(!) ", pulsed, n_ore, mm_ore])
+	# (how much ore there is: every ore cell in a 600 x 300 block under where you start; user, 25 Nov: "ore is much
+	# too abundant")
+	var oc_a: float = g.spawn_angle
+	var oc_c: Vector2i = Build.cell_of(Vector2(cos(oc_a), sin(oc_a)) * g.gpu.surf_at(oc_a).x)
+	var oc_r: Dictionary = g.gpu.read_rect(posmod(oc_c.x - 300, Defs.NS), oc_c.y + 20, 600, 300)
+	var oc_n := {}
+	for ocv in oc_r["fg"]:
+		var oct: int = int(ocv) & 255
+		if oct in [Defs.COPPER, Defs.COAL, Defs.CRYSTAL, Defs.FROST, Defs.EMBER, Defs.WISP]:
+			oc_n[Defs.NAMES[oct]] = int(oc_n.get(Defs.NAMES[oct], 0)) + 1
+	print("[ore] %s" % str(oc_n))
+	rows.append("ore under the start: %s" % str(oc_n))
 	ok = ok and pulsed and mm_ore
 	# ---- the skiff's plans: a half from each guardian beaten, the second teaches the recipe
 	var pl_learned: bool = g.learned.has("skiff")

@@ -65,7 +65,7 @@ func open() -> bool:
 	for p in Build.in_cat(Build.pieces(), Build.CAT_SHIP):
 		if String(p["kind"]) != "cut":
 			parts.append(p)
-	parts.append({"cat": 9, "name": "Pocket Door", "kind": "door", "cost": {}})
+	# (no Pocket Door any more: the pocket is below decks, G aboard; user, 25 Nov)
 	sel = clampi(sel, 0, parts.size() - 1)
 	active = true
 	visible = true
@@ -536,10 +536,6 @@ func _draw() -> void:
 		var sr := Rect2(o + Vector2(sc.x - 3, sc.y - 16) * cz, Vector2(7, 17) * cz)
 		draw_rect(sr, Color(0.55, 0.9, 1.0, 0.12) if s > 0 else Color(1.0, 0.85, 0.35, 0.14))
 		draw_rect(sr, Color(0.55, 0.9, 1.0, 0.7) if s > 0 else Color(1.0, 0.85, 0.35, 0.8), false, 1.0)
-	var dc: Vector2i = sk.door()
-	var dr := Rect2(o + Vector2(dc) * cz - Vector2(1, 1), Vector2(cz + 2, cz + 2))
-	var pul := 0.6 + 0.4 * sin(float(Engine.get_process_frames()) * 0.1)
-	draw_rect(dr, Color(0.8, 0.55, 1.0, pul), false, 2.0)
 	# what the cursor would do
 	if not game.ui.mouse_over_ui(false):
 		var kind := String(parts[sel]["kind"])

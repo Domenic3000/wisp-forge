@@ -122,3 +122,14 @@ Notes for development sessions on this part of the game. The rules that apply ev
   ("recipe" sale items; `owned` = known, `grant` learns), `_finish` teaches one as thanks (one request in three).
   ui.gd: the forge lists what you know, then the Recipe Book (`_book_page`: locked pages with `Defs.learn_hint`;
   J opens the forge there, `show_forge(true)`). Test: `_test_recipes` ("recipes", picture `forge_book.png`).
+
+## Forging many at once (user, 25 Nov: "When forging large amounts in the wisp forge like 10 or more the game gets very sluggish")
+- Every Forge click built all the forge's ~150 cards again (about 100 ms, and as long again laying them out), and a
+  material recipe wrote the save once per item (`craft` ended in `save_game` even in a batch: 20 planks, 112 ms).
+  Now `craft_many` saves and looks for first finds once at the end (`craft_quiet`), and ui `_refresh_forge`
+  updates the cards in place (costs, buttons, frames; `_cards`), building them again only when what's listed
+  changes (`_forge_shape` vs `_forge_key`). Forging 20 takes about 2 ms and the cards 8 ms. Checked in
+  `_test_inworld` ("forge20").
+- Sand x4 (4 stone, Materials, known from the start): a world with no desert, ocean or village had no sand, so no
+  glass (user: "is there a way to get sand if there is no desert biome?").
+

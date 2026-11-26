@@ -153,9 +153,21 @@ func _features() -> void:
 				_guard_bg(ax + di3, y, Defs.RUNESTONE)
 			elif inside:
 				guard[y * W + ax + di3] = 1        # (the opening: kept clear)
+	# (its pillars and the obelisk's plinth go down to the ground under them, where the isle dips: the arch stood
+	# a little over the ground; user, 25 Nov)
+	for di4 in range(-ARCH_W / 2 - 4, ARCH_W / 2 + 5):
+		if absf(float(di4)) >= float(ARCH_W) * 0.5:
+			var gj := _ground_row(ax + di4, at)
+			for y2 in range(at, gj):
+				_guard_bg(ax + di4, y2, Defs.RUNESTONE)
+	for di5 in range(-5, 6):
+		var y3 := ht
+		while y3 < H and y3 < ht + 30 and cells[y3 * W + hx + di5] == 0:
+			_guard_put(hx + di5, y3, Defs.RUNESTONE)
+			y3 += 1
 	# a tree and a few bushes (the back layer: scenery you walk past)
 	_tree(cx + 46, 26, 13)
-	_tree(cx - 74, 18, 9)
+	_tree(cx - 62, 18, 9)                  # (was 74 out: past the first ground's edge, its trunk down the side)
 	for bx in [cx - 24, cx + 22, cx + 64, cx - 58]:
 		_bush(bx)
 
@@ -179,7 +191,9 @@ func _guard_bg(i: int, j: int, m: int) -> void:
 	guard[k] = 1
 
 func _tree(tx: int, trunk: int, crown: int) -> void:
-	var tt := int(floor(top_at(tx, level)))
+	# (stood on the ground really there: the isle's edge curves away under its smooth top, and a tree at a new
+	# edge stood a few cells over it, its trunk in the air and its crown touching the ground; user, 25 Nov)
+	var tt := _ground_row(tx, int(floor(top_at(tx, level))))
 	for dj in trunk:
 		for di in range(-1, 2):
 			_bg_put(tx + di, tt - 1 - dj, Defs.WOOD)
@@ -190,8 +204,17 @@ func _tree(tx: int, trunk: int, crown: int) -> void:
 			if e < 1.0 - _h(float(di2 * 31 + dj2)) * 0.12:
 				_bg_put(tx + di2, cy + dj2, Defs.LEAF)
 
+## the first row at or below `from` (searching from a little above) where column i has ground: the isle's real top
+func _ground_row(i: int, from: int) -> int:
+	if i < 0 or i >= W:
+		return from
+	for j in range(maxi(0, from - 6), mini(H, from + 30)):
+		if cells[j * W + i] != 0:
+			return j
+	return from
+
 func _bush(bx: int) -> void:
-	var bt := int(floor(top_at(bx, level)))
+	var bt := _ground_row(bx, int(floor(top_at(bx, level))))
 	for dj in 5:
 		for di in range(-5, 6):
 			if pow(float(di) / 5.5, 2.0) + pow(float(dj) / 4.5, 2.0) < 1.0:
@@ -422,6 +445,55 @@ func load_isle(d: Dictionary) -> bool:
 	facing = 1
 	pos = Vector2.ZERO
 	com = Vector2.ZERO
+	_ground_features()
 	_all = true
 	_lights_dirty = true
 	return true
+
+## An isle made before 25 Nov: its own trees, the arch's pillars and the obelisk's plinth could stand over a dip
+## in the ground (user: "a tree that was attached to the ground by its leaves and its trunk was floating along
+## with the portal was a little bit floating"). Only empty cells straight under them are filled, down to ground.
+func _ground_features() -> void:
+	var cx := W / 2
+	var cols := []
+	var ax := cx + ARCH_DX
+	for di in range(-ARCH_W / 2 - 4, ARCH_W / 2 + 5):
+		if absf(float(di)) >= float(ARCH_W) * 0.5:
+			cols.append([ax + di, Defs.RUNESTONE, true])
+	var trees := [cx + 46, cx - 74, cx - 62]
+	for lv in range(2, level + 1, 2):
+		trees.append(W / 2 - int(LEVELS[lv]) + 26)
+		trees.append(W / 2 + int(LEVELS[lv]) - 26)
+	for tx in trees:
+		for di2 in range(-1, 2):
+			cols.append([int(tx) + di2, Defs.WOOD, false])
+	for c in cols:
+		var i: int = c[0]
+		var mt: int = c[1]
+		if i < 0 or i >= W:
+			continue
+		# the lowest cell of it in this column, then down through empty cells to the ground
+		var low := -1
+		for j in range(H - 1, -1, -1):
+			if bg[j * W + i] == mt:
+				low = j
+				break
+		if low < 0:
+			continue
+		var j2 := low + 1
+		while j2 < H and j2 < low + 16 and cells[j2 * W + i] == 0 and bg[j2 * W + i] == 0:
+			j2 += 1
+		if j2 >= H or j2 >= low + 16 or cells[j2 * W + i] == 0:
+			continue                    # (nothing under it near enough: leave it be)
+		for j3 in range(low + 1, j2):
+			if bool(c[2]):
+				_guard_bg(i, j3, mt)
+			else:
+				_bg_put(i, j3, mt)
+	var hx := cx + HEART_DX
+	var ht := int(floor(top_at(hx, 0)))
+	for di5 in range(-5, 6):
+		var y3 := ht
+		while y3 < H and y3 < ht + 30 and cells[y3 * W + hx + di5] == 0:
+			_guard_put(hx + di5, y3, Defs.RUNESTONE)
+			y3 += 1

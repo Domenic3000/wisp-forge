@@ -792,15 +792,8 @@ func _draw_skiff() -> void:
 			var at: Vector2i = slots[ck]
 			draw_texture(_crate_tex(String(cargo_ids[ck])), Vector2(at) - sk.com, Color(_lit(p), 1.0))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
-	for k in sk.riders.size():
-		var m = sk.riders[k]
-		if m == null or m.dead:
-			continue
-		var sc_cell: Vector2i = sk.seat_cells[k]
-		var feet: Vector2 = xf * (Vector2(sc_cell.x + 0.5, sc_cell.y + 1.0) - sk.com)
-		var gem: Color = Defs.SPELLS[game.known[game.sel]]["color"] if m == game.player else Color("#46e6f0")
-		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px) if m == game.player else m.input.aim
-		_draw_mage(m, aim, gem, true, [feet, rot, xf.y.length()])
+	# (seated riders aren't drawn: they're inside the ship; user, 25 Nov, "when you enter the ship i want the player
+	# model to go away so it looks like your inside the ship". Up and about on the deck (X), you're seen.)
 	# whoever's up and about on its deck (behind the hull too: it's their floor and walls)
 	for m2 in game.players:
 		if m2.aboard != sk or not m2.deck or m2.dead:
@@ -811,15 +804,10 @@ func _draw_skiff() -> void:
 		_draw_mage(m2, aim2, gem2, true, [feet2, rot, xf.y.length()])
 	draw_set_transform_matrix(xf)
 	draw_texture(sk.texture(), -sk.com, Color(_lit(p), 1.0))
-	# the pocket's door: a violet seam that breathes, and a word when you're by it
-	if sk.door_cell.x >= 0 and game.items.has("skiff"):
-		var dc: Vector2i = sk.door()
-		var pul := 0.45 + 0.35 * sin(float(game.frame) * 0.08)
-		draw_rect(Rect2(Vector2(dc) - sk.com + Vector2(-1, -1), Vector2(3, 2)), Color(0.85, 0.6, 1.0, pul))
-		draw_rect(Rect2(Vector2(dc) - sk.com, Vector2(1, 1)), Color(1.0, 0.92, 1.0, 0.6 + pul * 0.4))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
-	if game.door_in_reach(game.player):
-		_bubble(sk.door_world(), "[F] Step into the pocket", 0.9, "door", Speech.PROMPT)
+	# (the pocket is below decks now: aboard and parked, a word on how to go down)
+	if game.player.aboard == sk and not game.player.deck and game.items.has("skiff") and game.shipyard.parked():
+		_bubble(sk.pos - game.view_up() * 30.0, "[G] Go below to the pocket", 0.9, "door", Speech.PROMPT)
 
 ## Out in space (space.gd draws the stars, the sun and the planets): just you, your wisp, the
 ## light streaming from the staff, and the reticle.

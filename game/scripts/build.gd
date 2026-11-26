@@ -239,7 +239,7 @@ static func furniture_recipes() -> Array:
 	return out
 
 ## Plans (user, 25 Nov: everything you build is in your hand; "how would we aquire the plans?"): the
-## structures, stairs, the platform and levelling the ground, as recipes you learn (the book, shops, chest
+## structures, stairs and the platform, as recipes you learn (the book, shops, chest
 ## scrolls and "taught as thanks" all work for them) but never forge: a plan known is in your satchel's Plans,
 ## never used up; in your hand Conjure raises it from your materials (main `hold_plan`). [id, name, the build
 ## piece it is, what it is, how it's learned]
@@ -252,7 +252,6 @@ static func plans() -> Array:
 		["sstairs", "Stone Stairs", "Stone Stairs", "A flight of stone-block steps on posts. [ ] a step higher or lower, - = a storey, T turns it.", {"find": [Defs.MASONRY]}],
 		["bstairs", "Brick Stairs", "Brick Stairs", "A flight of brick steps on posts. [ ] a step higher or lower, - = a storey, T turns it.", {"find": [Defs.BRICK]}],
 		["platform", "Platform", "Platform", "A strip of scaffold: jump up through it, stand on it, drop through.", {"start": true}],
-		["level", "Level the Ground", "Flatten with Dirt", "Press where the ground should be, drag along, let go: what's above goes, dips are filled. R: fill with dirt, stone or sand.", {"start": true}],
 	]
 
 static func plan_recipes() -> Array:

@@ -50,6 +50,7 @@ class Body:
 	var step_h := 3
 	var anim := 0.0            # walk / animation phase
 	var stuck := 0             # frames spent wedged inside terrain
+	var free_pos := Vector2.ZERO   # where it last stood clear of the ground (world; the mage goes back there if wedged)
 	var on_ground := false
 	var in_liquid := false
 	var hit_wall := false
@@ -1352,15 +1353,40 @@ func _make_doors(loaded: bool) -> void:
 			doors.append(d)
 
 ## the nearest door to a point, within reach cells of its middle ([] if none)
-func _door_near(p: Vector2, reach: float) -> Dictionary:
+## the door nearest p within reach (`closed`: only shut ones; user, 25 Nov: between two rooms side by side, the
+## first room's open door was always the nearest, so the second's couldn't be opened from that side)
+func _door_near(p: Vector2, reach: float, closed := false) -> Dictionary:
 	var best := {}
 	var bd := reach * reach
 	for d in doors:
+		if closed and bool(d["open"]):
+			continue
 		var dd: float = (d["pos"] as Vector2).distance_squared_to(p)
 		if dd < bd:
 			bd = dd
 			best = d
 	return best
+
+## F's door: a shut one in front of you (the way you face) within reach first, else the nearest (to shut it).
+## (User, 25 Nov: two rooms side by side, the first room's open door was nearest, so F shut it again instead
+## of opening the second room's, just past it.)
+func _door_for_f(m) -> Dictionary:
+	var right: Vector2 = basis_r(atan2(m.pos.y, m.pos.x))
+	var best := {}
+	var bd := 28.0 * 28.0
+	for d in doors:
+		if bool(d["open"]):
+			continue
+		var o: Vector2 = (d["pos"] as Vector2) - m.pos
+		if o.dot(right) * float(m.facing) < -3.0:
+			continue                        # (behind you)
+		var dd := o.length_squared()
+		if dd < bd:
+			bd = dd
+			best = d
+	if not best.is_empty():
+		return best
+	return _door_near(m.pos, 22.0)
 
 ## is anyone standing in a door's doorway (closing it would wall them in)?
 ## A door record: its doorway is w x h cells from (col, row), laid out cell for cell as a stamp
@@ -1582,7 +1608,7 @@ func _door_cells(d: Dictionary) -> int:
 
 ## walking into a closed door opens it (the mage, and foes that know how: Defs.ENEMY ai "doors")
 func _door_bump(m: Body) -> void:
-	var d := _door_near(m.pos, 24.0)
+	var d := _door_near(m.pos, 24.0, true)
 	if not d.is_empty() and not d["open"]:
 		_set_door(d, true, m.pos)
 
@@ -1608,7 +1634,7 @@ func _interact() -> void:
 		return
 	if _try_home(player, 12):            # a bed right beside you comes before a door
 		return
-	var d := _door_near(player.pos, 22.0)
+	var d := _door_for_f(player)
 	if d.is_empty() and _try_home(player, 26):
 		return
 	if not d.is_empty():
@@ -2234,18 +2260,55 @@ func move_body(e: Body) -> void:
 					e.on_ground = true
 					e.vy = minf(e.vy, 0.0)
 				break
+		if not freed and e is Mage:
+			# (user, 25 Nov: "when levitating i got wedged into a small opening and clipped into the ground and then
+			# i got brought all the way to the surface through the ground"): a wider look round first, then back to
+			# where he last stood clear; rising through the rock a cell a tick only if neither works
+			var sp := _free_near(x, y, e.w, e.h, 10)
+			if sp != Vector2(x, y):
+				x = sp.x
+				y = sp.y
+				freed = true
+			elif e.free_pos != Vector2.ZERO and e.free_pos.distance_to(e.pos) < 80.0:
+				var fg := to_grid(e.free_pos) - Vector2(e.w * 0.5, e.h * 0.5)
+				if not box_solid(fg.x, fg.y, e.w, e.h):
+					x = fg.x
+					y = fg.y
+					e.vx = 0.0
+					e.vy = 0.0
+					freed = true
 		if not freed:
 			if e is Mage:
-				y -= 1.0          # the mage always works its way out
+				y -= 1.0          # the mage always works its way out (the last resort)
 			else:
 				e.stuck += 1      # a foe stays put (it used to rise up through the rock)
 	else:
 		e.stuck = 0
+		if e is Mage:
+			e.free_pos = from_grid(Vector2(x + e.w * 0.5, y + e.h * 0.5))
 	e.pos = from_grid(Vector2(x + e.w * 0.5, y + e.h * 0.5))
 	var r := e.pos.length()
 	if r > Defs.R_SPACE - 8.0:          # (the top of the orbit band: the space map comes later)
 		e.pos = e.pos.normalized() * (Defs.R_SPACE - 8.0)
 		e.vy = maxf(e.vy, 0.0)
+
+## the nearest spot within r cells of (x, y) where a w x h body is clear (nearest first, a little above before
+## below), or (x, y) itself if none
+func _free_near(x: float, y: float, w: float, h: float, r: int) -> Vector2:
+	for d in range(1, r + 1):
+		var best := Vector2(x, y)
+		var bd := 1e9
+		for dy in range(-d, d + 1):
+			for dx in range(-d, d + 1):
+				if maxi(absi(dx), absi(dy)) != d:
+					continue
+				var cost := float(dx * dx + dy * dy) + (0.5 * float(dy) if dy > 0 else 0.0)
+				if cost < bd and not box_solid(x + dx, y + dy, w, h):
+					bd = cost
+					best = Vector2(x + dx, y + dy)
+		if bd < 1e9:
+			return best
+	return Vector2(x, y)
 
 func gravity_at(p: Vector2) -> float:
 	var r := p.length()
@@ -2352,7 +2415,6 @@ func _tick() -> void:
 		_raise_tick()
 	frame += 1
 	time += 1.0
-	hand_live = false               # (set again this tick by whatever places from the hand)
 	if forge_vis > 0.0 and state != "forge":
 		forge_vis = maxf(0.0, forge_vis - 1.0 / float(FORGE_FADE))
 	for pg in pages:
@@ -2376,6 +2438,9 @@ func _tick() -> void:
 	if stamps.is_empty() and player != null:
 		Defs.anchor_c = _anchor_col(player.pos)      # (nothing waiting to go in under the old one)
 	_read_local_input(player)
+	# (set again this tick by whatever places from the hand; cleared only after the input is read, which looks at
+	# it: cleared before, the cast button never reached the pocket's builder)
+	hand_live = false
 	var aim: Vector2 = player.input.aim
 	if _recall_now:
 		_recall_now = false
@@ -2423,6 +2488,8 @@ func _tick() -> void:
 				m.cast_latch = false
 			if m.local and build_on:
 				_update_build(m)
+			elif m.local and _unmake_update(m):
+				pass                        # (Unmake: taking away in a shape, or levelling the ground)
 			elif m.local and _hand_update(m):
 				pass                        # (the hand placing through the building code)
 			elif m.input.cast and not m.cast_latch:
@@ -2742,6 +2809,8 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		return
 	m.cast_frame = frame
 	m.cast_latch = bool(s.get("single", false))
+	if id == "unmake":
+		return                       # (Unmake works through `_unmake_update`, never cast)
 	if id == "conjure":
 		_conjure(m, aim)
 		spell_used(m, id, int(s["cd"]))
@@ -5337,6 +5406,8 @@ func craft_many(r: Dictionary, n: int) -> int:
 		made += 1
 	craft_quiet = false
 	if made > 0:
+		if not testing_no_learn():
+			_learn_from_finds()
 		save_game()
 		_forge_send(r)
 		var what := String(r["name"])
@@ -5367,8 +5438,9 @@ func craft(r: Dictionary) -> bool:
 		for k in r["give"]:
 			player.inv[int(k)] += int(r["give"][k])
 		# (what it made may teach recipes at once: the forge's panel keeps the world waiting, and first finds
-		# are otherwise looked for as it ticks; user, 23 Nov: crafted obsidian, no Obsidian Focus)
-		if not testing_no_learn():
+		# are otherwise looked for as it ticks; user, 23 Nov: crafted obsidian, no Obsidian Focus. Forging many,
+		# once at the end: craft_many)
+		if not testing_no_learn() and not craft_quiet:
 			_learn_from_finds()
 	if r.has("potion"):
 		items["potion"] = int(items.get("potion", 0)) + int(r["potion"])
@@ -5476,9 +5548,10 @@ func craft(r: Dictionary) -> bool:
 		if mods.has("dig_r"):
 			dig_r = maxf(dig_r, float(mods["dig_r"]))
 		_apply_gear()
-	if not r.has("spell") and not r.has("give"):
+	if not r.has("spell") and not r.has("give") and not craft_quiet:
 		ui.toast("%s forged!" % r["name"], Color(1, 0.82, 0.23), 4.0)
-	save_game()
+	if not craft_quiet:
+		save_game()                  # (forging many: once at the end, craft_many; every one wrote the save)
 	return true
 
 # ================================================================ input ====
@@ -5528,7 +5601,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_B:
 			if player.aboard != null and not pocket.active:
 				shipyard.open()              # (aboard: the ship builder, where it's parked; else a word why not)
-			elif pocket.active or build_on:
+			elif build_on:
 				_toggle_build()
 			else:
 				# (user, 25 Nov: build mode folded into the hand: on the planet B opens the satchel at its Plans)
@@ -5537,7 +5610,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if k == KEY_G and pocket.active and not build_on:
 			if pocket.leave_by_ship(player):
 				return
+		if k == KEY_G and not pocket.active and player.aboard != null and player.aboard == skiff:
+			go_below(player)                 # (aboard: down into the ship's pocket)
+			return
 		if build_on and _build_key(k):
+			return
+		if _unmake_key(k):
 			return
 		if _hand_key(k):
 			return
@@ -5739,8 +5817,8 @@ func hold_carried(what: String, idx := -1, sk := "") -> void:
 ## (G, [ ] thickness), in front or as a back wall (V); furniture, workshops, torches and doors show where they
 ## go and a click sets one down (R the next design of a stack, T mirrors). It goes through the building code
 ## (`_update_build` / `_update_shape` / `_cabin_edit` with `_hand_over` as the piece), only within your
-## staff's reach. Plans (rooms, houses, stairs, Level the Ground) go in the hand too, and right-click takes away
-## the way the hand is set (`_hand_cut`): build mode stays only for the pocket and the tests.
+## staff's reach. Plans (rooms, houses, stairs) go in the hand too; taking away is the Unmake spell
+## (`_unmake_update`): build mode stays only for the pocket and the tests.
 var hand_item := {}          # a carried piece: {"what": "furn", "name"} or {"what": "station", "sk"}; {} = the material `mat`
 var hand_back := false       # solids go up as back wall
 var hand_shape := 0          # how solids are laid: Build.SHAPES (0 the brush)
@@ -5819,6 +5897,76 @@ func hand_piece(body := false) -> Dictionary:
 		return {}                     # (painted with Conjure's own brush)
 	return {"cat": Build.CAT_BLOCKS, "name": nm, "kind": "block", "mat": mat, "cost": {mat: 1}, "shape": maxi(hand_shape, 1), "thick": hand_thick}
 
+## Unmake (user, 25 Nov: "it is confusing how you have to select a block in order to get the removal tools,
+## maybe we should make deconstruction its own spell along side conjuring"; chose a spell with modes): build
+## mode's Remove tab and Level the Ground as a spell beside Conjure. Left: press, drag, let go (a click alone
+## takes a square as thick as [ ] sets); G: line, rectangle, frame, level the ground; V: what it takes
+## (`UNMAKE_LAYERS`); R: Level the Ground's fill. Right-click still digs.
+const UNMAKE_LAYERS := [["front", "blocks"], ["back", "back walls"], ["furn", "furniture"], ["all", "everything"]]
+const UNMAKE_SHAPES := ["", "line", "rectangle", "frame", "level the ground"]
+var unmake_shape := 2
+var unmake_layer := 0
+var unmake_thick := 1
+var stats_unmade := 0                # (for the tests: cells taken away by Unmake or the Remove tab)
+
+func unmaking(m) -> bool:
+	return m != null and not m.known.is_empty() and m.known[clampi(m.sel, 0, m.known.size() - 1)] == "unmake"
+
+func unmake_piece() -> Dictionary:
+	if unmake_shape == 4:
+		return {"cat": Build.CAT_REMOVE, "name": "Level the Ground", "kind": "flatten", "mat": hand_fill, "cost": {}}
+	var L: Array = UNMAKE_LAYERS[unmake_layer]
+	return {"cat": Build.CAT_REMOVE, "name": "Unmake " + String(L[1]), "kind": "remove", "layer": String(L[0]), "cost": {}}
+
+func _unmake_update(m: Mage) -> bool:
+	if not m.local or build_on or not unmaking(m) or m.aboard != null or pocket.active or space.active:
+		return false
+	hand_live = true
+	var piece := unmake_piece()
+	if String(piece["kind"]) == "flatten":
+		_update_flatten(m, piece)
+	else:
+		var s0 := build_shape
+		var t0 := build_thick
+		build_shape = unmake_shape
+		build_thick = unmake_thick
+		_update_remove(m, piece)
+		build_shape = s0
+		build_thick = t0
+	return true
+
+func _unmake_key(k: int) -> bool:
+	if build_on or not unmaking(player):
+		return false
+	if k == KEY_G:
+		unmake_shape = unmake_shape % 4 + 1
+		build_drag = false
+		ui.toast("Unmake: %s" % UNMAKE_SHAPES[unmake_shape], Color(1.0, 0.7, 0.6), 1.0)
+		return true
+	if k == KEY_V and unmake_shape != 4:
+		unmake_layer = (unmake_layer + 1) % UNMAKE_LAYERS.size()
+		ui.toast("Unmake takes: %s" % UNMAKE_LAYERS[unmake_layer][1], Color(1.0, 0.7, 0.6), 1.0)
+		return true
+	if (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT) and unmake_shape != 4:
+		unmake_thick = clampi(unmake_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
+		ui.toast("%d thick" % unmake_thick, Color(1.0, 0.7, 0.6), 0.8)
+		return true
+	if k == KEY_R and unmake_shape == 4:
+		var fills := [Defs.DIRT, Defs.STONE, Defs.SAND]
+		hand_fill = fills[(fills.find(hand_fill) + 1) % fills.size()]
+		ui.toast("Fill dips with %s" % Defs.NAMES[hand_fill], Color(0.95, 0.85, 0.55), 1.0)
+		return true
+	return false
+
+func unmake_hint() -> String:
+	var head := ""
+	if unmake_shape == 4:
+		head = "Unmake: level the ground  ·  press where it should be, drag, let go  ·  R fill: %s  ·  G shape" % Defs.NAMES[hand_fill]
+	else:
+		head = "Unmake: %s, %s  ·  press, drag, let go  ·  G shape  ·  V what  ·  [ ] %d thick" % [UNMAKE_SHAPES[unmake_shape], UNMAKE_LAYERS[unmake_layer][1], unmake_thick]
+	var pt := String(build_prev.get("text", "")) if hand_live else ""
+	return head + ("\n" + pt if pt != "" else "")
+
 ## each tick, the local mage holding Conjure with something the building code places: its preview and,
 ## on a click, setting it down (true if it did; otherwise the cast button casts Conjure as before)
 func _hand_update(m: Mage) -> bool:
@@ -5833,71 +5981,189 @@ func _hand_update(m: Mage) -> bool:
 		# (only within your staff's reach: a click beyond it sets nothing down)
 		wisp_note("That's out of reach: I can only shape what's near your staff.")
 		build_click = false
-	if _hand_cut(m, hp):
-		return true
 	_hand_over = hp
 	_update_build(m)
 	_hand_over = {}
 	return true
 
-## Right-click takes away the way your hand is set (user, 25 Nov: build mode's Remove folded into the hand):
-## with a solid in hand laid as a line, rectangle or frame (G, [ ] thickness), a right-drag cuts that shape;
-## only blocks in front, or only back walls when the hand lays back walls (V). Press, drag, let go; a left
-## click cancels. With the brush, right-click digs as ever. (Furniture: Shift + right-click takes it whole.)
-var _cut_drag := false
-var _cut_from := Vector2.ZERO
-var stats_cut := 0                   # (for the tests: cells cut)
-
-func _hand_cut(m: Mage, hp: Dictionary) -> bool:
-	var kind := String(hp.get("kind", ""))
-	if not (kind == "block" or (kind == "wall" and int(hp.get("shape", 0)) != 0)):
-		_cut_drag = false
+## Unmake in the pocket: the cabin builder's Remove with Unmake's choice of what (a brush as thick as [ ] sets;
+## levelling the ground is for the planet)
+func pocket_unmake(m: Mage, body) -> bool:
+	hand_live = false
+	if build_on or not unmaking(m):
 		return false
-	var d := m.input.aim - m.pos
-	var lim := _reach_len(m)
-	if d.length() > lim:
-		d = d.normalized() * lim
-	var cell := Build.cell_of(m.pos + d)
-	if not _cut_drag:
-		if not m.input.dig:
-			return false
-		_cut_drag = true
-		_cut_from = Build.cell_pos(cell.x, cell.y)
-		build_drag = false
-	var layer := "back" if kind == "wall" else "front"
-	var cells: Array = Build.shape_cells(Build.cell_of(_cut_from), cell, maxi(int(hp.get("shape", 1)), 1), int(hp.get("thick", 1)))
-	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
-	var prev := []
-	var n := 0
-	if not too_big:
-		for c in cells:
-			if _removable_guess(c, layer):
-				n += 1
-				prev.append([Build.cell_pos(c.x, c.y), Color(1.0, 0.3, 0.25)])
-			else:
-				prev.append([Build.cell_pos(c.x, c.y), Color(0.75, 0.75, 0.8, 0.5)])
-	build_prev = {"cells": prev, "ok": not too_big, "text": ("Too big to take in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS) if too_big else
-		"Cut %s: %d %s" % [String(Build.SHAPES[maxi(int(hp.get("shape", 1)), 1)]).to_lower(), n, "back wall cells" if layer == "back" else "blocks"]}
-	if m.input.cast:
-		_cut_drag = false            # (a left click cancels)
-		build_click = false
-		m.cast_latch = true
-		m.input.dig = false
+	hand_live = true
+	if unmake_shape == 4:
+		if m.input.cast and not m.cast_latch:
+			m.cast_latch = true
+			wisp_note("Levelling the ground is for a planet's land: here, take away with a line or brush (G).")
 		return true
-	if m.input.dig:
-		m.input.dig = false          # (held: the shape follows you; no digging meanwhile)
-		return true
-	_cut_drag = false
-	if too_big:
-		return true
-	var r := remove_cells(m, cells, layer)
-	var got: int = r["n"]
-	if got > 0:
-		stats_cut += got
-		audio.play("dig", m.pos + d, 0.6)
-	elif not r.has("mana"):
-		wisp_note("Nothing there to take." if not r["hard"] else "That's too hard for your staff.")
+	var L: Array = UNMAKE_LAYERS[unmake_layer]
+	_hand_over = {"cat": Build.CAT_REMOVE, "name": "Unmake", "kind": "remove", "layer": String(L[0]), "cost": {}}
+	var t0 := build_thick
+	build_thick = maxi(unmake_thick, 2)
+	_cabin_edit(m, body)
+	build_thick = t0
+	_hand_over = {}
 	return true
+
+## Plans in the pocket (user, 25 Nov: "the pocket dimension should use the same system for building as outside
+## the pocket dimension"): a room, house, roof, stairs or platform planned in the isle's own cells (as on the
+## planet: on the first floor under where you point, a plinth down to the ground, every cell it builds on open
+## space), paid for, then raised course by course (`_raise` with the isle as its body). Doors are left as open
+## doorways in here.
+func _pocket_plan(m: Mage, sk, piece: Dictionary) -> void:
+	build_prev = {}
+	var bb: Vector2 = sk.to_body(m.input.aim) + sk.com
+	var ci := int(floor(bb.x))
+	var cj := int(floor(bb.y))
+	var kind := String(piece["kind"])
+	var data := PackedInt32Array()
+	var i0 := 0
+	var j0 := 0
+	var w := 0
+	var h := 0
+	var cost: Dictionary = {}
+	var ok := true
+	var why := ""
+	match kind:
+		"platform":
+			w = Build.PLATFORM_W
+			h = 1
+			i0 = ci - w / 2
+			j0 = cj
+			data.resize(w)
+			data.fill(0xff00 | Defs.SCAFFOLD)
+			cost = piece["cost"]
+		"stairs":
+			var sdir := 1 if build_flip else -1
+			var bottom := _body_floor(sk, ci, cj - 6, 40)
+			if bottom < 0:
+				ok = false
+				why = "no floor under its foot"
+				bottom = cj
+			var sc := Build.stair_cells(ci, bottom, build_rise, sdir)
+			var post_to := {}
+			var free_bg := {}
+			for pp in sc["posts"]:
+				var fr := _body_floor(sk, int(pp[0]), int(pp[1]) + 1, 120)
+				if fr >= 0:
+					post_to[int(pp[0])] = fr
+					for r in range(int(pp[1]), fr + 1):
+						if sk.in_room(int(pp[0]), r) and int(sk.bg[r * sk.w + int(pp[0])]) == 0:
+							free_bg[Vector2i(int(pp[0]), r)] = true
+			for rl in sc["rail"]:
+				if sk.in_room(int(rl[0]), int(rl[1])) and int(sk.bg[int(rl[1]) * sk.w + int(rl[0])]) == 0:
+					free_bg[Vector2i(int(rl[0]), int(rl[1]))] = true
+			var st2 := Build.stair_stamp(sc, post_to, free_bg, int(piece["mat"]), int(piece["post"]), int(piece["rail"]))
+			var stm: Dictionary = st2["stamp"]
+			i0 = int(stm["x0"])
+			j0 = int(stm["y0"])
+			w = int(stm["w"])
+			h = int(stm["h"])
+			data = stm["data"]
+			cost = Build.stair_cost(int(piece["mat"]), int(piece["post"]), int(st2["front"]), int(st2["back"]))
+		"structure":
+			# (the highest ground under its footprint, as on the planet: `_floor_span`)
+			var floor_j := -1
+			for fi in range(ci - build_w / 2, ci + build_w / 2 + 1):
+				var fj := _body_floor(sk, fi, cj - 30, 90)
+				if fj >= 0 and (floor_j < 0 or fj < floor_j):
+					floor_j = fj
+			if floor_j < 0:
+				ok = false
+				why = "no ground under it"
+				floor_j = cj
+			var sr := Build.structure(builds, String(piece["struct"]), build_style, build_seed, build_w, build_floors, ci, floor_j)
+			var bp = sr["bp"]
+			if String(piece["struct"]) != "roof":
+				for i in range(int(sr["ox"]), int(sr["ox"]) + build_w):
+					var k2 := 1
+					while k2 <= Build.FOUND_MAX and sk.in_room(bp.x0 + i, floor_j + k2) and sk.at(bp.x0 + i, floor_j + k2) == 0:
+						bp.fg(i, int(sr["lb"]) + k2, sr["st"]["found"])
+						k2 += 1
+					if k2 > Build.FOUND_MAX:
+						ok = false
+						why = "too far over the ground there"
+			i0 = bp.x0
+			j0 = bp.y0
+			w = bp.w
+			h = bp.h
+			data = bp.c
+			cost = Build.structure_cost(bp, bp.doors.size())
+	# every cell it builds on open isle where you may build
+	var prev := []
+	for jj in h:
+		for ii in w:
+			var v: int = data[jj * w + ii]
+			if (v & 0xffff) == 0xffff:
+				continue
+			var f: int = v & 255
+			var i3 := i0 + ii
+			var j3 := j0 + jj
+			if f != 255:
+				if not sk.in_room(i3, j3) or sk.at(i3, j3) != 0:
+					if ok:
+						why = "something's in the way" if sk.in_room(i3, j3) else "past where you can build"
+						build_last = "%s at %d,%d of %dx%d (room %s)" % [Defs.NAMES[clampi(sk.at(i3, j3), 0, Defs.NM - 1)], ii, jj, w, h, sk.in_room(i3, j3)]
+					ok = false
+				if f != 0 and f != Defs.WOODDOOR:
+					prev.append([sk.cell_world(i3, j3), Defs.COLOR[f]])
+			elif ((v >> 8) & 255) != 255 and ((v >> 8) & 255) != 0 and sk.in_room(i3, j3):
+				prev.append([sk.cell_world(i3, j3), (Defs.COLOR[(v >> 8) & 255] as Color).darkened(0.35)])
+	var pc := {"cost": cost, "kind": "plan"}
+	var pay: Dictionary = Build.payable(pc, m.inv) if not cost.is_empty() else {Defs.AIR: 0}
+	build_prev = {"cells": prev, "ok": ok and not pay.is_empty(), "text": ("Takes " + Build.cost_text(cost)) if not cost.is_empty() else ""}
+	build_why = why
+	if not build_click:
+		return
+	build_click = false
+	if not ok:
+		wisp_note("It won't stand there: %s." % why)
+		return
+	if pay.is_empty():
+		wisp_note("That %s needs %s." % [String(piece["name"]).to_lower(), Build.cost_text(cost)])
+		return
+	for mt in pay:
+		if int(mt) != Defs.AIR:
+			m.inv[int(mt)] -= int(pay[mt])
+	vfx.stream(m, sk.cell_world(ci, cj), Color(1.0, 0.86, 0.5), 12)
+	_raise({"x0": i0, "y0": j0, "w": w, "h": h, "data": data}, m, [], sk.cell_world(ci, cj), sk)
+
+## the first row at or under (i, j) with something solid under it in a body (-1 if none within reach)
+func _body_floor(sk, i: int, j: int, reach: int) -> int:
+	for k in reach:
+		var jj := j + k
+		if jj + 1 >= sk.h:
+			return -1
+		if sk.at(i, jj) == 0 and sk.at(i, jj + 1) != 0:
+			return jj
+	return -1
+
+## a band of a stamp written into a body's cells (the pocket's isle): solids in front, back walls, furniture,
+## torches; doorways left open
+func _body_stamp(sk, i0: int, j0: int, w: int, data: PackedInt32Array) -> void:
+	var h := data.size() / maxi(1, w)
+	for jj in h:
+		for ii in w:
+			var v: int = data[jj * w + ii]
+			if (v & 0xffff) == 0xffff:
+				continue
+			var i := i0 + ii
+			var j := j0 + jj
+			if not sk.in_room(i, j):
+				continue
+			var f: int = v & 255
+			var g: int = (v >> 8) & 255
+			if f != 255 and f != 0 and f != Defs.WOODDOOR:
+				sk.place(i, j, f, false)
+			if g != 255 and g != 0:
+				if g == Defs.DECOR:
+					sk.deco[j * sk.w + i] = ((v >> 19) & 255) + 1
+					sk.touch(i, j)
+				else:
+					sk.place(i, j, g, true)
+	sk.dirty = true
 
 ## in the pocket: the hand builds in the isle's own cells (pocket.gd's tick)
 func hand_body(m: Mage, body) -> bool:
@@ -5911,6 +6177,10 @@ func hand_body(m: Mage, body) -> bool:
 			wisp_note("%s won't stay put in here: only blocks, walls and furniture." % Defs.NAMES[mat])
 		return false
 	var hk := String(hp["kind"])
+	if hk in ["structure", "stairs", "platform"]:
+		hand_live = true
+		_pocket_plan(m, body, hp)
+		return true
 	if hk != "block" and hk != "wall" and hk != "carried":
 		if m.input.cast and not m.cast_latch:
 			m.cast_latch = true
@@ -5928,6 +6198,8 @@ func hand_body(m: Mage, body) -> bool:
 ## the hand's bar (ui.gd shows it while Conjure is held with something in hand): what's held, then how
 ## it goes down
 func hand_hint() -> String:
+	if unmaking(player):
+		return unmake_hint()
 	var nm := hand_name()
 	if nm == "":
 		return ""
@@ -5960,7 +6232,7 @@ func hand_hint() -> String:
 		var shp := "brush" if hand_shape == 0 else String(Build.SHAPES[hand_shape]).to_lower()
 		how = "%s, %s  ·  G shape  ·  V %s" % [shp, "back wall" if hand_back else "in front", "in front" if hand_back else "back wall"]
 		if hand_shape != 0:
-			how += "  ·  [ ] %d thick  ·  right-drag cuts the same" % hand_thick
+			how += "  ·  [ ] %d thick" % hand_thick
 	var lines := [head + "  ·  " + how]
 	var pt := String(build_prev.get("text", "")) if hand_live else ""
 	if pt != "":
@@ -6118,7 +6390,7 @@ func quick_take(id: String) -> void:
 	_note_hand()
 
 func hand_bar_on() -> bool:
-	return not build_on and state == "play" and player != null and player.aboard == null and conjuring(player) and hand_name() != ""
+	return not build_on and state == "play" and player != null and player.aboard == null and ((conjuring(player) and hand_name() != "") or (unmaking(player) and not space.active))
 
 func _reach_len(m: Mage) -> float:
 	return REACH * gear("reach", m) * (1.5 if m.items.has("wisp_hands") else 1.0)
@@ -6797,18 +7069,39 @@ var raising := []
 const RAISE_EVERY := 3
 var stats_raised := 0                # (for the tests: whole things raised)
 
-func _raise(st: Dictionary, m, rdoors: Array, at: Vector2) -> void:
+func _raise(st: Dictionary, m, rdoors: Array, at: Vector2, body = null) -> void:
 	st["ax"] = int(st.get("ax", Defs.anchor_c))
 	st["aw"] = int(st.get("aw", 1))
 	var h: int = int(st["h"])
 	var steps := clampi(h / 2, 3, 28)
 	var per := maxi(1, int(ceil(float(h) / float(steps))))
-	raising.append({"st": st, "done": 0, "per": per, "m": m, "doors": rdoors, "at": at, "t": 0})
+	raising.append({"st": st, "done": 0, "per": per, "m": m, "doors": rdoors, "at": at, "t": 0, "body": body})
 	# the rune circle where it stands
-	var foot: Vector2 = Build.cell_pos(int(st["x0"]) + int(st["w"]) / 2, int(st["y0"]) + h - 1)
+	var foot: Vector2 = _raise_pos(body, int(st["x0"]) + int(st["w"]) / 2, int(st["y0"]) + h - 1)
 	vfx.spawn(Vfx.RING, foot, Vector2.ZERO, 30, Color(0.75, 0.95, 1.0), Color(0.4, 0.6, 1.0, 0.0), 2.0, float(int(st["w"])) * 0.6, true)
 	vfx.conjure(foot, Color(0.7, 0.9, 1.0))
 	audio.play("blink", foot, 0.5)
+
+## a cell of what's rising, as a world point (the planet's cells, or a body's: the pocket's isle)
+func _raise_pos(body, i: int, j: int) -> Vector2:
+	return body.cell_world(i, j) if body != null else Build.cell_pos(i, j)
+
+## everything still rising goes up at once (a save is coming: what's rising isn't saved, and was paid for)
+func _raise_finish_all() -> void:
+	for rs in raising:
+		var st: Dictionary = rs["st"]
+		var w: int = int(st["w"])
+		var left: int = int(st["h"]) - int(rs["done"])
+		if left > 0:
+			var data: PackedInt32Array = st["data"]
+			if rs.get("body") != null:
+				_body_stamp(rs["body"], int(st["x0"]), int(st["y0"]), w, data.slice(0, left * w))
+			else:
+				stamps.append({"x0": st["x0"], "y0": st["y0"], "w": w, "h": left, "data": data.slice(0, left * w), "ax": st["ax"], "aw": st["aw"]})
+		for rd in rs["doors"]:
+			doors.append(rd)
+		stats_raised += 1
+	raising.clear()
 
 func _raise_tick() -> void:
 	var k := 0
@@ -6829,12 +7122,14 @@ func _raise_tick() -> void:
 		var nr: int = mini(int(rs["per"]), h - done)
 		var r0: int = h - done - nr                  # (from the bottom row up)
 		var data: PackedInt32Array = st["data"]
-		var band := {"x0": st["x0"], "y0": int(st["y0"]) + r0, "w": w, "h": nr, "data": data.slice(r0 * w, (r0 + nr) * w), "ax": st["ax"], "aw": st["aw"]}
-		stamps.append(band)
+		if rs.get("body") != null:
+			_body_stamp(rs["body"], int(st["x0"]), int(st["y0"]) + r0, w, data.slice(r0 * w, (r0 + nr) * w))
+		else:
+			stamps.append({"x0": st["x0"], "y0": int(st["y0"]) + r0, "w": w, "h": nr, "data": data.slice(r0 * w, (r0 + nr) * w), "ax": st["ax"], "aw": st["aw"]})
 		rs["done"] = done + nr
 		# the course flares as it sets, and matter streams to it from the staff
-		var mid: Vector2 = Build.cell_pos(int(st["x0"]) + w / 2, int(st["y0"]) + r0)
-		var right: Vector2 = basis_r(atan2(mid.y, mid.x))
+		var mid: Vector2 = _raise_pos(rs.get("body"), int(st["x0"]) + w / 2, int(st["y0"]) + r0)
+		var right: Vector2 = basis_r(atan2(mid.y, mid.x)) if rs.get("body") == null else Vector2.RIGHT
 		for q in mini(6, maxi(2, w / 8)):
 			var px: Vector2 = mid + right * randf_range(-0.5, 0.5) * float(w)
 			vfx.spawn(Vfx.DOT, px, Vector2(randf() - 0.5, -randf()) * 0.5, 16 + randi() % 12, Color(0.85, 0.97, 1.0), Color(0.4, 0.6, 1.0, 0.0), 1.0, 0.4, true, 0.0)
@@ -6867,7 +7162,8 @@ func _place_mana_of(place: Dictionary) -> float:
 				n += 1
 	if place.has("door"):
 		n += Build.DOOR_W * Build.DOOR_H
-	if place.has("structure"):
+	if place.has("structure") and (place["structure"] as Dictionary).has("bp"):
+		# (a plan with no ground under it has no blueprint: nothing to cost)
 		for v2 in place["structure"]["bp"].c:
 			if (int(v2) & 0xffff) != 0xffff:
 				n += 1
@@ -7043,6 +7339,7 @@ func _update_remove(m: Mage, piece: Dictionary) -> void:
 		var r := remove_cells(m, cells, layer)
 		var got: int = r["n"]
 		if got > 0:
+			stats_unmade += got
 			audio.play("dig", m.pos + d, 0.6)
 			build_last = "%s: %d cells" % [piece["name"], got]
 		elif not r.has("mana"):
@@ -7887,7 +8184,7 @@ func start_game(use_save: bool) -> void:
 		space.load_state({})
 		player.inv.fill(0)
 		# (a modest start: a little Wisp Mote, no Spark Bolt and no levitation until they're forged)
-		known = ["mote", "conjure"]
+		known = ["mote", "conjure", "unmake"]
 		tier = 1
 		dig_r = 7.5
 		max_hp = 100
@@ -8468,8 +8765,8 @@ func _skiff_exhaust() -> void:
 # ------------------------------------------------------ the pocket's ways in ---
 ## (user, 24 Nov: "a return to ship function/return home function ... as a spell"; chose: the pocket is home):
 ## WISP RECALL, a channel of RECALL_CHANNEL ticks (hurt breaks it), takes you into your ship's pocket from
-## anywhere; the arch takes you back where you cast it. THE DOOR: F by the ship's door cell (`Skiff.door_world`),
-## on foot or walking its deck, steps in.
+## anywhere; the arch takes you back where you cast it. BELOW DECKS: G aboard the parked ship (`go_below`; the
+## hull door is gone) steps in, and the arch brings you back up aboard.
 const RECALL_CHANNEL := 45
 const DOOR_REACH := 14.0
 var _recall_now := false
@@ -8504,13 +8801,20 @@ func recall_tick(m: Mage) -> void:
 	if m.recall_t == 0 and m.local and not m.dead:
 		_recall_now = true
 
-## the ship's door within reach of m (on foot, or walking its deck): F steps into the pocket
-func door_in_reach(m: Mage) -> bool:
-	if pocket.active or skiff == null or not items.has("skiff") or skiff.door_cell.x < 0:
+## (user, 25 Nov: "the pocket dimension is a bit weird how its a seperate door attached to the ship"; chose: in
+## from inside the ship): aboard and parked, G goes below into the pocket; the arch brings you back up aboard.
+## The hull's door is gone (`door_in_reach` is always false; old ships keep the cell, unused).
+func go_below(m: Mage) -> bool:
+	if pocket.active or skiff == null or m.aboard != skiff:
 		return false
-	if m.aboard != null and not m.deck:
-		return false
-	return m.pos.distance_to(skiff.door_world()) < DOOR_REACH
+	if not shipyard.parked():
+		ui.toast("Land, or dock at a station or outpost, to go below into the pocket", Color(1, 0.75, 0.55), 2.5)
+		return true
+	pocket.enter(m, "ship")
+	return true
+
+func door_in_reach(_m: Mage) -> bool:
+	return false
 
 func _door_interact(m: Mage) -> bool:
 	if not door_in_reach(m):
@@ -8803,6 +9107,8 @@ func _apply_save(s: Dictionary) -> void:
 	known = []
 	for k in s.get("known", ["spark", "conjure"]):
 		known.append(str(k))
+	if known.has("conjure") and not known.has("unmake"):
+		known.insert(known.find("conjure") + 1, "unmake")     # (a journey from before Unmake: it has it too)
 	tier = int(s.get("tier", 1))
 	# saves from before the scale-up stored 4.5 / 7.0; the mage is bigger now (7.5 / 11)
 	var sd := float(s.get("dig_r", 7.5))
@@ -8862,6 +9168,7 @@ func _autosave_begin() -> void:
 		return
 	if chunks != null and not chunks.list.is_empty():
 		chunks.settle_all()
+	_raise_finish_all()              # (a plan still rising goes up whole first, so none of it is lost)
 	if not stamps.is_empty():
 		gpu.stamp(stamps, frame)
 		stamps.clear()
@@ -8915,6 +9222,7 @@ func save_world(blocking: bool, without_skiff := false) -> void:
 	# pieces still tumbling go into the world first, so nothing is lost
 	if chunks != null and not chunks.list.is_empty():
 		chunks.settle_all()
+	_raise_finish_all()              # (a plan still rising goes up whole first, so none of it is lost)
 	if not stamps.is_empty():
 		gpu.stamp(stamps, frame)
 		stamps.clear()
@@ -8938,6 +9246,7 @@ func save_world_async(without_skiff := false) -> void:
 	await saves_done()
 	if chunks != null and not chunks.list.is_empty():
 		chunks.settle_all()
+	_raise_finish_all()              # (a plan still rising goes up whole first, so none of it is lost)
 	if not stamps.is_empty():
 		gpu.stamp(stamps, frame)
 		stamps.clear()

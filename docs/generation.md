@@ -58,3 +58,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   over caves); everywhere else it is generated as grass over dirt, so ground never hides a pool you sink into.
   render.comp draws mud dark and glossy with a wet top sheen and bubbles. react.comp: loose (unanchored) dirt
   touching water turns to mud; unanchored mud in the open with no water near dries back to dirt.
+
+## Ore is rarer (user, 25 Nov: "ore is much too abundant. it is very easy to find ore. i dont want it to be be super hard to find but currently it is everywhere")
+- gen.comp `ORE_T` (0.025) raises every common ore's threshold (copper, coal, crystal, frost, ember, wisp): about
+  half the veins. Under the test planet's start (600 x 300 cells): copper 1772 -> 934, coal 1629 -> 870, wisp ore
+  149 -> 92, frost 58 -> 25, prism crystal 54 -> 18 (`_test_quest` prints it). Each kind's own ore is as it was.
+  Only worlds made from now on: saved worlds keep their cells.
+

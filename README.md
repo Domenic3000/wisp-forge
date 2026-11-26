@@ -53,14 +53,14 @@ one. Every journey grows a new star system of its own.
 
 | Key | Does |
 |---|---|
-| F | Talk, trade, open a chest or door, use a workshop or altar, board or leave the skiff, enter the pocket's door. At a bed with a roof over it: make it home |
+| F | Talk, trade, open a chest or door, use a workshop or altar, board or leave the skiff. At a bed with a roof over it: make it home |
 
 **Placing what you carry**
 
 Click anything in the satchel (I) to take it in your hand: the cast button becomes Conjure, which places it
 where you point, within your staff's reach. Sand, water and other loose stuff pours from the staff; blocks are
 painted with the brush or laid in shapes; furniture, workshops, torches and doors show where they'll go first.
-**Plans** (the satchel's Plans; B opens it) are rooms, houses, roofs, stairs, platforms and Level the Ground:
+**Plans** (the satchel's Plans; B opens it) are rooms, houses, roofs, stairs and platforms:
 take one in your hand and Conjure raises it from your materials, course by course, as you cast. A plan is
 never used up. You start with a few; others come from your first stone blocks or bricks, village shopkeepers
 and scrolls in chests.
@@ -68,15 +68,19 @@ and scrolls in chests.
 | Key | Does |
 |---|---|
 | Left mouse | Place (for a line, rectangle or frame: press, drag and let go) |
-| Right mouse | Dig; with blocks laid as a line, rectangle or frame, press, drag and let go to cut that shape (only blocks, or only back walls with V) |
+| Right mouse | Dig |
 | Shift + right mouse | Take furniture, a torch or a workshop whole |
-| G | How blocks are laid (and cut): brush, line, rectangle, frame |
+| G | How blocks are laid: brush, line, rectangle, frame |
 | [ ] | Thickness of a line or frame; a structure's width; a staircase's step |
 | - / = | A structure's storeys; a staircase's height |
 | V | Blocks in front, or as a back wall (planks, logs, stone, brick, sandstone, glass) |
 | R | The next design (furniture in a stack, a structure's variation, Level the Ground's fill) |
 | T | Mirror a piece; a structure's style |
 | B | Open the satchel at its Plans (aboard a parked ship: the ship builder) |
+
+**Unmake** (a spell beside Conjure) takes away what's built or grown: press, drag and let go. G picks a line, a
+rectangle, a frame or Level the Ground (press where the ground should be, drag along, let go; R the fill); V picks
+what it takes: blocks, back walls, furniture or everything; [ ] the thickness.
 
 **The skiff and space**
 
@@ -88,6 +92,7 @@ and scrolls in chests.
 | X | Stand up out of your seat to walk the deck, or sit back down |
 | Hold R | Mend the hull (planks or hull plating, and a little mana) |
 | B | The ship builder (only while it's parked) |
+| G | Go below into the ship's pocket (while it's parked); at the pocket's arch, back up aboard |
 | Shift | The Starsail, for crossing between stars (burns Wisp Cells) |
 | Mouse wheel, - / + | Zoom out in space |
 

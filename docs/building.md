@@ -178,18 +178,57 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - THE HAND: `hold_plan(id)` (`knows_plan`) puts {"what": "plan", "id"} in the hand (from the satchel's Plans,
   the belt, "p:<id>"); `hand_piece` gives `Build.plan_piece` (a copy, `_plan_cache`, with "_id"), so
   `_update_build` places it as build mode did; `_hand_key` runs `_build_key` on it ([ ], - =, T, R) and R cycles
-  `hand_fill` for Level the Ground. `_build_need` says what a plan takes; the hand bar shows a structure's cost.
+  `hand_fill`. `_build_need` says what a plan takes; the hand bar shows a structure's cost. (Level the Ground was a
+  plan at first; it moved into the Unmake spell.)
 - RAISED BY A SPELL: a plan's stamp (stairs, platform) or structure goes to `_raise(stamp, m, doors, at)`, not
   straight in: `_raise_tick` (from `_tick`) stamps a band of rows every `RAISE_EVERY` (3) ticks from the bottom
   row up (at most 28 bands), every band with the anchor (`ax`/`aw`) pinned when it was cast so they line up;
   the mage holds the casting pose (`cast_frame`), a rune ring opens at its foot, each course flares with sparks
   and light as matter streams to it from the staff, and its doors hang when the last course is in
-  (`stats_raised`). Paid for when cast. Build mode (tests, the pocket) still stamps at once.
-- TAKING AWAY: `_hand_cut(m, hp)` (from `_hand_update`): with a solid in hand laid as a line, rectangle or
-  frame, a right-drag cuts that shape (`remove_cells`, layer "front", or "back" when the hand lays back walls);
-  a left click cancels; the dig input is held off meanwhile (`stats_cut`). With the brush, right-click digs.
-- B on the planet calls `ui.open_plans()` (the satchel open, a word on where building went); in the pocket, or
-  with build mode already on, it toggles build mode; aboard a parked ship it's the ship builder. Build mode and
-  its code stay (the tests and the pocket use it).
+  (`stats_raised`). Paid for when cast. Build mode (tests, the pocket) still stamps at once. What's rising isn't
+  saved: every save (`save_world`, `save_world_async`, `_autosave_begin`) first calls `_raise_finish_all()`, which
+  stamps the rest of each at once and hangs its doors.
+- TAKING AWAY is the Unmake spell (below); the right-drag cut with a shaped block is gone (user: "it is confusing
+  how you have to select a block in order to get the removal tools").
+- B calls `ui.open_plans()` (the satchel open, a word on where building went), in the pocket too; with build mode
+  already on it toggles it off; aboard a parked ship it's the ship builder. Build mode and its code stay (the
+  tests use it).
 - Test: in `_test_inworld`: a Room plan raised (rising, the casting pose, cells growing over the ticks, its
   doors), a right-drag cut, B opening the plans; picture `plan_room.png`.
+
+## Unmake, a spell beside Conjure (user, 25 Nov: "it is confusing how you have to select a block in order to get the removal tools, maybe we should make deconstruction its own spell along side conjuring"; chose a spell with modes)
+- Defs.SPELLS "unmake" (after Conjure in `SPELL_ORDER`; known from the start, and added after Conjure to a journey
+  from before on load). Never cast (`_cast` returns): main `_unmake_update(m)` runs from the tick while it's the
+  chosen spell (planet, not aboard): build mode's Remove (`_update_remove`, press, drag, let go; a click alone
+  takes a square as thick as [ ] sets) with `unmake_shape` (G: line, rectangle, frame, level the ground) and
+  `unmake_layer` (V: `UNMAKE_LAYERS` blocks, back walls, furniture, everything), `unmake_thick` ([ ]); shape 4 is
+  Level the Ground (`_update_flatten`, R its fill `hand_fill`). `_unmake_key`, `unmake_hint` (the hand bar shows
+  while it's chosen: `hand_bar_on`), `stats_unmade`. Right-click still digs.
+- In the pocket (`pocket_unmake`): the cabin builder's Remove brush with Unmake's choice of what; levelling is for a
+  planet's land.
+
+## Doors between two rooms, and getting unwedged (fixes from play, 25 Nov)
+- F picks a door with `_door_for_f(m)`: a shut one in front of you (the way you face) within 28 first, else the
+  nearest (user: two Room plans side by side, "i cant open the second door from the left side only the right side":
+  the first room's open door was always nearest, so F shut it again). Foes walking into doors only look at shut
+  ones (`_door_near(..., closed)`).
+- A mage wedged in the ground (`move_body`; user: levitating into a gap "clipped into the ground and then i got
+  brought all the way to the surface through the ground"): after the small nudges, `_free_near` looks 10 cells
+  round, then he goes back to `Body.free_pos` (where he last stood clear, within 80); rising a cell a tick is the
+  last resort.
+
+## The pocket, the same as outside (user, 25 Nov: "The pocket dimension should use the same system for building as outside", "when you enter the ship i want the player model to go away", "its a seperate door attached to the ship"; chose: in from inside the ship)
+- In: aboard the parked ship (`shipyard.parked()`), G (`go_below`) goes below into the pocket ("ship"); out by the
+  arch (or G at the arch) you come back up aboard (`pocket.leave`: `skiff.board`). The hull's door is gone:
+  `door_in_reach` is always false, the ship builder has no Pocket Door, nothing is drawn on the hull; overlay shows
+  "[G] Go below to the pocket" aboard and parked. Seated riders aren't drawn (you're inside); up on the deck (X) you are.
+- Building: Conjure builds from your hand as outside (`hand_body`), plans too (`_pocket_plan`: a room, house, roof,
+  stairs or platform planned in the isle's cells on the highest ground under its footprint, a plinth down to the
+  ground, every cell on open isle; paid, then raised by `_raise` with the isle as its body, `_body_stamp` writing
+  each band: solids, back walls, furniture, torches, doorways left open); Unmake takes away (`pocket_unmake`); B opens
+  the plans. The pocket's tick runs `_raise_tick`. `hand_live` is cleared after the input is read (cleared before,
+  the cast button never reached the pocket's builder).
+- The isle's art: trees, bushes, the arch's pillars and the obelisk's plinth stand on the ground really there
+  (`_ground_row`; the edge curves away under its smooth top); an isle saved before is mended on load
+  (`_ground_features`: only empty cells straight under them, down to ground).
+
