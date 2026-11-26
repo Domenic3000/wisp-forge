@@ -10,7 +10,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   rigid bodies: a tree's detached cells (CPU flood from wood on the ground), or a building piece (loose blocks +
   the loose back walls and furniture joined to them) split along staggered, jittered lines. `update` steps them
   against the collision grid and each other (one averaged contact, impulse, friction); hard landings knock pixels
-  off as chips and rubble (`_splinter`); hits on mages/foes hurt (`_strike`). A tree collides by its wood only; its crown
+  off as chips and rubble (`_splinter`; a tree loses at most 1/40 of its pixels a landing, a building piece 1/6:
+  26 Nov, a felled tree splintered away too much of its wood); hits on mages/foes hurt (`_strike`). A tree collides by its wood only; its crown
   edge (`soft`) crushes: leaves that touch ground are knocked off as drifting leaf particles (`_crush`, once a
   frame), so the crown flattens instead of sinking. At rest (it hasn't moved or turned more than ~1 cell for 20
   frames) `_settle` writes it back with a raw stamp (stamp.comp mode 1: two words a cell, each layer only where

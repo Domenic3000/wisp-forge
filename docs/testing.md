@@ -22,9 +22,14 @@ Notes for development sessions on this part of the game. The rules that apply ev
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
-- Checks that fail now and then in the full run but not alone (22 Nov): the wild-life checks, the felled tree
-  (it lies whole but the wood counted round it can drop just past its bar), digging a pit (prints each hurt
-  with what fell). A test that sets something up in the air takes it away again (`_test_indoors` clears its
+- Checks that failed now and then in the full run but not alone (22 Nov), and what was done (26 Nov, user: "fix
+  the three flaky tests"): the felled tree lost too much wood as chips on landing (chunks.gd `_splinter` now knocks
+  off at most 1/40 of a tree's pixels, 1/6 of other pieces'); digging a pit was hit by a tree whose roots it
+  cut (`_clear_stretch(..., trees)` now also refuses a stretch with tree wood, roots or leaves in the back layer
+  within `trees` columns); the frog's hops are watched up to 720 frames (it sits and croaks between hops at random);
+  the deer in the storm is watched 240 frames, 120 cells from you (at 220 it was outside the simulated
+  neighbourhood, 192 cells each way, and stood frozen: `main.in_grid`); every creature gets 260 frames for its first
+  attack, and the report names any that failed ("(!) failed: ..."). A test that sets something up in the air takes it away again (`_test_indoors` clears its
   slab and house).
 - The wild-life checks (`_test_creatures`, `_test_ecology`) are set up near `start_pos` (where you arrived), in clear
   weather (rain off, `weather_timer` held), as when run alone. The skiff-travel check prints `[travel] a N ms

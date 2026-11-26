@@ -2161,7 +2161,7 @@ func run() -> void:
 	# digging a pit right under your feet, again and again, costs nothing: you drop in with the rim
 	# (on clear ground: nothing standing over you that the digging could bring down, and no cave under
 	# it: breaking into one brings its roof down after you, and that does hurt)
-	var pit_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) - 120, 30, 70, 6, 64)
+	var pit_st := _clear_stretch(int(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS) - 120, 30, 70, 6, 64, false, 40)
 	var pit_a: float = (float(pit_st.x) + 15.5) / float(Defs.NS) * TAU
 	_go(Vector2(cos(pit_a), sin(pit_a)) * (g.gpu.surf_at(pit_a).x + 14.0))
 	await _frames(60)

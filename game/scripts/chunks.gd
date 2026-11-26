@@ -890,7 +890,9 @@ func _splinter(c: Chunk, cp: Vector2, sp: float) -> void:
 		return
 	var ax := _axes(c)
 	var lc := _to_local(c, ax, cp)
-	var n_off := clampi(int((sp - BREAK_SPEED) * 7.0) + 3, 3, maxi(3, c.px.size() / 6))
+	# (a felled tree lands nearly whole: a few chips off its wood where it hits, its leaves shaken loose below;
+	# it lost up to a sixth of itself here, and the felled tree's check failed now and then on how hard it hit)
+	var n_off := clampi(int((sp - BREAK_SPEED) * 7.0) + 3, 3, maxi(3, c.px.size() / (40 if c.tree else 6)))
 	var by_d: Array = []
 	for k in c.px.size():
 		by_d.append([c.px[k].distance_squared_to(lc), k])

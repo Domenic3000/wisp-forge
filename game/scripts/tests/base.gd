@@ -154,10 +154,12 @@ func _soft_at(st: Vector2i, w: int) -> bool:
 				return false
 	return true
 
-func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0, quiet := false) -> Vector2i:
+## `trees`: no tree within that many columns either side (trees stand in the back layer, which the check for
+## something standing doesn't see: digging the pit's test into a tree's roots felled it onto the mage)
+func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0, quiet := false, trees := 0) -> Vector2i:
 	_cs_found = true
 	var b = g.builds
-	var why := {"level": 0, "label": 0, "wet": 0, "standing": 0, "hollow": 0}
+	var why := {"level": 0, "label": 0, "wet": 0, "standing": 0, "hollow": 0, "trees": 0}
 	for cs_d in range(0, 2400, 12):
 		for cs_s in [1, -1]:
 			var c0: int = from + cs_d * cs_s
@@ -186,6 +188,16 @@ func _clear_stretch(from: int, w: int, h: int, level := 3, below := 0, quiet := 
 			if not clear:
 				why["standing"] += 1
 				continue
+			if trees > 0:
+				var rt: Dictionary = g.gpu.read_rect(c0 - trees, gmin - h, w + trees * 2, h + 24)
+				for v3 in rt["bg"]:
+					var bm3: int = v3 & 255
+					if bm3 == Defs.WOOD or bm3 == Defs.ROOT or bm3 == Defs.LEAF:
+						clear = false
+						break
+				if not clear:
+					why["trees"] += 1
+					continue
 			if below > 0:
 				# (and solid ground under it, `below` rows down from its lowest point: no cave to break into)
 				var rb: Dictionary = g.gpu.read_rect(c0, gmax + 1, w, below)

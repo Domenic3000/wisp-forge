@@ -67,7 +67,8 @@ func _test_creatures() -> void:
 			cr_e.seen_pos = cr_home
 			cr_e.provoked = true           # (the neutral and the territorial fight once roused)
 			cr_group.append([cr_id, cr_e, cr_at, 0.0, 0.0, 9999.0, cr_e.pos])
-		for cr_f in 170:
+		# (a little longer than it was: now and then one creature hadn't got its first attack in by 170 frames)
+		for cr_f in 260:
 			await _frames(1)
 			if cr_f == 110:
 				g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("creatures_%d.png" % int(cr_g0 / 4.0)))
@@ -97,7 +98,7 @@ func _test_creatures() -> void:
 	_go(cr_orig)
 	await _frames(30)
 	_ok("every biome and depth has creatures that come after you, attack, stay on screen and keep moving",
-		cr_none.is_empty() and cr_bad.is_empty(), "%d creatures; places without any: %s; %s" % [cr_ids.size(), str(cr_none), "; ".join(cr_rows)])
+		cr_none.is_empty() and cr_bad.is_empty(), "%s%d creatures; places without any: %s; %s" % [("(!) failed: %s; " % ", ".join(cr_bad)) if not cr_bad.is_empty() else "", cr_ids.size(), str(cr_none), "; ".join(cr_rows)])
 
 ## The wild's own lives (ecology.gd): prey runs, a hunter runs prey down and eats, sleepers sleep in
 ## their off hours and wake to you, the territorial warn first, the neutral only fight back, fire and
@@ -301,9 +302,10 @@ func _test_ecology() -> void:
 	var ec_runs := 0
 	var ec_short := 0
 	var ec_run := 0
-	for ec_f9 in 300:
+	# (a frog sits and croaks between hops, at random: 300 frames sometimes held only one hop)
+	for ec_f9 in 720:
 		await _frames(1)
-		if ec_rf.dead:
+		if ec_rf.dead or (ec_runs >= 3 and ec_run == 0):
 			break
 		var ec_air: bool = String(g.overlay._boss_frame(ec_rf)).ends_with("_air")
 		if ec_air:
@@ -359,6 +361,8 @@ func _test_ecology() -> void:
 	ec_worm.dead = true
 
 	# ---- a storm sends them to shelter ----
+	# (you well away, so it isn't running from you, but inside the simulated neighbourhood (192 cells
+	# each way), or it stands frozen; a few seconds, as it may be grazing when the rain comes)
 	ec_stand.call(-120.0)
 	await _frames(20)
 	var ec_rain0: float = g.rain
@@ -367,12 +371,17 @@ func _test_ecology() -> void:
 	g.rain_target = 1.0
 	var ec_deer2 = ec_spawn.call("c_deer", 10.0)
 	var ec_shelter := false
-	for ec_f11 in 60:
+	var ec_why := ""
+	for ec_f11 in 240:
 		await _frames(1)
 		ec_shelter = ec_shelter or (ec_deer2.storm and ec_deer2.doing == "shelter")
+		if ec_shelter:
+			break
+	if not ec_shelter:
+		ec_why = " (storm %s, doing %s, afraid %d, asleep %s, eating %d)" % [ec_deer2.storm, ec_deer2.doing, ec_deer2.fear_t, ec_deer2.asleep, ec_deer2.eat_t]
 	g.rain = ec_rain0
 	g.rain_target = ec_rt0
-	ec_rows.append("%sa deer in the rain went for shelter %s" % ["" if ec_shelter else "(!) ", ec_shelter])
+	ec_rows.append("%sa deer in the rain went for shelter %s%s" % ["" if ec_shelter else "(!) ", ec_shelter, ec_why])
 	ec_good = ec_good and ec_shelter
 	ec_deer2.dead = true
 
