@@ -2752,29 +2752,33 @@ func run() -> void:
 	await _frames(40)
 	var sf_drift: float = sf_sk.pos.distance_to(sf_rest)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("skiff.png"))
-	# ---- the cabin is a room: open air the riders sit in, that can be built in ----
-	var sr_room := 0
-	for sr_k in sf_sk.w * sf_sk.h:
-		sr_room += sf_sk.room[sr_k]
-	var sr_head := true             # (a mage's height of room over each seat)
-	for sr_s in sf_sk.seat_cells:
-		for sr_dy in 18:
-			sr_head = sr_head and sf_sk.in_room(sr_s.x, sr_s.y - sr_dy) and sf_sk.at(sr_s.x, sr_s.y - sr_dy) == 0
-	var sr_outline: int = sf_sk.outline.size()
-	var sr_mass: float = sf_sk.mass
-	var sr_c: Vector2i = sf_sk.seat_cells[0] + Vector2i(-2, -12)
-	var sr_block: bool = sf_sk.place(sr_c.x, sr_c.y, Defs.PLANK)
-	var sr_back: bool = sf_sk.place(sr_c.x + 1, sr_c.y, Defs.BRICK, true)
-	var sr_hull: bool = sf_sk.place(sf_sk.w / 2, sf_sk.h - 3, Defs.PLANK)      # (into the hull: refused)
-	var sr_same: bool = sf_sk.outline.size() == sr_outline and sf_sk.mass > sr_mass
+	# ---- sails, not a glass bubble (user, 26 Nov: "Can we just have sails since the player is not gonna show up
+	# anymore"): no glass on any class, cloth and masts above the deck, still one piece; saved and loaded back
+	var sr_txt := []
+	var sr_ok := true
+	var Skc = load("res://scripts/skiff.gd")
+	for sr_kc in Skc.CLASSES:
+		var sr_sh = Skc.make(4242, sr_kc)
+		var sr_glass := 0
+		var sr_cloth := 0
+		var sr_mast := 0
+		for sr_k in sr_sh.w * sr_sh.h:
+			var sr_m: int = sr_sh.cells[sr_k]
+			if sr_m == Defs.GLASS or sr_sh.bg[sr_k] == Defs.GLASS:
+				sr_glass += 1
+			elif sr_m == Defs.SNOW or sr_m == Defs.SAND or sr_m == Defs.TILE:
+				sr_cloth += 1
+			elif (sr_m == Defs.TIMBER or sr_m == Defs.STARIRON) and sr_k / sr_sh.w < int((sr_sh.seat_cells[0] as Vector2i).y) - 10:
+				sr_mast += 1
+		var sr_one: bool = sr_sh.pieces().size() == 1
+		sr_ok = sr_ok and sr_glass == 0 and sr_cloth > 150 and sr_mast > 20 and sr_one
+		sr_txt.append("%s: glass %d, sail %d, mast %d, one piece %s" % [sr_kc, sr_glass, sr_cloth, sr_mast, sr_one])
 	g.save_world(true)
 	var sr_saved: bool = g.planet_state.has("skiff") and g.planet_state["skiff"].has("cells")
-	var sr_copy = Skiff.make(sf_sk.design_seed)
-	var sr_loaded: bool = sr_copy.load_cells(sf_sk.save_cells()) and sr_copy.at(sr_c.x, sr_c.y) == Defs.PLANK and sr_copy.bg[sr_c.y * sr_copy.w + sr_c.x + 1] == Defs.BRICK and sr_copy.made[sr_c.y * sr_copy.w + sr_c.x] == 1
-	var sr_took: bool = sf_sk.remove(sr_c.x, sr_c.y) == Defs.PLANK and sf_sk.remove(sr_c.x + 1, sr_c.y, true) == Defs.BRICK
-	_ok("the skiff's cabin is a room that can be built in (and is saved cell by cell)",
-		sr_room > 300 and sr_head and sr_block and sr_back and not sr_hull and sr_same and sr_saved and sr_loaded and sr_took and sf_sk.outline.size() == sr_outline,
-		"%d cells of room; headroom over the seats %s; a block built inside %s, a back wall %s, into the hull %s; outline the same (%d) %s; saved with the world %s; loaded back into a fresh skiff %s; taken out again %s" % [sr_room, sr_head, sr_block, sr_back, sr_hull, sr_outline, sr_same, sr_saved, sr_loaded, sr_took])
+	var sr_copy = Skiff.make(sf_sk.design_seed, sf_sk.klass)
+	var sr_loaded: bool = sr_copy.load_cells(sf_sk.save_cells()) and sr_copy.cells == sf_sk.cells
+	_ok("ships carry sails, not a glass bubble (you're inside, never drawn), and are saved cell by cell",
+		sr_ok and sr_saved and sr_loaded, "%s; saved with the world %s; loaded back %s" % ["; ".join(sr_txt), sr_saved, sr_loaded])
 	# aboard
 	g.player.pos = sf_sk.pos
 	var sf_board: bool = g._skiff_interact(g.player) and g.player.aboard == sf_sk

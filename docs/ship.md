@@ -46,7 +46,15 @@ Notes for development sessions on this part of the game. The rules that apply ev
   grows it from the same parts (`_hull`/`_trim` take materials, `_engine(n)`, `_fin(more)`); the seed picks its
   look. `cls()` is its class's row: `drive()` gives its speed (thrust and cruise), `hold_cap()` its crates,
   `damage` carves `r / sqrt(armour)`, space `_fire_cannon` fires `guns` bolts (none: a toast). Seats stay inside
-  (four, never drawn); X no longer walks the deck.
+  (four, never drawn, forward by the helm at 0.8 of its length); X no longer walks the deck.
+- SAILS, not a glass bubble (user, 26 Nov: "You still have the bubble where the player goes. Can we just have sails
+  since the player is not gonna show up anymore"): `_sails` grows masts (timber; star iron on the Corvette) with a
+  glowing wisp pennant, and by class: the Skiff one square sail of white canvas (SNOW) with the wisp's sigil and a
+  jib on a stay to the bow (`_square`, `_jib`), the Cutter a long fore-and-aft sail on a boom swept aft
+  (`_fore_aft`) and a jib, the Hauler two square sails of tan canvas (SAND), the Corvette two of red war-canvas
+  (TILE). Every sail's foot is 8 rows above the deck so crates stand under it (there's no enclosed room now: they
+  go on the open deck). `_canopy` is left for the old keel only. Icons match. Test: the skiff check "ships carry
+  sails" (no glass on any class, cloth and masts, one piece, saved and loaded back).
 - Owned ships (main.gd): `items["ships"]` class -> seed, `items["ship_class"]` the one you fly, `items["skiff"]` its
   seed. Recipes: "skiff" (the Wisp Skiff, round the Core Drive: forged whole, no keel), "ship_cutter" (an outpost
   shipwright, 140 coins; plans in a chest from level 2), "ship_hauler" (shipwright, 180), "ship_corvette" (a

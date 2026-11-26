@@ -229,22 +229,6 @@ func _design() -> void:
 			trim_m = Defs.WISPBAR
 	var extra := 12 if klass == "hauler" else (6 if klass == "cutter" else 0)
 	setup(length + 4, deck + depth + 2 + extra)
-	var cx := int(length * (0.5 + rng.randf_range(0.0, 0.06)))   # the cockpit's middle
-	var crx := 15 + rng.randi_range(0, 3)
-	var cry := deck - 1
-	match klass:
-		"cutter":
-			cx = int(length * 0.62)
-			crx = 11 + rng.randi_range(0, 2)
-			cry = deck - 4
-		"hauler":
-			cx = int(length * 0.8)
-			crx = 12 + rng.randi_range(0, 2)
-			cry = deck - 4
-		"corvette":
-			cx = int(length * 0.66)
-			crx = 12 + rng.randi_range(0, 2)
-			cry = deck - 6
 	_hull(length, deck, depth, rng, main_m, band_m)
 	_trim(length, deck, trim_m)
 	_engine(deck, depth, 2 if klass == "hauler" else 1)
@@ -260,10 +244,14 @@ func _design() -> void:
 			_fin(deck, rng)
 		_:
 			_fin(deck, rng)
-	_canopy(cx, deck, crx, cry, rng, Defs.HULL if klass == "corvette" else Defs.WOOD)   # (last: its room stays clear)
+	# (sails, not a glass bubble: you're inside the ship now, never drawn; user, 26 Nov: "You still have the bubble
+	# where the player goes. Can we just have sails since the player is not gonna show up anymore")
 	if main_m == Defs.HULL:
 		_plates()
-	seat_cells = [Vector2i(cx + 4, deck - 1), Vector2i(cx - 6, deck - 1), Vector2i(cx, deck - 1), Vector2i(cx - 2, deck - 1)]
+	_sails(length, deck, rng)
+	# (seats kept only for the riders' places: inside the ship, never drawn; forward, by the helm)
+	var hx := int(float(length) * 0.8)
+	seat_cells = [Vector2i(hx, deck - 1), Vector2i(hx - 2, deck - 1), Vector2i(hx + 2, deck - 1), Vector2i(hx - 4, deck - 1)]
 	riders = []
 	riders.resize(SEATS)
 	rebuild()
@@ -334,6 +322,123 @@ func _canopy(cx: int, deck: int, rx: float, ry: float, rng: RandomNumberGenerato
 				cells[j * w + i] = 0
 				bg[j * w + i] = Defs.GLASS                 # the room inside: a glass back pane
 				bgv[j * w + i] = randi() & 3
+
+## Sails by class, grown from parts: masts (timber, or star iron on a plated hull) with a yard, square sails
+## bellied forward with seams and shading, a jib on a stay down to the bow, a fore-and-aft sail on a boom for the
+## Cutter, a wisp sigil on the Skiff's mainsail, a glowing pennant at each masthead.
+##   skiff: one mast, a square sail of white canvas with the sigil, and a jib
+##   cutter: one tall mast, a long fore-and-aft sail swept aft, and a jib
+##   hauler: two masts of tan canvas, square sails
+##   corvette: two star-iron masts, square sails of red war-canvas
+func _sails(length: int, deck: int, rng: RandomNumberGenerator) -> void:
+	var cloth := Defs.SNOW
+	var mast_m := Defs.TIMBER
+	var masts := [int(float(length) * (0.5 + rng.randf_range(0.0, 0.06)))]
+	match klass:
+		"cutter":
+			masts = [int(float(length) * 0.6)]
+		"hauler":
+			cloth = Defs.SAND
+			masts = [int(float(length) * 0.36), int(float(length) * 0.64)]
+		"corvette":
+			cloth = Defs.TILE
+			mast_m = Defs.STARIRON
+			masts = [int(float(length) * 0.46), int(float(length) * 0.8)]
+	var bow := length + 1
+	for mk in masts.size():
+		var m0: int = masts[mk]
+		var top := 1 + (5 if mk > 0 and klass == "hauler" else 0) + (4 if mk == 1 and klass == "corvette" else 0)
+		for j in range(top, deck):
+			put(m0, j, mast_m, 0)
+			put(m0 + 1, j, mast_m, 1)
+		# a pennant flying aft from the masthead (it glows)
+		for pk in 6:
+			for pj in range(-(1 if pk < 3 else 0), (1 if pk < 3 else 0) + 1):
+				put(m0 - 1 - pk, top + 1 + pj, Defs.WISPBAR, 1 if pk % 2 == 0 else 3)
+		if klass == "cutter":
+			_fore_aft(m0, top, deck, cloth, rng)
+		else:
+			var sw := 16 + rng.randi_range(0, 4) + (4 if mk == 0 and masts.size() == 1 else 0)
+			if klass == "hauler" or klass == "corvette":
+				sw = 18 + rng.randi_range(0, 3) - mk * 2
+			_square(m0, top + 3, deck - 8, sw, cloth, mast_m, mk == 0 and klass == "skiff")     # (its foot clear of crates on deck)
+		# a jib on a stay from the foremost masthead down to the bow
+		if mk == masts.size() - 1 and klass != "corvette" and klass != "hauler":
+			_jib(m0 + 2, top + 2, bow - 3, deck - 2, cloth, deck - 8)
+
+## a square sail hung from a yard at row y0 down to y1, `sw` wide round the mast at m0, bellied toward the bow
+func _square(m0: int, y0: int, y1: int, sw: int, cloth: int, yard_m: int, sigil: bool) -> void:
+	for i in range(m0 - sw / 2 - 1, m0 + sw / 2 + 3):
+		put(i, y0, yard_m, 2)                           # the yard
+	var mid := m0 + 1
+	for j in range(y0 + 1, y1):
+		var f := float(j - y0) / float(maxi(1, y1 - y0))
+		var belly := int(round(sin(f * PI) * 3.0))
+		var l := m0 - sw / 2 + belly
+		var r := m0 + sw / 2 + 1 + belly
+		for i2 in range(l, r + 1):
+			if i2 == m0 or i2 == m0 + 1:
+				continue
+			# (lit where it bellies out toward the light, shaded at its edges and foot; a seam every five rows)
+			var edge: bool = i2 <= l or i2 >= r or j >= y1 - 1
+			var v := 0
+			if (j - y0) % 5 == 0:
+				v = 1
+			elif edge:
+				v = 3
+			elif absi(i2 - mid - belly) < sw / 4 and f > 0.2 and f < 0.8:
+				v = 2
+			put(i2, j, cloth, v)
+	if sigil:
+		# the wisp's sigil: a small glowing diamond in the middle of the sail
+		var sy := (y0 + y1) / 2
+		var sx := mid + 3
+		for dj in range(-3, 4):
+			for di in range(-3, 4):
+				var dd := absi(di) + absi(dj)
+				if dd == 3 or (dd == 0):
+					put(sx + di, sy + dj, Defs.WISP, 3 if dd == 0 else 1)
+
+## a fore-and-aft sail (the Cutter's): from the masthead down to a boom along the deck, swept aft, its back edge curved
+func _fore_aft(m0: int, top: int, deck: int, cloth: int, rng: RandomNumberGenerator) -> void:
+	var foot := deck - 8
+	var reach := 22 + rng.randi_range(0, 6)
+	for i in range(m0 - reach - 2, m0):
+		put(i, foot + 1, Defs.TIMBER, 2)               # the boom
+	for j in range(top + 2, foot + 1):
+		var f := float(j - (top + 2)) / float(maxi(1, foot - top - 2))
+		var back := int(round(float(reach) * pow(f, 0.8)))
+		for i2 in range(m0 - back, m0):
+			var v := 0
+			if i2 <= m0 - back + 1:
+				v = 3
+			elif (j - top) % 5 == 0:
+				v = 1
+			elif i2 > m0 - back / 2:
+				v = 2
+			put(i2, j, cloth, v)
+
+## a jib: the stay from (x0, y0) at the masthead down to the bow at (x1, y1), and a triangle of sail under it
+func _jib(x0: int, y0: int, x1: int, y1: int, cloth: int, foot: int) -> void:
+	var dx := maxi(1, x1 - x0)
+	var dy := maxi(1, y1 - y0)
+	var px := x0
+	var py := y0
+	for k in dx + dy + 1:
+		put(px, py, Defs.TIMBER, 3)                    # (stepped, so the stay stays in one piece)
+		var t := float(px - x0 + 1) / float(dx)
+		if float(py - y0) / float(dy) < t and py < y1:
+			py += 1
+		elif px < x1:
+			px += 1
+		else:
+			py += 1
+		if px >= x1 and py >= y1:
+			break
+	for j in range(y0 + 3, mini(y1 - 1, foot)):
+		var reach := int(float(j - y0) / float(dy) * float(dx)) - 1
+		for i in range(x0, x0 + reach):
+			put(i, j, cloth, 3 if i >= x0 + reach - 1 else (1 if (j - y0) % 5 == 0 else 0))
 
 ## (how far out a point is in an ellipse shrunk by `inset` cells: 1 on its edge)
 func _ellipse(x: float, y: float, rx: float, ry: float, inset: float) -> float:
