@@ -408,6 +408,38 @@ func mystery_steps() -> Array:
 		return []
 	var nm := String(Defs.make_planet(wi)["name"])
 	var md: Dictionary = (game.items.get("myst", {}) as Dictionary).get(str(wi), {})
+	if Defs.exotic_kind(wi) == "star":
+		var been3 := not md.is_empty() or int(game.planet.get("index", 0)) == wi
+		var lit3 := int(md.get("lit", 0))
+		return [
+			{"title": "Forge the Heat Shield", "done": game.items.has("heatshield") or been3,
+				"how": "A corona of fire wraps %s and sears through any hull. Fire opal (from a volcanic world), obsidian, star iron and hull plating make a Heat Shield at the Wisp Forge that carries the skiff through it." % nm},
+			{"title": "Fly to %s" % nm, "done": been3,
+				"how": "Through the corona and down onto a raft of slag. The sea round the rafts is molten: don't fall in. Its air scorches (the Heat Ward), and when the star flares its light sears everything under the open sky: get under rock until it passes, or forge the Solar Shroud (Wards)."},
+			{"title": "Find the Solar Sanctum", "done": bool(md.get("read", false)) or bool(md.get("solved", false)),
+				"how": "A domed hall at one end of the widest raft, a crystal eye on its dome. The inscription over its door says what it wants (F to read it)."},
+			{"title": "Lead the well's light into the eye (%d/5 lenses lit)" % lit3, "done": bool(md.get("solved", false)),
+				"how": "At the raft's other end the sun well throws its light the way its lens faces; five sun lenses stand on spires between. F turns a lens an eighth: each lit lens throws the light on to the nearest lens the way it faces. Bring it into the eye on the Sanctum's dome."},
+			{"title": "Claim what the Sanctum keeps", "done": bool(md.get("claimed", false)),
+				"how": "The ward is broken: F at the altar in the Sanctum's vault."},
+		]
+	if Defs.exotic_kind(wi) == "void":
+		var been4 := not md.is_empty() or int(game.planet.get("index", 0)) == wi
+		var sh := int(md.get("shards", 0))
+		return [
+			{"title": "Forge the Void Anchor", "done": game.items.has("voidanchor") or been4,
+				"how": "%s is a black hole: its horizon pulls a ship in and tears it apart. Void essence, xenite (from derelict stations), star iron and hull plating make a Void Anchor at the Wisp Forge that holds the skiff together through it." % nm},
+			{"title": "Fall into %s" % nm, "done": been4,
+				"how": "Through the horizon into the Hollow inside: shards of the worlds it swallowed, adrift over rifts. Don't sink far into a rift: the dark down there unmakes you (the Mantle of the Void bears it)."},
+			{"title": "Find the Singularity Gate", "done": bool(md.get("read", false)) or bool(md.get("solved", false)),
+				"how": "A gate of runestone near where you come down. The inscription on it says what it wants (F to read it)."},
+			{"title": "Win the five echo shards (%d/5)" % sh, "done": sh >= 5 or bool(md.get("solved", false)),
+				"how": "An echo shrine stands on each shard of a world. F at one wakes the echo of that world's guardian; beat it and the shrine gives up its shard."},
+			{"title": "Set the shards in the Gate", "done": bool(md.get("solved", false)),
+				"how": "F at the Singularity Gate with all five shards: its ward breaks."},
+			{"title": "Claim what the Gate keeps", "done": bool(md.get("claimed", false)),
+				"how": "F at the altar behind the Gate."},
+		]
 	if Defs.exotic_kind(wi) == "giant":
 		var been2 := not md.is_empty() or int(game.planet.get("index", 0)) == wi
 		var lit := int(md.get("lit", 0))
@@ -450,6 +482,10 @@ func mystery_notes() -> String:
 	if wi < 0:
 		return ""
 	var md: Dictionary = (game.items.get("myst", {}) as Dictionary).get(str(wi), {})
+	if Defs.exotic_kind(wi) == "star":
+		return "lenses lit: %d of 5" % int(md.get("lit", 0)) if not bool(md.get("solved", false)) else "the Sanctum is open"
+	if Defs.exotic_kind(wi) == "void":
+		return "echo shards: %d of 5" % int(md.get("shards", 0)) if not bool(md.get("solved", false)) else "the Gate is open"
 	if Defs.exotic_kind(wi) == "giant":
 		return "beacons burning: %d of 5" % int(md.get("lit", 0)) if not bool(md.get("solved", false)) else "the Eye is open"
 	var notes: Array = md.get("notes", [-1, -1, -1, -1, -1])
@@ -463,11 +499,29 @@ func _mystery_tick(here: int) -> void:
 	var it: Dictionary = game.items
 	if Defs.is_exotic(here) and not game.space.active and not it.has("myst_landed_%d" % here):
 		it["myst_landed_%d" % here] = true
+		if Defs.exotic_kind(here) == "star":
+			say("A star, gone dim and crusted over. Mind the molten sea, and when it flares, get under rock. On the widest raft a sanctum keeps something, and a well of fire with lenses round it. L shows what we know.")
+			return
+		if Defs.exotic_kind(here) == "void":
+			say("Inside the horizon... Shards of the worlds it swallowed, and echoes on them. Keep out of the rifts' depths. A gate stands near, sealed. L shows what we know.")
+			return
 		if Defs.exotic_kind(here) == "giant":
 			say("No ground here, only isles adrift over the clouds, and the air below crushes. On the far side something watches from the highest isle: the Eye of the Storm. L shows what we know.")
 		else:
 			say("This world sings under its waters. Five tide-stones on its islands and shelves hold a song; on the deepest floor a temple waits to hear it. L shows what we know.")
 		return
+	if game.space.active and not it.has("myst_heard_star") and not it.has("heatshield"):
+		for b3 in game.space.bodies:
+			if String(b3.get("exotic", "")) == "star" and (game.player.pos - (b3["pos"] as Vector2)).length() < float(b3["space"]) + 7000.0:
+				it["myst_heard_star"] = true
+				say("A star, %s, but a dying one: its fire has crusted over. Its corona would sear through the hull; a Heat Shield would carry us through. Something old waits on it." % String(b3["name"]))
+				return
+	if game.space.active and not it.has("myst_heard_void") and not it.has("voidanchor"):
+		for b4 in game.space.bodies:
+			if String(b4.get("exotic", "")) == "void" and (game.player.pos - (b4["pos"] as Vector2)).length() < float(b4["space"]) + 7000.0:
+				it["myst_heard_void"] = true
+				say("Careful: %s is a black hole. Its horizon pulls us in and tears at us. A Void Anchor would hold the ship together, all the way down into what lies inside." % String(b4["name"]))
+				return
 	if game.space.active and not it.has("myst_heard_giant") and not it.has("lattice"):
 		for b2 in game.space.bodies:
 			if String(b2.get("exotic", "")) == "giant" and (game.player.pos - (b2["pos"] as Vector2)).length() < float(b2["space"]) + 7000.0:

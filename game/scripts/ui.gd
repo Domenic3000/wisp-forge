@@ -1374,7 +1374,7 @@ func toggle_journal(g) -> void:
 		list.add_child(_label("✦ This chapter is done. Land on the next world and the wisp will speak again.", 12, GOLD))
 	# a mystery heard of (a deep ocean world in this system): its steps and the song so far
 	var mw: int = q.mystery_world()
-	if mw >= 0 and (g.items.has("myst_heard") or g.items.has("myst_heard_giant") or g.items.has("keel") or g.items.has("lattice") or (g.items.get("myst", {}) as Dictionary).has(str(mw)) or Defs.is_exotic(int(g.planet.get("index", 0)))):
+	if mw >= 0 and (g.items.has("myst_heard") or g.items.has("myst_heard_giant") or g.items.has("myst_heard_star") or g.items.has("myst_heard_void") or g.items.has("keel") or g.items.has("lattice") or g.items.has("heatshield") or g.items.has("voidanchor") or (g.items.get("myst", {}) as Dictionary).has(str(mw)) or Defs.is_exotic(int(g.planet.get("index", 0)))):
 		list.add_child(_rule(200))
 		list.add_child(_label("A mystery: %s" % String(Defs.make_planet(mw)["name"]), 12, CREAM))
 		var mfirst := true
@@ -1390,7 +1390,7 @@ func toggle_journal(g) -> void:
 				list.add_child(mh)
 			else:
 				list.add_child(_label("· " + String(ms["title"]), 12, Color(0.62, 0.6, 0.8)))
-		list.add_child(_label(("The song: " if Defs.exotic_kind(mw) == "abyss" else "The beacons: ") + q.mystery_notes(), 12, Color(0.7, 0.85, 1.0)))
+		list.add_child(_label(({"abyss": "The song: ", "giant": "The beacons: ", "star": "The relay: ", "void": "The Gate: "}.get(Defs.exotic_kind(mw), "")) + q.mystery_notes(), 12, Color(0.7, 0.85, 1.0)))
 	list.add_child(_rule(200))
 	list.add_child(_label("The wisp's gifts", 12, CREAM))
 	for pw in QuestScript.POWERS:

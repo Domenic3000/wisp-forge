@@ -153,6 +153,7 @@ var _mask: Shader
 var belt := 0.0                 # how deep you are in a storm belt (0 outside it, 1 at its inner edge)
 var belt_max := 0.0             # (the deepest since the tests last reset it)
 var belt_hits := 0              # (lightning strikes taken: the tests read it)
+var belt_strikes := 0       # (every strike, burn, shard and tear a barrier gives, near the view or not: the test mode)
 var bolts := []                 # lightning out here: [points (world), frames left]
 var _flash := 0.0               # (a strike lights up the view)
 var _belt_warn := 0
@@ -657,6 +658,20 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 			# swirl; user, 23 Nov: "different hazards to traverse to get to different types of planets")
 			v += t * (0.25 + 1.1 * f)
 			belt_dir = (n + t * 1.4).normalized()
+		if bar == "horizon":
+			# (a black hole's horizon pulls you IN, and tears at you the deeper you go; at its inner edge it spits
+			# you out battered, as a gravity well's heart does)
+			v -= n * (0.05 + 0.35 * f)
+			if f >= 1.0:
+				v = n * 16.0
+				_tear(p, 1.0, col_of(b))
+			elif randf() < 0.01 + 0.05 * f:
+				_tear(p, f, col_of(b))
+			_belt_warn -= 1
+			if _belt_warn <= 0:
+				_belt_warn = 420
+				game.ui.toast("%s %s. The Void Anchor (Wisp Forge, Travel) holds the skiff together through it." % [b["name"], String(Defs.BARRIERS["horizon"]["tell"])], col_of(b).lightened(0.4), 5.0)
+			continue
 		v += n * (0.03 + 0.85 * f * f)
 		var vin := -v.dot(n)
 		if vin > 0.0:
@@ -672,7 +687,7 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 		# through the hull, a shard ring's tumbling ice and rock hole it; at the inner edge each throws you clear
 		var rate := (0.004 + 0.035 * f) * (4.0 if thunder else 1.0)
 		match bar:
-			"radiation":
+			"radiation", "corona":
 				if f >= 1.0 or randf() < rate * 1.6:
 					v += n * (1.0 + 3.0 * f)
 					_irradiate(p, f, col)
@@ -699,9 +714,29 @@ func _storm(p: Vector2, v: Vector2) -> Vector2:
 			game.ui.toast("%s %s. The %s (Wisp Forge, Travel) carries the skiff through every %s." % [b["name"], tell, String(bd["key_name"]), barrier_name(bi2) if not thunder else "storm belt"], col.lightened(0.4), 5.0)
 	return v
 
+func col_of(b: Dictionary) -> Color:
+	return b["belt"]
+
+## a black hole's horizon tearing at whoever is at p: it hurts aboard or not, wrenches the view, and threads of
+## violet light stream away into the dark
+func _tear(p: Vector2, f: float, col: Color) -> void:
+	belt_strikes += 1
+	if p.distance_to(game.cam_c) < 500.0:
+		_flash = maxf(_flash, 0.1 + 0.25 * f)
+		belt_hits += 1
+		game.shake = maxf(game.shake, 3.0 + 6.0 * f)
+		game.audio.play("rumble", null, 0.6)
+	for k in 14:
+		var a := randf() * TAU
+		game._particle(p + Vector2(cos(a), sin(a)) * randf_range(4.0, 20.0), Vector2(cos(a), sin(a)) * randf_range(1.0, 3.5), 18 + randi() % 16, col.lightened(0.2), true, 0.0)
+	for m in game.players:
+		if not m.dead and m.pos.distance_to(p) < 60.0:
+			game.hurt(m, 2.0 + 7.0 * f, Vector2.ZERO, true)
+
 ## a radiation belt's light burning through the hull onto whoever is at p: it hurts aboard or not (a hull
 ## doesn't stop it), and the view flares its colour
 func _irradiate(p: Vector2, f: float, col: Color) -> void:
+	belt_strikes += 1
 	if p.distance_to(game.cam_c) < 500.0:
 		_flash = maxf(_flash, 0.12 + 0.18 * f)
 		belt_hits += 1
@@ -1578,7 +1613,30 @@ func _draw_belts(xf: Transform2D) -> void:
 				fpts.append(xf * f0)
 			draw_polyline(fpts, Color(1.0, 0.95, 0.8, 0.8), 2.0)
 		var bar := String(b.get("barrier", ""))
-		if bar == "radiation":
+		if bar == "corona":
+			# a corona: loops of fire arching up off the star and falling back
+			for q4 in 7:
+				var pa := ac - span + 2.0 * span * fposmod(float(q4) * 0.137 + tt * 0.00011, 1.0)
+				var ph4 := fposmod(tt * 0.004 + float(q4) * 0.29, 1.0)
+				var ht := (r_out - r_in) * (0.4 + 0.6 * sin(ph4 * PI))
+				var lpts := PackedVector2Array()
+				for lq in 17:
+					var u4 := float(lq) / 16.0
+					var aa4 := pa + (u4 - 0.5) * 0.02
+					var rr4 := r_in + sin(u4 * PI) * ht
+					lpts.append(xf * (c + Vector2(cos(aa4), sin(aa4)) * rr4))
+				draw_polyline(lpts, Color(1.0, 0.7 + 0.2 * sin(tt * 0.05 + float(q4)), 0.3, 0.35 * sin(ph4 * PI)), 5.0)
+		if bar == "horizon":
+			# an event horizon: the accretion disc's streaks wheeling round, brightening inward
+			for q5 in 5:
+				var rr5 := r_in + (r_out - r_in) * (0.1 + 0.18 * float(q5))
+				var hpts := PackedVector2Array()
+				for hq in 48:
+					var ha := ac - span + 2.0 * span * float(hq) / 47.0
+					var wob5 := sin(ha * 60.0 - tt * 0.04 * (1.0 + float(q5) * 0.3)) * 18.0
+					hpts.append(xf * (c + Vector2(cos(ha), sin(ha)) * (rr5 + wob5)))
+				draw_polyline(hpts, Color(col.r, col.g, col.b, 0.12 + 0.06 * float(5 - q5)), 4.0)
+		if bar == "radiation" or bar == "corona":
 			# a radiation belt: slow rippling bands of burning light through it, and motes that flare and die
 			for band in 3:
 				var rr0 := r_in + (r_out - r_in) * (0.25 + 0.3 * float(band))
@@ -1818,6 +1876,25 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 			var nv := noise.get_noise_2d(float(x), float(y))
 			var bi := Defs.biome_index_at(pl, ang + nv * 0.6 / float(cols.size()) * TAU)
 			var c: Color = cols[bi]
+			if String(pl.get("exotic", "")) == "star":
+				# (a dying star: white-gold fire, darker rafts of slag drifting on it; it gives its own light)
+				var heat := 0.5 + 0.5 * sin(s.x * 9.0 + nv * 5.0) * cos(s.y * 7.0 - nv * 3.0)
+				c = Color(1.0, 0.95, 0.7).lerp(Color(1.0, 0.55, 0.18), heat * 0.7 + s.length() * 0.3)
+				if nv > 0.25:
+					c = c.lerp(Color(0.25, 0.12, 0.08), clampf((nv - 0.25) * 3.0, 0.0, 0.8))
+				c.a = 1.0
+				img.set_pixel(x, y, c)
+				continue
+			if String(pl.get("exotic", "")) == "void":
+				# (a black hole: nothing at all, ringed by its disc of light)
+				var rl := s.length()
+				c = Color(0.0, 0.0, 0.0)
+				if rl > 0.62:
+					var ring := sin(atan2(s.y, s.x) * 3.0 + rl * 30.0 + nv * 4.0) * 0.5 + 0.5
+					c = Color(0.9, 0.55, 1.0).lerp(Color(1.0, 0.85, 0.6), ring) * clampf((rl - 0.62) * 4.0, 0.0, 1.0)
+				c.a = 1.0
+				img.set_pixel(x, y, c)
+				continue
 			if String(pl.get("exotic", "")) == "giant":
 				# (a gas giant: bands of amber and rust across it, swirled, with a great storm's eye)
 				var band := 0.5 + 0.5 * sin(s.y * 15.0 + nv * 3.0)

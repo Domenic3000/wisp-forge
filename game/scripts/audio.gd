@@ -32,7 +32,7 @@ var music_volume := 0.6
 
 var tracks := {}              # mood, "kind:mood" or "biome:<biome>:mood" -> Array of streams
 const MOODS := ["surface_day", "surface_night", "underground", "deep", "boss", "space", "title", "village", "pocket", "outpost", "derelict"]
-const KINDS := ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss", "giant"]
+const KINDS := ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss", "giant", "star", "void"]
 ## when a mood has no track of its own (nor its kind's or biome's), the next one along is tried
 const FALLBACK := {"surface_night": "surface_day", "deep": "underground", "boss": "underground", "title": "surface_day",
 	"underground": "surface_night", "space": "surface_night", "village": "surface_day", "pocket": "surface_night",
@@ -464,10 +464,17 @@ func _amb_targets() -> Dictionary:
 			if wk == "rain" or game.sky_ev == "hail":
 				t["rain"] = clampf(game.sky_rain * 1.1, 0.0, 0.8) * (open * 0.6 + 0.4) * surf
 			var kind := _kind()
-			var warm := wk != "snow" and wk != "ash" and kind != "frozen" and kind != "volcanic" and kind != "giant"
+			var warm := wk != "snow" and wk != "ash" and not kind in ["frozen", "volcanic", "giant", "star", "void"]
 			if warm and game._local_daylight(game.player.pos) < 0.3:
 				t["crickets"] = 0.3 * (1.0 - clampf(game.sky_rain * 1.5, 0.0, 1.0)) * surf
 			t["sea"] = 0.5 * float(here["sea"])
+			if kind == "star":
+				# (a dying star's sea is molten: it roars like the deep's lava, not waves)
+				t["deep"] = maxf(float(t.get("deep", 0.0)), 0.45 * float(here["sea"]) + 0.15 * surf)
+				t["sea"] = 0.0
+			if kind == "void":
+				t["wind"] = 0.0          # (no air moves in the Hollow; the far drone of space instead)
+				t["space"] = 0.35 * surf
 			if pl == "underground":
 				t["cave"] = 0.5
 			elif pl == "deep":

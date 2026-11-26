@@ -1,4 +1,4 @@
-# Wisp Forge: Exotic worlds: the deep ocean world and the gas giant
+# Wisp Forge: Exotic worlds: the deep ocean world, the gas giant, the dying star and the black hole
 
 Notes for development sessions on this part of the game. The rules that apply everywhere are in
 `CLAUDE.md` at the top of the repo; read it first.
@@ -83,3 +83,79 @@ Notes for development sessions on this part of the game. The rules that apply ev
   the lattice, standing on the landing isle with no ground in reach, the crushing air and the Depth Seal, the
   inscription, four beacons lit and one let burn out, all five as one and the ward's cells gone, the Storm
   Crown; pictures `giant_landing/beacon/eye/vault/journal.png`.
+
+## The dying star (26 Nov; the roadmap's "stars (a heat shield to land)", built while the user was away)
+- Slot 2: `Defs.exotics_of(0)` is all four exotics; later systems have a star one time in three (its own draw, seed
+  59). `_star_planet`: kind/exotic "star", eight biomes alternating "slag" (rafts of crust: MAGMAROCK over
+  DEEPSTONE, flora 11 so basalt columns stand on them; flags 8 | 16) and "corona" (the molten sea, its floor of
+  obsidian 90 down; flags 16), the landing raft first, `planet["sanctum"]` (2) the widest raft. Sea 9-13. Name +
+  "Pyre", "Ember"... (`STAR_NAMES`). No guardians.
+- THE MOLTEN SEA: biome flags 16 (on either biome of a border) make surface.comp lay the sea as LAVA instead of
+  water (`waterMat`), so the shores never turn to water. react.comp leaves lava alone unless water touches it.
+- THE CORONA: its barrier (`BARRIERS["corona"]`, KIND_BARRIER "star"): space.gd `_storm` burns through the hull as a
+  radiation belt does (`_irradiate`), `_draw_belts` adds loops of fire arching off it; the HEAT SHIELD (recipe
+  "heatshield", Travel: 10 fire opal, 20 obsidian, 6 star iron, 12 hull plating; learned on finding fire opal,
+  hidden until the skiff) passes it. Its disc (`_disc_image`) is white-gold fire with dark rafts, giving its own
+  light.
+- CLIMATES "star": heat 1.5 (the Heat Ward, as on volcanic worlds), "flare" 1.0. FLARES: the sky event "flare"
+  (`SKY_EVENTS`, the only one a star has; main rolls three times as often there): `_sky_flare` washes the sky
+  white-gold and drops burning motes; HAZARDS "flare" (`_hazard_level`: `sky_level("flare")` under the open sky)
+  sears you, borne by the SOLAR SHROUD (Wards: fire opal, sunstone, obsidian, crystal) or the Sun's Heart. No night:
+  main pins the clock to midday where you stand (`_physics` tick, as the Hollow's to dusk).
+- THE SUN RELAY (buildings.gd `_star_relay`, its own RNG; mystery.gd kind "lenses"): THE SOLAR SANCTUM (`_eye_hall`
+  on a plinth, `eye`: a crystal eye on its dome) 450 columns one way from the sanctum raft's middle; the path planned
+  BACKWARD from the eye: five SUN LENSES and the SUN WELL's lens (`_sun_lens`: an obsidian spire 6-130 high with a
+  ledge and a crystal lens in a copper ring; `_sun_well`: the first lens beside a pit of lava), each exactly one of
+  eight ways (`Defs.octant` / `octant_dir`, in the frame of the ground under the lens) from the one before it, 110-190
+  apart, on slag, tried (120 times) until `_relay_clear`: no later lens or the eye nearer along any step's way.
+  mystery: lenses [{pos, stand}] (0 the well), eye, need (the path's turns), facing (each lens's first turn, never
+  right), planned, plaque, vault, hall, ward, echoes. Playing it: `st["face"]` (saved); F turns a lens an eighth
+  (`turn`); `relay()` follows the light from the well: each lit lens throws it the way it faces to the nearest
+  unlit lens (or the eye) that way within `RELAY_RANGE` (700); into the eye -> `_solve` (the ward's air stamp).
+  Overlay `_draw_lenses`: the beams (bright, with motes running along; the last one fading where it reaches
+  nothing) and each lens's way as a tick; the Sanctum's braziers light with the lenses. The prompt names the way
+  a lens faces as it looks on screen (`WAYS`; Defs.octant's 0 is main's `basis_r`, screen right). The vault: the
+  SUN'S HEART (`Defs.RELICS["sunheart"]`, mods: no lava or fire damage, Fireball 1.3, a light; it bears "flare",
+  and main treats it as the Cinderheart for the heat and the mantle) and `SUN_LOOT`.
+- Heart boss: SOLARION the Sun Phoenix (`HEARTS["star"]`, a bird, calls flare wisps; relic "flareheart") flies over
+  the Sanctum (main `_spawn_heart_boss`, as the gas giant's over its Eye). Creatures: flare wisp (slag/corona, a
+  flier with a glow), slag crawler (territorial), the basalt monitor (slag too).
+- Quest: `mystery_steps` (Heat Shield, fly there, find the Sanctum, the relay n/5, claim), `mystery_notes`, the
+  wisp near the corona (`myst_heard_star`) and on landing. Audio: the molten sea roars as the deep's lava.
+- Test: `_test_star` ("star"; in the full run after `_test_giant`): where it lies, the corona (strikes counted by
+  `space.belt_strikes`) and the shield, the sea molten in the plan and in the world, a flare (2 s: ~9 health; none
+  with the Shroud), the inscription and the ward's runestone, the well turned by hand until it lights a lens, the
+  rest set to `need`, the eye reached and the ward gone, the Sun's Heart (no loss in the lava), Solarion there;
+  pictures `star_landing/flare/sanctum/relay/vault/journal.png`.
+
+## The black hole and its Hollow (26 Nov, the roadmap's "black holes with a pocket dimension inside", built while the user was away)
+- Slot 3: system 0 always; later systems one time in four (seed 61). `_void_planet`: kind/exotic "void", small
+  (1150-1300 before PLANET_SCALE); its biomes are SHARDS of the worlds it swallowed (forest, desert, tundra,
+  jungle, grove: their own ground, plants and creatures) with "rift" between them (off 560: the floor far down
+  in the dark, like the gas giant's). Sky a dim violet; the clock pinned to dusk where you stand. No guardians,
+  no structures (`_try_place` refuses a void world), no dungeons.
+- THE HORIZON: its barrier (`BARRIERS["horizon"]`): `_storm` PULLS you in (the only barrier that does) and tears at
+  you (`_tear`: hurts aboard or not), and at its inner edge spits you out battered; `_draw_belts` wheels the
+  accretion disc's streaks; its disc is black, ringed with light. The VOID ANCHOR (Travel: 20 void essence, 8 xenite,
+  10 star iron, 10 hull plating; learned on holding void essence) passes it.
+- CLIMATES "void": no storm or wind, "void" 1.0: HAZARDS "void" (main `_hazard_level`: from `VOID_D` (120) under the
+  mean surface, down a rift) unmakes you, borne by the Mantle of the Void ("voidmantle") or the Void Heart.
+- THE ECHOES (buildings.gd `_void_shrines`, its own RNG; mystery.gd kind "echoes"): THE SINGULARITY GATE
+  (`_eye_hall` on a plinth, 190 columns from where you land) and an ECHO SHRINE (`_echo_shrine`: an arch of obsidian
+  and runestone over a floating crystal shard) in the middle of every shard of a world (on the one you land on, on
+  the far side from the Gate). mystery: shrines [{pos, stand, biome}], plaque, vault, hall, ward, echoes. F at a
+  shrine (`wake`) calls the shrine biome's guardian (`Defs.BOSSES`) as an ECHO: `summoning.find_spot` (or over the
+  shrine), its definition copied with `d["echo"] = i`, `ECHO_HP` (0.7) of its health, awake, leashed like a called
+  guardian; overlay washes it violet and flickering. Beaten, main `_kill_enemy` calls `echo_falls` (not
+  `_guardian_falls`: no relic, no hoard): the shard is yours (`st["won"]`, saved), one of the Gate's braziers
+  lights. Walk `ECHO_FADE` (700) from its shrine and it fades (wake it again); an echo isn't saved. With all five, F
+  at the Gate's inscription sets them (`_solve`). The vault: the VOID HEART (`RELICS["voidheart"]`: +60 max mana,
+  given once in `claim`, spells 0.85; it bears "void") and `VOID_LOOT`.
+- Heart boss: NUL'GHORA the Devourer (`HEARTS["void"]`, a serpent, calls null stalkers; relic "nullheart") over the
+  Gate. Creatures of the rifts: rift ray (a big glowing glider), null stalker (predator). Quest steps: the Anchor,
+  fall in, find the Gate, the shards n/5, set them, claim; the wisp near the horizon (`myst_heard_void`). Audio: no
+  wind in the Hollow, space's drone instead.
+- Test: `_test_void` ("void"; after `_test_star`): where it lies, the horizon's pull and the Anchor, the Hollow made
+  (rifts 400+ deep), the unmaking 200 down a rift, the inscription, an echo woken (70% health) that fades when you
+  go 900 off, all five woken and beaten, the shards set and the ward gone, the Void Heart (+60 mana, no unmaking),
+  Nul'Ghora there; pictures `void_landing/echo/gate/vault/journal.png`.

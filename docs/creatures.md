@@ -91,6 +91,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   kelpserpent (plus stormgull); saltflats: salthopper, miragefox (plus vulture); mangrove: mirecroc, heron (plus
   reedfrog); crystalfields: crystalstag, shardlynx (plus snowhare); elder: mossbackelk, fernstalker (plus hare,
   deer); meadow: meadowsheep, bumblewing, hedgefox (plus hare).
+- The exotic worlds' (26 Nov, docs/exotic-worlds.md): a dying star: flare wisp, slag crawler (and the basalt
+  monitor); a black hole's rifts: rift ray, null stalker (its shards of worlds keep their own biomes' creatures).
 - Foe AI (`scripts/foe_ai.gd`, static behaviours; each foe's `ai` entry in `Defs.ENEMY` picks and tunes them):
   `think` (line of sight through the collision grid every few frames, spells heard nearby, memory of where you
   were, `rally` alerts foes within 90 cells), `goal`, and attacks as small state machines on `Enemy.act`

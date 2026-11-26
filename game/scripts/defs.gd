@@ -587,6 +587,13 @@ const BIOMES := {
 	"ocean": {"name": "Drowned Shelf", "under": "Abyssal Grottos", "off": 62.0, "amp": 18.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 6, "ug": 0, "flags": 0},
 	# a deep ocean world's sea floor, hundreds of cells down (user, 23 Nov: "are there super deep ocean worlds?")
 	"giant": {"name": "The Cloud Sea", "under": "The Crushing Deep", "off": 560.0, "amp": 30.0, "top": GRAVEL, "topD": 3, "sub": STONE, "subD": 20, "weather": "rain", "flora": 5, "ug": 3, "flags": 0},
+	# a dying star's (26 Nov): rafts of slag crust (basalt columns on them) on a sea of molten light (flags 16: the
+	# sea is lava), and the molten sea itself over a floor of obsidian
+	"slag": {"name": "Slag Crust", "under": "The Furnace", "off": -4.0, "amp": 9.0, "top": MAGMAROCK, "topD": 4, "sub": DEEPSTONE, "subD": 30, "weather": "ash", "flora": 11, "ug": 3, "flags": 8 | 16},
+	"corona": {"name": "The Molten Sea", "under": "The Furnace", "off": 90.0, "amp": 16.0, "top": OBSIDIAN, "topD": 3, "sub": MAGMAROCK, "subD": 20, "weather": "ash", "flora": 0, "ug": 3, "flags": 16},
+	# a black hole's Hollow (26 Nov): the rifts between the shards of the worlds it swallowed, their floor far down
+	# in the dark
+	"rift": {"name": "The Rift", "under": "The Unmaking", "off": 560.0, "amp": 30.0, "top": OBSIDIAN, "topD": 3, "sub": DEEPSTONE, "subD": 20, "weather": "clear", "flora": 0, "ug": 1, "flags": 0},
 	"abyss": {"name": "The Abyss", "under": "Hadal Vaults", "off": 430.0, "amp": 26.0, "top": GRAVEL, "topD": 2, "sub": SAND, "subD": 10, "weather": "rain", "flora": 10, "ug": 1, "flags": 0},
 	# each kind of world's own biome (user, 26 Nov: "do other worlds have unique biomes and unique enemies?"; chose
 	# Basalt Columns, Kelp Isles, Salt Flats, Sunken Mangroves, Crystal Fields, Elder Canopy, Flower Meadows, each with a
@@ -674,7 +681,13 @@ func system_g(r: int) -> PackedFloat64Array:
 ## the others half the time. The second (user, 24 Nov: "maybe some gas giants with no ground or only clouds"):
 ## the gas giant ("giant": slot 1; islands of rock floating over a sea of cloud with no ground to be found, the
 ## crushing depths under it, a Thunderhead round it that only the Storm Lattice grounds, and five beacons to
-## light at once). Every system's first has one; the others two times in five.
+## light at once). Every system's first has one; the others two times in five. The third (26 Nov, the roadmap's
+## "stars (a heat shield to land)"): a dying star ("star": slot 2; rafts of slag crust on a sea of molten light,
+## solar flares that sear everything under the open sky, a corona that only the Heat Shield passes, and the Sun
+## Relay: lenses to turn until the well's light reaches the sanctum). The fourth: a black hole ("void": slot 3;
+## inside its horizon the Hollow, shards of the worlds it swallowed over rifts that unmake you, five echo shrines
+## whose guardians' echoes give up their shards, and the Singularity Gate). Every system's first has both; the
+## others a star one time in three, a black hole one in four.
 const EXOTIC := 100000
 const EXO_SLOTS := 8
 
@@ -694,9 +707,14 @@ const BARRIERS := {
 		"tell": "is ringed by tumbling shards of ice and rock that hole a hull"},
 	"maelstrom": {"name": "maelstrom", "key": "keel", "key_name": "Tempest Keel", "col": Color(0.3, 0.7, 0.8),
 		"tell": "spins inside a maelstrom that hurls you round and out"},
+	"corona": {"name": "corona", "key": "heatshield", "key_name": "Heat Shield", "col": Color(1.0, 0.62, 0.22),
+		"tell": "burns inside a corona of fire that sears through any hull"},
+	"horizon": {"name": "event horizon", "key": "voidanchor", "key_name": "Void Anchor", "col": Color(0.7, 0.45, 1.0),
+		"tell": "pulls everything that comes near into its horizon and tears it apart"},
 }
 const KIND_BARRIER := {"temperate": "", "wild": "", "realm": "", "marsh": "", "ocean": "storm", "giant": "storm",
-	"volcanic": "radiation", "desert": "radiation", "frozen": "shards", "abyss": "maelstrom"}
+	"volcanic": "radiation", "desert": "radiation", "frozen": "shards", "abyss": "maelstrom",
+	"star": "corona", "void": "horizon"}
 const OPEN_KINDS := ["wild", "realm", "marsh"]      # (the kinds a first system always has one of: `_planet_kind`)
 
 ## what kind planet i of this journey's world is (no planet is made for it)
@@ -716,9 +734,21 @@ func is_exotic(i: int) -> bool:
 func system_of(i: int) -> int:
 	return (i - EXOTIC) / EXO_SLOTS if i >= EXOTIC else i / SYSTEM.size()
 
+var _exo_of := {}             # (world seed, system) -> its exotics: asked for every frame by space and the chart
+var _exo_at := {}             # (world seed, planet) -> an exotic's place: each one is worked out from the ones before
 func exotics_of(r: int) -> Array:
 	if r == 0:
-		return [EXOTIC, EXOTIC + 1]
+		return [EXOTIC, EXOTIC + 1, EXOTIC + 2, EXOTIC + 3]
+	var ck := Vector2i(world_seed, r)
+	if _exo_of.has(ck):
+		return _exo_of[ck]
+	var got := _exotics_of(r)
+	if _exo_of.size() > 4096:
+		_exo_of.clear()
+	_exo_of[ck] = got
+	return got
+
+func _exotics_of(r: int) -> Array:
 	var er := RandomNumberGenerator.new()
 	er.seed = hash([world_seed, r, 41])
 	var out := [EXOTIC + r * EXO_SLOTS] if er.randf() < 0.5 else []
@@ -726,6 +756,14 @@ func exotics_of(r: int) -> Array:
 	gr.seed = hash([world_seed, r, 49])
 	if gr.randf() < 0.4:
 		out.append(EXOTIC + r * EXO_SLOTS + 1)
+	var sr := RandomNumberGenerator.new()          # (each kind its own draw)
+	sr.seed = hash([world_seed, r, 59])
+	if sr.randf() < 0.34:
+		out.append(EXOTIC + r * EXO_SLOTS + 2)
+	var vr := RandomNumberGenerator.new()
+	vr.seed = hash([world_seed, r, 61])
+	if vr.randf() < 0.25:
+		out.append(EXOTIC + r * EXO_SLOTS + 3)
 	return out
 
 ## every planet of system r: its round of five, then its exotics
@@ -736,15 +774,52 @@ func planets_of(r: int) -> Array:
 	out.append_array(exotics_of(r))
 	return out
 
-const EXO_KINDS := ["abyss", "giant"]
+const EXO_KINDS := ["abyss", "giant", "star", "void"]
 func exotic_kind(i: int) -> String:
 	if i < EXOTIC:
 		return ""
 	return String(EXO_KINDS[mini(posmod(i - EXOTIC, EXO_SLOTS), EXO_KINDS.size() - 1)])
 
+## which of eight ways `to` lies from `from`, in the frame of the ground under `from` (0 along main's basis_r,
+## 2 straight up, 4 the other way along, 6 straight down): a dying star's sun lenses (mystery.gd "lenses")
+static func octant(from: Vector2, to: Vector2) -> int:
+	var a := atan2(from.y, from.x)
+	var up := Vector2(cos(a), sin(a))
+	var r := Vector2(sin(a), -cos(a))
+	var d := to - from
+	var ang := atan2(d.dot(up), d.dot(r))
+	return posmod(int(round(ang / (PI / 4.0))), 8)
+
+## how far (radians, signed) the way to `to` lies from the middle of its eighth
+static func octant_off(from: Vector2, to: Vector2) -> float:
+	var a := atan2(from.y, from.x)
+	var up := Vector2(cos(a), sin(a))
+	var r := Vector2(sin(a), -cos(a))
+	var d := to - from
+	var ang := atan2(d.dot(up), d.dot(r))
+	return ang - round(ang / (PI / 4.0)) * (PI / 4.0)
+
+## the way eighth f points from p (a unit vector)
+static func octant_dir(p: Vector2, f: int) -> Vector2:
+	var a := atan2(p.y, p.x)
+	var up := Vector2(cos(a), sin(a))
+	var r := Vector2(sin(a), -cos(a))
+	var t := float(f) * PI / 4.0
+	return r * cos(t) + up * sin(t)
+
 ## an exotic's place in its system: 92-118 thousand cells from the first planet, on the bearing farthest from
 ## the others (so no journey toward it begins by another)
 func _exotic_local(i: int) -> Vector2:
+	var ck := Vector2i(world_seed, i)
+	if _exo_at.has(ck):
+		return _exo_at[ck]
+	var got := _exotic_local_now(i)
+	if _exo_at.size() > 4096:
+		_exo_at.clear()
+	_exo_at[ck] = got
+	return got
+
+func _exotic_local_now(i: int) -> Vector2:
 	var r := system_of(i)
 	var xr := RandomNumberGenerator.new()
 	xr.seed = hash([world_seed, i, 43])
@@ -844,6 +919,10 @@ const CLIMATES := {
 	# a deep ocean world (an exotic: see EXOTIC): the deep and, far down, the crushing deep; a few island folk
 	"abyss": {"storm": 1.7, "wind": 0.6, "deep": 1.0, "crush": 1.0, "settle": 0.35, "towns": 0.4, "belt": Color(0.25, 0.5, 1.0)},
 	"giant": {"storm": 2.2, "wind": 1.0, "pressure": 1.0, "settle": 0.0, "towns": 0.0, "wild": 1.3, "belt": Color(1.0, 0.78, 0.42)},
+	# a dying star: its air scorches (the Heat Ward), and its flares sear everything under the open sky
+	"star": {"storm": 0.0, "wind": 0.3, "heat": 1.5, "flare": 1.0, "settle": 0.0, "towns": 0.0, "wild": 0.9, "belt": Color(1.0, 0.62, 0.22)},
+	# a black hole's Hollow: still air, and the rifts unmake whatever falls too far into them
+	"void": {"storm": 0.0, "wind": 0.0, "void": 1.0, "settle": 0.0, "towns": 0.0, "wild": 0.8, "belt": Color(0.7, 0.45, 1.0)},
 	"desert": {"storm": 0.8, "wind": 0.7, "dust": 1.0, "sun": 1.0, "settle": 0.35, "towns": 0.3, "ruin": 0.25, "belt": Color(1.0, 0.8, 0.35)},
 	"marsh": {"storm": 1.3, "fog": 1.0, "miasma": 1.0, "settle": 0.3, "towns": 0.3, "ruin": 0.15, "belt": Color(0.55, 0.95, 0.45)},
 	"frozen": {"storm": 1.4, "wind": 0.8, "freeze": 1.0, "cold": 1.0, "settle": 0.3, "towns": 0.5, "belt": Color(0.7, 0.9, 1.0)},
@@ -872,6 +951,12 @@ const HAZARDS := {
 	# (a gas giant's: under its cloud deck the air grows too heavy to bear; main `_hazard_level`)
 	"pressure": {"ward": "depthseal", "relic": "stormcrown", "dmg": 0.045, "name": "The crushing air",
 		"msg": "Under the cloud deck of %s the air crushes you: climb back up, or forge the Depth Seal (Wards)"},
+	# (a dying star's: while it flares, its light sears everything under the open sky; main `_hazard_level`)
+	"flare": {"ward": "solarshroud", "relic": "sunheart", "dmg": 0.07, "name": "The flare",
+		"msg": "The flare of %s sears you under the open sky: get under rock until it passes, or forge the Solar Shroud (Wards)"},
+	# (a black hole's Hollow: from VOID_D down into a rift, the dark unmakes you)
+	"void": {"ward": "voidmantle", "relic": "voidheart", "dmg": 0.06, "name": "The unmaking",
+		"msg": "The rifts of %s unmake whatever sinks into them: climb back out, or wear the Mantle of the Void"},
 }
 
 ## Sky events (main `_update_sky_events`): now and then something happens in the sky, picked by the
@@ -897,6 +982,8 @@ const SKY_EVENTS := {
 		"msg": "A blood moon rises. The wild things are restless tonight: far more of them are about."},
 	"fireworks": {"name": "Fireworks", "when": "night", "dur": [2400, 3600], "kinds": {"realm": 4.0},
 		"msg": "Fireworks burst over the kingdom: a festival tonight."},
+	"flare": {"name": "Solar flare", "when": "any", "dur": [900, 1500], "kinds": {"star": 4.0},
+		"msg": "The star flares! Its light sears everything under the open sky: get under rock until it passes."},
 }
 const SKY_EVENT_EVERY := 600       # ticks between chances of one starting
 const SKY_EVENT_CHANCE := 0.035    # (about one a day)
@@ -1150,6 +1237,7 @@ const LEARN := {
 	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
 	"tidecharm": {"shop": "shop", "kind": "ocean", "price": 45, "hoard": true},
 	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]}, "lattice": {"find": [STARIRON]},
+	"heatshield": {"find": [FIREOPAL]}, "solarshroud": {"find": [FIREOPAL, SUNSTONE]}, "voidanchor": {"find": [VOIDESS]},
 	# (the ship classes, user 25 Nov: "you can get recipes for different ships"): the Cutter and Hauler from an
 	# outpost's shipwright (the Cutter's plans in a chest now and then), the Corvette from a hoard or a reliquary
 	"ship_cutter": {"shop": "shipwright", "price": 140, "scroll": 2}, "ship_hauler": {"shop": "shipwright", "price": 180},
@@ -1219,7 +1307,7 @@ func ore_kind(mat: int) -> String:
 ## a planet's climate and settlement (see CLIMATES), every key filled in
 func climate(pl: Dictionary) -> Dictionary:
 	var out := {"storm": 1.0, "wind": 0.0, "fog": 0.0, "heat": 0.0, "freeze": 0.0, "dust": 0.0, "wild": 1.0,
-		"cold": 0.0, "sun": 0.0, "miasma": 0.0, "deep": 0.0, "crush": 0.0, "pressure": 0.0, "settle": 1.0, "towns": 1.0, "ruin": 0.0,
+		"cold": 0.0, "sun": 0.0, "miasma": 0.0, "deep": 0.0, "crush": 0.0, "pressure": 0.0, "flare": 0.0, "void": 0.0, "settle": 1.0, "towns": 1.0, "ruin": 0.0,
 		"belt": Color(0.45, 0.7, 1.0)}
 	var c: Dictionary = CLIMATES.get(String(pl.get("kind", "temperate")), {})
 	for k in c:
@@ -1260,7 +1348,7 @@ const PLANET_KINDS := {
 }
 const PLANET_ORDER := ["volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm"]
 const BIOME_WORDS := {"forest": "woods", "jungle": "jungle", "marsh": "bogs", "tundra": "snowfields", "mountain": "peaks",
-	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas", "abyss": "abyssal deeps", "giant": "cloud seas",
+	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas", "abyss": "abyssal deeps", "giant": "cloud seas", "slag": "slag crusts", "corona": "molten seas", "rift": "rifts",
 	"basalt": "basalt columns", "kelp": "kelp isles", "saltflats": "salt flats", "mangrove": "mangroves", "crystalfields": "crystal fields", "elder": "elder forests", "meadow": "flower meadows"}
 const NAME_A := ["Ver", "Cin", "Thal", "Ser", "Fen", "Ar", "Bel", "Cor", "Dra", "El", "Gal", "Hal", "Ith", "Kel", "Lor", "Mor",
 	"Nev", "Or", "Pyr", "Quel", "Ryn", "Syl", "Tor", "Ul", "Vel", "Wyn", "Zar", "Ash", "Brim", "Cal", "Del", "Em", "Fal", "Gry",
@@ -1327,6 +1415,10 @@ func _planet_kind(ws: int, i: int) -> String:
 func _exotic_planet(ws: int, i: int) -> Dictionary:
 	if exotic_kind(i) == "giant":
 		return _giant_planet(ws, i)
+	if exotic_kind(i) == "star":
+		return _star_planet(ws, i)
+	if exotic_kind(i) == "void":
+		return _void_planet(ws, i)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([ws, i, 47])
 	var r := system_of(i)
@@ -1377,6 +1469,67 @@ func _giant_planet(ws: int, i: int) -> Dictionary:
 		"desc": "A gas giant: islands of rock adrift over an endless sea of cloud, no ground to be found under it, and a storm that never sleeps.",
 		"biomes": bl, "starts": starts, "magmaR": radius * 0.3, "sea": -1.0,
 		"rich": 1.4 * (1.0 + r * 0.25), "lava": 0.3, "sky": Color(1.18, 0.96, 0.74)}
+
+## A dying star: rafts of slag crust on a sea of molten light, small and bright. Its biggest raft but the one
+## you land on ("sanctum": its biome index) carries the Sun Relay (buildings.gd `_star_relay`).
+const STAR_NAMES := ["Pyre", "Ember", "Cinder", "Brand", "Flare", "Kindle"]
+func _star_planet(ws: int, i: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([ws, i, 59])
+	var r := system_of(i)
+	# (the landing raft first of the slag, so you come down on it; the sanctum's raft the widest)
+	var bl := ["slag", "corona", "slag", "corona", "slag", "corona", "slag", "corona"]
+	var wd := [0.55, 0.8, 1.5, 0.75, 0.42, 0.7, 0.38, 0.6]
+	var ws_ := PackedFloat32Array()
+	var wt := 0.0
+	for q in bl.size():
+		var w := float(wd[q]) * rng.randf_range(0.88, 1.12)
+		ws_.append(w)
+		wt += w
+	var starts := PackedFloat32Array()
+	var acc := 0.0
+	for q in bl.size():
+		starts.append(acc / wt)
+		acc += ws_[q]
+	var nrng := RandomNumberGenerator.new()
+	nrng.seed = hash([ws, i, 13])
+	var pname := String(NAME_A[nrng.randi_range(0, NAME_A.size() - 1)]) + String(NAME_C[nrng.randi_range(0, NAME_C.size() - 1)]) + " " + String(STAR_NAMES[nrng.randi_range(0, STAR_NAMES.size() - 1)])
+	var radius := rng.randf_range(1300.0, 1480.0) * PLANET_SCALE
+	return {"name": pname, "index": i, "kind": "star", "exotic": "star", "seed": 1 + posmod(hash([ws, i, 5]), 0xFFFFFE),
+		"guardians": [], "radius": radius, "sanctum": 2,
+		"desc": "A dying star: its fire has crusted over in rafts of slag that drift on a sea of molten light, and flares burst up from below.",
+		"biomes": bl, "starts": starts, "magmaR": radius * rng.randf_range(0.5, 0.56), "sea": rng.randf_range(9.0, 13.0),
+		"rich": 1.5 * (1.0 + r * 0.25), "lava": 1.6, "sky": Color(1.3, 0.86, 0.58)}
+
+## A black hole's Hollow: shards of the worlds it swallowed (forest, desert, tundra, jungle, a mushroom grove)
+## over rifts whose floors lie far down in the dark, under a sky of bent starlight
+const VOID_NAMES := ["Hollow", "Maw", "Abyss", "Silence", "Null", "Eclipse"]
+func _void_planet(ws: int, i: int) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([ws, i, 61])
+	var r := system_of(i)
+	var bl := ["forest", "rift", "desert", "tundra", "rift", "jungle", "rift", "grove"]
+	var wd := [0.62, 0.42, 0.5, 0.48, 0.4, 0.52, 0.38, 0.5]
+	var ws_ := PackedFloat32Array()
+	var wt := 0.0
+	for q in bl.size():
+		var w := float(wd[q]) * rng.randf_range(0.88, 1.12)
+		ws_.append(w)
+		wt += w
+	var starts := PackedFloat32Array()
+	var acc := 0.0
+	for q in bl.size():
+		starts.append(acc / wt)
+		acc += ws_[q]
+	var nrng := RandomNumberGenerator.new()
+	nrng.seed = hash([ws, i, 13])
+	var pname := String(NAME_A[nrng.randi_range(0, NAME_A.size() - 1)]) + String(NAME_C[nrng.randi_range(0, NAME_C.size() - 1)]) + " " + String(VOID_NAMES[nrng.randi_range(0, VOID_NAMES.size() - 1)])
+	var radius := rng.randf_range(1150.0, 1300.0) * PLANET_SCALE
+	return {"name": pname, "index": i, "kind": "void", "exotic": "void", "seed": 1 + posmod(hash([ws, i, 5]), 0xFFFFFE),
+		"guardians": [], "radius": radius,
+		"desc": "A black hole. Inside its horizon lies the Hollow: shards of the worlds it swallowed, adrift over rifts that unmake whatever falls in.",
+		"biomes": bl, "starts": starts, "magmaR": radius * 0.3, "sea": -1.0,
+		"rich": 1.6 * (1.0 + r * 0.25), "lava": 0.2, "sky": Color(0.42, 0.32, 0.66)}
 
 func _grown_planet(ws: int, i: int) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
@@ -1641,6 +1794,7 @@ const RECIPES := [
 	{"id": "sunveil", "cat": "Wards", "name": "Sun Veil", "cost": {GLASS: 10, LEAF: 12, COPPERBAR: 2}, "desc": "Shades you from a desert world's midday sun."},
 	{"id": "fenmask", "cat": "Wards", "name": "Fen Mask", "cost": {SHROOM: 10, LEAF: 10, GLASS: 4}, "desc": "Lets you breathe a marsh world's choking fog."},
 	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISPBAR: 3, GLASS: 6, COPPERBAR: 3}, "desc": "Bears the crushing deep of an ocean world's sea."},
+	{"id": "solarshroud", "cat": "Wards", "name": "Solar Shroud", "cost": {FIREOPAL: 8, SUNSTONE: 8, OBSIDIAN: 10, CRYSTAL: 6}, "desc": "A shroud of opal and sunstone glass: a dying star's flares can't sear you under the open sky."},
 	{"id": "depthseal", "cat": "Wards", "name": "Depth Seal", "cost": {ABYSSPEARL: 8, GLASS: 6, WISPBAR: 2}, "desc": "Bears the abyss of a deep ocean world, far below where the Tide Charm holds (wear both)."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, WISP: 10, COPPERBAR: 4}, "desc": "Your world's heart, bound in copper and wisp ore: the engine a ship is built round. Forge it before the Wisp Skiff. Needs the Core Siphon (to harvest the Planet Core)."},
 	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 60, WOOD: 24, WISP: 20, WISPBAR: 4, COPPERBAR: 3, GLASS: 12}, "desc": "Your first ship, a Core Drive at its heart: a planked hull under a glass canopy, room for three crates. K calls it, F boards it; landed, G aboard goes below into its pocket dimension. It flies out into space and on to other worlds: any without a barrier round it."},
@@ -1653,6 +1807,8 @@ const RECIPES := [
 	{"id": "scanner", "cat": "Travel", "name": "Wisp Scanner", "part": "part_scanner", "cost": {XENITE: 12, CRYSTAL: 10, WISPBAR: 6, HULL: 10}, "desc": "A lens of alien glass fitted to your skiff, built round a Scanner Lens from a derelict station's vault: what you see round you reaches three times as far, systems are charted from farther off, and the nearest wreck and derelict station within reach are marked at the edge of the screen."},
 	{"id": "keel", "cat": "Travel", "name": "Tempest Keel", "cost": {ABYSSPEARL: 12, STARIRON: 6, HULL: 10}, "desc": "A keel of pearl and star iron that rides out a maelstrom: the skiff passes every maelstrom (round the deep ocean worlds). Needs the skiff."},
 	{"id": "lattice", "cat": "Travel", "name": "Storm Lattice", "cost": {COPPERBAR: 12, STARIRON: 6, GLASS: 8}, "desc": "A cage of copper and star iron round the skiff that grounds lightning: it carries the skiff through every storm belt (ocean worlds, and the Thunderhead round a gas giant). Needs the skiff."},
+	{"id": "heatshield", "cat": "Travel", "name": "Heat Shield", "cost": {FIREOPAL: 10, OBSIDIAN: 20, STARIRON: 6, HULL: 12}, "desc": "A prow of obsidian and fire opal over plating: the skiff passes through a star's corona and down onto its crust. Needs the skiff."},
+	{"id": "voidanchor", "cat": "Travel", "name": "Void Anchor", "cost": {VOIDESS: 20, XENITE: 8, STARIRON: 10, HULL: 10}, "desc": "An anchor of void essence that holds the skiff whole through a black hole's horizon: down into the Hollow inside. Needs the skiff."},
 	{"id": "radward", "cat": "Travel", "name": "Radiation Ward", "cost": {HULL: 12, WISPBAR: 8, CRYSTAL: 6, STARIRON: 4}, "desc": "Hull plating salvaged from wrecks, lined with wisp and crystal: it turns the burning light of every radiation belt (desert and volcanic worlds) from the skiff. Needs the skiff."},
 	{"id": "rimeprow", "cat": "Travel", "name": "Rime Prow", "cost": {XENITE: 8, STARIRON: 10, HULL: 16}, "desc": "A ram of star iron and alien chitin on the skiff's bow: it shoulders through every shard ring (frozen worlds) without holing the hull. Needs the skiff."},
 	{"id": "sail", "cat": "Travel", "name": "Starsail", "cost": {STARIRON: 8, WISPBAR: 6, CRYSTAL: 6, PLANK: 20}, "desc": "A sail of wisp-light for the skiff: hold Shift while you fly it in open space and it runs up to eight times as fast, slowing by itself near planets and rock. For crossing between the stars; it burns a Wisp Cell every few seconds (refined at a smelter from wisp ore and coal, or bought at an outpost). Needs the skiff."},
@@ -2847,6 +3003,15 @@ const RELICS := {
 		"mods": {"light": 1.0, "max_mana": 40.0, "mana_regen": 0.5}},
 	"stormheart": {"name": "Heart of the Tempest", "desc": "You run a quarter faster and jump half again as high.",
 		"mods": {"speed": 1.25, "jump": 1.5}},
+	"flareheart": {"name": "Solarion's Flame", "desc": "Fireball strikes a third harder, fire can't hurt you, and you run a tenth faster.",
+		"mods": {"spell_fireball": 1.33, "fire_dmg": 0.0, "speed": 1.1}},
+	"nullheart": {"name": "The Null Eye", "desc": "Your staff reaches a quarter further, and spells cost a sixth less mana.",
+		"mods": {"reach": 1.25, "mana_cost": 0.84}},
+	# the mysteries' prizes (mystery.gd): a dying star's and a black hole's (what they bear is in HAZARDS)
+	"sunheart": {"name": "The Sun's Heart", "desc": "Lava and fire can't hurt you, the heat and the flares of a star can't sear you, Fireball strikes harder, and a light goes with you.",
+		"mods": {"lava_dmg": 0.0, "fire_dmg": 0.0, "spell_fireball": 1.3, "light": 1.0}},
+	"voidheart": {"name": "The Void Heart", "desc": "+60 max mana, spells cost a sixth less, and the rifts of the Hollow can't unmake you.",
+		"mods": {"max_mana": 60.0, "mana_cost": 0.85}},
 }
 
 ## The bosses at the hearts of the other kinds of world (user, 26 Nov: "i would like different bosses at the heart
@@ -2912,6 +3077,19 @@ const HEARTS := {
 		"moves": {"dive": {}, "gust": {}, "rain": {"proj": "ice", "n": 8}},
 		"rage": {"dive2": {}, "spit": {"proj": "spore", "n": 3, "spread": 0.5}},
 		"relic": "stormheart", "loot": {VOIDESS: 6, STARIRON: 8, CRYSTAL: 12}},
+	# (26 Nov) a dying star's, over the Solar Sanctum, and a black hole's, over the Singularity Gate
+	"star": {"name": "Solarion", "title": "the Sun Phoenix", "col": Color(1.0, 0.7, 0.25), "biome": "slag",
+		"body": {"plan": "bird", "len": 34, "span": 50, "base": "#e8621a", "belly": "#ffd86a", "accent": "#fff6c8", "dark": "#5a1a06", "eye": "#ffffff", "skin": "fur"},
+		"w": 30.0, "h": 24.0, "hp": 980.0, "dmg": 19.0, "go": "fly", "speed": 2.9, "fly": true,
+		"moves": {"dive": {}, "rain": {"proj": "efire", "n": 9}, "summon": {"type": "c_flarewisp", "n": 2, "max": 4}},
+		"rage": {"dive2": {}, "spit": {"proj": "efire", "n": 5, "spread": 0.2}},
+		"relic": "flareheart", "loot": {FIREOPAL: 10, OBSIDIAN: 30, EMBER: 24}},
+	"void": {"name": "Nul'Ghora", "title": "the Devourer", "col": Color(0.7, 0.45, 1.0), "biome": "rift",
+		"body": {"plan": "serpent", "segs": 17, "rad": 8.5, "base": "#1a1030", "belly": "#5a3a9a", "accent": "#c88aff", "dark": "#06030e", "eye": "#ffffff", "teeth": true},
+		"w": 18.0, "h": 16.0, "hp": 1040.0, "dmg": 20.0, "go": "slither", "speed": 2.4, "fly": true,
+		"moves": {"dive": {}, "spit": {"proj": "venom", "n": 5, "spread": 0.2}, "summon": {"type": "c_nullstalker", "n": 2, "max": 3}},
+		"rage": {"gust": {}, "spit2": {"proj": "spore", "n": 4, "spread": 0.4}},
+		"relic": "nullheart", "loot": {VOIDESS: 14, CRYSTAL: 16, STARIRON: 6}},
 }
 ## how each kind's heart chamber is lined, for gen.comp (P.p[121].z): 0 obsidian and embers (as it always was;
 ## temperate and volcanic), 1 deep stone and crystal, 2 sandstone and crystal, 3 moss and glowcaps, 4 ice and frost,
@@ -3062,10 +3240,28 @@ const CREATURES := {
 		"body": {"plan": "bird", "len": 5, "span": 7, "base": "#e8eef0", "belly": "#ffffff", "accent": "#ffb03a", "dark": "#5a6670", "eye": "#1a1a1a", "skin": "fur"},
 		"moves": {"dive": {"v": 3.8}}, "drops": [[SAND, 2, 0.4]]},
 	# each kind of world's own biome's creatures (26 Nov)
-	"basaltmonitor": {"name": "Basalt Monitor", "where": ["basalt"], "temper": "predator", "w": 13.0, "h": 6.0, "hp": 38.0, "dmg": 9.0, "go": "walk", "speed": 1.3,
+	"basaltmonitor": {"name": "Basalt Monitor", "where": ["basalt", "slag"], "temper": "predator", "w": 13.0, "h": 6.0, "hp": 38.0, "dmg": 9.0, "go": "walk", "speed": 1.3,
 		"body": {"plan": "beast", "len": 13, "tall": 4, "leg": 3, "head": 4, "neck": 1, "base": "#2e2e36", "belly": "#56565e", "accent": "#ff7a2a",
 			"dark": "#101014", "eye": "#ffb03a", "skin": "scales", "spikes": 4, "tail": "long"},
 		"moves": {"charge": {"v": 3.4}, "spit": {"proj": "efire", "n": 1, "spread": 0.0}}, "drops": [[DEEPSTONE, 4, 0.7], [EMBER, 1, 0.25]]},
+	# a dying star's (26 Nov): flare wisps drifting over the slag, slag crawlers on it; a black hole's Hollow: rift
+	# rays gliding over the rifts, null stalkers hunting there
+	"flarewisp": {"name": "Flare Wisp", "where": ["slag", "corona"], "temper": "neutral", "w": 6.0, "h": 6.0, "hp": 22.0, "dmg": 8.0, "go": "fly", "speed": 1.4,
+		"idle": {"soar": 3, "circle": 3}, "glow": Color(1.0, 0.7, 0.3),
+		"body": {"plan": "bird", "len": 5, "span": 9, "base": "#ff8a2a", "belly": "#ffe68a", "accent": "#fffbe0", "dark": "#7a2a06", "eye": "#ffffff", "skin": "fur"},
+		"moves": {"dive": {"v": 3.2}, "spit": {"proj": "efire", "n": 1, "spread": 0.0}}, "drops": [[EMBER, 2, 0.5], [FIREOPAL, 1, 0.2]]},
+	"slagcrawler": {"name": "Slag Crawler", "where": ["slag"], "temper": "territorial", "w": 14.0, "h": 7.0, "hp": 48.0, "dmg": 11.0, "go": "walk", "speed": 1.0,
+		"body": {"plan": "beast", "len": 14, "tall": 5, "leg": 3, "head": 5, "neck": 1, "base": "#3a2a26", "belly": "#7a4a2a", "accent": "#ffb03a",
+			"dark": "#140c0a", "eye": "#ffe14a", "skin": "scales", "spikes": 6, "tail": "short"},
+		"moves": {"charge": {"v": 3.0}, "slam": {}}, "drops": [[MAGMAROCK, 4, 0.7], [OBSIDIAN, 2, 0.4], [FIREOPAL, 1, 0.15]]},
+	"riftray": {"name": "Rift Ray", "where": ["rift"], "temper": "neutral", "w": 14.0, "h": 6.0, "hp": 50.0, "dmg": 9.0, "go": "fly", "speed": 0.9,
+		"idle": {"soar": 4, "circle": 3}, "glow": Color(0.75, 0.5, 1.0),
+		"body": {"plan": "bird", "len": 12, "span": 14, "base": "#2a1a4a", "belly": "#8a6ac8", "accent": "#e0b0ff", "dark": "#0a0614", "eye": "#ffffff", "skin": "spots"},
+		"moves": {"dive": {"v": 3.0}}, "drops": [[VOIDESS, 2, 0.45], [CRYSTAL, 2, 0.4]]},
+	"nullstalker": {"name": "Null Stalker", "where": ["rift"], "temper": "predator", "w": 8.0, "h": 5.0, "hp": 30.0, "dmg": 10.0, "go": "fly", "speed": 2.3,
+		"idle": {"circle": 3, "soar": 2},
+		"body": {"plan": "bird", "len": 7, "span": 9, "base": "#14081e", "belly": "#4a2a6a", "accent": "#c88aff", "dark": "#000000", "eye": "#ff5aff", "skin": "fur"},
+		"moves": {"dive": {"v": 4.8}}, "drops": [[VOIDESS, 1, 0.4], [XENITE, 1, 0.2]]},
 	"steammoth": {"name": "Steam Moth", "where": ["basalt"], "temper": "neutral", "active": "night", "w": 6.0, "h": 4.0, "hp": 16.0, "dmg": 6.0, "go": "fly", "speed": 1.2,
 		"body": {"plan": "bird", "len": 5, "span": 9, "base": "#8a7a6a", "belly": "#e8d8c8", "accent": "#ff9a3a", "dark": "#3a2e26", "eye": "#ffd23a", "skin": "fur"},
 		"moves": {"dive": {"v": 3.0}}, "drops": [[ASH, 3, 0.6], [EMBER, 1, 0.15]]},

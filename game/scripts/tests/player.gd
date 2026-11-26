@@ -1037,9 +1037,9 @@ func _test_cores() -> void:
 	var ok := true
 	var kinds_ok := true
 	var seen := {}
-	for kd in ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss", "giant"]:
+	for kd in ["temperate", "volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm", "abyss", "giant", "star", "void"]:
 		var kc: int = Defs.kind_core({"kind": kd})
-		if (kd == "temperate" or kd == "giant") != (kc == Defs.CORE):
+		if (kd in ["temperate", "giant", "star", "void"]) != (kc == Defs.CORE):
 			kinds_ok = false
 		if kc != Defs.CORE:
 			if seen.has(kc):

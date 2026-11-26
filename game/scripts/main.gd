@@ -844,9 +844,9 @@ func _save_settings() -> void:
 
 func _process(delta: float) -> void:
 	var t0 := Time.get_ticks_usec()
-	if testing and Time.get_ticks_msec() > 1320000:
-		# a test run that hasn't finished in 22 minutes has broken somewhere: don't leave the game open
-		printerr("[Wisp Forge] test mode timed out after 22 minutes; quitting")
+	if testing and Time.get_ticks_msec() > 1620000:
+		# a test run that hasn't finished in 27 minutes has broken somewhere: don't leave the game open
+		printerr("[Wisp Forge] test mode timed out after 27 minutes; quitting")
 		get_tree().quit(1)
 		return
 	if gpu == null:
@@ -2427,6 +2427,10 @@ func _tick() -> void:
 		_raise_tick()
 	frame += 1
 	time += 1.0
+	# (a dying star has no night: you stand on the sun. A black hole's Hollow lies in an endless dusk)
+	var exk := String(planet.get("exotic", ""))
+	if (exk == "star" or exk == "void") and player != null and not space.active:
+		time = floorf(time / DAY_LEN) * DAY_LEN + towns.time_for_hour(player.pos, 12.0 if exk == "star" else 18.0)
 	if forge_vis > 0.0 and state != "forge":
 		forge_vis = maxf(0.0, forge_vis - 1.0 / float(FORGE_FADE))
 	for pg in pages:
@@ -2687,7 +2691,7 @@ func _update_player(m: Mage) -> void:
 	var lava := box_count(bx, by, p.w, p.h, Defs.LAVA)
 	var fire := box_count(bx, by, p.w, p.h, Defs.FIRE)
 	# (Kragmor's relic, the Cinderheart: fire can't burn you, lava hurts far less, the deep heat none)
-	var cinder: bool = m.items.has("cinderheart")
+	var cinder: bool = m.items.has("cinderheart") or m.items.has("sunheart")
 	if lava > 0:
 		hurt(m, (0.08 if m.heat_ward else 0.55) * (0.3 if cinder else 1.0) * gear("lava_dmg", m) * mini(lava, 6), Vector2.ZERO, false)
 	if fire > 0 and not cinder:
@@ -3614,7 +3618,9 @@ func _kill_enemy(e: Enemy) -> void:
 			player.inv[int(dr[0])] += n
 			ui.toast("+%d %s" % [n, Defs.NAMES[int(dr[0])]], Defs.COLOR[int(dr[0])])
 	if e.boss and e.d.has("def"):
-		if e.d.get("heart", false):
+		if e.d.has("echo"):
+			mystery.echo_falls(e)          # (a black hole's echo of a guardian: its shrine's shard)
+		elif e.d.get("heart", false):
 			_heart_falls(e)
 		else:
 			_guardian_falls(e)
@@ -3638,7 +3644,7 @@ func _spawn_heart_boss() -> Enemy:
 		return spawn_enemy("golem", bd * (boss_info.y - boss_info.w + float(Defs.ENEMY["golem"]["h"]) * 0.5 + 2.0))
 	var d: Dictionary = Defs.heart_enemy(ht)
 	var e: Enemy
-	if String(planet.get("kind", "")) == "giant" and builds.mystery.has("hall"):
+	if String(planet.get("kind", "")) in ["giant", "star", "void"] and builds.mystery.has("hall"):
 		var hp0: Vector2 = builds.mystery["hall"]
 		var at: Vector2 = hp0 + hp0.normalized() * 110.0
 		e = spawn_enemy(ht, at)
@@ -4744,7 +4750,8 @@ func _update_sky_events() -> void:
 		_sky_roll += 1
 		if _sky_roll >= Defs.SKY_EVENT_EVERY:
 			_sky_roll = 0
-			if randf() < Defs.SKY_EVENT_CHANCE and not testing:
+			# (a dying star flares three times as often as anything happens in another sky)
+			if randf() < Defs.SKY_EVENT_CHANCE * (3.0 if String(planet.get("kind", "")) == "star" else 1.0) and not testing:
 				var id := _pick_sky_event()
 				if id != "":
 					start_sky_event(id)
@@ -4761,6 +4768,7 @@ func _update_sky_events() -> void:
 		"hail": _sky_hail(ramp)
 		"bloodmoon": sky_tint = Color(0.5, 0.02, 0.02, 0.07 * ramp)
 		"fireworks": _sky_fireworks()
+		"flare": _sky_flare(ramp)
 	if sky_t >= sky_dur:
 		end_sky_event()
 
@@ -5004,6 +5012,20 @@ func _sky_hail(ramp: float) -> void:
 		if int(sky_stats["hail_hits"]) == 1:
 			ui.toast("Hail stings you: get under a roof", Color(0.8, 0.9, 1.0), 2.5)
 
+## a dying star's flare: the sky blazes white-gold, the light sears whatever stands under the open sky (HAZARDS
+## "flare", `_hazards`), and burning motes drift down
+func _sky_flare(ramp: float) -> void:
+	sky_tint = Color(1.0, 0.86, 0.55, 0.3 * ramp)
+	if frame % 3 == 0:
+		var up: Vector2 = -basis_d(atan2(player.pos.y, player.pos.x))
+		var rr: Vector2 = basis_r(atan2(player.pos.y, player.pos.x))
+		var at: Vector2 = player.pos + up * randf_range(60.0, 130.0) + rr * randf_range(-220.0, 220.0)
+		_particle(at, -up * randf_range(0.3, 0.9) + rr * randf_range(-0.2, 0.2), 60 + randi() % 40, Color(1.0, 0.85, 0.5), true, 0.0)
+	if sky_t == 1 or (sky_t % 600 == 0 and exposed):
+		shake = maxf(shake, 3.0)
+		audio.play("rumble", player.pos, 0.5)
+	lights.append([player.pos + -basis_d(atan2(player.pos.y, player.pos.x)) * 80.0, 260.0, Color(1.0, 0.85, 0.55) * (0.4 * ramp)])
+
 ## fireworks: rockets rise from the land round you and burst in colour
 func _sky_fireworks() -> void:
 	if _sky_next <= 0:
@@ -5098,7 +5120,16 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 			# (a gas giant's: from PRESSURE_D under its mean surface, well into its cloud deck, harder the deeper)
 			var under3: float = Defs.RS0 - p.pos.length()
 			return 0.0 if under3 < PRESSURE_D else 1.0 + (under3 - PRESSURE_D) / 60.0
+		"flare":
+			# (a dying star's: while it flares, under the open sky)
+			return sky_level("flare") if exposed and not p.in_liquid else 0.0
+		"void":
+			# (a black hole's Hollow: from VOID_D under its mean surface, down in a rift)
+			var under4: float = Defs.RS0 - p.pos.length()
+			return 0.0 if under4 < VOID_D else 1.0 + (under4 - VOID_D) / 50.0
 	return 0.0
+
+const VOID_D := 120.0
 
 const PRESSURE_D := 110.0
 
@@ -5169,6 +5200,8 @@ func recipe_done(r: Dictionary) -> bool:
 		"lattice": return items.has("lattice")
 		"radward": return items.has("radward")
 		"rimeprow": return items.has("rimeprow")
+		"heatshield": return items.has("heatshield")
+		"voidanchor": return items.has("voidanchor")
 		"depthseal": return items.has("depthseal")
 		"rimelens": return items.has("rimelens") or dig_r >= 14.0
 		"levitate": return items.has("levitate")
@@ -5330,7 +5363,7 @@ func ore_found(om: int) -> bool:
 ## ore, which shows (locked) where that ore is found.
 ## (An alloy shows, locked, once you've found either of its ores.)
 func recipe_hidden(r: Dictionary) -> bool:
-	if String(r["id"]) in ["keel", "lattice", "radward", "rimeprow"] and not items.has("skiff"):
+	if String(r["id"]) in ["keel", "lattice", "radward", "rimeprow", "heatshield", "voidanchor"] and not items.has("skiff"):
 		return true
 	if r.has("part"):
 		# (ship parts: once you have a skiff to fit them to)
@@ -5619,10 +5652,13 @@ func craft(r: Dictionary) -> bool:
 			ui.toast("Fitted to your skiff: %s" % ("the Wisp Shield takes a lightning strike out there, then charges again" if r["id"] == "shield" else "the Wisp Cannon fires with the cast button while you fly in space (the keys steer)"), Color(1, 0.85, 0.4), 5.0)
 			save_game()
 			return true
-		"keel", "depthseal", "lattice", "radward", "rimeprow":
+		"keel", "depthseal", "lattice", "radward", "rimeprow", "heatshield", "voidanchor", "solarshroud":
 			items[String(r["id"])] = true
 			var what := {"keel": "the skiff rides out every maelstrom now", "lattice": "the skiff grounds the lightning of every storm belt now",
 				"radward": "the skiff passes every radiation belt now", "rimeprow": "the skiff shoulders through every shard ring now",
+				"heatshield": "the skiff passes through a star's corona and down onto its crust",
+				"voidanchor": "the skiff holds together through a black hole's horizon, down into the Hollow",
+				"solarshroud": "a dying star's flares can't sear you under the open sky",
 				"depthseal": "the abyss of a deep ocean world, or the air under a gas giant's clouds, can't crush you"}
 			ui.toast("%s forged: %s" % [r["name"], what[String(r["id"])]], Color(1, 0.85, 0.4), 5.0)
 			save_game()

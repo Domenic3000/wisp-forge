@@ -10,15 +10,15 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `player`, `space`, `exotic`, `perf`), so every check is still a method of the one test object. A new section
   goes in the file for its area; a file may only call functions in itself or files before it in the chain (an
   earlier file can't see a later one's functions). `Check scripts.bat` checks each of them.
-- Test mode quits by itself after 22 minutes (a full run takes about 18), so a broken run never leaves the game open;
+- Test mode quits by itself after 27 minutes (a full run takes about 22; 26 Nov), so a broken run never leaves the game open;
   `scripts/watchdog.gd` (an autoload ahead of Defs, kept tiny) also quits a `--test` run whose main scene never came
   up (a parse error in main.gd used to leave a blank window), whose main.gd `_ready` stopped before `booted` (a
-  script it preloads failed to compile: 25 s), or that passes 23 minutes. tests.gd is loaded at run
+  script it preloads failed to compile: 25 s), or that passes 28 minutes. tests.gd is loaded at run
   time (not preloaded), so a parse error in it quits the game instead of leaving a blank window. `Check scripts.bat`
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "hearts", "newbiomes", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "hand", "audio", "inworld", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "stations", "fuel", "ships" (also "shipyard" or "pocket"), "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "hand", "audio", "inworld", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "stations", "fuel", "ships" (also "shipyard" or "pocket"), "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "star", "void", "pursuit", "cores", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.

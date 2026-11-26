@@ -286,7 +286,9 @@ var plan_times := {}     # ms per step of the last plan (the test mode prints it
 
 var _clim := {}            # the planet's climate and settlement (Defs.climate): how many structures, how many towns
 
+var _planet := {}          # (the planet being planned: a dying star's and a black hole's mysteries read its biomes)
 func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, boss_angle: float, build: bool) -> void:
+	_planet = planet
 	N0 = Defs.NS
 	surf = surface
 	_clim = Defs.climate(planet)
@@ -364,6 +366,18 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		rng.seed = int(planet["seed"]) * 89 + 6151
 		_giant_sky(build, String(planet.get("name", "")))
 		rng = keep2
+	elif exo == "star":
+		var keep3 := rng
+		rng = RandomNumberGenerator.new()
+		rng.seed = int(planet["seed"]) * 83 + 7177
+		_star_relay(build, String(planet.get("name", "")))
+		rng = keep3
+	elif exo == "void":
+		var keep4 := rng
+		rng = RandomNumberGenerator.new()
+		rng.seed = int(planet["seed"]) * 79 + 8273
+		_void_shrines(build, String(planet.get("name", "")))
+		rng = keep4
 	# dungeons: a gatehouse on the surface over a maze of halls below
 	var dn := 0
 	for tries in 80:
@@ -404,7 +418,7 @@ func _pick(weights: Dictionary) -> String:
 func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
 	# (each kind of world's own biome builds as the biome it grew from: Defs.BASE_BIOME, 26 Nov)
 	var b := Defs.base_biome(biome(x))
-	if b == "abyss" or b == "giant":
+	if b == "abyss" or b == "giant" or b == "slag" or b == "corona" or b == "rift" or String(_planet.get("exotic", "")) == "void":
 		return false                  # (a deep ocean world's floor, a gas giant's far under its clouds: nothing)
 	var w := {}
 	match b:
@@ -3162,11 +3176,28 @@ func _beacon(bx: int, top: int, k: int, build: bool) -> void:
 ## The Eye of the Storm on the isle whose grass row at column ex is `top`: a domed hall of masonry, its door
 ## at one end under a great round window, five braziers along its floor that answer the beacons, an inscription
 ## by the door, and at the other end the vault behind a ward of runestone, with an altar and a chest.
-func _eye_hall(ex: int, top: int, build: bool) -> void:
+func _eye_hall(ex: int, top: int, build: bool, title := "The Eye of the Storm", plinth := 0, eye := false) -> void:
 	var W := EYE_W
 	var DOME := 30
-	var fl := EYE_HALL + 4 + DOME + 2          # (the hall's floor row, local: the isle's grass)
-	var bp := BP.new(ex - W / 2, top - fl, W, fl + 1)
+	var fl := EYE_HALL + 4 + DOME + 2 + (6 if eye else 0)   # (the hall's floor row, local: the isle's grass)
+	var bp := BP.new(ex - W / 2, top - fl, W, fl + 1 + plinth)
+	# (on uneven ground: a plinth of masonry down under the floor, into the ground)
+	for jp in plinth:
+		for ip in W:
+			bp.fg(ip, fl + 1 + jp, Defs.MASONRY if jp < plinth - 2 or (ip > 2 and ip < W - 3) else Defs.OBSIDIAN)
+	if eye:
+		# (a dying star's sanctum: a crystal eye on the dome's crown, for the relay's light)
+		var ecx := W / 2
+		var ecy := fl - EYE_HALL - 4 - DOME - 4
+		for jy in range(-4, 5):
+			for ix in range(-4, 5):
+				var dl2 := Vector2(ix, jy).length()
+				if dl2 < 4.3:
+					bp.fg(ecx + ix, ecy + jy, Defs.WISP if dl2 < 1.6 else (Defs.CRYSTAL if dl2 < 3.3 else Defs.COPPERBAR))
+		for jy2 in range(ecy + 4, ecy + 7):
+			bp.fg(ecx, jy2, Defs.COPPERBAR)
+			bp.fg(ecx - 1, jy2, Defs.COPPERBAR)
+		mystery["eye"] = _bp_at(bp, float(ecx) + 0.5, bp.y0 + ecy, Defs.R_TOP - float(bp.y0 + ecy) - 0.5)
 	var side := -1 if rng.randf() < 0.5 else 1   # (the door's end; the vault at the other)
 	var F := func(i: int) -> int: return i if side < 0 else W - 1 - i
 	var htop := fl - EYE_HALL                  # (the hall's first air row)
@@ -3220,7 +3251,7 @@ func _eye_hall(ex: int, top: int, build: bool) -> void:
 	var hrow := bp.y0 + fl - 20
 	mystery["hall"] = _bp_at(bp, float(W) * 0.5, hrow, Defs.R_TOP - float(hrow) - 0.5)
 	mystery["ward"] = {"x0": posmod(bp.x0 + wx0, N0), "y0": bp.y0 + htop, "w": 4, "h": fl - htop, "ax": posmod(bp.x0, N0), "aw": W}
-	_claim(bp.x0, W, "The Eye of the Storm", bp.y0, bp.y0 + fl)
+	_claim(bp.x0, W, title, bp.y0, bp.y0 + fl)
 	_pin(bp)
 	_finish(bp, build)
 
@@ -3234,6 +3265,240 @@ func _pin(bp: BP) -> void:
 		if cc[k] != 0xffff:
 			cc[k] = cc[k] | F_ANCHOR
 	bp.c = cc
+
+# ------------------------------------------------------------ a dying star ---
+## A dying star (26 Nov, the roadmap's "stars (a heat shield to land)"): rafts of slag crust on a sea of molten
+## light. On its widest raft (planet "sanctum", not the one you land on) the SUN RELAY: the SUN WELL at one end
+## (a lens over a pit of lava, always lit by the star's own fire), five SUN LENSES on obsidian spires of every
+## height along the raft, and at the other end THE SOLAR SANCTUM (`_eye_hall` on a plinth, a crystal eye on its
+## dome) whose vault is shut by a ward of runestone. Each lens (the well's too) faces one of eight ways and F turns
+## it an eighth; a lit lens throws its light the way it faces, to the nearest lens (or the eye) that way, which
+## lights in turn. Bring the well's light into the eye and the ward breaks (mystery.gd, kind "lenses").
+## mystery = {kind, lenses [{pos (the lens), stand}] (0 is the well), eye, facing (how each is turned at first),
+## need (the turns of the planned path, for the test), plaque, vault, hall, ward, echoes, name, planet}
+const RELAY_RANGE := 700.0
+func _star_relay(build: bool, pname: String) -> void:
+	mystery = {"kind": "lenses", "lenses": [], "name": "The Solar Sanctum", "planet": pname}
+	var st := Defs.biome_starts(_planet)
+	var sb := int(_planet.get("sanctum", 2))
+	var c0 := int(st[sb] * float(N0))
+	var c1 := int((st[sb + 1] if sb + 1 < st.size() else 1.0) * float(N0))
+	var mid := (c0 + c1) / 2
+	var side := 1 if rng.randf() < 0.5 else -1
+	var xs := mid + side * 450                 # (the sanctum)
+	var gr := _ground_range(xs - EYE_W / 2, EYE_W)
+	_eye_hall(xs, gr.x, build, "The Solar Sanctum", gr.y - gr.x + 6, true)
+	var eye: Vector2 = mystery["eye"]
+	# the path, planned backward from the eye: each lens exactly the way (one of eight) from the one before it,
+	# a flight of 110-190 cells, on a spire it can stand on, over the raft's slag; tried until no lens or the eye
+	# lies nearer along any step's way (where the light would go instead)
+	# (the ways toward the sanctum: columns grow the opposite way to Defs.octant's 0)
+	var fwd: Array = [4, 3, 5] if side > 0 else [0, 1, 7]
+	var best: Array = []
+	for attempt in 120:
+		var pts := [eye]
+		var spots := []                 # [column, spire height]
+		var good := true
+		for step in 6:
+			var o: int = fwd[rng.randi_range(0, 2)] if step > 0 else fwd[rng.randi_range(0, 1)]
+			var d := rng.randf_range(110.0, 190.0)
+			var p0: Vector2 = pts[pts.size() - 1]
+			var q := p0 - Defs.octant_dir(p0, o) * d
+			for it in 4:
+				q = p0 - Defs.octant_dir(q, o) * d
+			var col := int(round(fposmod(atan2(q.y, q.x), TAU) / TAU * float(N0) - 0.5))
+			var row := int(round(Defs.R_TOP - q.length() - 0.5))
+			var g9 := _ground_range(col - 4, 9)
+			var h := g9.x - row - 6
+			var lo := 6
+			var hi := 130
+			if h < lo or h > hi or wet(col) or cdist(col, xs) < EYE_W / 2 + 14 or cdist(col, mid) > (c1 - c0) / 2 - 140:
+				good = false
+				break
+			var dup := false
+			for sp in spots:
+				if cdist(int(sp[0]), col) < 24:
+					dup = true
+			if dup:
+				good = false
+				break
+			# (the lens as it will stand: its real place, from the spire's height)
+			var lrow := g9.x - h - 6
+			var a := (float(posmod(col, N0)) + 0.5) / float(N0) * TAU
+			pts.append(Vector2(cos(a), sin(a)) * (Defs.R_TOP - float(lrow) - 0.5))
+			spots.append([col, h])
+		if not good:
+			continue
+		# forward now: the well (last planned) first, then the lenses, then the eye
+		var fp := []
+		for k in range(pts.size() - 1, -1, -1):
+			fp.append(pts[k])
+		if _relay_clear(fp):
+			best = spots.duplicate()
+			best.reverse()
+			break
+	mystery["planned"] = not best.is_empty()
+	if best.is_empty():
+		# (no clear path found: a straight row of lenses, every one on the same short spire; it still plays)
+		for k2 in 6:
+			best.append([xs - side * (900 - k2 * 150), 12])
+	_sun_well(int(best[0][0]), int(best[0][1]), side, build)
+	for k3 in range(1, 6):
+		_sun_lens(int(best[k3][0]), int(best[k3][1]), k3, build)
+	# the turns: the planned path's, and each lens's first turn (never the right one)
+	var need := []
+	var lz: Array = mystery["lenses"]
+	for k4 in 6:
+		var to: Vector2 = lz[k4 + 1]["pos"] if k4 < 5 else mystery["eye"]
+		need.append(Defs.octant(lz[k4]["pos"], to))
+	var facing := []
+	for k5 in 6:
+		var f := rng.randi_range(0, 7)
+		if f == int(need[k5]):
+			f = (f + rng.randi_range(2, 6)) % 8
+		facing.append(f)
+	mystery["need"] = need
+	mystery["facing"] = facing
+
+## is the planned path clear? each step well inside its eighth (15 of its 22.5 degrees), within reach, and no
+## point after it (a lens not yet lit, or the eye) nearer along that eighth
+func _relay_clear(pts: Array) -> bool:
+	for k in pts.size() - 1:
+		var a: Vector2 = pts[k]
+		var b: Vector2 = pts[k + 1]
+		if a.distance_to(b) > RELAY_RANGE * 0.9:
+			return false
+		var o := Defs.octant(a, b)
+		if absf(Defs.octant_off(a, b)) > deg_to_rad(15.0):
+			return false
+		for q in range(k + 2, pts.size()):
+			var c: Vector2 = pts[q]
+			if Defs.octant(a, c) == o and a.distance_to(c) < a.distance_to(b) + 30.0:
+				return false
+	return true
+
+## the sun well: its lens on a spire h high at column x, and behind it (away from the sanctum, `side`) a pit of
+## lava ringed in obsidian
+func _sun_well(x: int, h: int, side: int, build: bool) -> void:
+	var W := 22
+	var px := x - side * 16                    # (the pit's middle)
+	var gr := _ground_range(px - W / 2, W)
+	var bp := BP.new(px - W / 2, gr.x - 2, W, gr.y - gr.x + 12)
+	var base := gr.y - bp.y0           # (local row of the lowest ground)
+	for i in W:
+		for j in range(2, base + 10):
+			if i >= 2 and i < 20 and j < base - 2:
+				bp.fg(i, j, 0)          # (open over the pit, however the ground lies)
+				continue
+			var pit := i >= 4 and i < 18 and j >= base - 1 and j < base + 6
+			var rim := i >= 2 and i < 20 and j >= base - 2 and j < base + 8
+			if pit:
+				bp.fg(i, j, Defs.LAVA)
+			elif rim:
+				bp.fg(i, j, Defs.OBSIDIAN)
+			elif j >= base:
+				bp.fg(i, j, Defs.MAGMAROCK)
+	_pin(bp)
+	_finish(bp, build)
+	_sun_lens(x, h, 0, build)
+
+## a sun lens on an obsidian spire h cells high at column x: a ledge to stand on at its top and the lens over it
+## (a crystal disc in a copper ring, its heart glowing for the well's). Its place goes in `mystery["lenses"][k]`.
+func _sun_lens(x: int, h: int, k: int, build: bool) -> void:
+	var W := 19
+	var gr := _ground_range(x - 4, 9)
+	var LH := 9                           # (the lens and its ring over the ledge)
+	var top := gr.x - h                   # (the ledge's row)
+	var bp := BP.new(x - W / 2, top - LH, W, LH + (gr.y - top) + 4)
+	var ledge := LH                       # (local)
+	var cx := W / 2
+	for j in range(ledge, bp.h):
+		var f := float(j - ledge) / maxf(1.0, float(bp.h - ledge))
+		var half := 2 + int(round(f * f * 3.0)) + (6 if j < ledge + 2 else 0)
+		for i in range(cx - half, cx + half + 1):
+			var edge := j == ledge or (absi(i - cx) == half)
+			bp.fg(i, j, Defs.OBSIDIAN if not edge or j > ledge + 1 else Defs.MAGMAROCK)
+	# the lens: a ring of copper round crystal, on a copper stem
+	var lc := Vector2(cx, LH / 2 - 1)
+	for j2 in LH:
+		for i2 in range(cx - 4, cx + 5):
+			var dl := (Vector2(i2, j2) - lc).length()
+			if dl < 3.6:
+				bp.fg(i2, j2, Defs.CRYSTAL if dl < 2.4 and not (k == 0 and dl < 1.2) else (Defs.WISP if k == 0 and dl < 1.2 else Defs.COPPERBAR))
+	for j3 in range(int(lc.y) + 3, ledge):
+		bp.fg(cx, j3, Defs.COPPERBAR)
+	for d in maxi(0, k):
+		bp.fg(cx - 6 + d * 3, ledge + 1, Defs.CRYSTAL)          # (k marks along the ledge's front)
+	_pin(bp)
+	_finish(bp, build)
+	var lrow := bp.y0 + int(lc.y)
+	var srow := bp.y0 + ledge - 9
+	var at := {"pos": _bp_at(bp, lc.x + 0.5, lrow, Defs.R_TOP - float(lrow) - 0.5),
+		"stand": _bp_at(bp, float(cx) + 6.5, srow, Defs.R_TOP - float(srow) - 0.5)}
+	(mystery["lenses"] as Array).append(at)
+
+# ------------------------------------------------------------ a black hole ---
+## A black hole's Hollow (26 Nov): shards of the worlds it swallowed over rifts that unmake you. An ECHO SHRINE on
+## each shard (an arch of obsidian over a floating crystal shard, in the middle of the shard; on the one you land
+## on, away from the Gate), and THE SINGULARITY GATE near where you come down (`_eye_hall`, its five braziers lit
+## one by one as the shards are won). F at a shrine wakes the echo of that world's guardian; beat it and its shard is
+## yours; with all five, F at the Gate breaks its ward (mystery.gd, kind "echoes"). mystery = {kind, shrines [{pos,
+## stand, biome}], plaque (where the shards are set, too), vault, hall, ward, echoes, name, planet}
+func _void_shrines(build: bool, pname: String) -> void:
+	mystery = {"kind": "echoes", "shrines": [], "name": "The Singularity Gate", "planet": pname}
+	var bl: Array = _planet["biomes"]
+	var st := Defs.biome_starts(_planet)
+	var spawn_b := Defs.biome_index_at(_planet, float(spawn_col) / float(N0) * TAU)
+	var side := 1 if rng.randf() < 0.5 else -1
+	# the Gate, a little way from where you come down
+	var xg := spawn_col + side * 190
+	var gr := _ground_range(xg - EYE_W / 2, EYE_W)
+	_eye_hall(xg, gr.x, build, "The Singularity Gate", gr.y - gr.x + 6, false)
+	for b in bl.size():
+		if String(bl[b]) == "rift":
+			continue
+		var c0 := int(st[b] * float(N0))
+		var c1 := int((st[b + 1] if b + 1 < st.size() else 1.0) * float(N0))
+		var x := (c0 + c1) / 2
+		if b == spawn_b:
+			# (on the shard you land on, the shrine stands on the far side from the Gate)
+			x = spawn_col - side * 240
+		_echo_shrine(x, (mystery["shrines"] as Array).size(), String(bl[b]), build)
+
+## an echo shrine at column x: a dark arch of obsidian and runestone over a crystal shard that floats in it
+func _echo_shrine(x: int, k: int, biome: String, build: bool) -> void:
+	var W := 23
+	var H := 30
+	var gr := _ground_range(x - W / 2, W)
+	var bp := BP.new(x - W / 2, gr.x - H, W, H + (gr.y - gr.x) + 4)
+	var fl := H                                # (local: the floor, the highest ground)
+	for j in range(fl, bp.h):
+		for i in W:
+			bp.fg(i, j, Defs.OBSIDIAN if j == fl else Defs.DEEPSTONE)
+	var cx := W / 2
+	for j2 in range(2, fl):
+		for i2 in W:
+			var u := float(i2 - cx) / float(cx)
+			var arch := float(fl - j2) > float(fl - 6) * sqrt(maxf(0.0, 1.0 - u * u)) + 4.0
+			var pillar := absi(i2 - cx) >= cx - 3
+			if pillar or (arch and j2 < fl - 2 and absi(i2 - cx) <= cx):
+				bp.fg(i2, j2, Defs.RUNESTONE if (pillar and (j2 % 6 == 0)) or (arch and j2 < 6) else Defs.OBSIDIAN)
+			else:
+				bp.fg(i2, j2, 0)
+				bp.bg(i2, j2, Defs.DEEPSTONE)
+	# the shard, a diamond of crystal floating in the arch
+	var sc := Vector2(cx, fl - 13)
+	for j3 in range(-5, 6):
+		for i3 in range(-3, 4):
+			var dd := absf(float(i3)) / 3.0 + absf(float(j3)) / 5.0
+			if dd <= 1.0:
+				bp.fg(cx + i3, int(sc.y) + j3, Defs.WISP if dd < 0.35 else Defs.CRYSTAL)
+	_pin(bp)
+	_finish(bp, build)
+	var prow := bp.y0 + int(sc.y)
+	var srow := bp.y0 + fl - 9
+	(mystery["shrines"] as Array).append({"pos": _bp_at(bp, sc.x + 0.5, prow, Defs.R_TOP - float(prow) - 0.5),
+		"stand": _bp_at(bp, float(W) + 4.5, srow, Defs.R_TOP - float(srow) - 0.5), "biome": biome})
 
 const TEMPLE_W := 250
 const TEMPLE_HALL := 62

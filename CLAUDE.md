@@ -34,7 +34,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | `docs/space.md` | Space and travel between planets, asteroids, the galaxy (systems, sectors, nebulae, charting, the Starsail, the space map), space's view |
 | `docs/space-places.md` | Derelict wrecks, pirates, trading outposts (docked into their halls, an instance), derelict stations and aliens, void life and anomalies |
 | `docs/ship.md` | Pixel bodies, ship classes (forged whole), ship parts, hull damage and mending, fuel, the pocket dimension (its isle, the home terrace), cargo; the old builder |
-| `docs/exotic-worlds.md` | The deep ocean world and the gas giant, with their mysteries |
+| `docs/exotic-worlds.md` | The deep ocean world, the gas giant, the dying star and the black hole, with their mysteries |
 | `docs/progression.md` | The main quest, getting off the first planet, barriers by kind, cores, ores and gear, hazards, skiff upgrades |
 | `docs/climate.md` | Settlement and climate per planet kind, weather, sky events |
 | `docs/towns.md` | Living towns: villagers, requests, trade, sleep, memory, rebuilding |
@@ -70,7 +70,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 
 ## Testing
 - `Run tests.bat` runs every check on a test planet (the classic system, world seed 0) and writes
-  `saves/test_report.txt` (and `test_log.txt`, pictures in `saves/shots/`). A full run takes about 18 minutes.
+  `saves/test_report.txt` (and `test_log.txt`, pictures in `saves/shots/`). A full run takes about 22 minutes.
 - A non-empty `saves/test_only.txt` naming one section runs just that one (25-50 s); `docs/testing.md` lists
   the names. Leave it empty when done.
 - `Check scripts.bat` checks the scripts for parse errors (`saves/check.txt`; "Identifier not found: Defs" is

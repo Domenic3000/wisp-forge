@@ -43,6 +43,8 @@ void main() {
 	if (P.p[7].y >= 0.0) waterR = RS0 - P.p[7].y;
 	if ((fl & 2) != 0) waterR = max(waterR, RS0 - P.p[8 + 2 * bsel].x - 2.0);
 	if ((fl & 4) != 0 && waterR < 0.0) { waterR = RS0 - P.p[8 + 2 * bsel].x - 6.0; waterMat = float(M_LAVA); }
+	// (a dying star's: its sea is molten, flags 16 on either biome of the border so the shore never turns to water)
+	if (((int(A.w) | int(B.w)) & 16) != 0 && waterR >= 0.0) waterMat = float(M_LAVA);
 
 	S.s[2 * i] = vec4(rs, float(bsel), deepR, magmaR);
 	// the two biomes this column sits between, and how far across the border it is, so the ground

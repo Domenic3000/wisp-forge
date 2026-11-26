@@ -102,12 +102,14 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (volcanic, serpent), Kharybdos the Deep Maw (ocean, toad), Ankhet the Sun Sphinx (desert, beast), Gulgoth the Mire
   Wyrm (marsh, serpent), Hiemora the Glacier Queen (frozen, bird), Gorrath the Elder Beast (wild, beast), Aurelis the
   Gryphon King (realm, bird), Nhal'Zuur the Abyssal Eye (the deep ocean world, a swimming serpent in a flooded
-  chamber), Tempestra the Storm Roc (the gas giant, bird). `Defs.heart_type(kind)`: "heart_<kind>", or "golem"
+  chamber), Tempestra the Storm Roc (the gas giant, bird), and (26 Nov) Solarion the Sun Phoenix (a dying star,
+  bird, over the Solar Sanctum) and Nul'Ghora the Devourer (a black hole's Hollow, serpent, over the Singularity Gate). `Defs.heart_type(kind)`: "heart_<kind>", or "golem"
   (Vulkhar) for temperate and any kind without one. `heart_enemy` (via `enemy_def`, prefix "heart_"): "boss",
   "heart", "hall" (it wakes only with you inside its chamber: boss_ai's wake test, as a warden's `_in_hall`), "key".
 - main `_spawn_heart_boss` (where Vulkhar was spawned, unless `planet_state["boss_dead"]`): on the chamber's floor,
   `tether` = the chamber's half width - 12, `ceil` its height - 8, `home` where it stands. The gas giant's (its heart
-  can't be reached) over the Eye of the Storm (`builds.mystery["hall"]` + 110 up), `arena` 260, tether 420, ceil 260,
+  can't be reached), the dying star's and the black hole's: over their mystery's hall (the Eye of the Storm, the
+  Solar Sanctum, the Singularity Gate: `builds.mystery["hall"]` + 110 up), `arena` 260, tether 420, ceil 260,
   and no "hall" (it wakes as you come near). Beaten: `_heart_falls` (main's `_kill_enemy` routes "heart" there):
   `boss_dead`, its relic (max health / mana / regen given once, `_apply_gear`), its loot, 24 of the world's ore, a
   recipe, 120 coins, `_roll_loot(6, 2.0)`. Guardians' moves, chase (pursuit), wall-breaking and calls all apply.

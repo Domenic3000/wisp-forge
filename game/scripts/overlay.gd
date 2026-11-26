@@ -350,6 +350,12 @@ func _draw_mystery() -> void:
 				var a := float(q) / 10.0 * TAU + float(game.frame) * 0.02
 				draw_rect(Rect2((sp + Vector2(cos(a), sin(a)) * 7.0).floor(), Vector2.ONE), Color(0.6, 0.9, 1.0, 0.4))
 		_glyph(sp, int(pil[k]["glyph"]), col)
+	if md.has("lenses"):
+		_draw_lenses(md, view)
+		var echl: Array = md.get("echoes", [])
+		for pk in game.mystery.path:
+			if int(pk) > 0 and int(pk) - 1 < echl.size():
+				_flame(game.world_to_screen(echl[int(pk) - 1]), 0.6, int(pk) + 7, view)
 	# a gas giant's beacons: a flame in each basin that burns (mystery.gd `burn`), and the Eye's braziers that
 	# answer them
 	var bcs: Array = md.get("beacons", [])
@@ -361,6 +367,49 @@ func _draw_mystery() -> void:
 		_flame(game.world_to_screen(bcs[k2]["pos"]), 1.0, k2, view)
 		if k2 < ech.size():
 			_flame(game.world_to_screen(ech[k2]), 0.6, k2 + 7, view)
+
+## a dying star's sun lenses: the light from the well, lens to lens, as bright beams (into the eye once it gets
+## there), the last one fading out where it reaches nothing; each lens's way shown as a short dim tick
+func _draw_lenses(md: Dictionary, view: Rect2) -> void:
+	var lzs: Array = md.get("lenses", [])
+	if lzs.is_empty():
+		return
+	var face: Array = game.mystery.st.get("face", [])
+	var pth: Array = game.mystery.path
+	var t := float(game.frame)
+	var big := view.grow(400.0)
+	for k in lzs.size():
+		var lp: Vector2 = lzs[k]["pos"]
+		var sp: Vector2 = game.world_to_screen(lp)
+		if not big.has_point(sp) or k >= face.size():
+			continue
+		var tip: Vector2 = game.world_to_screen(lp + Defs.octant_dir(lp, int(face[k])) * 9.0)
+		draw_line(sp, tip, Color(1.0, 0.8, 0.4, 0.5 if pth.has(k) else 0.28), 1.0)
+	for q in pth.size():
+		var a: Vector2 = lzs[int(pth[q])]["pos"]
+		var b: Vector2
+		var end := q == pth.size() - 1
+		if not end:
+			b = lzs[int(pth[q + 1])]["pos"]
+		else:
+			b = game.mystery.path_end
+		var sa: Vector2 = game.world_to_screen(a)
+		var sb: Vector2 = game.world_to_screen(b)
+		if not (big.has_point(sa) or big.has_point(sb) or view.intersects(Rect2(sa, Vector2.ZERO).expand(sb))):
+			continue
+		var fade := 1.0
+		if end and not game.mystery.path_eye:
+			fade = 0.55
+		var pulse := 0.85 + 0.15 * sin(t * 0.13 + float(q))
+		draw_line(sa, sb, Color(1.0, 0.55, 0.15, 0.22 * fade), 5.0)
+		draw_line(sa, sb, Color(1.0, 0.85, 0.45, 0.6 * fade * pulse), 2.0)
+		draw_line(sa, sb, Color(1.0, 1.0, 0.85, 0.9 * fade), 1.0)
+		# motes running along it, toward where it goes
+		var ln: float = sa.distance_to(sb)
+		for m in int(ln / 24.0):
+			var u := fposmod(t * 0.012 + float(m) * 24.0 / maxf(ln, 1.0), 1.0)
+			var mp: Vector2 = sa.lerp(sb, u)
+			draw_rect(Rect2(mp.floor(), Vector2.ONE * 2.0), Color(1.0, 0.95, 0.7, 0.8 * fade * (1.0 - u * (0.0 if not end or game.mystery.path_eye else 0.9))))
 
 ## a pixel flame standing on screen point sp (s: its size), flickering
 func _flame(sp: Vector2, s: float, fseed: int, view: Rect2) -> void:
@@ -1043,6 +1092,9 @@ func _draw_all() -> void:
 			continue
 		var tl: float = FoeAI.tell(e)
 		var tint := Color(1, 1, 1).lerp(Color(2.2, 0.75, 0.5), tl)
+		if e.d.has("echo"):
+			# (a black hole's echo of a guardian: washed violet, flickering like something not quite there)
+			tint = tint * Color(0.72, 0.55, 1.15, 0.72 + 0.12 * sin(float(game.frame) * 0.21 + e.phase * 9.0))
 		var sq := 1.0 - 0.22 * tl if (e.type == "slime" or e.type == "mimic") else 1.0
 		if e.d.has("def"):
 			# a guardian or creature: its frames grown from parts (on a worker thread) the first time it's

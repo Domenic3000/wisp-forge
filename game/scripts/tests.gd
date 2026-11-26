@@ -163,6 +163,10 @@ func run() -> void:
 			await _test_abyss()
 		elif only == "giant":
 			await _test_giant()
+		elif only == "star":
+			await _test_star()
+		elif only == "void":
+			await _test_void()
 		elif only == "newbiomes":
 			await _test_newbiomes()
 		elif only == "cores":
@@ -3043,6 +3047,8 @@ func run() -> void:
 	await _test_far_biomes()
 	await _test_abyss()
 	await _test_giant()
+	await _test_star()
+	await _test_void()
 	await _test_cores()
 	await _test_newbiomes()
 	await _test_worlds()
