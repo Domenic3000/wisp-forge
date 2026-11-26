@@ -49,13 +49,16 @@ const COOLDOWN := {"dig": 6, "step": 9, "spark": 4, "hit": 5, "coin": 3, "creak"
 	"fizzle": 8, "thunder": 40, "hurt": 10, "foe_die": 4, "dock": 30, "cannon": 5, "shield": 12,
 	"step_soft": 9, "step_stone": 9, "step_sand": 9, "step_snow": 9, "step_wood": 9, "step_metal": 9}
 
+## (26 Nov, user on another PC: "crackling in the audio engine... occasional snaps"): a free player is taken
+## before one still sounding is cut off, and there are more of them
+const VOICES := 16
 const BUS_SFX := "WF Sound"
 const BUS_AMB := "WF Ambience"
 const BUS_MUSIC := "WF Music"
 
 func _ready() -> void:
 	_make_buses()
-	for k in 12:
+	for k in VOICES:
 		var p := AudioStreamPlayer.new()
 		p.bus = BUS_SFX
 		add_child(p)
@@ -87,8 +90,17 @@ func play(sname: String, wpos = null, vol := 1.0, pitch := 1.0) -> void:
 		v *= clampf(1.0 - (d - 60.0) / 220.0, 0.0, 1.0)
 	if v <= 0.01:
 		return
-	var p: AudioStreamPlayer = _players[_next]
-	_next = (_next + 1) % _players.size()
+	# a free player if there is one; else the one started longest ago (cutting a sound off mid-way snaps)
+	var p: AudioStreamPlayer = null
+	for k in _players.size():
+		var q: AudioStreamPlayer = _players[(_next + k) % _players.size()]
+		if not q.playing:
+			p = q
+			_next = (_next + k + 1) % _players.size()
+			break
+	if p == null:
+		p = _players[_next]
+		_next = (_next + 1) % _players.size()
 	p.stream = sfx[sname]
 	p.volume_db = linear_to_db(v)
 	p.pitch_scale = pitch * randf_range(0.93, 1.07)
@@ -226,6 +238,16 @@ func _make_buses() -> void:
 		var i := AudioServer.bus_count - 1
 		AudioServer.set_bus_name(i, nm)
 		AudioServer.set_bus_send(i, "Master")
+	# a limiter on the master bus: sounds, ambience and music stacked up never clip the output (clipping is heard
+	# as crackling)
+	var has_lim := false
+	for e in AudioServer.get_bus_effect_count(0):
+		if AudioServer.get_bus_effect(0, e) is AudioEffectHardLimiter:
+			has_lim = true
+	if not has_lim:
+		var lim := AudioEffectHardLimiter.new()
+		lim.ceiling_db = -0.5
+		AudioServer.add_bus_effect(0, lim)
 	var si := AudioServer.get_bus_index(BUS_SFX)
 	_rv = AudioEffectReverb.new()
 	_rv.room_size = 0.3
@@ -549,7 +571,7 @@ func _loop(a: PackedFloat32Array, f: int, rate: int) -> AudioStreamWAV:
 	for i in f:
 		var w := float(i) / float(f)
 		b[i] = a[i] * w + a[n + i] * (1.0 - w)
-	var st := _wav(b, rate)
+	var st := _wav(b, rate, false)
 	st.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	st.loop_begin = 0
 	st.loop_end = n
@@ -840,11 +862,25 @@ func _amb_fire(r: RandomNumberGenerator) -> AudioStreamWAV:
 	return _loop(a, f, RATE)
 
 # --------------------------------------------------------------- synthesis ---
-func _wav(samples: PackedFloat32Array, rate := RATE) -> AudioStreamWAV:
+## Into a 16-bit wav. Loud peaks are rounded off softly (above SOFT_KNEE they bend toward SOFT_CEIL) instead
+## of being cut flat at the limit, and a one-shot's last few milliseconds fade to silence, so it never ends on
+## a step (26 Nov: both were heard as crackles and snaps). A loop keeps its ends as they are (`tail` false).
+const SOFT_KNEE := 0.7
+const SOFT_CEIL := 0.97
+const TAIL_FADE := 0.004
+func _wav(samples: PackedFloat32Array, rate := RATE, tail := true) -> AudioStreamWAV:
 	var data := PackedByteArray()
-	data.resize(samples.size() * 2)
-	for i in samples.size():
-		data.encode_s16(i * 2, int(clampf(samples[i], -1.0, 1.0) * 32000.0))
+	var n := samples.size()
+	data.resize(n * 2)
+	var fade := int(TAIL_FADE * rate) if tail else 0
+	for i in n:
+		var x: float = samples[i]
+		var ax := absf(x)
+		if ax > SOFT_KNEE:
+			x = signf(x) * (SOFT_KNEE + (SOFT_CEIL - SOFT_KNEE) * tanh((ax - SOFT_KNEE) / (SOFT_CEIL - SOFT_KNEE)))
+		if i >= n - fade:
+			x *= float(n - 1 - i) / float(fade)
+		data.encode_s16(i * 2, int(x * 32000.0))
 	var w := AudioStreamWAV.new()
 	w.format = AudioStreamWAV.FORMAT_16_BITS
 	w.mix_rate = rate
@@ -1070,7 +1106,8 @@ func _build_sfx() -> void:
 	# thunder: a crack overhead and a long roll
 	sfx["thunder"] = _wav(_mixn([_band(0.08, 0.15, 0.9, 30.0, 0.8, 3000.0), _late(_lowpass(_noise(2.8, 0.02, 1.1, 2.2), 0.25), 0.05), _grains(2.0, 30, 0.03, 0.08, 0.5, 1.4)]))
 	# ---- the interface ----
-	sfx["ui_hover"] = _wav(_mix(_fm(0.05, 1760.0, 2.0, 0.5, 70.0, 0.04, 40.0), _band(0.015, 0.3, 0.9, 200.0, 0.05, 2000.0)))
+	# (26 Nov: a soft rounded blip; it had a tiny burst of white noise in it that read as a crackle)
+	sfx["ui_hover"] = _wav(_lowpass(_fm(0.06, 1568.0, 2.0, 0.35, 55.0, 0.05, 40.0), 0.45))
 	sfx["ui_click"] = _wav(_mixn([_chime([784.0, 1175.0], 0.035, 0.18, 0.1), _drop(0.05, 300.0, 200.0, 60.0, 70.0, 0.2), _band(0.02, 0.2, 0.9, 150.0, 0.12, 3000.0)]))
 	# speech blips (speech.gd): a soft, rounded "bup" under a breath of square, and the wisp's little chime;
 	# played at each speaker's own pitch

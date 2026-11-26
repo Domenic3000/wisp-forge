@@ -1172,12 +1172,16 @@ func _test_audio() -> void:
 	ok = ok and missing.is_empty()
 	rows.append("%d sounds played in the scripts, missing: %s" % [used.size(), str(missing)])
 	# loud enough and never clipping
+	# (26 Nov, crackling on another PC: no sample at the limit at all now, and every one-shot ends in silence)
 	var clipped := []
 	var quiet := []
+	var abrupt := []
 	for nm in au.sfx:
 		var pk := _au_peak(au.sfx[nm])
-		if pk[1] > 0.004:
+		if pk[1] > 0.0:
 			clipped.append("%s (%.1f%%)" % [nm, pk[1] * 100.0])
+		if pk[2] > 0.002:
+			abrupt.append("%s (%.3f)" % [nm, pk[2]])
 		if pk[0] < 0.02:
 			quiet.append("%s (%.3f)" % [nm, pk[0]])
 	# the ambience: made on its thread, then started
@@ -1192,18 +1196,23 @@ func _test_audio() -> void:
 		if st2.loop_mode == AudioStreamWAV.LOOP_FORWARD and st2.loop_end > 0:
 			amb_loops += 1
 		var pk2 := _au_peak(st2)
-		if pk2[1] > 0.004:
+		if pk2[1] > 0.0:
 			clipped.append("amb %s (%.1f%%)" % [nm2, pk2[1] * 100.0])
 		if pk2[0] < 0.02:
 			quiet.append("amb %s (%.3f)" % [nm2, pk2[0]])
-	ok = ok and clipped.is_empty() and quiet.is_empty() and amb_names.size() == 12 and amb_loops == 12
-	rows.append("clipping: %s; too quiet: %s" % [str(clipped), str(quiet)])
+	ok = ok and clipped.is_empty() and quiet.is_empty() and abrupt.is_empty() and amb_names.size() == 12 and amb_loops == 12
+	rows.append("clipping: %s; too quiet: %s; ending on a step: %s" % [str(clipped), str(quiet), str(abrupt)])
 	rows.append("ambience %d made (%d loop): %s" % [amb_names.size(), amb_loops, ", ".join(amb_names)])
 	# buses and where you are
 	var buses_ok := true
 	for bn in [au.BUS_SFX, au.BUS_AMB, au.BUS_MUSIC]:
 		var bi := AudioServer.get_bus_index(bn)
 		buses_ok = buses_ok and bi >= 0 and AudioServer.get_bus_effect_count(bi) >= 1
+	var limited := false
+	for e in AudioServer.get_bus_effect_count(0):
+		if AudioServer.get_bus_effect(0, e) is AudioEffectHardLimiter:
+			limited = true
+	buses_ok = buses_ok and limited and au._players.size() == au.VOICES
 	await _frames(240)
 	var place := String(au.here["place"])
 	var wind_v: float = float(au._amb["wind"][1]) if au._amb.has("wind") else 0.0
@@ -1212,7 +1221,7 @@ func _test_audio() -> void:
 		au.here["biome"], au.here["open"], au.here["village"], float(au.here["sea"]), wind_v, au._list])
 	_ok("the audio pass: every sound there, none clipping or too quiet, ambience loops, buses, where you are", ok, "; ".join(rows))
 
-## [the loudest sample (0..1), the share of samples at the limit] of a 16-bit wav
+## [the loudest sample (0..1), the share of samples at the limit, the last sample (0..1)] of a 16-bit wav
 func _au_peak(w: AudioStreamWAV) -> Array:
 	var d: PackedByteArray = w.data
 	var n := d.size() / 2
@@ -1223,4 +1232,5 @@ func _au_peak(w: AudioStreamWAV) -> Array:
 		mx = maxi(mx, v)
 		if v >= 31990:
 			at += 1
-	return [float(mx) / 32000.0, float(at) / float(maxi(1, n))]
+	var last := absi(d.decode_s16((n - 1) * 2)) if n > 0 else 0
+	return [float(mx) / 32000.0, float(at) / float(maxi(1, n)), float(last) / 32000.0]

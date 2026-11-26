@@ -48,6 +48,17 @@ Notes for development sessions on this part of the game. The rules that apply ev
   shield. Remade: jump, land, hurt, place, hit, foe_die, fire, water, splash, boom, blink, roar, mimic, creak,
   rumble, crack, coin, chest_open, forge, the doors, the UI.
 
+## Crackling (26 Nov, user playtesting on another PC: "im getting crackling in the audio engine. the main menu when i
+hover over options and during the game occasional snaps that sound like audio crackling")
+- `_wav` rounds loud peaks off softly (`SOFT_KNEE` 0.7 bending toward `SOFT_CEIL` 0.97; boom, zap and the roar had
+  been cut flat at the limit) and fades a one-shot's last 4 ms (`TAIL_FADE`) to silence; loops (`_loop`) keep
+  their ends. The hover blip lost its burst of white noise.
+- `play` takes a free player first (`VOICES` 16), and only cuts off the oldest when all are sounding.
+- A hard limiter on the Master bus (`_make_buses`) so everything stacked never clips the output.
+- project.godot `audio/driver/output_latency` 40 ms (Godot's default 15 ms underruns on some Windows PCs, heard
+  as crackle).
+- Test "audio": no sample at the limit, every one-shot ends in silence, the limiter and the 16 players there.
+
 ## Saves and window
 - Save slots: saves/slot_1..3 (`SLOTS`, `slot`, `_save_dir`), each with its progress.json and worlds; the title
   lists them (title_screen.gd `refresh_slots`: continue a saved one, start in an empty one, Delete twice);
