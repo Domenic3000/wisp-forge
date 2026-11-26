@@ -38,7 +38,7 @@ var sys := -1                # the star system it serves (galaxy.gd), when known
 var keepers := []            # [Trader]: one per shop room
 var folk_plan := []          # [{"fseed", "room", "b"}]: the spacers who live here
 var _trader = null
-var halls := false           # (made for docking: its halls, the instance you walk; else the shell seen out in space)
+# (`halls`, from station.gd: made for docking, its halls, the instance you walk; else the shell seen out in space)
 
 ## a keeper behind a counter: what towns.gd's shop and ui.gd's panel need of one
 class Trader:

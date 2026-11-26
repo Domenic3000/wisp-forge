@@ -61,10 +61,21 @@ static func station_name(sd: int) -> String:
 	rng.seed = sd ^ 0x5717
 	return "%s %s" % [ST_A[rng.randi_range(0, ST_A.size() - 1)], ST_B[rng.randi_range(0, ST_B.size() - 1)]]
 
-static func make_station(sd: int) -> RefCounted:
+## (user, 25 Nov: "derelict ships and outposts and so on should be redesigned so that you press a button to dock and
+## go inside an instanced area so we can make them larger and more intricate"): `in_halls` grows its HALLS, docked
+## into as an instance (space.gd `dock_station`): a bigger grid (7-9 rooms by 3-4 decks), its caches and aliens; the
+## SHELL out in space is the same kind of station, its dock's mouth sealed behind a force-field pane, nothing in it.
+static func make_station(sd: int, in_halls := false) -> RefCounted:
 	var st = load("res://scripts/station.gd").new()
+	st.halls = in_halls
 	st._build_station(sd)
 	return st
+
+var halls := false          # (its halls, docked into; else the shell seen out in space)
+
+## its key in space.gd's station_state: the halls keep what you did in them (the shell keeps nothing)
+func state_key() -> String:
+	return str(seed_) + ("h" if halls else "")
 
 func _build_station(sd: int) -> void:
 	seed_ = sd
@@ -75,6 +86,9 @@ func _build_station(sd: int) -> void:
 	fate = ST_FATES[rng.randi_range(0, ST_FATES.size() - 1)]
 	cols = rng.randi_range(4, 6)
 	rows = rng.randi_range(2, 3)
+	if halls:
+		cols = rng.randi_range(7, 9)
+		rows = rng.randi_range(3, 4)
 	setup(OX * 2 + cols * PX + T, OY * 2 + rows * PY + T)
 	var noise := FastNoiseLite.new()
 	noise.seed = sd
@@ -250,13 +264,18 @@ func _build_station(sd: int) -> void:
 	for bj in [int(dm["y1"]) - MOUTH - T - 2, int(dm["y1"]) + T + 1]:
 		var bx: int = wx0 - 3 if dock_side < 0 else wx0 + T + 2
 		put(bx, int(bj), Defs.EMBER, 1)
+	if not halls:
+		# (out in space its mouth is sealed: a force-field pane with frost lights; F docks you into its halls)
+		var pane: int = wx0 + T / 2
+		for j6 in range(int(dm["y1"]) - MOUTH, int(dm["y1"])):
+			put(pane, j6, Defs.FROST if (j6 - (int(dm["y1"]) - MOUTH)) % 8 == 0 else Defs.GLASS, j6 & 3)
 	# ---- each room dressed for its role and its power
 	for k in mods.size():
 		_dress(k, rng, noise)
 	# ---- the outside: windows in the roofs, masts and beacons on top, trusses under, solar wings
 	_outside(rng)
-	# ---- the caches
-	for k2 in mods.size():
+	# ---- the caches (only in its halls)
+	for k2 in (mods.size() if halls else 0):
 		var mk: Dictionary = mods[k2]
 		var fl: int = int(mk["y1"])
 		var a0: int = int(mk["x0"]) + 3
@@ -274,8 +293,9 @@ func _build_station(sd: int) -> void:
 				_crate_near(a1 - 14, fl, "nest", a0, a1)
 			"vault":
 				_crate_near((a0 + a1) / 2 - CRATE_W / 2, fl, VAULT_CRATE, a0, a1)
-	# ---- the aliens that live here
-	_plan_aliens(rng)
+	# ---- the aliens that live here (in its halls)
+	if halls:
+		_plan_aliens(rng)
 	meta = {"rooms": mods.size(), "powered": npw, "dock": dock, "nest": nest, "vault": vault, "reactor": reactor}
 	rebuild()
 	rad = maxf(3.0, sqrt(mass / PI))

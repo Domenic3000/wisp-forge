@@ -1493,8 +1493,20 @@ func _test_stations() -> void:
 	# only once its seal is broken; powered and dead rooms both; aliens and caches in it
 	var n_good := 0
 	var lay_txt := []
+	var shells_ok := 0
 	for q in 10:
-		var sq = S.make_station(7001 + q * 1543)
+		# (the shell out in space: its bay sealed by a pane, no aliens, no caches; user, 25 Nov: docked into an
+		# instance instead)
+		var shq = S.make_station(7001 + q * 1543)
+		var dmq: Dictionary = shq.mods[shq.dock]
+		var pxq: int = (int(dmq["x0"]) - shq.T if shq.dock_side < 0 else int(dmq["x1"])) + shq.T / 2
+		var paneq := 0
+		for jq in range(int(dmq["y1"]) - shq.MOUTH, int(dmq["y1"])):
+			if shq.at(pxq, jq) == Defs.GLASS or shq.at(pxq, jq) == Defs.FROST:
+				paneq += 1
+		if paneq >= shq.MOUTH - 2 and shq.spawns.is_empty() and shq.caches.is_empty():
+			shells_ok += 1
+		var sq = S.make_station(7001 + q * 1543, true)
 		var reach_shut := _station_rooms_reached(sq)
 		sq.open_seal()
 		var reach_open := _station_rooms_reached(sq)
@@ -1516,14 +1528,14 @@ func _test_stations() -> void:
 		for sp in sq.spawns:
 			if sp["kind"] == "brood":
 				n_brood += 1
-		var good: bool = all_but_vault and vault_shut and vault_open and n_pow >= 2 and n_pow < sq.mods.size() and has_vc and n_brood == 1 and sq.caches.size() >= 3
+		var good: bool = all_but_vault and vault_shut and vault_open and n_pow >= 2 and n_pow < sq.mods.size() and has_vc and n_brood == 1 and sq.caches.size() >= 3 and sq.mods.size() >= 18
 		if good:
 			n_good += 1
 		lay_txt.append("%s%dx%d %d rooms (%d powered), %d aliens, %d caches; all reached %s, vault shut %s then open %s" % ["" if good else "(!) ", sq.cols, sq.rows, sq.mods.size(), n_pow, sq.spawns.size(), sq.caches.size(), all_but_vault, vault_shut, vault_open])
 		if q < 3:
 			_station_picture(sq, "station_layout_%d.png" % q)
-	var ok2: bool = n_good == 10
-	rows.append("%s10 stations grown: %d sound. %s" % ["" if ok2 else "(!) ", n_good, " | ".join(lay_txt)])
+	var ok2: bool = n_good == 10 and shells_ok == 10
+	rows.append("%s10 stations' halls grown: %d sound; their shells sealed and empty %d. %s" % ["" if ok2 else "(!) ", n_good, shells_ok, " | ".join(lay_txt)])
 	ok = ok and ok2
 	# ---- up into space in the skiff, out to the station
 	g.player.dead = false
@@ -1569,11 +1581,8 @@ func _test_stations() -> void:
 	if st == null:
 		_ok("derelict stations: grown, boarded, fought through, looted", false, "; ".join(rows) + "; (!) no station came in with its sector")
 		return
-	var al_n := 0
-	for al in g.space.aliens:
-		if al.st == st:
-			al_n += 1
-	# outside it, by the dock
+	# outside it, by the dock (its shell: sealed)
+	var shell = st
 	var dm: Dictionary = st.mods[st.dock]
 	var mouth_b := Vector2(float(int(dm["x0"]) - 60) if st.dock_side < 0 else float(int(dm["x1"]) + 60), float(int(dm["y1"]) - 16))
 	sk.pos = st.to_world(mouth_b - st.com) + st.axis_x() * float(st.dock_side) * 40.0
@@ -1583,42 +1592,41 @@ func _test_stations() -> void:
 	_shot("station_outside.png")
 	g.space.zoom_i = 0
 	await _frames(30)
-	# ---- flown in through the dock's mouth (user, 23 Nov: docking "needs work"): the skiff fits, docks
-	# without a crash, and you step out onto its floor
-	var fly_b := Vector2(float(int(dm["x0"]) - 70) if st.dock_side < 0 else float(int(dm["x1"]) + 70), float(int(dm["y1"])) - float(sk.h) * 0.5 - 3.0)
-	sk.pos = st.to_world(fly_b - st.com)
-	sk.vel = Vector2.ZERO
-	await _frames(20)
-	var in_dock := false
-	for k2b in 240:
-		var bnow: Vector2 = st.to_body(sk.pos) + st.com
-		in_dock = st.module_at(bnow) == st.dock and absf(bnow.x - float(int(dm["x0"]) + int(dm["x1"])) * 0.5) < float(st.MW) * 0.5 - float(sk.w) * 0.5 - 2.0
-		if in_dock:
-			break
-		sk.vel = -st.axis_x() * float(st.dock_side) * 2.0
+	# ---- F docks (user, 25 Nov: "press a button to dock and go inside an instanced area"): its halls grown in a
+	# worker, standing where the shell stood, nothing else out here while you're in; you on its bay's floor
+	var ship_at: Vector2 = sk.pos
+	var n_out: int = g.space.rocks.size()
+	var can_dock: bool = g.space.dock_target(g.player) == shell
+	g._interact()
+	var dock_t := -1
+	for kd in 300:
 		await _frames(1)
-	sk.vel = Vector2.ZERO
-	await _frames(40)
-	var docked_ok: bool = g.space.docked_st == st
-	_shot("station_docked.png")
-	g._skiff_interact(g.player)
+		if g.space.inst != null:
+			dock_t = kd
+			break
+	if g.space.inst == null:
+		g.space.dock_station_now(g.player, shell)
+	st = g.space.inst
+	var al_n := 0
+	for al in g.space.aliens:
+		if al.st == st:
+			al_n += 1
 	var got_in := false
 	for k2 in 120:
 		await _frames(1)
 		if g.space.in_station == st:
 			got_in = true
 			break
-	var ok_dock: bool = in_dock and docked_ok and got_in
-	rows.append("%sflown in through the docking bay's mouth (%d high): in the bay %s, docked %s, stepped out aboard %s" % ["" if ok_dock else "(!) ", st.MOUTH, in_dock, docked_ok, got_in])
+	await _frames(30)
+	_shot("station_docked.png")
+	var alone: bool = g.space.rocks.size() == 1 and g.space.rocks[0] == st
+	var ok_dock: bool = can_dock and dock_t >= 0 and st.halls and got_in and alone and g.player.aboard == null and n_out > 1
+	rows.append("%sF docked %s (in %d ticks): in its halls %s (%d rooms, %d aliens), alone in them %s (%d things out here before)" % ["" if ok_dock else "(!) ", can_dock, dock_t, got_in, st.mods.size(), al_n, alone, n_out])
 	ok = ok and ok_dock
-	# (the skiff out of the way of the checks in the rooms: back out beyond the mouth)
-	sk.pos = st.to_world(fly_b - st.com) + st.axis_x() * float(st.dock_side) * 120.0
-	g.space.vel = Vector2.ZERO
-	await _frames(40)
 	var framed: bool = g.space.frame_st == st and absf(wrapf(g.space.view_ang - (g.cam_c - g.space.centre).angle(), -PI, PI)) < 0.2
 	_shot("station_dock.png")
 	var ok3: bool = got_in and framed and al_n > 0
-	rows.append("%s%s came in with its sector (%d rooms, %d aliens); drifted in through the dock %s, the view levelled with its floor %s" % ["" if ok3 else "(!) ", st.wname, st.mods.size(), al_n, got_in, framed])
+	rows.append("%s%s's halls: %d aliens; the view levelled with its floor %s" % ["" if ok3 else "(!) ", st.wname, al_n, framed])
 	ok = ok and ok3
 	# ---- a powered room: you fall to its floor, walk, jump, land on a ledge and drop through it
 	var pr := -1
@@ -1852,12 +1860,12 @@ func _test_stations() -> void:
 		rows.append("(!) no vault cache")
 	ok = ok and vault_ok
 	# ---- kept: streamed out and in again, it's as you left it
-	var key := str(st.seed_)
+	var key: String = st.state_key()
 	var ss: Dictionary = g.space.save_state()
 	var saved: bool = (ss.get("stations", {}) as Dictionary).has(key)
 	var dead_n: int = (g.space.station_state[key]["dead"] as Array).size()
 	var open_n: int = (g.space.station_state[key]["open"] as Array).size()
-	var st2 = S.make_station(st.seed_)
+	var st2 = S.make_station(st.seed_, true)
 	st2.pos = st.pos
 	st2.ang = st.ang
 	var alive_before := 0
@@ -1868,6 +1876,7 @@ func _test_stations() -> void:
 	g.space.rocks.erase(st)
 	st2.sect = st.sect
 	g.space.rocks.append(st2)
+	g.space.inst = st2
 	g.space._station_in(st2)
 	var alive_after := 0
 	for al6 in g.space.aliens:
@@ -1888,17 +1897,25 @@ func _test_stations() -> void:
 	_shot("station_map.png")
 	g.close_map()
 	await _frames(4)
-	# home again, and down: first back aboard from wherever you are, by the wisp (K; user, 23 Nov: "losing
-	# the skiff in space was a little hard maybe someway to teleport to the skiff")
+	# ---- back to your ship in the bay: F undocks; aboard, out by the shell where you were, everything back
 	calm.call()
-	var rc_from: float = g.player.pos.distance_to(sk.pos)
-	g.player.mana = maxf(g.player.mana, 40.0)
-	var mana_rc: float = g.player.mana
-	var rc_ok: bool = g.recall_skiff()
-	await _frames(6)
-	var rc_good: bool = rc_ok and g.player.aboard == sk and g.player.pos.distance_to(sk.pos) < 40.0 and g.space.in_station == null and g.player.mana < mana_rc
-	rows.append("%scarried back aboard the skiff from %.0f away by the wisp %s (mana %.0f -> %.0f)" % ["" if rc_good else "(!) ", rc_from, rc_good, mana_rc, g.player.mana])
-	ok = ok and rc_good
+	var dmh: Dictionary = st2.mods[st2.dock]
+	var bay_mid := Vector2((float(int(dmh["x0"])) + float(int(dmh["x1"]))) * 0.5, float(int(dmh["y1"])) - 9.6)
+	_st_put(st2, bay_mid)
+	await _frames(20)
+	g.player.pos = sk.pos + st2.axis_y() * 4.0
+	g.space.vel = Vector2.ZERO
+	await _frames(2)
+	var by_it: bool = g.space.by_ship(g.player)
+	g._interact()
+	await _frames(10)
+	var back_out: bool = by_it and g.space.inst == null and g.player.aboard == sk and sk.pos.distance_to(ship_at) < 1.0 and g.space.rocks.has(shell) and g.space.rocks.size() >= n_out - 1
+	var halls_gone := true
+	for al7 in g.space.aliens:
+		if al7.st == st2:
+			halls_gone = false
+	rows.append("%sF at your ship undocked %s: aboard, by its shell where you were %s, its aliens set aside with its halls %s" % ["" if back_out and halls_gone else "(!) ", by_it, back_out, halls_gone])
+	ok = ok and back_out and halls_gone
 	if g.player.aboard != sk:
 		g.player.pos = sk.pos
 		g.space.vel = Vector2.ZERO
@@ -1925,7 +1942,7 @@ func _test_stations() -> void:
 		g._skiff_interact(g.player)
 		await _frames(10)
 	print("[stations] " + "\n[stations] ".join(rows))
-	_ok("derelict stations: grown, boarded, gravity by section, aliens fought, the Broodmother and her vault, kept", ok, "; ".join(rows))
+	_ok("derelict stations: docked into their halls by F, gravity by section, aliens fought, the Broodmother and her vault, kept, undocked", ok, "; ".join(rows))
 
 ## (user, 23 Nov: wisp fuel "Only the long hauls": the Starsail and journeys between planets burn Wisp Cells)
 func _test_fuel() -> void:
@@ -3179,7 +3196,13 @@ func _test_spacebench() -> void:
 		sk.pos = st.to_world(mouth_b - st.com) + st.axis_x() * float(st.dock_side) * 120.0
 		sk.vel = Vector2.ZERO
 		await _frames(20)
-		g._skiff_interact(g.player)
+		# (docked into its halls: an instance; user, 25 Nov)
+		if g.player.aboard != sk:
+			g.player.pos = sk.pos
+			g._skiff_interact(g.player)
+			await _frames(2)
+		g.space.dock_station_now(g.player, st)
+		st = g.space.inst
 		await _frames(4)
 		# (into the powered room with the most aliens)
 		var best := -1
@@ -3222,10 +3245,7 @@ func _test_spacebench() -> void:
 		rows.append(_bench_line("a fight in %s (%d aliens left)" % [st.wname, n_al], r1))
 		ok = ok and r1["avg"] < 16.7 and r1["p95"] < 25.0
 		_shot("bench_station.png")
-		g.player.pos = sk.pos
-		g.space.vel = Vector2.ZERO
-		await _frames(2)
-		g._skiff_interact(g.player)
+		g.space.undock_station(g.player)
 		await _frames(4)
 	else:
 		rows.append("(!) no derelict station came in")

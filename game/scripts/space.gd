@@ -216,6 +216,17 @@ var station_state := {}         # a station's seed (String) -> {"open": [cache],
 var aliens := []                # the aliens of the stations out here now
 var acid := []                  # what they spit: [pos, vel, ticks left, damage]
 var sbolts := []                # your spells out here (in a station): {"type", "pos", "vel", "life", "st"}
+# Docked in a derelict station's HALLS (user, 25 Nov: "press a button to dock and go inside an instanced area so
+# we can make them larger and more intricate"): `inst` is the halls (station.gd made with `in_halls`), standing
+# where the shell stood; everything else out here waits in `_inst_stash` (rocks: asteroids, wrecks, pirates, the
+# shell...) and nothing streams, drifts or comes out of the dark until you undock. Your ship waits in its bay.
+var inst = null
+var _inst_shell = null
+var _inst_stash := []
+var _inst_back := {}
+var _st_task := -1
+var _st_made := []
+var _st_from = null
 var in_station = null           # the station the local mage is inside (its rooms), or null
 var frame_st = null             # the station whose floor is "down" now (you're within its bounds), or null
 var st_room := -1               # (the room you were in last: a note when you come into another)
@@ -294,6 +305,7 @@ func try_enter() -> void:
 
 ## Back into the orbit band: the planet's own physics take over again, and the view eases back in.
 func exit() -> void:
+	_leave_halls()
 	shots.clear()
 	acid.clear()
 	sbolts.clear()
@@ -352,7 +364,9 @@ func _tick() -> void:
 	var sk = game.skiff
 	sun_ang += TAU / game.day_len()
 	var focus: Vector2 = sk.pos if m.aboard != null else m.pos
-	_galaxy(focus)
+	_dock_poll(m)
+	if inst == null:
+		_galaxy(focus)
 	focus = sk.pos if m.aboard != null else m.pos      # (moved over if space's origin just followed you)
 	_pmark("galaxy")
 	_manual_turn(m)
@@ -367,8 +381,9 @@ func _tick() -> void:
 	if not m.input.cast:
 		m.cast_latch = false
 	_grow_disc()
-	_ensure_rocks()
-	_stream(focus)
+	if inst == null:
+		_ensure_rocks()
+		_stream(focus)
 	_pmark("streaming")
 	_update_rocks()
 	if game.frame % 10 == 3:
@@ -379,17 +394,19 @@ func _tick() -> void:
 	_update_acid()
 	_update_sbolts()
 	_pmark("aliens and folk")
-	vl.tick(focus)
+	if inst == null:
+		vl.tick(focus)
 	_pmark("void life")
 	if game.frame % 60 == 11:
 		_scanner_marks()
-	_pirate_chance(focus)
-	_update_pirates()
+	if inst == null:
+		_pirate_chance(focus)
+		_update_pirates()
 	_pmark("pirates")
 	game._mend_skiff(m)
 	if game.build_on and m.aboard != null and not m.dead:
 		game._update_cabin(m)
-	if sk != null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
+	if sk != null and inst == null and (sk.pilot() != null or sk.pos.length() > Defs.R_SPACE - 9.5):
 		# the skiff: flown by its pilot (keys, or hold cast toward the cursor), or drifting if nobody's
 		# aboard (one left down on the planet waits there)
 		var pl = sk.pilot()
@@ -1176,7 +1193,7 @@ func save_state() -> Dictionary:
 		var sg := Galaxy.sector_g(_loaded[key])
 		var keep := []
 		var any := false
-		for a in rocks:
+		for a in (rocks + _inst_stash):
 			if a.sect == key and a.kind != "station" and a.kind != "outpost" and a.kind != "monolith":
 				any = any or a.touched
 				keep.append(_rock_save(a, sg))
@@ -1408,7 +1425,8 @@ func _draw_space() -> void:
 		if not shown.has(si):
 			sprites[si].visible = false
 	_draw_belts(xf)
-	vl.draw_under(self, xf)
+	if inst == null:
+		vl.draw_under(self, xf)
 	_draw_rocks(xf)
 	# where the planets are when they're off screen: a marker at the edge, pointing the way
 	for b2 in bodies:
@@ -1456,7 +1474,8 @@ func _draw_space() -> void:
 	var own = game.skiff
 	if own != null and game.player.aboard != own and own.pos.length() > Defs.R_SPACE - 9.5:
 		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff [K]", Color(0.55, 0.9, 1.0), 1, "skiff")
-	vl.draw_markers(xf)
+	if inst == null:
+		vl.draw_markers(xf)
 	_flush_marks()
 	_top.queue_redraw()
 	if _mid.get_index() != get_child_count() - 1:
@@ -2484,7 +2503,8 @@ func _draw_top_parts() -> void:
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5 + 1.0, 1.0), Vector2(bw + 2.0, 4.0)), Color(0.05, 0.02, 0.04, 0.8))
 		_top.draw_rect(Rect2(bar_at - Vector2(bw * 0.5, 0.0), Vector2(bw * clampf(pa.hp / pa.hp_max, 0.0, 1.0), 2.0)), Color(1.0, 0.35, 0.3))
 	_draw_alien_marks(xf)
-	vl.draw_top(_top, xf)
+	if inst == null:
+		vl.draw_top(_top, xf)
 	# each outpost's name over it
 	for oa in rocks:
 		if oa.kind != "outpost":
@@ -2502,7 +2522,10 @@ func _draw_top_parts() -> void:
 			var sgn: Vector2 = sa.to_world(skp.b + Vector2(0.0, -34.0) - sa.com)
 			if near_keeper != skp:
 				_top_text(xf * sgn, String(Outpost.OP_ROOMS[skp.shop]).to_upper(), Outpost.SHOP_COL[skp.shop])
-	var dt = dock_target(game.player) if game.pocket != null and not game.pocket.docking() else null
+	if inst != null and by_ship(game.player):
+		var up_u: Vector2 = xf.basis_xform(-inst.axis_y()).normalized()
+		game.speech.draw(_top, xf * game.skiff.pos + up_u * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), "[F] Undock", 1.0, "undock", game.Speech.PROMPT)
+	var dt = dock_target(game.player) if game.pocket != null and not game.pocket.docking() and _st_task < 0 else null
 	if dt != null and game.skiff != null:
 		var up_d: Vector2 = xf.basis_xform(-dt.axis_y()).normalized()
 		game.speech.draw(_top, xf * game.skiff.pos + up_d * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), "[F] Dock at %s" % dt.wname, 1.0, "dock", game.Speech.PROMPT)
@@ -2879,6 +2902,7 @@ func _beat_pirate(pr) -> void:
 ## Fallen out here: back to the planet's own frame (home at the origin), no pirates, nobody aboard
 ## (main `_respawn` puts you at home, and the skiff answers you there).
 func reset_after_death() -> void:
+	_leave_halls()
 	if not active:
 		return
 	if not at_home():
@@ -3067,13 +3091,126 @@ func dock_target(m) -> Variant:
 	if not active or m.aboard == null or m.aboard != game.skiff:
 		return null
 	var sk = game.skiff
+	if inst != null:
+		return null
 	var op = nearest_outpost(sk.pos, 3000.0)
+	if op == null:
+		for a in rocks:
+			if a.kind == "station" and not a.halls and a.pos.distance_to(sk.pos) < a.reach() + DOCK_REACH:
+				op = a
+				break
 	if op == null:
 		return null
 	var bb: Vector2 = op.to_body(sk.pos) + op.com
 	if bb.x < -DOCK_REACH or bb.y < -DOCK_REACH or bb.x > float(op.w) + DOCK_REACH or bb.y > float(op.h) + DOCK_REACH:
 		return null
 	return op
+
+## F flying by a derelict station's shell: its halls are grown in a worker; you're in once they're ready
+func dock_station(m, shell) -> bool:
+	if inst != null or _st_task >= 0 or shell == null:
+		return false
+	_st_from = shell
+	_st_made = [null]
+	var sd: int = shell.seed_
+	var into: Array = _st_made
+	_st_task = WorkerThreadPool.add_task(func() -> void: into[0] = Station.make_station(sd, true))
+	game.ui.toast("Docking at %s..." % shell.wname, Color(0.8, 0.7, 1.0), 1.5)
+	game.audio.play("creak", m.pos, 0.6)
+	return true
+
+func _dock_poll(m) -> void:
+	if _st_task < 0 or not WorkerThreadPool.is_task_completed(_st_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_st_task)
+	_st_task = -1
+	var h = _st_made[0]
+	if h != null and m.aboard != null and not m.dead and rocks.has(_st_from):
+		_enter_halls(m, h)
+
+## (the tests: docked at once)
+func dock_station_now(m, shell) -> void:
+	_st_from = shell
+	_enter_halls(m, Station.make_station(shell.seed_, true))
+
+func _enter_halls(m, h) -> void:
+	var sh = _st_from
+	var sk = game.skiff
+	if sh == null or sk == null:
+		return
+	h.pos = sh.pos
+	h.ang = sh.ang
+	h.vel = Vector2.ZERO
+	h.omega = 0.0
+	h.sect = sh.sect
+	_inst_back = {"ship": sk.pos, "ang": sk.ang}
+	_inst_stash = rocks
+	rocks = [h]
+	inst = h
+	_inst_shell = sh
+	shots.clear()
+	foe_shots.clear()
+	sbolts.clear()
+	acid.clear()
+	_station_in(h)
+	if m.aboard != null:
+		sk.leave(m)
+		m.aboard = null
+		m.deck = false
+	# your ship parked in its bay, toward the mouth; you on the floor beside it, toward the station
+	var dm: Dictionary = h.mods[h.dock]
+	var mid := (float(int(dm["x0"])) + float(int(dm["x1"]))) * 0.5
+	var fl := float(int(dm["y1"]))
+	var ds := float(h.dock_side)
+	sk.ang = h.ang
+	sk.vel = Vector2.ZERO
+	sk.pos = h.to_world(Vector2(mid + ds * 18.0, fl - float(sk.h) * 0.5 - 1.0) - h.com)
+	var at := Vector2(mid - ds * 36.0, fl - float(m.h) * 0.5 - 0.5)
+	m.pos = h.to_world(at - h.com)
+	vel = Vector2.ZERO
+	_st_b = at
+	_st_w = m.pos
+	m.on_ground = false
+	stats["halls"] = int(stats.get("halls", 0)) + 1
+	game.audio.play("creak", m.pos, 0.8)
+	game.ui.toast("Docked in %s's bay. %s F beside your ship undocks" % [h.wname, h.fate], Color(0.8, 0.7, 1.0), 5.5)
+
+## on foot beside your ship in the halls' bay
+func by_ship(m) -> bool:
+	var sk = game.skiff
+	return inst != null and sk != null and m.aboard == null and not m.dead and m.pos.distance_to(sk.pos) < float(maxi(sk.w, sk.h)) * 0.55 + 12.0
+
+## F beside your ship: out of the halls, aboard, where you were by its shell
+func undock_station(m) -> void:
+	if inst == null:
+		return
+	_leave_halls()
+	var sk = game.skiff
+	if sk != null:
+		m.pos = sk.pos
+		if sk.board(m):
+			m.aboard = sk
+	stats["undocked"] = int(stats.get("undocked", 0)) + 1
+	game.audio.play("blink", m.pos, 0.6)
+	game.ui.toast("Undocked: you're aboard, by %s" % String(_inst_shell.wname if _inst_shell != null else "the station"), Color(0.8, 0.7, 1.0), 2.5)
+
+## (the halls set aside, everything else back as it was; your ship where you left it)
+func _leave_halls() -> void:
+	if inst == null:
+		return
+	var h = inst
+	_station_out(h)
+	rocks = _inst_stash
+	_inst_stash = []
+	inst = null
+	sbolts.clear()
+	acid.clear()
+	var sk = game.skiff
+	if sk != null and not _inst_back.is_empty():
+		sk.pos = _inst_back["ship"]
+		sk.ang = float(_inst_back["ang"])
+		sk.vel = Vector2.ZERO
+	vel = Vector2.ZERO
 
 ## on foot by an outpost's counter: its keeper is near_keeper (near_trader the outpost; F trades); beside a
 ## spacer, near_folk (F talks)
@@ -3102,7 +3239,7 @@ func _trader_near(m) -> void:
 
 ## the skiff flown into an outpost's hangar: docked (a word the first time each visit)
 func _dock_check(sk) -> void:
-	if sk == null:
+	if sk == null or inst != null:
 		docked = null
 		docked_st = null
 		return
@@ -3342,7 +3479,7 @@ func job_short(jb: Dictionary) -> String:
 
 ## a station streamed in: what changed in it before, and the aliens still living in it
 func _station_in(st) -> void:
-	var sd: Dictionary = station_state.get(str(st.seed_), {})
+	var sd: Dictionary = station_state.get(st.state_key() if st.kind == "station" else str(st.seed_), {})
 	st.apply_state(sd)
 	var dead := {}
 	for d in sd.get("dead", []):
@@ -3369,7 +3506,7 @@ func _station_out(st) -> void:
 		frame_st = null
 
 func _st_state(st) -> Dictionary:
-	var key := str(st.seed_)
+	var key: String = st.state_key() if st.kind == "station" else str(st.seed_)
 	if not station_state.has(key):
 		station_state[key] = {"open": [], "seal": false, "dead": []}
 	return station_state[key]
@@ -3390,7 +3527,7 @@ func _station_frame(focus: Vector2) -> void:
 		frame_st = a
 		if m.aboard != null and a.kind == "station" and not _dock_hint.has(a.seed_):
 			_dock_hint[a.seed_] = true
-			game.ui.toast("%s: fly the skiff in through its docking bay's mouth (marked by its lights)" % a.wname, Color(0.8, 0.7, 1.0), 5.0)
+			game.ui.toast("%s: its bay is sealed. Come close aboard and press F to dock" % a.wname, Color(0.8, 0.7, 1.0), 5.0)
 		if m.aboard == null and not m.dead and a.inside(b):
 			in_station = a
 			var op: bool = a.kind == "outpost"
@@ -3866,7 +4003,8 @@ func _draw_mid() -> void:
 
 func _draw_mid_parts() -> void:
 	var xf := _world_xf()
-	vl.draw_mid(_mid, xf)
+	if inst == null:
+		vl.draw_mid(_mid, xf)
 	_draw_aliens(xf)
 	var zs: float = minf(float(game.zoom), 4.0)
 	for oa in rocks:

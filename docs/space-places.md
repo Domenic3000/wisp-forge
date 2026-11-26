@@ -106,6 +106,23 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Figures among a station's or outpost's rooms (aliens' bodies, keepers and their counters, spacers) are drawn on
   space.gd `_mid` (a child kept last among space's children, z 0: over the rock sprites, under the overlay's mage);
   health bars, prompts, signs and speech on `_top` (z 1).
+- DOCKING INTO A DERELICT STATION'S HALLS (26 Nov; the user's request of 25 Nov above, stations after outposts).
+  Unlike an outpost's (pocket.gd), a station's halls stay in space.gd, which already runs everything they need
+  (aliens, your spells and `sbolts`, gravity by section in `_station_move`, caches, the vault, `station_state`). Out
+  in space a station is a SHELL (`make_station(seed)`: its dock's mouth sealed by a pane of glass with frost lights,
+  no caches, no aliens). Aboard within `DOCK_REACH` of one, `dock_target` returns it and F calls `dock_station`:
+  its HALLS (`make_station(seed, true)`, `halls`: 7-9 rooms by 3-4 decks, caches, aliens) are grown in a
+  WorkerThreadPool task (`_dock_poll`), then `_enter_halls`: the halls stand where the shell stood, `rocks` becomes
+  just them (everything else waits in `_inst_stash`: asteroids, wrecks, pirates, the shell), and while `inst` is set
+  nothing streams (`_galaxy`, `_ensure_rocks`, `_stream` skipped), no void life ticks or draws, no pirates come or
+  move, your ship sits frozen in the bay (nose to the mouth) and you stand on the bay's floor. Its state is kept
+  under `state_key()` (seed + "h"; a shell keeps nothing, and what an older save kept under the plain seed is left
+  with the shell). F beside your ship (`by_ship`, "[F] Undock" drawn over it) calls `undock_station`: `_leave_halls`
+  puts everything back as it was and you're aboard where you were. K in the halls says the ship waits in the bay.
+  Leaving space, dying or loading leaves the halls first (`exit`, `reset_after_death`). `save_state` saves the
+  stashed sectors' rocks too. `dock_station_now` docks at once (tests). Test: `_test_stations` (the shells sealed
+  and empty, the halls sound, docks by F, alone in the halls, rooms, fights, the Broodmother, the vault, kept,
+  undocks); the bench's station fight is in the halls.
 - DERELICT STATIONS AND ALIENS (scripts/station.gd, alien.gd; user, 23 Nov: "much bigger more complex outposts ...
   Derelict space stations and everything with aliens and such to fight"; inside, chosen "Both, by section"):
   `Station` extends wreck.gd, kind "station"; `make_station(seed)` lays out a grid (`cols` 4-6 x `rows` 2-3, a corner

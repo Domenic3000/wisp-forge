@@ -1618,9 +1618,16 @@ func _interact() -> void:
 		return
 	if _door_interact(player):
 		return
-	# (flying by an outpost: F docks, into its halls; user, 25 Nov)
+	# (flying by an outpost or a derelict station: F docks, into its halls; user, 25 Nov)
+	if space.active and space.inst != null and space.by_ship(player):
+		space.undock_station(player)
+		return
 	if space.active and player.aboard != null and player.aboard == skiff and space.dock_target(player) != null:
-		pocket.dock(player, space.dock_target(player))
+		var dt = space.dock_target(player)
+		if dt.kind == "station":
+			space.dock_station(player, dt)
+		else:
+			pocket.dock(player, dt)
 		return
 	if _skiff_interact(player):
 		return
@@ -5656,6 +5663,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			ui.toast("You're inside the ship: F to step out, G (landed) to go below", Color(0.75, 0.85, 1.0), 2.0)
 		elif k == KEY_K and pocket.active:
 			ui.toast("Your ship is outside: step out by the arch (F), or by your ship (G)", Color(0.85, 0.75, 1.0), 2.0)
+		elif k == KEY_K and space.active and space.inst != null:
+			ui.toast("Your ship waits in the bay: F beside it undocks", Color(0.8, 0.7, 1.0), 2.0)
 		elif k == KEY_K:
 			if space.active:
 				recall_skiff()
