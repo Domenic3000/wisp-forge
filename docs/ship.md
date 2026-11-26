@@ -34,7 +34,34 @@ Notes for development sessions on this part of the game. The rules that apply ev
   transform (`_draw_mage(..., place)`), so they sit and turn with it. Air drag 0.97 a tick below `R_TOP` (none above);
   coming back from space it sheds its speed to 8 a tick, and glows coming down fast through the air.
 
+## Ship classes (25 Nov)
+- The user, 25 Nov: "If we have a pocket dimension i dont think we need to be able to build on the ship anymore.
+  i would rather have the pocket dimension be the safe haven for crafting a home and workstations. Also i dont know
+  if we need seats or anything if we can just go inside the ship. the ship builder also could use refining. maybe
+  we have prefab ships instead that you can get recipes for different ships." Chosen: classes from recipes, each
+  with its own stats and a look grown from parts; keep damage, cargo as a stat.
+- `Skiff.CLASSES` (skiff.gd): skiff (speed 1.0, armour 1.0, 3 crates, 1 gun), cutter (1.35, 0.8, 2, 1: long and
+  slim on a swept `_wing`), hauler (0.75, 1.3, 12, 0: deep with `_pods` slung under it and a second engine),
+  corvette (1.1, 1.7, 5, 2: HULL plating, STARIRON bands, WISPBAR trim and a `_turret`). `Skiff.make(seed, klass)`
+  grows it from the same parts (`_hull`/`_trim` take materials, `_engine(n)`, `_fin(more)`); the seed picks its
+  look. `cls()` is its class's row: `drive()` gives its speed (thrust and cruise), `hold_cap()` its crates,
+  `damage` carves `r / sqrt(armour)`, space `_fire_cannon` fires `guns` bolts (none: a toast). Seats stay inside
+  (four, never drawn); X no longer walks the deck.
+- Owned ships (main.gd): `items["ships"]` class -> seed, `items["ship_class"]` the one you fly, `items["skiff"]` its
+  seed. Recipes: "skiff" (the Wisp Skiff, round the Core Drive: forged whole, no keel), "ship_cutter" (an outpost
+  shipwright, 140 coins; plans in a chest from level 2), "ship_hauler" (shipwright, 180), "ship_corvette" (a
+  hoard); each needs the first ship and has `"ship"`: forging it adds it and flies it (`switch_ship`, the one out
+  replaced where it stood). The satchel's Ships section lists them (click: fly it, off the ship); a forged ship's
+  forge card says "Another look" (`reshape_ship`: a new seed). `make_ship()` builds the one you fly. `_migrate_ships`
+  (on load) keeps an old journey's skiff as a Wisp Skiff and lets a hull built in the old builder go
+  (`load_cells` refuses one that's `designed` or of another class). The HUD shows "hold n/cap crates" aboard or in
+  space. B aboard says ships come whole; the cabin builder no longer runs (its code, the Ship tab and shipyard.gd's
+  panel are left but unreachable; `shipyard.parked()` is still how G knows you're landed). The quest's "hull" step is
+  now "Call your ship and board it" (`items["boarded"]`). Test: "ships" (`_test_ships`, then the pocket); the sheet
+  `saves/shots/ships.png`.
+
 ## Parts, damage, fuel, hull, builder, pocket, cargo
+(The hull builder, cabin building and the keel below are from before the ship classes and no longer reachable.)
 - SHIP PARTS (recipes with "part": unlocked by the salvaged part, used up in forging, `recipe_hidden` until you
   have a skiff): the Wisp Shield (`items["shield"]`: space `_strike` on a mage aboard is taken by it when
   `shield` is 1, then it charges over `SHIELD_RECHARGE` ticks; a ring flash, a faint shimmer while ready) and
@@ -120,9 +147,19 @@ Notes for development sessions on this part of the game. The rules that apply ev
   it, `_recall_now` enters at the next tick's start; cast in space through `_mend_cast` / `_space_cast`, even in an
   outpost) puts you on `PocketIsle`, a pixel body (ang PI, so `to_world(b) = (-b.x, b.y)`; the view angle is -PI/2
   there: `view_angle`, `close_view`, `unrolled`, overlay `_feet`/`_draw_mage`/`_lit`/`_draw_in_pocket`). The world
-  outside waits (`_tick` hands over to `pocket.tick`, `_process` skips the GPU). The isle: grass, dirt, stone with
-  crystal specks over a deep crystal-dripping underside, trees and bushes, the Isle Heart's obelisk and the arch on
-  the back layer (`guard`: never taken or built over; you walk in front of them); a nebula shader behind
+  outside waits (`_tick` hands over to `pocket.tick`, `_process` skips the GPU). The isle (its look of 25 Nov, the
+  user: "the pocket dimension still needs work. it looks a little thrown together still"; chose the isle itself, the
+  arch and heart, a home spot): grass, soil threaded with roots, a gravel seam, rock in wavy strata of stone and
+  deepstone, a few crystal geodes, stalactites with crystal tips (`ground_at`, `drip_at`); a flagstone path from the
+  arch to the heart (`_path`); the home terrace (`_terrace`, `TER_A`..`TER_B` right of the heart: level paving to
+  build a home on, a wisp lantern at each end that glows); the Isle Heart (`_heart`: a tiered plinth you walk up,
+  front `guard` cells, a faceted obelisk with a wisp seam, a floating shard, crystal clusters) and the arch (`_arch`:
+  a stepped base, pillars in courses with rune lights, warded capitals, voussoirs, a wisp keystone) on the back layer
+  (`guard`: never taken or built over; you walk in front of them); trees (`_tree`: flared trunk, boughs, a crown of
+  blobs lit from the upper left), bushes, and `_dress` (tufts, flowers, stones, vines down the rim, roots hanging
+  under it; again at each new level). An isle saved before (no "art" or under `ART`) is dressed again on load
+  (`_restyle`: its own ground re-laid in strata, the heart and arch carved afresh, the path, the terrace only where
+  nothing's built, nothing you built touched). A Python preview of the isle's art (needs Pillow and a pal.json of the palette): docs/tools/isle_preview.py; a nebula shader behind
   (`NEBULA`), far isles, light halos (`gather_lights`). Build there with build mode (blocks, back walls,
   furniture, Remove: main `_cabin_edit(m, body)`, the cabin's code made general with `can_take`/`touch`). F at the
   heart twice grows the isle (`expand`, `expand_cost` levels 1-6, 40 mana; LEVELS half widths 70..296). F at the
@@ -130,15 +167,14 @@ Notes for development sessions on this part of the game. The rules that apply ev
   space). Saved in the slot's `pocket.dat` (`save_isle` "v" 2); a save made inside keeps you where you came in
   (`_world_meta`). First time in: Wisp Recall learned, `items["pocket_seen"]`. A ship from before gets a door at
   its stern's lowest cell (`Skiff.ensure_door`, from `_update_skiff` and the builder).
-  Quest (v 5): "skiff" (forge the keel), "hull" (`["count", "hull_cells", Quest.HULL_STEP]` 180), "pocket".
-  Test: `_test_shipyard` ("shipyard" or "pocket"; in the full run after `_test_hull`; then `_test_pocket`;
-  pictures `shipyard.png`, `pocket_isle.png`, `pocket_grown.png`).
+  Quest: "skiff" (forge the Wisp Skiff), "hull" (call it and board it), "pocket". Test: `_test_ships` ("ships",
+  "shipyard" or "pocket"; then `_test_pocket`, which checks the look and an old isle's restyle; pictures
+  `ships.png`, `pocket_isle.png`, `pocket_grown.png`, `pocket_room.png`).
 - THE CARGO HOLD (user, 23 Nov: "Hold for big things only"): `Defs.GOODS` (8 trade goods with a base price) ride
   as crates in `items["cargo"]` (good -> crates; "sealed" is a courier job's), never the satchel; drawn where they
   stand (skiff `crate_slots`: in its room away from the helm, else lashed on its open deck; overlay `_crate_tex`); `Defs.trade_of(outpost seed)`: three goods an
   outpost sells cheap (0.55-0.72 x base), three it wants (1.5-1.9 x), what it pays for each. towns.gd: an outpost's
-  `shop_def` adds its goods ("good"), `buy` refuses past `main.hold_cap()` (the skiff's `hold_cap`: a crate for every
-  `HOLD_ROOM` (120) room cells its hull closes in, at least 2), `sell_good`, `good_pays`, `good_wants`; ui.gd's shop
+  `shop_def` adds its goods ("good"), `buy` refuses past `main.hold_cap()` (the ship class's crates, `Skiff.CLASSES`), `sell_good`, `good_pays`, `good_wants`; ui.gd's shop
   shows "hold n/cap" and a Sell row per crate held or good wanted; the HUD in space "hold n/cap". Icon "crate".
   Test: `_test_cargo` ("cargo": a profitable run between systems, the hold fills and refuses, sold for what the
   other outpost pays; picture `cargo_shop.png`).

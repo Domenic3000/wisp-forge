@@ -281,7 +281,6 @@ var pocket                # inside your ship: a pocket dimension, an isle in a n
 var shipyard              # the ship builder, where the ship is parked (shipyard.gd; state "shipyard")
 var speech = Speech.new()  # every speech bubble: its pop, its typing, its voice (speech.gd)
 var test_bubbles := []     # (the tests: [world point, text, alpha, key, style, pitch] drawn as bubbles)
-var classic_skiff := false   # (the test mode: the skiff is forged as before, not as a bare keel)
 var towns                 # the living villages' folk, talk and trade (towns.gd)
 var workshops             # the workshop stations on this planet (workshops.gd)
 var summoning             # guardians called at altars (summoning.gd)
@@ -1619,6 +1618,10 @@ func _interact() -> void:
 		return
 	if _door_interact(player):
 		return
+	# (flying by an outpost: F docks, into its halls; user, 25 Nov)
+	if space.active and player.aboard != null and player.aboard == skiff and space.dock_target(player) != null:
+		pocket.dock(player, space.dock_target(player))
+		return
 	if _skiff_interact(player):
 		return
 	if space.wreck_interact(player):      # (out in space: a wreck's cache within reach)
@@ -2500,8 +2503,8 @@ func _tick() -> void:
 				_deconstruct(m, m.input.aim)
 			else:
 				m.decon_pause = 0
-		if not m.dead and state == "play" and m.aboard != null and m.local and build_on:
-			_update_cabin(m)
+		# (no building aboard any more, user 25 Nov: "i dont think we need to be able to build on the ship anymore";
+		# the pocket below is the place for a home and workshops)
 	prof_add("mages", Time.get_ticks_usec() - tm)
 	_use_grid(player)
 	var tq := Time.get_ticks_usec()
@@ -5069,6 +5072,8 @@ func dig_speed(m: Mage, paced := true) -> float:
 func recipe_done(r: Dictionary) -> bool:
 	if r.has("spell"):
 		return known.has(r["spell"])
+	if r.has("ship"):
+		return ships().has(String(r["ship"]))
 	match r["id"]:
 		"tier2": return tier >= 2
 		"tier3": return tier >= 3
@@ -5116,6 +5121,7 @@ func recipe_unlocked(r: Dictionary) -> bool:
 		"delve3": return int(items.get("delve", 0)) >= 2
 		"drive": return tier >= 4
 		"skiff": return items.has("drive") or items.has("skiff")
+		"ship_cutter", "ship_hauler", "ship_corvette": return items.has("skiff")
 		"engine", "beam", "sail", "shield", "cannon", "scanner": return items.has("skiff")
 	if r.has("gear"):
 		# (gear from a planet kind's own ore: once you've found some, and what it builds on)
@@ -5334,6 +5340,7 @@ func recipe_lock_text(r: Dictionary) -> String:
 		"tier4": return "Needs Obsidian Focus + the Ember Heart"
 		"drive": return "Needs the Core Siphon (to harvest the Planet Core)"
 		"skiff": return "Needs a Core Drive: harvest the planet's core with the Core Siphon"
+		"ship_cutter", "ship_hauler", "ship_corvette": return "Built round your first ship's Core Drive: forge the Wisp Skiff first"
 		"engine", "beam", "sail": return "Needs the Wisp Skiff"
 		"shield", "cannon":
 			if not items.has(String(r["part"])):
@@ -5476,20 +5483,27 @@ func craft(r: Dictionary) -> bool:
 		known.append(r["spell"])
 		known.sort_custom(func(x, y): return Defs.SPELL_ORDER.find(x) < Defs.SPELL_ORDER.find(y))
 		ui.toast("New spell learned: %s" % Defs.SPELLS[r["spell"]]["name"], Color(1, 0.82, 0.23), 4.0)
+	if r.has("ship"):
+		var nk := String(r["ship"])
+		var own2: Dictionary = ships()
+		own2[nk] = randi() % 1000000
+		items["ships"] = own2
+		ui.toast("%s forged: it's yours. Your ships are in the satchel (I): click one to fly it" % String(Skiff.CLASSES[nk]["name"]), Color(1, 0.82, 0.23), 5.0)
+		switch_ship(nk, true)
+		save_game()
+		return true
 	match r["id"]:
 		"skiff":
-			items["skiff"] = randi() % 1000000      # (its seed: the shape of your skiff)
-			if classic_skiff:
-				ui.toast("Wisp Skiff forged: press K to call it to you", Color(1, 0.82, 0.23), 4.0)
-			else:
-				# (user, 24 Nov: "the main quest can walk you through building your first ship"): a bare keel,
-				# built out in the ship builder
-				var kl = Skiff.make_keel(int(items["skiff"]))
-				items["ship"] = kl.save_cells()
-				items["hull_cells"] = kl.hull_count()
-				if skiff != null and player.aboard == null:
-					skiff = null                       # (an old one out: the keel answers K instead)
-				ui.toast("Wisp Keel forged: press K to call it, board it (F), then B to build it out", Color(1, 0.82, 0.23), 5.0)
+			# (user, 25 Nov: prefab ship classes, no building on the ship): the first, a Wisp Skiff
+			var sd := randi() % 1000000                # (its seed: the shape of your skiff)
+			var owned: Dictionary = items.get("ships", {})
+			owned["skiff"] = sd
+			items["ships"] = owned
+			items["skiff"] = sd
+			items["ship_class"] = "skiff"
+			if skiff != null and player.aboard == null:
+				skiff = null
+			ui.toast("Wisp Skiff forged: K calls it, F boards it. Landed, G aboard goes below into its pocket", Color(1, 0.82, 0.23), 5.0)
 			save_game()
 			return true
 		"tier2": tier = 2
@@ -5600,7 +5614,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			jump_buf = 8   # catch even the quickest tap
 		if k == KEY_B:
 			if player.aboard != null and not pocket.active:
-				shipyard.open()              # (aboard: the ship builder, where it's parked; else a word why not)
+				# (user, 25 Nov: no building on the ship: ships come whole, from the forge)
+				ui.toast("Ships come whole now: forge another class at the Wisp Forge (Travel), switch in the satchel (I)", Color(0.75, 0.85, 1.0), 3.5)
 			elif build_on:
 				_toggle_build()
 			else:
@@ -5637,8 +5652,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_drink(player)
 		elif k == KEY_F:
 			_interact()
-		elif k == KEY_X:
-			deck_toggle(player)
+		elif k == KEY_X and player.aboard != null:
+			ui.toast("You're inside the ship: F to step out, G (landed) to go below", Color(0.75, 0.85, 1.0), 2.0)
 		elif k == KEY_K and pocket.active:
 			ui.toast("Your ship is outside: step out by the arch (F), or by your ship (G)", Color(0.85, 0.75, 1.0), 2.0)
 		elif k == KEY_K:
@@ -8446,7 +8461,7 @@ func _make_world(index: int, arriving: bool) -> void:
 		skiff = null
 		if loaded and planet_state.has("skiff") and items.has("skiff"):
 			var sk: Dictionary = planet_state["skiff"]
-			skiff = Skiff.make(int(sk.get("seed", items["skiff"])))
+			skiff = Skiff.make(int(sk.get("seed", items["skiff"])), String(sk.get("klass", ship_class())))
 			var sp: Array = sk["pos"]
 			skiff.pos = Vector2(float(sp[0]), float(sp[1]))
 			skiff.ang = float(sk.get("ang", 0.0))
@@ -8477,10 +8492,6 @@ func _make_world(index: int, arriving: bool) -> void:
 func _update_skiff() -> void:
 	if skiff == null:
 		return
-	if not classic_skiff:
-		skiff.ensure_door()                     # (a ship forged before the pocket came in gets its door)
-	if frame % 120 == 0 and items.has("skiff"):
-		items["hull_cells"] = maxi(int(items.get("hull_cells", 0)), skiff.hull_count())   # (the quest: how far it's been built out)
 	_use_grid(player)
 	var pl = skiff.pilot()
 	if pl == null and not in_grid(skiff.pos, 40.0):
@@ -8772,6 +8783,10 @@ const DOOR_REACH := 14.0
 var _recall_now := false
 
 func _begin_recall(m: Mage, cost: float) -> void:
+	if pocket.active and pocket.place == "outpost":
+		ui.toast("Undock first (F at your ship): Wisp Recall can't reach you through an outpost's shields", Color(0.85, 0.75, 1.0), 2.0)
+		spell_used(m, "recall", 20)
+		return
 	if pocket.active:
 		ui.toast("You're in the pocket already", Color(0.85, 0.75, 1.0), 1.2)
 		spell_used(m, "recall", 20)
@@ -8862,9 +8877,7 @@ func call_skiff() -> bool:
 	if player.aboard != null or space.active:
 		return false
 	if skiff == null:
-		skiff = Skiff.make(int(items["skiff"]))
-		if items.get("ship") is Dictionary:
-			skiff.load_cells(items["ship"])       # (the hull you built: it answers as you left it)
+		skiff = make_ship()
 	for k in skiff.riders.size():
 		if skiff.riders[k] != null:
 			skiff.riders[k].aboard = null
@@ -8918,6 +8931,7 @@ func recall_skiff() -> bool:
 	player.mana -= RECALL_MANA
 	var from := player.pos
 	player.aboard = skiff
+	items["boarded"] = true
 	player.deck = false
 	player.vx = 0.0
 	player.vy = 0.0
@@ -8960,6 +8974,7 @@ func _skiff_interact(m: Mage) -> bool:
 	if m.pos.distance_to(skiff.pos) < skiff.w * 0.5 + 10.0:
 		if skiff.board(m):
 			m.aboard = skiff
+			items["boarded"] = true
 			ui.toast("Aboard. Fly with WASD (or hold cast toward the cursor); F to step out", Color(0.7, 0.85, 1.0), 3.0)
 		else:
 			ui.toast("The skiff is full", Color(1, 0.7, 0.5), 1.5)
@@ -9118,6 +9133,7 @@ func _apply_save(s: Dictionary) -> void:
 	mana_regen = float(s.get("mana_regen", 0.22))
 	heat_ward = bool(s.get("heat_ward", false))
 	items = s.get("items", {})
+	_migrate_ships()
 	if int(s.get("start", 0)) < 1:
 		items["levitate"] = true    # (a journey from before levitation had to be forged keeps it)
 	learned = {}
@@ -9276,7 +9292,7 @@ func _world_meta_body(without_skiff: bool) -> String:
 		if space.active and (player.aboard == skiff or skiff.pos.length() > Defs.R_SPACE - 9.5):
 			sp = space.safe_return()
 		planet_state["skiff"] = {"pos": [sp.x, sp.y], "ang": skiff.ang, "facing": skiff.facing, "seed": skiff.design_seed,
-			"cells": skiff.save_cells()}
+			"klass": skiff.klass, "cells": skiff.save_cells()}
 	else:
 		planet_state.erase("skiff")
 	var cs := []
@@ -9761,6 +9777,64 @@ func cargo_count() -> int:
 	return n
 
 func hold_cap() -> int:
-	if skiff == null or not items.has("skiff"):
+	if not items.has("skiff"):
 		return 0
-	return skiff.hold_cap()
+	return skiff.hold_cap() if skiff != null else int(Skiff.CLASSES.get(ship_class(), Skiff.CLASSES["skiff"])["cargo"])
+
+## Your ships (user, 25 Nov: prefab classes from recipes, "you keep the ones you've forged and swap between
+## them"): items["ships"] class -> its design seed, items["ship_class"] the one you fly (K calls it); items["skiff"]
+## stays its seed. A journey from before has its skiff as a Wisp Skiff (`_migrate_ships`).
+func ships() -> Dictionary:
+	return items.get("ships", {})
+
+func ship_class() -> String:
+	return String(items.get("ship_class", "skiff"))
+
+func make_ship():
+	return Skiff.make(int(items.get("skiff", 1)), ship_class())
+
+## fly another of your ships: the one out now (if you're not aboard) is put away and this one stands where it was
+func switch_ship(k: String, quiet := false) -> bool:
+	if not ships().has(k):
+		return false
+	if player.aboard != null:
+		if not quiet:
+			ui.toast("Step off your ship first", Color(1, 0.75, 0.55), 2.0)
+		return false
+	items["ship_class"] = k
+	items["skiff"] = int(ships()[k])
+	if skiff != null:
+		var at: Vector2 = skiff.pos
+		var fc: int = skiff.facing
+		var ag: float = skiff.ang
+		skiff = make_ship()
+		skiff.pos = at
+		skiff.facing = fc
+		skiff.look = float(fc)
+		skiff.ang = ag
+	if not quiet:
+		ui.toast("Your ship now: the %s (K calls it)" % String(Skiff.CLASSES[k]["name"]), Color(0.7, 0.85, 1.0), 2.5)
+	return true
+
+## the forge grows one of your ships another look (a new seed: its class and stats stay)
+func reshape_ship(k: String) -> bool:
+	if not ships().has(k):
+		return false
+	if player.aboard != null and ship_class() == k:
+		ui.toast("Step off it first", Color(1, 0.75, 0.55), 2.0)
+		return false
+	var own: Dictionary = ships()
+	own[k] = randi() % 1000000
+	items["ships"] = own
+	stats_reshaped += 1
+	if ship_class() == k:
+		switch_ship(k, true)
+	ui.toast("Your %s has a new look" % String(Skiff.CLASSES[k]["name"]), Color(0.7, 0.85, 1.0), 2.0)
+	return true
+var stats_reshaped := 0
+
+func _migrate_ships() -> void:
+	if items.has("skiff") and not items.has("ships"):
+		items["ships"] = {"skiff": int(items["skiff"])}
+		items["ship_class"] = "skiff"
+		items.erase("ship")              # (a hull built in the old ship builder: your ship is a Wisp Skiff now)

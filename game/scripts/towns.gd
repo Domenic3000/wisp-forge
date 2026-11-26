@@ -1048,7 +1048,8 @@ func owned(it: Dictionary) -> bool:
 		var pid := String(it["part"])
 		return game.items.has("part_" + pid) or game.items.has(pid)
 	if it.has("repair"):
-		return game.skiff == null or game.skiff.missing() == 0 or game.skiff.pos.distance_to(game.player.pos) > 600.0
+		var at_dock: bool = game.pocket.active and game.pocket.place == "outpost"     # (docked: your ship's in the hangar)
+		return game.skiff == null or game.skiff.missing() == 0 or (game.skiff.pos.distance_to(game.player.pos) > 600.0 and not at_dock)
 	if it.has("job"):
 		return game.space.has_job(String(it["job"]["id"]))
 	return false

@@ -1133,6 +1133,10 @@ const LEARN := {
 	"fenmask": {"shop": "shop", "kind": "marsh", "price": 45, "hoard": true},
 	"tidecharm": {"shop": "shop", "kind": "ocean", "price": 45, "hoard": true},
 	"depthseal": {"find": [ABYSSPEARL]}, "keel": {"find": [ABYSSPEARL]}, "lattice": {"find": [STARIRON]},
+	# (the ship classes, user 25 Nov: "you can get recipes for different ships"): the Cutter and Hauler from an
+	# outpost's shipwright (the Cutter's plans in a chest now and then), the Corvette from a hoard or a reliquary
+	"ship_cutter": {"shop": "shipwright", "price": 140, "scroll": 2}, "ship_hauler": {"shop": "shipwright", "price": 180},
+	"ship_corvette": {"hoard": true},
 	"engine": {"hoard": true},
 }
 
@@ -1619,7 +1623,10 @@ const RECIPES := [
 	{"id": "tidecharm", "cat": "Wards", "name": "Tide Charm", "cost": {WISPBAR: 3, GLASS: 6, COPPERBAR: 3}, "desc": "Bears the crushing deep of an ocean world's sea."},
 	{"id": "depthseal", "cat": "Wards", "name": "Depth Seal", "cost": {ABYSSPEARL: 8, GLASS: 6, WISPBAR: 2}, "desc": "Bears the abyss of a deep ocean world, far below where the Tide Charm holds (wear both)."},
 	{"id": "drive", "cat": "Travel", "name": "Core Drive", "cost": {CORE: 30, WISP: 10, COPPERBAR: 4}, "desc": "Your world's heart, bound in copper and wisp ore: the engine a ship is built round. Forge it before the Wisp Skiff. Needs the Core Siphon (to harvest the Planet Core)."},
-	{"id": "skiff", "cat": "Travel", "name": "Wisp Keel", "cost": {PLANK: 82, WOOD: 32, WISP: 20, WISPBAR: 4, COPPERBAR: 3}, "desc": "The keel of your first ship, a Core Drive at its heart: a deck, a helm and a wisp engine. K calls it to you, F to board or step out. Parked, press B aboard to open the ship builder and build it out; G aboard while parked goes below into its pocket dimension. It flies out into space and on to other worlds: any without a barrier round it."},
+	{"id": "skiff", "cat": "Travel", "name": "Wisp Skiff", "cost": {PLANK: 60, WOOD: 24, WISP: 20, WISPBAR: 4, COPPERBAR: 3, GLASS: 12}, "desc": "Your first ship, a Core Drive at its heart: a planked hull under a glass canopy, room for three crates. K calls it, F boards it; landed, G aboard goes below into its pocket dimension. It flies out into space and on to other worlds: any without a barrier round it."},
+	{"id": "ship_cutter", "cat": "Travel", "name": "Wisp Cutter", "cost": {PLANK: 70, GLASS: 14, WISPBAR: 6, COPPERBAR: 6, STARIRON: 8}, "ship": "cutter", "desc": "A long, slim hull on swept wings: the fastest ship (speed x1.35), lightly built (armour x0.8), two crates, one gun."},
+	{"id": "ship_hauler", "cat": "Travel", "name": "Wisp Hauler", "cost": {PLANK: 120, WOOD: 60, WISPBAR: 8, COPPERBAR: 10, HULL: 20}, "ship": "hauler", "desc": "A deep-bellied freighter with cargo pods: slow (x0.75) and sturdy (armour x1.3), twelve crates, no guns."},
+	{"id": "ship_corvette", "cat": "Travel", "name": "Wisp Corvette", "cost": {HULL: 60, STARIRON: 16, WISPBAR: 10, XENITE: 8, GLASS: 12}, "ship": "corvette", "desc": "A plated warship with a turret: armour x1.7, its cannon fires two bolts at once, five crates."},
 	{"id": "engine", "cat": "Travel", "name": "Star-Iron Engine", "cost": {STARIRON: 10, WISPBAR: 4, COPPERBAR: 5}, "desc": "Your skiff flies half again as fast, in the air and in space. Needs the skiff."},
 	{"id": "shield", "cat": "Travel", "name": "Wisp Shield", "part": "part_shield", "cost": {HULL: 20, WISPBAR: 6, CRYSTAL: 8, COPPERBAR: 4}, "desc": "A bubble of wisp-light round your skiff, built round a Shield Emitter salvaged from a wreck: out in space it takes a lightning strike for you, then needs eight seconds to charge again."},
 	{"id": "cannon", "cat": "Travel", "name": "Wisp Cannon", "part": "part_cannon", "cost": {HULL: 16, STARIRON: 6, WISPBAR: 5, COPPERBAR: 6}, "desc": "A bolt-thrower on your skiff, built round a Cannon Coil salvaged from a wreck: out in space the cast button fires it toward the cursor (6 mana a shot; the keys steer). Its bolts blast rock and hull apart."},

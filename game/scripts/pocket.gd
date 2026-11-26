@@ -14,12 +14,69 @@
 ## Drawn: a nebula (`NEBULA` shader on `bgrect`, behind: slow coloured clouds, two depths of stars, drifting
 ## with you), far isles, the isle's back and front pictures, halos over its glowing cells (`glow`, additive),
 ## wisp-lights drifting, a shimmer in the arch, and the prompts (`top`).
+##
+## The same instance holds a trading OUTPOST's halls (`place` "outpost"; user, 25 Nov: "derelict ships and outposts
+## and so on should be redesigned so that you press a button to dock and go inside an instanced area so we can make
+## them larger and more intricate with their own scenery"; chose outposts first). Flying by one, F docks (`dock`):
+## its halls are grown in a worker (outpost.gd made with `halls`: a deck more, more rooms and folk), then you stand in
+## its hangar beside your ship, space waiting outside. Its spacers walk (spacer.gd), its keepers stand at their
+## counters (F trades: space.gd `open_trade`), F by a spacer talks, F at your ship undocks (`leave`: aboard, by the
+## outpost). Behind it all, through its windows and the hangar's mouth, its own sky (`SKY` shader): the star it
+## serves, a planet, a nebula's haze. Spells stay sheathed; nothing is built here.
 extends Node2D
 
 const PixelFont := preload("res://scripts/pixel_font.gd")
 const Isle := preload("res://scripts/pocket_isle.gd")
 const Build := preload("res://scripts/build.gd")
 const Vfx := preload("res://scripts/vfx.gd")
+const Outpost := preload("res://scripts/outpost.gd")
+const Spacer := preload("res://scripts/spacer.gd")
+const PROMPT_REACH := 16.0
+
+## an outpost's sky, behind its halls: a starfield, a nebula's haze, the system's star glowing off to one side and a
+## banded planet hanging below (its colours by `hue`), drifting a little with you
+const SKY := """
+shader_type canvas_item;
+uniform vec2 cam = vec2(0.0);
+uniform float t = 0.0;
+uniform vec2 size = vec2(480.0, 270.0);
+uniform float hue = 0.0;
+float hh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float nn(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hh(i), hh(i + vec2(1.0, 0.0)), f.x), mix(hh(i + vec2(0.0, 1.0)), hh(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float fbm(vec2 p) { float s = 0.0; float a = 0.5; for (int k = 0; k < 4; k++) { s += a * nn(p); p = p * 2.07 + vec2(3.1, 1.7); a *= 0.5; } return s; }
+vec3 hsv(float h, float s, float v) { vec3 k = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); return v * mix(vec3(1.0), k, s); }
+void fragment() {
+	vec2 px = floor(UV * size);
+	vec2 p = px + cam * 0.02;
+	vec3 col = mix(vec3(0.01, 0.012, 0.035), vec3(0.03, 0.02, 0.07), UV.y);
+	float n = fbm(p / 120.0 + vec2(t * 0.0008, 0.0));
+	col = mix(col, hsv(hue + 0.55, 0.5, 0.22), smoothstep(0.5, 0.9, n) * 0.6);
+	if (hh(floor(p)) > 0.997) { col += vec3(0.8, 0.85, 1.0) * (0.5 + 0.5 * sin(t * 0.04 + hh(floor(p) + 3.0) * 50.0)); }
+	if (hh(floor(p / 2.0) + 9.0) > 0.9985) { col += vec3(1.0, 0.9, 0.75) * 0.7; }
+	// the star: a glow off to the upper right
+	vec2 sc = vec2(size.x * 0.82, size.y * 0.18) - cam * 0.01;
+	float sd = length(px - sc);
+	col += hsv(hue + 0.08, 0.35, 1.0) * (0.9 * exp(-sd * 0.09) + 0.25 * exp(-sd * 0.015));
+	// the planet below, lit from the star
+	vec2 pc = vec2(size.x * 0.3, size.y * 1.45) - cam * 0.015;
+	float pr = size.y * 0.85;
+	vec2 q = (px - pc) / pr;
+	float d = length(q);
+	if (d < 1.0) {
+		float band = fbm(vec2(q.x * 3.0 + t * 0.0004, q.y * 14.0));
+		vec3 pcol = mix(hsv(hue, 0.45, 0.35), hsv(hue + 0.05, 0.55, 0.6), band);
+		vec3 nrm = vec3(q, sqrt(max(0.0, 1.0 - d * d)));
+		float lit = clamp(dot(nrm, normalize(vec3(0.7, -0.6, 0.5))), 0.0, 1.0);
+		col = mix(col, pcol * (0.12 + 0.95 * lit), 1.0);
+	} else if (d < 1.06) {
+		col += hsv(hue + 0.5, 0.4, 0.6) * (1.0 - (d - 1.0) / 0.06) * 0.35;      // (its air, a thin rim)
+	}
+	COLOR = vec4(col, 1.0);
+}
+"""
 
 const NEBULA := """
 shader_type canvas_item;
@@ -77,7 +134,18 @@ var bgrect: ColorRect
 var glow: Node2D
 var top: Node2D
 var _halo: ImageTexture
-var stats := {"entered": 0, "left": 0, "expanded": 0, "fell": 0}
+var stats := {"entered": 0, "left": 0, "expanded": 0, "fell": 0, "docked": 0, "undocked": 0, "trades": 0, "talks": 0}
+var place := "isle"             # "isle": your ship's pocket; "outpost": a trading outpost's halls, docked
+var op = null                   # (docked) the outpost's halls (outpost.gd, made with `halls`)
+var op_folk := []               # its spacers (spacer.gd)
+var near_keeper = null          # (docked) the keeper whose counter you're at, or a spacer beside you
+var near_folk = null
+var _dock_task := -1            # (docking: the halls being grown in a worker)
+var _dock_made := []
+var _dock_from = null           # the outpost out in space you're docking at
+var _sky_mat: ShaderMaterial
+var _neb_mat: ShaderMaterial
+var _op_lights: Array = []      # [cell middle, radius, colour]
 
 func _ready() -> void:
 	visible = false
@@ -90,6 +158,11 @@ func _ready() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = sh
 	bgrect.material = mat
+	_neb_mat = mat
+	var sh2 := Shader.new()
+	sh2.code = SKY
+	_sky_mat = ShaderMaterial.new()
+	_sky_mat.shader = sh2
 	add_child(bgrect)
 	glow = Node2D.new()
 	var add := CanvasItemMaterial.new()
@@ -112,6 +185,11 @@ func reset() -> void:
 	visible = false
 	isle = null
 	back = {}
+	place = "isle"
+	op = null
+	op_folk.clear()
+	_dock_task = -1
+	_dock_from = null
 
 func _path() -> String:
 	return game._save_dir().path_join("pocket.dat")
@@ -159,6 +237,8 @@ func enter(m, how: String) -> void:
 	if active:
 		return
 	_ensure()
+	place = "isle"
+	bgrect.material = _neb_mat
 	back = {"pos": m.pos, "space": game.space.active, "zoom": game.zoom, "how": how}
 	if m.aboard != null:
 		m.aboard.leave(m)
@@ -208,6 +288,9 @@ func ship_here() -> bool:
 func leave(m, by_ship := false) -> void:
 	if not active:
 		return
+	if place == "outpost":
+		_undock(m)
+		return
 	game._raise_finish_all()             # (anything still rising into the isle goes up whole first)
 	save()
 	active = false
@@ -256,21 +339,25 @@ func tick() -> void:
 		m.cast_latch = true
 		if game.frame - _calm_note > 240:
 			_calm_note = game.frame
-			game.ui.toast("The pocket is calm: spells rest here", Color(0.8, 0.75, 1.0), 1.6)
+			game.ui.toast("The pocket is calm: spells rest here" if place == "isle" else "Spells stay sheathed in an outpost's halls", Color(0.8, 0.75, 1.0), 1.6)
 	m.mana = minf(m.max_mana, m.mana + game.mana_regen_of(m))
 	m.breath = minf(m.max_breath, m.breath + 4.0)
 	if m.iframes > 0:
 		m.iframes -= 1
 	_move(m)
-	if game.build_on:
+	if place == "outpost":
+		game.build_on = false
+		_op_tick(m)
+	elif game.build_on:
 		game._cabin_edit(m, isle)
 	elif game.unmaking(m):
 		game.pocket_unmake(m, isle)      # (Unmake takes away here as outside)
 	else:
 		game.hand_body(m, isle)          # (what's in your hand, with Conjure held, builds here: plans too)
-	if not game.raising.is_empty():
+	if not game.raising.is_empty() and place == "isle":
 		game._raise_tick()               # (a plan rising into the isle: the world's tick waits while you're here)
-	_near(m)
+	if place == "isle":
+		_near(m)
 	if _offer_t > 0:
 		_offer_t -= 1
 	game.cam_c = m.pos.round()
@@ -292,11 +379,12 @@ func _move(m) -> void:
 		m.ground_t += 1
 	var jump: bool = m.input.jump and game.state == "play" and not game.build_on
 	m.floating = false
+	var bd = isle if place == "isle" else op
 	if jump and not m.jump_held:
 		var on_plat := false
 		var fy := int(round(b.y + hh))
 		for i in range(int(floor(b.x - hw)), int(ceil(b.x + hw))):
-			if isle.scaffold_cell(i, fy):
+			if bd.scaffold_cell(i, fy):
 				on_plat = true
 		if m.input.down and on_plat:
 			m.drop_t = 12
@@ -312,7 +400,7 @@ func _move(m) -> void:
 	m.jump_held = jump
 	v.y = minf(v.y + 0.17, 6.0)
 	var was_ground: bool = m.on_ground
-	var r: Array = isle.move_box(b, v, hw, hh, true, 5 if m.on_ground else 0, m.drop_t > 0)
+	var r: Array = bd.move_box(b, v, hw, hh, true, 5 if m.on_ground else 0, m.drop_t > 0)
 	if m.drop_t > 0:
 		m.drop_t -= 1
 	b = r[0]
@@ -326,14 +414,15 @@ func _move(m) -> void:
 		m.anim += absf(v.x) * 0.13
 		if int(m.anim * 0.5) != int(a0 * 0.5):
 			game.audio.play("step", m.pos, 0.3)
-	# (fallen off the isle into the nebula: it sets you gently back by the arch)
-	if b.y > float(Isle.H) + 40.0 or b.x < -80.0 or b.x > float(Isle.W) + 80.0:
-		b = spawn_b(m)
+	# (fallen off the isle into the nebula: it sets you gently back by the arch; out of an outpost's hangar mouth,
+	# its tractor beam sets you back on the hangar's floor)
+	if b.y > float(bd.h) + 40.0 or b.x < -80.0 or b.x > float(bd.w) + 80.0 or b.y < -80.0:
+		b = spawn_b(m) if place == "isle" else _op_spawn(m)
 		v = Vector2.ZERO
 		stats["fell"] += 1
-		game.ui.toast("The pocket sets you back on its isle", Color(0.8, 0.75, 1.0), 2.0)
+		game.ui.toast("The pocket sets you back on its isle" if place == "isle" else "The hangar's tractor beam sets you back on its floor", Color(0.8, 0.75, 1.0), 2.0)
 		game.audio.play("blink", m.pos, 0.5)
-	m.pos = isle.to_world(b)
+	m.pos = bd.to_world(b)
 	m.vx = v.x
 	m.vy = v.y
 
@@ -350,6 +439,8 @@ func _near(m) -> void:
 
 ## F in the pocket
 func interact(m) -> bool:
+	if place == "outpost":
+		return _op_interact(m)
 	match near:
 		"arch":
 			leave(m, false)
@@ -361,7 +452,7 @@ func interact(m) -> bool:
 
 ## G at the arch: out by your ship
 func leave_by_ship(m) -> bool:
-	if near != "arch":
+	if place != "isle" or near != "arch":
 		return false
 	if not ship_here():
 		game.ui.toast("Your ship isn't where you came in from: the arch takes you back there", Color(1, 0.75, 0.55), 2.5)
@@ -418,7 +509,7 @@ func _heart(m) -> void:
 # -------------------------------------------------------------- drawing ---
 
 func _draw() -> void:
-	if not active or isle == null:
+	if not active or (isle == null and place == "isle") or (op == null and place == "outpost"):
 		return
 	var vw := float(game.VW)
 	var vh := float(game.VH)
@@ -428,6 +519,11 @@ func _draw() -> void:
 	mat.set_shader_parameter("cam", Vector2(-game.cam_c.x, game.cam_c.y))
 	mat.set_shader_parameter("t", float(game.frame))
 	mat.set_shader_parameter("size", Vector2(vw, vh))
+	if place == "outpost":
+		_draw_op()
+		glow.queue_redraw()
+		top.queue_redraw()
+		return
 	isle.pictures()
 	isle.gather_lights()
 	var xf: Transform2D = game.screen_xf()
@@ -482,6 +578,9 @@ func _halo_tex() -> ImageTexture:
 	return _halo
 
 func _draw_glow() -> void:
+	if active and place == "outpost":
+		_draw_op_glow()
+		return
 	if not active or isle == null:
 		return
 	var xf: Transform2D = game.screen_xf()
@@ -516,6 +615,9 @@ func _draw_glow() -> void:
 		glow.draw_texture_rect(ht, Rect2(sp2 - Vector2(5, 5) / z, Vector2(10, 10) / z), false, Color(mc.r, mc.g, mc.b, 0.22 * fl))
 
 func _draw_top() -> void:
+	if active and place == "outpost":
+		_draw_op_top()
+		return
 	if not active or isle == null:
 		return
 	var txt := ""
@@ -530,3 +632,297 @@ func _draw_top() -> void:
 	if txt == "":
 		return
 	game.speech.draw(top, game.world_to_screen(at), txt, 1.0, "pocket_" + near, game.Speech.PROMPT)
+
+# ============================================================ an outpost ===
+# (docked: its halls as an instance; see the top of this file)
+
+## F flying by an outpost out in space: its halls are grown in a worker, and you're in once they're ready
+func dock(m, ext) -> bool:
+	if active or _dock_task >= 0 or ext == null:
+		return false
+	_dock_from = ext
+	_dock_made = [null]
+	var sd: int = ext.seed_
+	var sy: int = ext.sys
+	var into: Array = _dock_made
+	_dock_task = WorkerThreadPool.add_task(func() -> void: into[0] = Outpost.make_outpost(sd, sy, true))
+	game.ui.toast("Docking at %s..." % ext.wname, Color(1.0, 0.85, 0.5), 1.5)
+	game.audio.play("creak", m.pos, 0.6)
+	return true
+
+func docking() -> bool:
+	return _dock_task >= 0
+
+func _process(_d: float) -> void:
+	if _dock_task < 0 or not WorkerThreadPool.is_task_completed(_dock_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_dock_task)
+	_dock_task = -1
+	var o = _dock_made[0]
+	if o == null or game.state != "play" or not game.space.active or game.player.aboard == null:
+		return                           # (left space, or off the ship, while it was being made: no docking)
+	_enter_outpost(game.player, o)
+
+## the docking finished at once (the tests; and a save loaded mid-dock)
+func dock_now(m, ext) -> void:
+	var o = Outpost.make_outpost(ext.seed_, ext.sys, true)
+	_dock_from = ext
+	_enter_outpost(m, o)
+
+func _enter_outpost(m, o) -> void:
+	op = o
+	op.ang = PI
+	op.facing = 1
+	op.pos = Vector2.ZERO
+	op.com = Vector2.ZERO
+	op.texture()
+	var sk = game.skiff
+	back = {"pos": m.pos, "space": true, "zoom": game.zoom, "how": "dock", "ship": sk.pos if sk != null else m.pos,
+		"ship_ang": sk.ang if sk != null else 0.0, "name": op.wname}
+	if m.aboard != null:
+		m.aboard.leave(m)
+		m.aboard = null
+		m.deck = false
+	game.space.vel = Vector2.ZERO
+	if sk != null:
+		sk.vel = Vector2.ZERO
+	game.build_on = false
+	game.build_prev = {}
+	place = "outpost"
+	bgrect.material = _sky_mat
+	_sky_mat.set_shader_parameter("hue", fposmod(float(op.seed_ % 997) / 997.0, 1.0))
+	active = true
+	visible = true
+	op_folk.clear()
+	for pl in op.folk_plan:
+		op_folk.append(Spacer.make(op, pl))
+	_op_lights = _gather_op_lights()
+	b = _op_spawn(m)
+	v = Vector2.ZERO
+	m.pos = op.to_world(b)
+	m.vx = 0.0
+	m.vy = 0.0
+	m.on_ground = false
+	m.recall_t = 0
+	game.zoom = 1.0
+	game.view_c = Vector2.ZERO
+	game.cam_c = m.pos.round()
+	game.view_rect.visible = false
+	game.space.visible = false
+	game.weather.visible = false
+	stats["docked"] += 1
+	game.audio.play("blink", m.pos, 0.7)
+	game.ui.toast("Docked at %s. Its shops are along the deck through the hangar's door; F at your ship to undock" % op.wname, Color(1.0, 0.85, 0.5), 4.5)
+
+## your ship parked on the hangar's floor: [middle cell, floor row]
+func _op_ship_at() -> Vector2:
+	var hm: Dictionary = op.mods[op.hangar]
+	var x0 := float(int(hm["x0"]))
+	var x1 := float(int(hm["x1"]))
+	var mid := (x0 + x1) * 0.5 + float(op.hangar_side) * (x1 - x0) * 0.12
+	return Vector2(mid, float(int(hm["y1"])))
+
+## where you stand when you come in: on the hangar's floor between your ship and the door to the deck
+func _op_spawn(m) -> Vector2:
+	var hm: Dictionary = op.mods[op.hangar]
+	var x0 := float(int(hm["x0"]))
+	var x1 := float(int(hm["x1"]))
+	var sx: float = x1 - 22.0 if op.hangar_side < 0 else x0 + 22.0       # (the deck's door is away from the mouth)
+	var at := Vector2(sx, float(int(hm["y1"])) - float(m.h) * 0.5 - 0.05)
+	for k in 40:
+		if op.box_free(at, float(m.w) * 0.5, float(m.h) * 0.5):
+			break
+		at.y -= 1.0
+	return at
+
+func _undock(m) -> void:
+	active = false
+	visible = false
+	stats["undocked"] += 1
+	var sk = game.skiff
+	var at: Vector2 = back.get("ship", back.get("pos", m.pos))
+	if sk != null:
+		sk.pos = at
+		sk.vel = Vector2.ZERO
+		sk.ang = float(back.get("ship_ang", sk.ang))
+	m.pos = at
+	m.vx = 0.0
+	m.vy = 0.0
+	game.zoom = float(back.get("zoom", 1.0))
+	game.space.visible = true
+	game.space.vel = Vector2.ZERO
+	game.weather.visible = true
+	game.cam_c = m.pos
+	game.view_c = Vector2.ZERO
+	if sk != null and sk.board(m):
+		m.aboard = sk
+	place = "isle"
+	bgrect.material = _neb_mat
+	op = null
+	op_folk.clear()
+	near_keeper = null
+	near_folk = null
+	game.audio.play("blink", m.pos, 0.6)
+	game.ui.toast("Undocked: you're aboard, by %s" % String(back.get("name", "the outpost")), Color(1.0, 0.85, 0.5), 2.5)
+
+func _op_tick(m) -> void:
+	for f in op_folk:
+		f.tick()
+	if game.frame % 20 == 3:
+		for i in op_folk.size():
+			var fa = op_folk[i]
+			if fa.wait <= 0:
+				continue
+			for k in range(i + 1, op_folk.size()):
+				var fb = op_folk[k]
+				if fb.wait > 0 and absf(fb.b.x - fa.b.x) < 8.0 and absf(fb.b.y - fa.b.y) < 4.0:
+					fb.step_aside(1 if fb.b.x >= fa.b.x else -1)
+					break
+	# what F would do: your ship, a keeper's counter, a spacer beside you
+	near = ""
+	near_keeper = null
+	near_folk = null
+	var sa := _op_ship_at()
+	if b.distance_to(sa + Vector2(0.0, -10.0)) < 34.0:
+		near = "ship"
+		return
+	var best := PROMPT_REACH + 6.0
+	for kp in op.keepers:
+		var d: float = b.distance_to(kp.b + Vector2(0.0, -10.0))
+		if d < best:
+			best = d
+			near_keeper = kp
+	if near_keeper != null:
+		near = "keeper"
+		return
+	var fb2 := PROMPT_REACH
+	for f2 in op_folk:
+		var fd: float = b.distance_to(f2.b)
+		if fd < fb2:
+			fb2 = fd
+			near_folk = f2
+	if near_folk != null:
+		near = "folk"
+
+func _op_interact(m) -> bool:
+	match near:
+		"ship":
+			leave(m)
+			return true
+		"keeper":
+			stats["trades"] += 1
+			game.space.open_trade(op, near_keeper)
+			return true
+		"folk":
+			stats["talks"] += 1
+			game.space._folk_talk(near_folk)
+			return true
+	return false
+
+## the glowing cells of its halls, gathered into a few halos (blocks of 16)
+func _gather_op_lights() -> Array:
+	var out := []
+	for by in range(0, op.h, 16):
+		for bx in range(0, op.w, 16):
+			var n := 0
+			var col := Color(0, 0, 0)
+			var sx := 0.0
+			var sy := 0.0
+			for j in range(by, mini(by + 16, op.h)):
+				for i in range(bx, mini(bx + 16, op.w)):
+					var mt: int = op.cells[j * op.w + i]
+					if mt == 0 or Defs.SELF[mt] == 0:
+						continue
+					var c := Color.hex((Defs.PAL[mt * 4] << 8) | 0xff)
+					n += 1
+					col += c
+					sx += float(i)
+					sy += float(j)
+			if n > 0:
+				out.append([Vector2(sx / n + 0.5, sy / n + 0.5), 12.0 + sqrt(float(n)) * 4.0, col / float(n)])
+	return out
+
+func _draw_op() -> void:
+	var xf: Transform2D = game.screen_xf()
+	draw_set_transform_matrix(xf * Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2.ZERO))
+	draw_texture(op.back_texture(), Vector2.ZERO)
+	# your ship, parked on the hangar's floor (its back, then its hull)
+	var sk = game.skiff
+	if sk != null:
+		var sa := _op_ship_at()
+		var st: ImageTexture = sk.texture()
+		var stb: ImageTexture = sk.back_texture()
+		var o := Vector2(sa.x - float(sk.w) * 0.5, sa.y - float(sk.h) + 1.0)
+		var mir: bool = op.hangar_side < 0          # (its nose toward the hangar's mouth)
+		if mir:
+			draw_set_transform_matrix(xf * Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2.ZERO) * Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2(sa.x * 2.0, 0.0)))
+		draw_texture(stb, o)
+		draw_texture(st, o)
+		draw_set_transform_matrix(xf * Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2.ZERO))
+	draw_texture(op.texture(), Vector2.ZERO)
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+	# the keepers, each behind a counter drawn in front of them; the spacers
+	for kp in op.keepers:
+		var kt: ImageTexture = op.keeper_texture(kp)
+		var kps: Vector2 = (xf * op.to_world(kp.b)).floor()
+		draw_set_transform(kps, 0.0, Vector2(float(-kp.facing), 1.0))
+		draw_texture(kt, Vector2(-float(kt.get_width()) * 0.5, -float(kt.get_height()) + 1.0))
+		var ct: ImageTexture = op.counter_texture(kp)
+		draw_texture(ct, Vector2(-6.0, -float(ct.get_height())))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	for f in op_folk:
+		var ft: ImageTexture = f.texture()
+		var fs: Vector2 = (xf * op.to_world(f.b)).floor()
+		draw_set_transform(fs, 0.0, Vector2(float(-f.facing), 1.0))
+		draw_texture(ft, Vector2(-float(ft.get_width()) * 0.5, 9.5 + 1.0 - float(ft.get_height())))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _draw_op_glow() -> void:
+	var xf: Transform2D = game.screen_xf()
+	var ht := _halo_tex()
+	var z: float = maxf(float(game.zoom), 0.01)
+	var scr := Vector2(float(game.VW), float(game.VH))
+	for lt in _op_lights:
+		var sp: Vector2 = xf * op.to_world(lt[0])
+		var r: float = float(lt[1]) / z
+		if sp.x < -r or sp.y < -r or sp.x > scr.x + r or sp.y > scr.y + r:
+			continue
+		var c: Color = lt[2]
+		glow.draw_texture_rect(ht, Rect2(sp - Vector2(r, r), Vector2(r, r) * 2.0), false, Color(c.r, c.g, c.b, 0.28 + 0.04 * sin(t * 0.03 + sp.x * 0.05)))
+
+func _draw_op_top() -> void:
+	var xf: Transform2D = game.screen_xf()
+	# the shops' signs over their counters
+	for kp in op.keepers:
+		if kp == near_keeper:
+			continue
+		var sp: Vector2 = xf * op.to_world(kp.b + Vector2(0.0, -34.0))
+		_top_text(sp, String(Outpost.OP_ROOMS[kp.shop]).to_upper(), Outpost.SHOP_COL[kp.shop])
+	for f in op_folk:
+		if f.say_t > 0:
+			game.speech.draw(top, xf * op.to_world(f.b + Vector2(0.0, -12.0)), f.say, clampf(float(f.say_t) / 30.0, 0.0, 1.0), "s%d" % f.fseed, game.Speech.SPEECH, op.to_world(f.b), game.Speech.pitch_of(f.fseed))
+	var txt := ""
+	var at := Vector2.ZERO
+	match near:
+		"ship":
+			txt = "[F] Undock"
+			at = _op_ship_at() + Vector2(0.0, -float(game.skiff.h if game.skiff != null else 30) - 6.0)
+		"keeper":
+			txt = "[F] trade with %s, %s" % [near_keeper.name, String(Outpost.OP_ROOMS[near_keeper.shop]).to_lower()]
+			at = near_keeper.b + Vector2(0.0, -34.0)
+		"folk":
+			if near_folk.say_t <= 0:
+				txt = "[F] talk to %s" % near_folk.name
+				at = near_folk.b + Vector2(0.0, -14.0)
+	if txt != "":
+		game.speech.draw(top, xf * op.to_world(at), txt, 1.0, "op_" + near, game.Speech.PROMPT)
+
+func _top_text(at: Vector2, txt: String, col: Color) -> void:
+	var f2: Font = PixelFont.make()
+	var px: float = float(game.scale_px)
+	var sz: int = PixelFont.SIZE * int(game.ui.U)
+	var wd := f2.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
+	top.draw_set_transform(at, 0.0, Vector2.ONE / px)
+	top.draw_string(f2, Vector2(-wd * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, Color(0, 0, 0, 0.7))
+	top.draw_string(f2, Vector2(-wd * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, sz, col)
+	top.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

@@ -38,6 +38,7 @@ var sys := -1                # the star system it serves (galaxy.gd), when known
 var keepers := []            # [Trader]: one per shop room
 var folk_plan := []          # [{"fseed", "room", "b"}]: the spacers who live here
 var _trader = null
+var halls := false           # (made for docking: its halls, the instance you walk; else the shell seen out in space)
 
 ## a keeper behind a counter: what towns.gd's shop and ui.gd's panel need of one
 class Trader:
@@ -58,9 +59,15 @@ static func outpost_name(sd: int) -> String:
 	rng.seed = sd ^ 0x7057
 	return "%s %s" % [OP_A[rng.randi_range(0, OP_A.size() - 1)], OP_B[rng.randi_range(0, OP_B.size() - 1)]]
 
-static func make_outpost(sd: int, system := -1) -> RefCounted:
+## (user, 25 Nov: "derelict ships and outposts and so on should be redesigned so that you press a button to dock
+## and go inside an instanced area so we can make them larger and more intricate with their own scenery"):
+## `halls` (made with in_side) are its halls for docking (pocket.gd's "outpost" place): a deck more and more rooms, more folk, the
+## hangar open onto space; the shell out in space is the same station with its hangar's mouth sealed behind a
+## force-field pane and nobody walking it (you dock with F as you fly by).
+static func make_outpost(sd: int, system := -1, in_side := false) -> RefCounted:
 	var op = load("res://scripts/outpost.gd").new()
 	op.sys = system
+	op.halls = in_side
 	op._build_outpost(sd)
 	return op
 
@@ -73,6 +80,10 @@ func _build_outpost(sd: int) -> void:
 	rng.seed = sd
 	cols = rng.randi_range(6, 7)
 	rows = 3
+	if halls:
+		cols = rng.randi_range(8, 9)
+		rows = 4
+	var lo := rows - 1               # (the lowest deck's row: the shops, and the hangar's lower half)
 	setup(OX * 2 + cols * PX + T, OY * 2 + rows * PY + T)
 	var noise := FastNoiseLite.new()
 	noise.seed = sd
@@ -83,10 +94,10 @@ func _build_outpost(sd: int) -> void:
 	# ---- the rooms: the hangar (2 x 2 cells of the grid) first, then every other cell; a top corner away
 	# from the hangar sometimes left out
 	var hx0: int = OX + T + hc0 * PX
-	var hy0: int = OY + T + PY
+	var hy0: int = OY + T + (lo - 1) * PY
 	hangar = 0
-	mods.append({"c": hc0, "r": 1, "x0": hx0, "y0": hy0, "x1": hx0 + 2 * MW + T, "y1": hy0 + 2 * MH + T, "role": "hangar",
-		"powered": true, "links": [], "cells": [Vector2i(hc0, 1), Vector2i(hc0 + 1, 1), Vector2i(hc0, 2), Vector2i(hc0 + 1, 2)]})
+	mods.append({"c": hc0, "r": lo - 1, "x0": hx0, "y0": hy0, "x1": hx0 + 2 * MW + T, "y1": hy0 + 2 * MH + T, "role": "hangar",
+		"powered": true, "links": [], "cells": [Vector2i(hc0, lo - 1), Vector2i(hc0 + 1, lo - 1), Vector2i(hc0, lo), Vector2i(hc0 + 1, lo)]})
 	for hv in mods[0]["cells"]:
 		grid[hv] = 0
 	var far_corner := Vector2i(cols - 1 if hangar_side < 0 else 0, 0)
@@ -126,7 +137,7 @@ func _build_outpost(sd: int) -> void:
 	var deck := []                 # (the lowest deck's rooms, from the hangar outward)
 	var c2: int = inner
 	while c2 >= 0 and c2 < cols:
-		deck.append(int(grid[Vector2i(c2, 2)]))
+		deck.append(int(grid[Vector2i(c2, lo)]))
 		c2 -= hangar_side
 	for d in range(deck.size() - 1):
 		edges[_ekey(deck[d], deck[d + 1])] = true
@@ -147,7 +158,7 @@ func _build_outpost(sd: int) -> void:
 	var dist := _bfs(hangar)
 	reactor = -1
 	for i3 in range(1, mods.size()):
-		if int(mods[i3]["r"]) == 2:
+		if int(mods[i3]["r"]) == lo:
 			continue
 		if reactor < 0 or int(dist[i3]) > int(dist[reactor]):
 			reactor = i3
@@ -201,6 +212,11 @@ func _build_outpost(sd: int) -> void:
 	for j3 in range(hy1 - MOUTH_H, hy1):
 		for i6 in range(wx0, wx0 + T):
 			cells[j3 * w + i6] = 0
+	if not halls:
+		# (out in space its mouth is sealed: a force-field pane, glowing at its edges; you dock with F)
+		var pane: int = wx0 + T / 2
+		for j5 in range(hy1 - MOUTH_H, hy1):
+			put(pane, j5, Defs.FROST if (j5 - (hy1 - MOUTH_H)) % 9 == 0 else Defs.GLASS, j5 & 3)
 	var apron0: int = wx0 - 40 if hangar_side < 0 else wx0 + T
 	for i7 in range(apron0, apron0 + 40):
 		for j4 in range(hy1, hy1 + T):
@@ -232,7 +248,7 @@ func _build_outpost(sd: int) -> void:
 		var mk: Dictionary = mods[deck[d3]]
 		kp.b = Vector2(float(int(mk["x0"]) + int(mk["x1"])) * 0.5 - float(hangar_side) * 14.0, float(int(mk["y1"])))
 		keepers.append(kp)
-	var nfolk := rng.randi_range(7, 10)
+	var nfolk := rng.randi_range(13, 17) if halls else 0       # (outside, nobody walks the shell)
 	var homes := []
 	for i9 in range(1, mods.size()):
 		homes.append(i9)

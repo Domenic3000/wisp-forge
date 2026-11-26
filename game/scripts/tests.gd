@@ -17,7 +17,6 @@ func run() -> void:
 	lines.append("")
 	g.test_god = true
 	g.free_magic = true         # (digging and building cost no mana, but in the check about it)
-	g.classic_skiff = true      # (the skiff is forged whole, as the older checks expect; "shipyard" forges a keel)
 
 	# ---- a picture of the animated title screen (saves/shots/title.png) ----
 	var tdir: String = g._real_save_dir().path_join("shots")
@@ -116,10 +115,6 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_outposts()
-		elif only == "cabin":
-			_go(g.player.pos)
-			await _frames(60)
-			await _test_cabin()
 		elif only == "stations":
 			_go(g.player.pos)
 			await _frames(60)
@@ -128,14 +123,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_fuel()
-		elif only == "hull":
+		elif only == "ships" or only == "shipyard" or only == "pocket":
 			_go(g.player.pos)
 			await _frames(60)
-			await _test_hull()
-		elif only == "shipyard" or only == "pocket":
-			_go(g.player.pos)
-			await _frames(60)
-			await _test_shipyard()
+			await _test_ships()
 		elif only == "cargo":
 			await _test_cargo()
 		elif only == "voidlife":
@@ -2844,11 +2835,9 @@ func run() -> void:
 	await _test_wrecks()
 	await _test_pirates()
 	await _test_outposts()
-	await _test_cabin()
 	await _test_stations()
 	await _test_fuel()
-	await _test_hull()
-	await _test_shipyard()
+	await _test_ships()
 	await _test_cargo()
 	await _test_voidlife()
 	await _test_spacebench()

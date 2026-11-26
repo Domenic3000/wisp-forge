@@ -2363,7 +2363,18 @@ func _fire_cannon(pl, sk) -> void:
 		return
 	var dir := d.normalized()
 	var from: Vector2 = sk.pos + dir * (float(sk.w) * 0.5 + 2.0)
-	shots.append([from, sk.vel + dir * CANNON_SPEED, 110])
+	# (its class's guns: a Hauler has none, a Corvette fires two bolts side by side)
+	var guns: int = int(sk.cls()["guns"]) if sk.has_method("cls") else 1
+	if guns <= 0:
+		if game.frame % 90 == 0:
+			game.ui.toast("Your %s carries no guns" % String(sk.cls()["name"]), Color(1, 0.75, 0.55), 1.5)
+		return
+	if guns >= 2:
+		var side := Vector2(-dir.y, dir.x) * 4.0
+		shots.append([from + side, sk.vel + dir * CANNON_SPEED, 110])
+		shots.append([from - side, sk.vel + dir * CANNON_SPEED, 110])
+	else:
+		shots.append([from, sk.vel + dir * CANNON_SPEED, 110])
 	pl.mana -= CANNON_MANA
 	_cannon_cd = CANNON_CD
 	stats["shots"] += 1
@@ -2491,6 +2502,10 @@ func _draw_top_parts() -> void:
 			var sgn: Vector2 = sa.to_world(skp.b + Vector2(0.0, -34.0) - sa.com)
 			if near_keeper != skp:
 				_top_text(xf * sgn, String(Outpost.OP_ROOMS[skp.shop]).to_upper(), Outpost.SHOP_COL[skp.shop])
+	var dt = dock_target(game.player) if game.pocket != null and not game.pocket.docking() else null
+	if dt != null and game.skiff != null:
+		var up_d: Vector2 = xf.basis_xform(-dt.axis_y()).normalized()
+		game.speech.draw(_top, xf * game.skiff.pos + up_d * (float(game.skiff.h) * 0.6 / game.zoom + 10.0), "[F] Dock at %s" % dt.wname, 1.0, "dock", game.Speech.PROMPT)
 	if near_trader != null and near_keeper != null:
 		var kw: Vector2 = near_trader.to_world(near_keeper.b + Vector2(0.0, -34.0) - near_trader.com)
 		game.speech.draw(_top, xf * kw, "[F] trade with %s, %s" % [near_keeper.name, String(Outpost.OP_ROOMS[near_keeper.shop]).to_lower()], 1.0, "trade", game.Speech.PROMPT)
@@ -3044,6 +3059,21 @@ func nearest_outpost(p: Vector2, within: float) -> Variant:
 			bd = d
 			best = a
 	return best
+
+## Flying by an outpost aboard your ship: the outpost F docks at (pocket.gd `dock`, into its halls), or null.
+## Within DOCK_REACH cells of its shell (user, 25 Nov: "press a button to dock and go inside an instanced area").
+const DOCK_REACH := 140.0
+func dock_target(m) -> Variant:
+	if not active or m.aboard == null or m.aboard != game.skiff:
+		return null
+	var sk = game.skiff
+	var op = nearest_outpost(sk.pos, 3000.0)
+	if op == null:
+		return null
+	var bb: Vector2 = op.to_body(sk.pos) + op.com
+	if bb.x < -DOCK_REACH or bb.y < -DOCK_REACH or bb.x > float(op.w) + DOCK_REACH or bb.y > float(op.h) + DOCK_REACH:
+		return null
+	return op
 
 ## on foot by an outpost's counter: its keeper is near_keeper (near_trader the outpost; F trades); beside a
 ## spacer, near_folk (F talks)

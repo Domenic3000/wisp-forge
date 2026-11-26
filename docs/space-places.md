@@ -85,6 +85,24 @@ Notes for development sessions on this part of the game. The rules that apply ev
   this system's outpost (gold); the map draws a little station at every charted system's outpost. Test:
   `_test_outposts` ("outposts"; pictures `outpost_layout_0/1.png`, `outpost.png`, `outpost_hangar.png`,
   `outpost_trader.png`, `outpost_shop.png`, `outpost_jobs.png`, `outpost_folk.png`, `outpost_map.png`).
+- DOCKING INTO AN OUTPOST'S HALLS (25 Nov; the user: "derelict ships and outposts and so on should be redesigned so
+  that you press a button to dock and go inside an instanced area so we can make them larger and more intricate with
+  their own scenery"; chose outposts first, then derelict stations, then wrecks). Out in space the outpost is a
+  SHELL (`make_outpost(seed, sys)`: its hangar's mouth sealed by a force-field pane of glass with frost lights, no
+  folk). Flying by it aboard, within `DOCK_REACH` (140 cells) of it, space.gd `dock_target` shows "[F] Dock at ..."
+  and main `_interact` calls pocket.gd `dock`: its HALLS (`make_outpost(seed, sys, true)`, `halls`: 8-9 columns x 4
+  decks, the hangar on the lowest two, 13-17 spacers) are grown in a WorkerThreadPool task, then `_enter_outpost`
+  puts you in the pocket instance (`place` "outpost", `op`): space waits (main hands the tick to pocket.gd), the halls
+  lie at the origin like the isle (ang PI, com 0), you stand on the hangar's floor beside your ship (drawn parked,
+  nose to the mouth), behind it all its own sky (`SKY` shader: stars, a haze, the star, a banded planet below, hue by
+  seed). Spacers (`op_folk`, spacer.gd on the halls) walk; keepers stand behind counters; `_op_tick` sets `near`
+  ("ship", "keeper", "folk"); F trades (space `open_trade(op, kp)`), talks (`_folk_talk`), or at the ship undocks
+  (`_undock`: aboard, where you were). Signs over the shops, prompts and speech on `top`; halos over glowing cells
+  (`_gather_op_lights`). The HUD shows its name and the hold. Spells sheathed, nothing built; falling out of the
+  hangar's mouth, its tractor beam sets you back; Wisp Recall waits until you undock; the shipwright mends your hull
+  while docked (towns.gd `owned`). A save made docked keeps you outside it, aboard. `dock_now` docks at once (tests).
+  Test: `_test_outposts` (docks by F, walks to the market, every shop, the job board, spacers, undocks); the bench
+  measures the halls.
 - Figures among a station's or outpost's rooms (aliens' bodies, keepers and their counters, spacers) are drawn on
   space.gd `_mid` (a child kept last among space's children, z 0: over the rock sprites, under the overlay's mage);
   health bars, prompts, signs and speech on `_top` (z 1).

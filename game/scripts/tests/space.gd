@@ -896,8 +896,9 @@ func _test_pirates() -> void:
 
 ## Trading outposts (outpost.gd, galaxy.gd, space.gd; user, 23 Nov): every system's outpost where it
 ## should be (clear of planets and the first wreck), grown as a great station of rooms (a hangar the skiff fits
-## in, the four shops along one deck of doorways, spacers); out there it streams in, the skiff flies into its
-## hangar and docks, you step out onto its floor and walk to the market: a bounty for pirates beaten, salvage
+## in, the four shops along one deck of doorways, spacers; user, 25 Nov: docked by a button into an instance, its
+## halls grown bigger, the shell out in space sealed); out there it streams in, F docks as you fly by, you stand in
+## its hangar beside your ship and walk to the market: a bounty for pirates beaten, salvage
 ## sold; the shipwright mends the hull and sells a part, the cartographer charts; the cantina's job board (a
 ## courier run carried and paid, a salvage job); the spacers walk and talk; no spells in its halls; pirates that
 ## come near are driven off by its guns; the map shows it. Pictures: outpost_layout_0/1.png, outpost.png,
@@ -927,8 +928,19 @@ func _test_outposts() -> void:
 	var op_deck := 0
 	var op_big := 0
 	var op_folk := 0
+	var sealed := 0
 	for q in 6:
-		var oq = O.make_outpost(5003 + q * 977, q)
+		var shell = O.make_outpost(5003 + q * 977, q)
+		var shr: Rect2i = shell.hangar_rect()
+		var mx: int = shr.position.x - 2 if shell.hangar_side < 0 else shr.end.x + 1
+		var pane := 0
+		for mxi in range(mx - 3, mx + 4):
+			for mj in range(shr.end.y - 60, shr.end.y - 10):
+				if mxi >= 0 and mxi < shell.w and shell.cells[mj * shell.w + mxi] == Defs.GLASS:
+					pane += 1
+		if pane >= 30 and shell.folk_plan.is_empty():
+			sealed += 1
+		var oq = O.make_outpost(5003 + q * 977, q, true)
 		var hr: Rect2i = oq.hangar_rect()
 		var free := true
 		for j in range(hr.end.y - 47, hr.end.y):
@@ -948,14 +960,15 @@ func _test_outposts() -> void:
 		var shops_ok: bool = shops.size() == 4 and not shops.values().has(false) and String(oq.mods[deck[0]]["role"]) == "market"
 		if chain and shops_ok:
 			op_deck += 1
-		if oq.mods.size() >= 12 and oq.w > 560:
+		if oq.mods.size() >= 24 and oq.w > 900 and oq.rows == 4:
 			op_big += 1
-		if oq.folk_plan.size() >= 7:
+		if oq.folk_plan.size() >= 13:
 			op_folk += 1
 		if q < 2:
 			_station_picture(oq, "outpost_layout_%d.png" % q)
-	var op_ok2: bool = op_fit == 6 and op_deck == 6 and op_big == 6 and op_folk == 6
-	op_rows.append("%s6 outposts grown (%d rooms, %dx%d the first): 12+ rooms %d; the hangar holds the skiff in %d; the market by the hangar and the shipwright, cantina and cartographer along one deck of doorways in %d; 7+ spacers in %d" % ["" if op_ok2 else "(!) ", O.make_outpost(5003, 0).mods.size(), O.make_outpost(5003, 0).w, O.make_outpost(5003, 0).h, op_big, op_fit, op_deck, op_folk])
+	var op_ok2: bool = op_fit == 6 and op_deck == 6 and op_big == 6 and op_folk == 6 and sealed == 6
+	var oq0 = O.make_outpost(5003, 0, true)
+	op_rows.append("%s6 outposts' halls grown (%d rooms, %dx%d the first): 24+ rooms on 4 decks %d; the hangar holds the skiff in %d; the market by the hangar and the shipwright, cantina and cartographer along one deck of doorways in %d; 13+ spacers in %d; the shell out in space sealed, nobody in it, %d" % ["" if op_ok2 else "(!) ", oq0.mods.size(), oq0.w, oq0.h, op_big, op_fit, op_deck, op_folk, sealed])
 	op_ok = op_ok and op_ok2
 	# ---- up into space in the skiff, out to the outpost
 	g.player.dead = false
@@ -999,7 +1012,7 @@ func _test_outposts() -> void:
 	if op == null:
 		_ok("trading outposts: found, docked at, traded with", false, "; ".join(op_rows) + "; (!) no outpost came in with its sector")
 		return
-	# beside it, then in its hangar
+	# beside it: F docks (its halls grown in a worker), and you stand in its hangar beside your ship
 	var hr0: Rect2i = op.hangar_rect()
 	var side: float = float(op.hangar_side)
 	var mouth_x: float = float(hr0.position.x) - 70.0 if side < 0.0 else float(hr0.end.x) + 70.0
@@ -1012,47 +1025,49 @@ func _test_outposts() -> void:
 	_shot("outpost.png")
 	g.space.zoom_i = 0
 	await _frames(30)
-	var bay_x: float = float(hr0.position.x) + 50.0 if side < 0.0 else float(hr0.end.x) - 50.0
-	var bay: Vector2 = op.to_world(Vector2(bay_x, float(hr0.end.y) - 26.0) - op.com)
+	var pk = g.pocket
+	var ship_at: Vector2 = sk.pos
+	var can_dock: bool = g.space.dock_target(g.player) == op
 	var bumps0: int = int(g.space.stats["crashes"])
-	for k2 in 110:
-		sk.vel = (bay - sk.pos) * 0.08
+	g._interact()
+	var dock_t := -1
+	for kd in 300:
 		await _frames(1)
-	sk.vel = Vector2.ZERO
-	await _frames(20)
-	var op_docked: bool = g.space.docked == op
+		if pk.active and pk.place == "outpost":
+			dock_t = kd
+			break
+	if not pk.active:
+		pk.dock_now(g.player, op)          # (so the checks below still run, and this one fails)
+	var io = pk.op
+	await _frames(40)
 	_shot("outpost_hangar.png")
-	var op_ok3: bool = op_docked and int(g.space.stats["crashes"]) == bumps0
-	op_rows.append("%s%s came in with its sector; the skiff flew into its hangar and docked %s (no crash %s)" % ["" if op_ok3 else "(!) ", op.wname, op_docked, int(g.space.stats["crashes"]) == bumps0])
+	var op_ok3: bool = can_dock and dock_t >= 0 and io != null and io.halls and io.wname == op.wname and g.player.aboard == null and g.player.on_ground and int(g.space.stats["crashes"]) == bumps0
+	op_rows.append("%s%s came in with its sector; F docked %s (in %d ticks), in its halls %s, standing in its hangar %s" % ["" if op_ok3 else "(!) ", op.wname, can_dock, dock_t, io != null and io.halls, g.player.on_ground])
 	op_ok = op_ok and op_ok3
-	# ---- out of the skiff onto the hangar's floor (its gravity), then on foot through its door to the market
-	g._skiff_interact(g.player)
-	await _frames(60)
-	var in_op: bool = g.space.in_station == op
-	var landed: bool = g.player.on_ground
-	var mk = op.keeper("market")
+	# ---- on foot through the hangar's door to the market
+	var mk = io.keeper("market")
 	var walked := -1
-	for k3 in 1200:
-		var mb: Vector2 = op.to_body(g.player.pos) + op.com
-		g.test_move = 1 if mk.b.x > mb.x else -1
+	for k3 in 1500:
+		g.test_move = 1 if mk.b.x > pk.b.x else -1
 		await _frames(1)
-		if g.space.near_keeper == mk:
+		if pk.near_keeper == mk:
 			walked = k3
 			break
 	g.test_move = 0
 	await _frames(10)
 	_shot("outpost_trader.png")
-	var op_ok3b: bool = in_op and landed and walked >= 0
-	op_rows.append("%sstepped out into the hangar: in its rooms %s, standing on its floor %s; walked through its door to the market's counter in %d ticks" % ["" if op_ok3b else "(!) ", in_op, landed, walked])
+	var op_ok3b: bool = walked >= 0
+	op_rows.append("%swalked through its door to the market's counter in %d ticks" % ["" if op_ok3b else "(!) ", walked])
 	op_ok = op_ok and op_ok3b
 	# ---- no spells in its halls
 	var sb0: int = g.space.sbolts.size()
-	g.test_aim = g.player.pos + op.axis_x() * 40.0
+	var mana0: float = g.player.mana
+	g.test_aim = g.player.pos + Vector2(40.0, 0.0)
 	g.test_cast = true
 	await _frames(6)
 	g.test_cast = false
 	await _frames(4)
-	var no_spell: bool = g.space.sbolts.size() == sb0
+	var no_spell: bool = g.space.sbolts.size() == sb0 and g.player.mana >= mana0 - 0.01
 	# ---- the market: a bounty, then its shop; salvage sold
 	var tr = mk
 	g.items["bounty_paid"] = int(g.items.get("pirates_beaten", 0))
@@ -1073,13 +1088,14 @@ func _test_outposts() -> void:
 	op_ok = op_ok and op_ok4
 	# ---- along the deck: the shipwright mends the hull at the dock and sells a part; the cartographer charts
 	var go_to := func(kp) -> void:
-		g.player.pos = op.to_world(kp.b + Vector2(float(kp.facing) * 18.0, -9.0) - op.com)
-		g.space.vel = Vector2.ZERO
+		pk.b = kp.b + Vector2(float(kp.facing) * 10.0, -9.6)
+		pk.v = Vector2.ZERO
+		g.player.pos = io.to_world(pk.b)
 	g.items["coins"] = int(g.items.get("coins", 0)) + 1200
-	var sw = op.keeper("shipwright")
+	var sw = io.keeper("shipwright")
 	go_to.call(sw)
 	await _frames(20)
-	var at_sw: bool = g.space.near_keeper == sw
+	var at_sw: bool = pk.near_keeper == sw
 	sk.carve(sk.cell_world(6, sk.h - 4), 4.0)
 	var miss0: int = sk.missing()
 	var sd: Dictionary = g.towns.shop_def(sw)
@@ -1093,10 +1109,10 @@ func _test_outposts() -> void:
 			i_part = i3
 	var op_mended: bool = i_rep >= 0 and miss0 > 0 and g.towns.buy(sw, i_rep) and sk.missing() == 0
 	var op_part: bool = i_part < 0 or (g.towns.buy(sw, i_part) and g.towns.owned(sd["sell"][i_part]))
-	var ct = op.keeper("charts")
+	var ct = io.keeper("charts")
 	go_to.call(ct)
 	await _frames(20)
-	var at_ct: bool = g.space.near_keeper == ct
+	var at_ct: bool = pk.near_keeper == ct
 	var sd2: Dictionary = g.towns.shop_def(ct)
 	var i_chart := -1
 	for i4 in (sd2["sell"] as Array).size():
@@ -1109,10 +1125,10 @@ func _test_outposts() -> void:
 	op_ok = op_ok and op_ok5
 	# ---- the cantina's job board: a courier run taken (its sealed crates into the hold), carried to the other
 	# outpost and paid; a salvage job taken and done here
-	var cn = op.keeper("cantina")
+	var cn = io.keeper("cantina")
 	go_to.call(cn)
 	await _frames(20)
-	var at_cn: bool = g.space.near_keeper == cn
+	var at_cn: bool = pk.near_keeper == cn
 	var cargo_keep = g.items.get("cargo", {})
 	var jobs_keep = g.items.get("jobs", [])
 	var done_keep := int(g.items.get("jobs_done", 0))
@@ -1149,7 +1165,7 @@ func _test_outposts() -> void:
 	if not salvage.is_empty() and g.space.take_job(salvage):
 		g.player.inv[int(salvage["mat"])] += int(salvage["n"])
 		var coins3 := int(g.items.get("coins", 0))
-		g.space._settle_jobs(op)
+		g.space._settle_jobs(io)
 		s_ok = int(g.items.get("coins", 0)) - coins3 == int(salvage["pay"]) and g.space.jobs().is_empty()
 	var op_ok6j: bool = at_cn and board_open and n_jobs == 3 and c_took and sealed0 == int(courier.get("n", -1)) and c_paid and s_ok and hud_txt != ""
 	op_rows.append("%sthe cantina's job board %s (%d jobs): a courier run taken %s (%d sealed crates into the hold; the HUD: %s), paid at %s %s (%d coins); a salvage job done %s" % ["" if op_ok6j else "(!) ", board_open, n_jobs, c_took, sealed0, hud_txt, String(courier.get("to_name", "?")), c_paid, int(courier.get("pay", 0)), s_ok])
@@ -1158,10 +1174,7 @@ func _test_outposts() -> void:
 	g.items["jobs"] = jobs_keep
 	g.items["jobs_done"] = done_keep
 	# ---- its spacers walk their decks and talk
-	var mine := []
-	for f in g.space.folk:
-		if f.op == op:
-			mine.append(f)
+	var mine: Array = pk.op_folk
 	var at0 := []
 	for f2 in mine:
 		at0.append(f2.b)
@@ -1179,24 +1192,35 @@ func _test_outposts() -> void:
 	var f0_d := -1.0
 	for fc in mine:
 		var dmin := 1e9
-		for kq in op.keepers:
+		for kq in io.keepers:
 			dmin = minf(dmin, (fc.b as Vector2).distance_to(kq.b - Vector2(0.0, 12.0)))
 		if dmin > f0_d:
 			f0_d = dmin
 			f0 = fc
 	if f0 != null:
-		g.player.pos = op.to_world(f0.b + Vector2(8.0, 0.0) - op.com)
-		g.space.vel = Vector2.ZERO
-		await _frames(3)
+		pk.b = f0.b + Vector2(8.0, 0.0)
+		pk.v = Vector2.ZERO
+		g.player.pos = io.to_world(pk.b)
+		await _frames(2)
 		g._interact()
 		await _frames(5)
 		talk_ok = f0.say_t > 0 and f0.say != ""
 		said = f0.say
 		await _frames(20)
 		_shot("outpost_folk.png")
-	var op_ok7: bool = mine.size() >= 7 and moved >= 3 and grounded >= mine.size() - 1 and talk_ok
-	op_rows.append("%s%d spacers aboard: %d walked about in 6 s, %d standing on a floor; talked to one %s (\"%s\"; %.0f from a counter)" % ["" if op_ok7 else "(!) ", mine.size(), moved, grounded, talk_ok, said, f0_d])
+	var op_ok7: bool = mine.size() >= 13 and moved >= 4 and grounded >= mine.size() - 1 and talk_ok
+	op_rows.append("%s%d spacers in its halls: %d walked about in 6 s, %d standing on a floor; talked to one %s (\"%s\"; %.0f from a counter)" % ["" if op_ok7 else "(!) ", mine.size(), moved, grounded, talk_ok, said, f0_d])
 	op_ok = op_ok and op_ok7
+	# ---- back to your ship: F undocks, aboard, where you were out in space
+	pk.b = pk._op_ship_at() + Vector2(0.0, -12.0)
+	pk.v = Vector2.ZERO
+	await _frames(4)
+	var by_ship: bool = pk.near == "ship"
+	g._interact()
+	await _frames(10)
+	var undocked: bool = by_ship and not pk.active and g.space.active and g.player.aboard == sk and sk.pos.distance_to(ship_at) < 1.0 and g.space.visible
+	op_rows.append("%sF at your ship undocked %s: aboard, out in space where you were %s" % ["" if undocked else "(!) ", by_ship, undocked])
+	op_ok = op_ok and undocked
 	# ---- pirates that come near are driven off by its guns
 	var made: Array = g.space.spawn_pirates(op.pos, Vector2.RIGHT, "cutter")
 	if not made.is_empty():
@@ -1214,8 +1238,9 @@ func _test_outposts() -> void:
 	g.close_map()
 	await _frames(4)
 	# home again, and down
-	g.player.pos = sk.pos
-	g._skiff_interact(g.player)
+	if g.player.aboard != sk:
+		g.player.pos = sk.pos
+		g._skiff_interact(g.player)
 	await _frames(4)
 	sk.pos = g.space.home_at() + (ol - g.space.home_at()).normalized() * (Defs.R_SPACE + 150.0)
 	sk.vel = -(sk.pos - g.space.home_at()).normalized() * 6.0
@@ -1238,135 +1263,7 @@ func _test_outposts() -> void:
 		g._skiff_interact(g.player)
 		await _frames(10)
 	print("[outposts] " + "\n[outposts] ".join(op_rows))
-	_ok("trading outposts: great stations of rooms, docked at, walked through, traded with (market, shipwright, cantina's jobs, cartographer), spacers, pirates kept off", op_ok, "; ".join(op_rows))
-
-## Building inside the skiff's cabin (user, 23 Nov): aboard, build mode paints blocks and back walls into the
-## room its hull closes in (never over a seat) and sets furniture down on the cabin's floor behind the riders;
-## the Remove tab takes them back; it's all kept with the skiff's cells. Pictures: cabin_built.png.
-func _test_cabin() -> void:
-	var cb_rows := []
-	var cb_ok := true
-	g.player.dead = false
-	g.test_god = true
-	if g.skiff == null or not g.items.has("skiff"):
-		var sf_rec: Dictionary = {}
-		for sr in g.recipes:
-			if sr["id"] == "skiff":
-				sf_rec = sr
-		for sk_k in sf_rec.get("cost", {}):
-			g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
-		g.craft(sf_rec)
-		g.call_skiff()
-		await _frames(60)
-	var sk = g.skiff
-	if g.player.aboard != sk:
-		g.player.pos = sk.pos
-		g._skiff_interact(g.player)
-	await _frames(20)
-	g.player.inv[Defs.PLANK] += 80
-	g.player.inv[Defs.LEAF] += 20
-	g.player.inv[Defs.DIRT] += 20
-	if not g.build_on:
-		g._toggle_build()
-	# ---- a plank block, high in the cabin (clear of the seats)
-	var bi := -1
-	var bj := -1
-	for j in sk.h:
-		for i in sk.w:
-			if bi < 0 and sk.in_room(i, j) and not sk.in_seat(i, j) and sk.at(i, j) == 0 and sk.in_room(i - 1, j) and sk.in_room(i + 1, j):
-				bi = i
-				bj = j
-	var cb_k: int = bj * sk.w + bi
-	var pl0: int = g.player.inv[Defs.PLANK]
-	g.build_thick = 1
-	var got_b: bool = _pick_piece("Planks")
-	g.test_cast = true
-	for k in 6:
-		g.test_aim = sk.cell_world(bi, bj)
-		await _frames(1)
-	g.test_cast = false
-	await _frames(2)
-	var cb_ok1: bool = got_b and bi >= 0 and sk.made[cb_k] == 1 and sk.cells[cb_k] == Defs.PLANK and g.player.inv[Defs.PLANK] < pl0
-	cb_rows.append("%sa plank block built at cabin cell %d,%d %s (planks %d -> %d)" % ["" if cb_ok1 else "(!) ", bi, bj, sk.made[cb_k] == 1, pl0, g.player.inv[Defs.PLANK]])
-	cb_ok = cb_ok and cb_ok1
-	# ---- a back wall over the glass pane
-	var wi := -1
-	var wj := -1
-	for j2 in sk.h:
-		for i2 in sk.w:
-			var k2: int = j2 * sk.w + i2
-			if wi < 0 and sk.in_room(i2, j2) and sk.bg[k2] == Defs.GLASS and sk.at(i2, j2) == 0:
-				wi = i2
-				wj = j2
-	var got_w: bool = _pick_piece("Plank Wall")
-	g.test_cast = true
-	for k1 in 6:
-		g.test_aim = sk.cell_world(wi, wj)
-		await _frames(1)
-	g.test_cast = false
-	await _frames(2)
-	var cb_ok2: bool = got_w and wi >= 0 and sk.bg[wj * sk.w + wi] == Defs.PLANK
-	cb_rows.append("%sa back wall of planks over the glass pane %s" % ["" if cb_ok2 else "(!) ", cb_ok2])
-	cb_ok = cb_ok and cb_ok2
-	# ---- furniture: a potted plant, behind the riders, set down on the floor
-	var deco0 := 0
-	for v in sk.deco:
-		if v != 0:
-			deco0 += 1
-	var got_f: bool = _pick_piece("Potted Plant")
-	var sc0: Vector2i = sk.seat_cells[0]
-	var sc1: Vector2i = sk.seat_cells[1]
-	var fp: Vector2 = sk.cell_world((sc0.x + sc1.x) / 2, sc0.y - 6)
-	g.test_cast = true
-	for k2b in 3:
-		g.test_aim = fp
-		await _frames(1)
-	g.test_cast = false
-	await _frames(3)
-	var deco1 := 0
-	for v2 in sk.deco:
-		if v2 != 0:
-			deco1 += 1
-	var cb_ok3: bool = got_f and deco1 > deco0 and int(g.cabin_stats["furniture"]) >= 1
-	cb_rows.append("%sa potted plant set down on the cabin floor %s (%d furniture cells)" % ["" if cb_ok3 else "(!) ", deco1 > deco0, deco1])
-	cb_ok = cb_ok and cb_ok3
-	g.cam_c = sk.pos
-	await _frames(10)
-	_shot("cabin_built.png")
-	# ---- kept with the skiff's cells
-	var Sk = load("res://scripts/skiff.gd")
-	var s2 = Sk.make(sk.design_seed)
-	var cb_loaded: bool = s2.load_cells(sk.save_cells())
-	var deco2 := 0
-	for v3 in s2.deco:
-		if v3 != 0:
-			deco2 += 1
-	var cb_ok4: bool = cb_loaded and deco2 == deco1 and s2.made[cb_k] == 1 and s2.bg[wj * s2.w + wi] == Defs.PLANK and s2.hull_f > 0.999
-	cb_rows.append("%ssaved and loaded: %s, furniture %d cells, the block and the wall kept %s, the hull counted whole %s" % ["" if cb_ok4 else "(!) ", cb_loaded, deco2, s2.made[cb_k] == 1, s2.hull_f > 0.999])
-	cb_ok = cb_ok and cb_ok4
-	# ---- the Remove tab takes the block back
-	var pl1: int = g.player.inv[Defs.PLANK]
-	var got_r: bool = _pick_piece("Remove Blocks")
-	g.test_cast = true
-	for k3 in 6:
-		g.test_aim = sk.cell_world(bi, bj)
-		await _frames(1)
-	g.test_cast = false
-	await _frames(2)
-	var cb_ok5: bool = got_r and sk.cells[cb_k] == 0 and g.player.inv[Defs.PLANK] > pl1 and sk.hull_f > 0.999
-	cb_rows.append("%sthe Remove tab took the block back %s (planks %d -> %d)" % ["" if cb_ok5 else "(!) ", sk.cells[cb_k] == 0, pl1, g.player.inv[Defs.PLANK]])
-	cb_ok = cb_ok and cb_ok5
-	if g.build_on:
-		g._toggle_build()
-	await _frames(4)
-	if g.player.aboard != null:
-		g._skiff_interact(g.player)
-		await _frames(10)
-	print("[cabin] " + "\n[cabin] ".join(cb_rows))
-	_ok("building inside the skiff's cabin: blocks, back walls, furniture, taken back, kept", cb_ok, "; ".join(cb_rows))
-
-
-# ------------------------------------------------------------------ derelict stations ---
+	_ok("trading outposts: great stations of rooms, docked at by F into their halls, walked through, traded with (market, shipwright, cantina's jobs, cartographer), spacers, undocked, pirates kept off", op_ok, "; ".join(op_rows))
 
 ## (user, 23 Nov: "Derelict space stations and everything with aliens and such to fight"; "Both, by section")
 ## The minimap and the view in space (user, 24 Nov: the camera "spinning around on its own especially near a
@@ -2163,183 +2060,13 @@ func _test_fuel() -> void:
 	print("[fuel] " + "\n[fuel] ".join(rows))
 	_ok("wisp fuel: the Starsail burns Wisp Cells, none means furled; a landfall costs none", ok, "; ".join(rows))
 
-## (user, 23 Nov: "Design your own hull": the skiff grown into a ship laid out cell by cell from the Ship tab,
-## walked about inside)
-func _test_hull() -> void:
-	var rows := []
-	var ok := true
-	var Bd = load("res://scripts/build.gd")
-	g.player.dead = false
-	g.test_god = true
-	# ---- a skiff on clear ground beside you, aboard it
-	if not g.items.has("skiff"):
-		g.items["skiff"] = 4242
-	var keep_ship = g.items.get("ship", null)
-	var keep_sk = g.skiff
-	g.items.erase("ship")
-	var hs := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 240, 120, 6)
-	var ha: float = (float(hs.x) + 160.0) / float(Defs.NS) * TAU
-	_go(Vector2(cos(ha), sin(ha)) * (g.gpu.surf_at(ha).x + 12.0))
-	await _frames(60)
-	g.skiff = null
-	g.call_skiff()
-	await _frames(90)
-	var sk = g.skiff
-	g.player.pos = sk.pos
-	g._skiff_interact(g.player)
-	await _frames(10)
-	var w0: int = sk.w
-	var mass0: float = sk.mass
-	var seats0: int = sk.seat_cells.size()
-	for mt in [Defs.HULL, Defs.PLANK, Defs.WOOD, Defs.GLASS, Defs.COPPERBAR, Defs.MASONRY, Defs.WISP]:
-		g.player.inv[mt] += 600
-	g.player.inv[Defs.CRYSTAL] += 10
-	# the cabin's measures: the deck row (the seats' floor), the cockpit's middle
-	var sc0: Vector2i = sk.seat_cells[0]
-	var deck: int = sc0.y + 1
-	var cx: int = sc0.x - 4
-	# (where an original cell is now: the grid grows to the left as the deck goes aft, moving every cell over)
-	var at := func(x: float, y: float) -> Vector2:
-		var o: Vector2i = sk.seat_cells[0] - sc0
-		return Vector2(x + float(o.x), y + float(o.y))
-	# ---- build mode, the Ship tab
-	g.build_on = true
-	g.build_cat = Bd.CAT_SHIP
-	g.build_thick = 3
-	# (1) a long open deck aft, level with the cabin's floor: planking, cell by cell from the stern outward
-	_pick_piece("Planking")
-	await _hull_paint(sk, at, Vector2(-1.0, float(deck) + 1.5), Vector2(-64.0, float(deck) + 1.5))
-	var grew: int = sk.w - w0
-	# (2) the cabin's back wall and the fin cut away, a way through from the cabin to the deck
-	_pick_piece("Cut Away")
-	g.build_thick = 4
-	for jj in range(deck - 20, deck, 3):
-		await _hull_paint(sk, at, Vector2(4.0, float(jj)), Vector2(float(cx - 3), float(jj)))
-	# (3) a rail of copper trim at the deck's end, and a seat on the new deck
-	_pick_piece("Seat")
-	var seat_at: Vector2 = at.call(-30.0, float(deck) - 5.0)
-	g.test_aim = sk.cell_world(int(seat_at.x), int(seat_at.y))
-	g.test_cast = true
-	await _frames(3)
-	g.test_cast = false
-	await _frames(3)
-	var seats1: int = sk.seat_cells.size()
-	g.build_on = false
-	await _frames(10)
-	_shot("hull_built.png")
-	var ok1: bool = grew >= 60 and int(g.hull_stats["added"]) > 150 and int(g.hull_stats["cut"]) > 40 and sk.missing() == 0 and sk.mass > mass0 and seats1 == seats0 + 1 and g.items.get("ship") is Dictionary
-	rows.append("%sthe hull grew %d cells longer (%d cells laid, %d cut away for a way aft), nothing counted missing %s, mass %.0f -> %.0f, seats %d -> %d, kept in items %s" % ["" if ok1 else "(!) ", grew, g.hull_stats["added"], g.hull_stats["cut"], sk.missing() == 0, mass0, sk.mass, seats0, seats1, g.items.get("ship") is Dictionary])
-	ok = ok and ok1
-	# ---- X: up out of the seat onto the deck; walk aft through the way cut, along the deck
-	g.deck_toggle(g.player)
-	await _frames(20)
-	var on_deck: bool = g.player.deck and g.player.aboard == sk
-	var b0: Vector2 = g.player.deck_b
-	g.test_move = -1 if sk.facing > 0 else 1
-	var walked := 0.0
-	for k in 38:
-		await _frames(1)
-		if not g.player.deck:
-			break
-		walked = maxf(walked, absf(b0.x - g.player.deck_b.x))
-	g.test_move = 0
-	await _frames(10)
-	_shot("hull_deck.png")
-	var still_on: bool = g.player.deck
-	var grounded_deck: bool = g.player.on_ground
-	# a jump on the deck
-	var by0: float = g.player.deck_b.y
-	g.test_jump = true
-	var rise := 0.0
-	for k2 in 30:
-		await _frames(1)
-		rise = maxf(rise, by0 - g.player.deck_b.y)
-	g.test_jump = false
-	await _frames(40)
-	var ok2: bool = on_deck and walked > 40.0 and still_on and grounded_deck and rise > 20.0 and g.player.on_ground
-	rows.append("%sstood up onto the deck %s, walked %.0f cells aft and stood on the new deck %s, jumped %.0f and landed %s" % ["" if ok2 else "(!) ", on_deck, walked, still_on and grounded_deck, rise, g.player.on_ground])
-	ok = ok and ok2
-	# ---- X by the new seat: sit in it
-	var ns: Vector2i = sk.seat_cells[sk.seat_cells.size() - 1]
-	g.player.deck_b = Vector2(float(ns.x) + 2.5, float(ns.y) + 1.0 - 8.5)
-	await _frames(5)
-	g.deck_toggle(g.player)
-	await _frames(5)
-	var sat: bool = not g.player.deck and sk.seat_of(g.player) == sk.seat_cells.size() - 1
-	# up again, to the helm, and fly it
-	g.deck_toggle(g.player)
-	await _frames(5)
-	g.player.deck_b = Vector2(float(sk.seat_cells[0].x) + 0.5, float(sk.seat_cells[0].y) + 1.0 - 8.5)
-	await _frames(3)
-	g.deck_toggle(g.player)
-	await _frames(5)
-	var at_helm: bool = sk.pilot() == g.player
-	var y0: float = sk.pos.length()
-	g.test_jump = true
-	await _frames(40)
-	g.test_jump = false
-	var rose: float = sk.pos.length() - y0
-	# (hands off with someone on deck: it holds)
-	g.deck_toggle(g.player)
-	await _frames(70)
-	var h0: float = sk.pos.length()
-	await _frames(90)
-	var drop: float = h0 - sk.pos.length()
-	var held: bool = g.player.deck and absf(drop) < 8.0
-	var drv: float = sk.drive()
-	var ok3: bool = sat and at_helm and rose > 30.0 and held and drv > 0.34 and drv < 1.51
-	rows.append("%ssat in the new seat %s; at the helm %s, it climbed %.0f cells (its drive %.2f for its mass); left at the helm with you on deck it held (moved %.1f) %s" % ["" if ok3 else "(!) ", sat, at_helm, rose, drv, drop, held])
-	ok = ok and ok3
-	# ---- walk off its end: off the ship, onto the world
-	g.player.deck_b = at.call(6.0, float(deck) - 9.0)
-	g.test_move = -1 if sk.facing > 0 else 1
-	var off := false
-	for k3 in 120:
-		await _frames(1)
-		if g.player.aboard == null:
-			off = true
-			break
-	g.test_move = 0
-	await _frames(60)
-	var ok4: bool = off and not g.player.deck
-	rows.append("%swalked off the deck's end onto the world %s" % ["" if ok4 else "(!) ", off])
-	ok = ok and ok4
-	# ---- kept: saved and back as built
-	var d: Dictionary = sk.save_cells()
-	var Sk = load("res://scripts/skiff.gd")
-	var s2 = Sk.make(sk.design_seed)
-	var took: bool = s2.load_cells(d)
-	var same: bool = took and s2.w == sk.w and s2.h == sk.h and s2.seat_cells.size() == sk.seat_cells.size() and s2.designed and s2.engine0 == sk.engine0
-	rows.append("%ssaved and loaded: %dx%d, %d seats, the same %s" % ["" if same else "(!) ", s2.w, s2.h, s2.seat_cells.size(), same])
-	ok = ok and same
-	# (put things back: later checks fly the skiff as forged)
-	if keep_ship == null:
-		g.items.erase("ship")
-	else:
-		g.items["ship"] = keep_ship
-	g.build_cat = 0
-	g.build_thick = 1
-	g.player.deck = false
-	if g.player.aboard != null:
-		g._skiff_interact(g.player)
-	if keep_sk != null:
-		# (the very skiff later checks hold on to, not a new one)
-		for hr in keep_sk.riders.size():
-			keep_sk.riders[hr] = null
-		g.skiff = keep_sk
-		g.call_skiff()
-	else:
-		g.skiff = null
-		g.call_skiff()
-	await _frames(30)
-	print("[hull] " + "\n[hull] ".join(rows))
-	_ok("your own hull: grown cell by cell from the Ship tab, a seat added, walked about on deck, flown, kept", ok, "; ".join(rows))
-
-## (user, 24 Nov: "can we create a ship builder instead ... and then when your not in the ship builder you just
-## repair"; "the inside of the ship be like a pocket dimension that you can enter"; a return spell): a keel forged,
-## built out in the ship builder where it's parked, then its pocket dimension entered by the door and by Wisp
-## Recall, walked, built on, grown, left by the arch and by the ship, kept.
-func _test_shipyard() -> void:
+## Ships as classes (user, 25 Nov: "maybe we have prefab ships instead that you can get recipes for different
+## ships", no building on the ship, no seats: you're inside): every class grown whole from its parts (one piece,
+## an engine, its look by seed: saves/shots/ships.png), its stats (speed, armour, crates, guns); the first forged
+## at the Wisp Forge, another learned and forged and flown, swapped back, another look; no swap aboard; B aboard
+## opens no builder; a journey from before keeps its ship (as a Skiff); the quest's step boards it. Then the
+## pocket (_test_pocket) from aboard.
+func _test_ships() -> void:
 	var rows := []
 	var ok := true
 	var Sk = load("res://scripts/skiff.gd")
@@ -2347,165 +2074,183 @@ func _test_shipyard() -> void:
 	g.test_god = true
 	if g.build_on:
 		g._toggle_build()
-	var keep_ship = g.items.get("ship", null)
-	var keep_sk = g.skiff
-	var keep_skiff = g.items.get("skiff", null)
-	if keep_sk != null:
-		for hr in keep_sk.riders.size():
-			if keep_sk.riders[hr] != null:
-				keep_sk.riders[hr].aboard = null
-				keep_sk.riders[hr] = null
-	g.player.aboard = null
+	if g.player.aboard != null:
+		g._skiff_interact(g.player)
 	g.player.deck = false
-	# ---- the keel forged (as a new journey forges it: not the classic skiff)
+	var keep_items := {}
+	for ik in ["skiff", "ships", "ship_class", "ship", "boarded", "drive"]:
+		if g.items.has(ik):
+			keep_items[ik] = g.items[ik]
+	# ---- every class, three seeds each: whole (one piece), an engine, no bigger than a ship may be; a sheet
+	var sheet := []
+	var bad := []
+	for kc in Sk.CLASSES:
+		for sq in 3:
+			var shp = Sk.make(2000 + sq * 7919, kc)
+			shp.rebuild()
+			var np: int = shp.pieces().size()
+			if np != 1 or shp.engine0 < 4 or shp.w > Sk.MAX_W or shp.h > Sk.MAX_H or shp.hold_cap() != int(Sk.CLASSES[kc]["cargo"]) or absf(shp.drive() - float(Sk.CLASSES[kc]["speed"])) > 0.001:
+				bad.append("%s#%d: %d pieces, %d engine cells, %dx%d, hold %d, drive %.2f" % [kc, sq, np, shp.engine0, shp.w, shp.h, shp.hold_cap(), shp.drive()])
+			sheet.append(shp.texture().get_image())
+	var sw := 8
+	var sh := 0
+	for im in sheet:
+		sh = maxi(sh, (im as Image).get_height() * 3)
+	var per := 3
+	var colw := 0
+	for im0 in sheet:
+		colw = maxi(colw, (im0 as Image).get_width() * 3 + 12)
+	sw = colw * per + 8
+	var out := Image.create(sw, (sh + 12) * Sk.CLASSES.size() + 8, false, Image.FORMAT_RGBA8)
+	out.fill(Color(0.07, 0.07, 0.16))
+	for si in sheet.size():
+		var big: Image = (sheet[si] as Image).duplicate()
+		big.convert(Image.FORMAT_RGBA8)
+		big.resize(big.get_width() * 3, big.get_height() * 3, Image.INTERPOLATE_NEAREST)
+		out.blend_rect(big, Rect2i(Vector2i.ZERO, big.get_size()), Vector2i(4 + (si % per) * colw, 4 + (si / per) * (sh + 12) + sh - big.get_height()))
+	out.save_png(g._real_save_dir().path_join("shots").path_join("ships.png"))
+	var ok0: bool = bad.is_empty()
+	rows.append("%s%d classes x 3 seeds grown whole%s" % ["" if ok0 else "(!) ", Sk.CLASSES.size(), "" if ok0 else ": " + "; ".join(bad)])
+	ok = ok and ok0
+	# ---- armour: one hit on a Corvette carves less than the same hit on a Cutter
+	var cu = Sk.make(77, "cutter")
+	var cv = Sk.make(77, "corvette")
+	cu.rebuild()
+	cv.rebuild()
+	cu.pos = Vector2.ZERO
+	cv.pos = Vector2.ZERO
+	var cu0: int = cu.cells.size() - cu.cells.count(0)
+	var cv0: int = cv.cells.size() - cv.cells.count(0)
+	# (amidships, a few cells under the deck: inside the hull on every class)
+	var cu_at: Vector2i = cu.seat_cells[0]
+	var cv_at: Vector2i = cv.seat_cells[0]
+	cu.damage(cu.cell_world(cu_at.x - 14, cu_at.y + 5), 7.0)
+	cv.damage(cv.cell_world(cv_at.x - 14, cv_at.y + 5), 7.0)
+	var cu_lost: int = cu0 - (cu.cells.size() - cu.cells.count(0))
+	var cv_lost: int = cv0 - (cv.cells.size() - cv.cells.count(0))
+	var ok1: bool = cu_lost > 0 and cv_lost < cu_lost
+	rows.append("%sa hit carves %d cells of a Cutter, %d of a Corvette" % ["" if ok1 else "(!) ", cu_lost, cv_lost])
+	ok = ok and ok1
+	# ---- the first forged at the Wisp Forge: a whole Wisp Skiff, no keel to build out
 	var sf_rec: Dictionary = {}
+	var cut_rec: Dictionary = {}
 	for sr in g.recipes:
 		if sr["id"] == "skiff":
 			sf_rec = sr
-	for sk_k in sf_rec.get("cost", {}):
-		g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+		elif sr["id"] == "ship_cutter":
+			cut_rec = sr
+	for ik2 in ["skiff", "ships", "ship_class", "ship", "boarded"]:
+		g.items.erase(ik2)
 	g.items["drive"] = true
 	g.learn("skiff")
-	g.items.erase("skiff")          # (in the full run the skiff is forged already: forge it again as a keel)
-	g.items.erase("ship")
-	g.classic_skiff = false
+	for sk_k in sf_rec.get("cost", {}):
+		g.player.inv[int(sk_k)] += int(sf_rec["cost"][sk_k])
+	var keep_sk = g.skiff
 	g.skiff = null
 	var forged: bool = g.craft(sf_rec)
-	g.classic_skiff = true
-	var keel_cells := 0
-	if g.items.get("ship") is Dictionary:
-		var kl = Sk.make(int(g.items["skiff"]))
-		kl.load_cells(g.items["ship"])
-		keel_cells = kl.hull_count()
-	var ok0: bool = forged and keel_cells >= 100 and keel_cells < 200 and int(g.items.get("hull_cells", 0)) == keel_cells
-	rows.append("%sthe Wisp Keel forged %s: %d hull cells" % ["" if ok0 else "(!) ", forged, keel_cells])
-	ok = ok and ok0
-	# ---- called onto clear ground, boarded
+	var ok2: bool = forged and g.ships().has("skiff") and g.ship_class() == "skiff" and not g.items.has("ship") and g.recipe_done(sf_rec)
+	rows.append("%sthe Wisp Skiff forged %s: ships %s, flying %s" % ["" if ok2 else "(!) ", forged, g.ships().keys(), g.ship_class()])
+	ok = ok and ok2
+	# ---- out on clear ground beside you (for the rest, and the pocket after)
 	var hs := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 240, 120, 6)
-	var ha: float = (float(hs.x) + 120.0) / float(Defs.NS) * TAU
+	var ha: float = (float(hs.x) + 160.0) / float(Defs.NS) * TAU
 	_go(Vector2(cos(ha), sin(ha)) * (g.gpu.surf_at(ha).x + 12.0))
 	await _frames(60)
 	g.call_skiff()
-	await _frames(150)
+	await _frames(120)
 	var sk = g.skiff
-	g.player.pos = sk.pos
-	var boarded: bool = g._skiff_interact(g.player) and g.player.aboard == sk
-	await _frames(20)
-	# (not parked: flying, it won't open)
-	var gr0: bool = sk.grounded
-	sk.grounded = false
-	var flying_refused: bool = not g.shipyard.open()
-	sk.grounded = gr0
-	for w in 120:
-		if g.shipyard.parked():
-			break
-		await _frames(1)
-	var opened: bool = g.shipyard.open() and g.state == "shipyard"
-	var ok1: bool = boarded and flying_refused and opened
-	rows.append("%sboarded %s; the builder refused in flight %s, opened parked %s (grounded %s)" % ["" if ok1 else "(!) ", boarded, flying_refused, opened, sk.grounded])
-	ok = ok and ok1
-	if not opened:
-		g.shipyard.sk = sk
-		g.shipyard.active = true
-		g.shipyard.parts = []
-		for pp in load("res://scripts/build.gd").in_cat(load("res://scripts/build.gd").pieces(), 9):
-			if String(pp["kind"]) != "cut":
-				g.shipyard.parts.append(pp)
-	var sy = g.shipyard
-	var part := func(pname: String) -> void:
-		for pi in sy.parts.size():
-			if String(sy.parts[pi]["name"]) == pname:
-				sy.sel = pi
-	for mt in [Defs.PLANK, Defs.HULL, Defs.GLASS, Defs.WISP, Defs.WOOD]:
-		g.player.inv[mt] += 400
-	var sc: Vector2i = sk.seat_cells[0]
-	var helm_w0: Vector2 = sk.cell_world(sc.x, sc.y)
-	# ---- a seat on the deck forward of the helm (4 planks)
-	part.call("Seat")
-	var pl0: int = g.player.inv[Defs.PLANK]
-	sy.click_part(Vector2i(sc.x + 9, sc.y - 6))
-	var seat_ok: bool = sk.seat_cells.size() == 2 and g.player.inv[Defs.PLANK] == pl0 - 4
-	rows.append("%sa seat added on the deck %s (%d seats, planks %d -> %d)" % ["" if seat_ok else "(!) ", seat_ok, sk.seat_cells.size(), pl0, g.player.inv[Defs.PLANK]])
-	ok = ok and seat_ok
-	# ---- a mast of planking up from the deck aft: laid where it joins, paid a plank a cell; up past the grid's top
-	part.call("Planking")
-	var mx: int = sc.x - 12
-	pl0 = g.player.inv[Defs.PLANK]
-	var h0: int = sk.h
-	sy._push_undo()
-	var col := []
-	for k in 40:
-		col.append(Vector2i(mx, sc.y - k))
-	sy._stroke(col, false)
-	var sc1: Vector2i = sk.seat_cells[0]
-	var laid: int = pl0 - g.player.inv[Defs.PLANK]
-	var helm_moved: float = sk.cell_world(sc1.x, sc1.y).distance_to(helm_w0)
-	var ok2: bool = laid == 40 and sk.h > h0 and helm_moved < 0.05
-	rows.append("%sa mast of 40 planks laid (%d paid), the grid grew %d -> %d rows, the helm stayed put in the world (%.3f)" % ["" if ok2 else "(!) ", laid, h0, sk.h, helm_moved])
-	ok = ok and ok2
-	# ---- a cell that doesn't join is refused
-	var hc0: int = sk.hull_count()
-	sy._stroke([Vector2i(sc1.x + 30, sc1.y - 30)], false)
-	var ok3: bool = sk.hull_count() == hc0
-	rows.append("%sa cell off by itself refused %s (\"%s\")" % ["" if ok3 else "(!) ", ok3, sy.note])
+	var cap0: int = g.hold_cap()
+	# ---- another class: locked until learned, then forged and flown (the one out swapped where it stood)
+	var unl0: bool = g.recipe_unlocked(cut_rec)
+	g.learn("ship_cutter")
+	for ck in cut_rec.get("cost", {}):
+		g.player.inv[int(ck)] += int(cut_rec["cost"][ck])
+	var at0: Vector2 = sk.pos
+	var forged2: bool = g.craft(cut_rec)
+	var sk2 = g.skiff
+	var ok3: bool = unl0 and forged2 and g.ships().size() == 2 and g.ship_class() == "cutter" and sk2 != null and sk2.klass == "cutter" and sk2.pos.distance_to(at0) < 1.0 and g.hold_cap() == 2 and cap0 == 3 and g.recipe_done(cut_rec)
+	rows.append("%sthe Cutter learned and forged %s: flying %s (hold %d, the Skiff's %d)" % ["" if ok3 else "(!) ", forged2, g.ship_class(), g.hold_cap(), cap0])
 	ok = ok and ok3
-	# ---- cut through the mast's foot: what's over it comes loose, falls away, every plank given back
-	pl0 = g.player.inv[Defs.PLANK]
-	var ox: int = sc1.x - 12
-	sy._push_undo()
-	sy._stroke([Vector2i(ox, sc1.y - 3)], true)
-	var back: int = g.player.inv[Defs.PLANK] - pl0
-	var ok4: bool = back == 37 and sk.hull_count() == hc0 - 37 and int(sy.stats["fell"]) == 36
-	rows.append("%scut the mast 3 up: %d planks back, %d fell away (\"%s\")" % ["" if ok4 else "(!) ", back, int(sy.stats["fell"]), sy.note])
+	# ---- guns: a Hauler fires none, a Corvette two bolts at once, a Cutter one
+	var guns := []
+	for gk in ["cutter", "hauler", "corvette"]:
+		var gs = Sk.make(5, gk)
+		gs.pos = g.player.pos
+		g.space._cannon_cd = 0
+		g.player.mana = 200.0
+		g.player.input.aim = gs.pos + Vector2(80, 0)
+		var n0: int = g.space.shots.size()
+		g.space._fire_cannon(g.player, gs)
+		guns.append(g.space.shots.size() - n0)
+	g.space.shots.clear()
+	g.space._cannon_cd = 0
+	var ok4: bool = guns == [1, 0, 2]
+	rows.append("%sbolts a shot: Cutter %d, Hauler %d, Corvette %d" % ["" if ok4 else "(!) ", guns[0], guns[1], guns[2]])
 	ok = ok and ok4
-	# ---- the helm's floor can't be cut
-	var hc1: int = sk.hull_count()
-	sy._stroke([Vector2i(sc1.x, sc1.y + 1)], true)
-	var ok5: bool = sk.hull_count() == hc1
-	rows.append("%sthe helm's floor kept %s" % ["" if ok5 else "(!) ", ok5])
-	ok = ok and ok5
-	# (the pocket's door is gone: the pocket is below decks, G aboard; user, 25 Nov)
-	var ok6: bool = not sy.parts.any(func(pp): return String(pp["name"]) == "Pocket Door")
-	rows.append("%sno pocket door among the parts %s" % ["" if ok6 else "(!) ", ok6])
-	ok = ok and ok6
-	# ---- a canopy of glass over the helm (the ship's figures update), drawn
-	part.call("Glass Hull")
-	sy.brush = 1
-	sy._push_undo()
-	var gl := []
-	for k2 in range(0, 22):
-		gl.append(Vector2i(sc1.x - 6, sc1.y - k2))
-	for k3 in range(-6, 8):
-		gl.append(Vector2i(sc1.x + k3, sc1.y - 21))
-	sy._stroke(gl, false)
-	var f: Dictionary = sy.figures()
-	await _frames(10)
-	_shot("shipyard.png")
-	var ok7: bool = int(f["cells"]) > hc1 + 30 and int(f["seats"]) == 2
-	rows.append("%sa glass canopy: %d cells, %s, mass %d, thrust %d%%, hold %d" % ["" if ok7 else "(!) ", int(f["cells"]), String(f["size"]), int(f["mass"]), int(f["drive"]), int(f["hold"])])
-	ok = ok and ok7
-	# ---- closed: kept as built, set clear of the ground
-	g.shipyard.close()
+	# ---- the satchel's Ships; swapped back to the Skiff; another look; no swap aboard
+	g.ui.satchel_open = true
+	g.ui._inv_key = ""
+	await _frames(5)
+	var listed := false
+	for sec in g.ui.satchel.get_children():
+		if sec is Label and String(sec.text).begins_with("Ships"):
+			listed = true
+	g.ui.satchel_open = false
+	g.ui._inv_key = ""
+	var back: bool = g.switch_ship("skiff", true) and g.ship_class() == "skiff" and g.skiff.klass == "skiff"
+	var seed0: int = int(g.ships()["cutter"])
+	var looked: bool = g.reshape_ship("cutter") and int(g.ships()["cutter"]) != seed0 and g.ship_class() == "skiff"
 	await _frames(30)
-	var kept: bool = g.items.get("ship") is Dictionary and int((g.items["ship"] as Dictionary).get("w", 0)) == sk.w and g.state == "play" and int(g.items.get("hull_cells", 0)) >= int(f["cells"])
-	var fits: bool = g._skiff_fits()
-	rows.append("%sclosed: kept %s, clear of the ground %s" % ["" if kept and fits else "(!) ", kept, fits])
-	ok = ok and kept and fits
-	print("[shipyard] " + "\n[shipyard] ".join(rows))
-	_ok("the ship builder: a keel forged, opened parked (not in flight), laid, refused, cut (loose parts fall, refunded), the helm kept, a seat, the door, undo, closed and kept", ok, "; ".join(rows))
+	sk = g.skiff
+	g.player.pos = sk.pos
+	g._skiff_interact(g.player)
+	await _frames(5)
+	var aboard: bool = g.player.aboard == sk
+	var no_swap: bool = not g.switch_ship("cutter", true) and g.ship_class() == "skiff"
+	var boarded: bool = g.items.has("boarded")
+	var qst: Dictionary = {}
+	for qs0 in g.quest._first_chapter():
+		if String(qs0["id"]) == "hull":
+			qst = qs0
+	# B aboard: no ship builder any more
+	var bk := InputEventKey.new()
+	bk.keycode = KEY_B
+	bk.pressed = true
+	g._unhandled_input(bk)
+	await _frames(3)
+	var no_yard: bool = not g.shipyard.active and g.state == "play"
+	var hud_hold: bool = String(g.ui.info.text).find("hold 0/3") >= 0 or String(g.ui.info.text).find("hold %d/3" % g.cargo_count()) >= 0
+	var ok5: bool = listed and back and looked and aboard and no_swap and boarded and String(qst.get("title", "")).begins_with("Call your ship") and no_yard and hud_hold
+	rows.append("%sin the satchel %s, back to the Skiff %s, another look %s, aboard %s, no swap aboard %s, the quest's step %s (boarded %s), B opens no builder %s, the HUD's hold %s" % ["" if ok5 else "(!) ", listed, back, looked, aboard, no_swap, qst.get("title", "?"), boarded, no_yard, hud_hold])
+	ok = ok and ok5
+	# ---- a journey from before: its skiff kept as a Wisp Skiff, a hull built in the old builder let go
+	var it0: Dictionary = g.items.duplicate(true)
+	g.items.erase("ships")
+	g.items.erase("ship_class")
+	g.items["skiff"] = 31337
+	var old_hull: Dictionary = Sk.make(31337).save_cells()
+	old_hull["designed"] = true
+	old_hull.erase("klass")
+	g.items["ship"] = old_hull
+	g._migrate_ships()
+	var mig: bool = g.ships() == {"skiff": 31337} and g.ship_class() == "skiff" and not g.items.has("ship")
+	var refused: bool = not Sk.make(31337).load_cells(old_hull)
+	g.items = it0
+	var ok6: bool = mig and refused
+	rows.append("%san old journey's ship kept as a Skiff %s, its built hull let go %s" % ["" if ok6 else "(!) ", mig, refused])
+	ok = ok and ok6
+	print("[ships] " + "\n[ships] ".join(rows))
+	_ok("ships as classes: grown whole, stats per class, forged, learned, swapped, another look, no builder, old journeys kept", ok, "; ".join(rows))
 	await _test_pocket()
-	# (put things back: later checks fly the skiff as forged)
+	# (put things back: later checks fly the skiff as it was)
 	g.player.deck = false
 	if g.player.aboard != null:
 		g._skiff_interact(g.player)
-	if keep_ship == null:
-		g.items.erase("ship")
-	else:
-		g.items["ship"] = keep_ship
-	if keep_skiff == null:
-		g.items.erase("skiff")
-	else:
-		g.items["skiff"] = keep_skiff
+	for ik3 in ["skiff", "ships", "ship_class", "ship", "boarded", "drive"]:
+		if keep_items.has(ik3):
+			g.items[ik3] = keep_items[ik3]
+		else:
+			g.items.erase(ik3)
 	if keep_sk != null:
 		for hr2 in keep_sk.riders.size():
 			keep_sk.riders[hr2] = null
@@ -2560,6 +2305,62 @@ func _test_pocket() -> void:
 	var ok0: bool = reach and in1 and on_isle and learned and not g.view_rect.visible
 	rows.append("%sin from aboard by G %s (parked %s), standing on the isle %s, Wisp Recall learned %s" % ["" if ok0 else "(!) ", in1, reach, on_isle, learned])
 	ok = ok and ok0
+	# ---- its look (user, 25 Nov: "it looks a little thrown together still"; chose the isle itself, the arch and
+	# heart, a home spot): a paved terrace, a flagstone path, the carved arch's wisp keystone, the floating shard,
+	# strata (stone and deepstone), vines and hanging roots, flowers; nothing of the isle's own floats
+	var il = pk.isle
+	var cxi: int = Isle.W / 2
+	var paved := 0
+	var path_st := 0
+	for ti in range(cxi + Isle.TER_A, cxi + Isle.TER_B):
+		for tj in range(Isle.SURF - 14, Isle.SURF + 14):
+			if il.cells[tj * Isle.W + ti] == Defs.MASONRY:
+				paved += 1
+				break
+	for pi in range(cxi + Isle.ARCH_DX + 13, cxi - 9):
+		for pj in range(Isle.SURF - 8, Isle.SURF + 8):
+			if il.cells[pj * Isle.W + pi] == Defs.MASONRY:
+				path_st += 1
+				break
+	var nkey := 0
+	var nroot := 0
+	var nvine := 0
+	var nflow := 0
+	var ndeep := 0
+	for kk0 in Isle.W * Isle.H:
+		var bgm: int = il.bg[kk0]
+		if bgm == Defs.WISPBAR and il.guard[kk0] == 1:
+			nkey += 1
+		elif bgm == Defs.ROOT and il.cells[kk0] == 0:
+			nroot += 1
+		elif bgm == Defs.LEAF and kk0 / Isle.W > Isle.SURF + 2:
+			nvine += 1
+		elif bgm == Defs.SUNSTONE or bgm == Defs.FROST or bgm == Defs.CAP:
+			nflow += 1
+		if il.cells[kk0] == Defs.DEEPSTONE:
+			ndeep += 1
+	var oklook: bool = paved == Isle.TER_B - Isle.TER_A and path_st >= 12 and nkey >= 3 and nroot >= 20 and nvine >= 20 and nflow >= 2 and ndeep > 500
+	rows.append("%sits look: the terrace paved %d of %d, %d flagstones on the path, the keystone %d, %d root cells hanging, %d vine cells, %d flower cells, %d deepstone" % ["" if oklook else "(!) ", paved, Isle.TER_B - Isle.TER_A, path_st, nkey, nroot, nvine, nflow, ndeep])
+	ok = ok and oklook
+	# (an isle from before its look: dressed again on load, what you built kept)
+	var old_i = Isle.new()
+	old_i.make()
+	var ob_k: int = (Isle.SURF - 20) * Isle.W + cxi - 100
+	old_i.place(cxi - 100 + 0, Isle.SURF - 20, Defs.PLANK)
+	for kg in Isle.W * Isle.H:
+		if old_i.cells[kg] == Defs.DEEPSTONE:
+			old_i.cells[kg] = Defs.STONE
+	var od: Dictionary = old_i.save_isle()
+	od.erase("art")
+	var re_i = Isle.new()
+	var reloaded: bool = re_i.load_isle(od)
+	var re_deep := 0
+	for kg2 in Isle.W * Isle.H:
+		if re_i.cells[kg2] == Defs.DEEPSTONE:
+			re_deep += 1
+	var restyled: bool = reloaded and re_deep > 500 and re_i.cells[ob_k] == Defs.PLANK and re_i.made[ob_k] == 1
+	rows.append("%san older isle dressed again on load %s (%d deepstone), your block kept %s" % ["" if restyled else "(!) ", reloaded, re_deep, re_i.cells[ob_k] == Defs.PLANK])
+	ok = ok and restyled
 	# ---- walk
 	var bx0: float = pk.b.x
 	g.test_move = 1
@@ -2661,7 +2462,7 @@ func _test_pocket() -> void:
 			var tj := int(floor(isle.top_at(ii2, 0)))
 			for jj2 in range(tj - 50, tj):
 				var kk: int = jj2 * Isle.W + ii2
-				if isle.made[kk] == 1 or isle.guard[kk] == 1 or isle.cells[kk] != 0:
+				if isle.made[kk] == 1 or isle.guard[kk] == 1:
 					clear = false
 		if clear:
 			rx = cand
@@ -2777,7 +2578,7 @@ func _test_pocket() -> void:
 	for st in g.quest._first_chapter():
 		qs.append(String(st["id"]))
 	var qi: int = qs.find("skiff")
-	var ok5: bool = qi >= 0 and qi + 2 < qs.size() and qs[qi + 1] == "hull" and qs[qi + 2] == "pocket" and Q.HULL_STEP > 130
+	var ok5: bool = qi >= 0 and qi + 2 < qs.size() and qs[qi + 1] == "hull" and qs[qi + 2] == "pocket"
 	rows.append("%sthe quest walks you through it: %s" % ["" if ok5 else "(!) ", ", ".join(qs.slice(maxi(qi, 0), qi + 3))])
 	ok = ok and ok5
 	# (put the spells back as they were: later checks cast with the one chosen, and Wisp Recall chosen out in
@@ -2836,7 +2637,7 @@ func _test_cargo() -> void:
 	var full_refused: bool = bought == cap and g.cargo_count() == cap
 	var gd0: String = sd["sell"][gi]["good"]
 	var ok2: bool = gi >= 0 and cap >= 2 and full_refused
-	rows.append("%sthe skiff's hold takes %d crates (%d room cells): %d bought, then it was full %s" % ["" if ok2 else "(!) ", cap, g.skiff.room_cells, bought, full_refused])
+	rows.append("%sthe %s's hold takes %d crates: %d bought, then it was full %s" % ["" if ok2 else "(!) ", g.skiff.klass, cap, bought, full_refused])
 	ok = ok and ok2
 	# ---- the crates stand in the hold (drawn there), away from the helm (a picture)
 	var cx_sk = g.skiff
@@ -2848,12 +2649,12 @@ func _test_cargo() -> void:
 			for ii in cx_sk.CRATE_W:
 				if cx_sk.in_seat(slv.x + ii, slv.y + jj):
 					off_seat = false
-	# (and on skiffs of other shapes: every seed's finds a place for its crates)
+	# (and on ships of every class and shape: each finds a place for its crates)
 	var Skf = load("res://scripts/skiff.gd")
 	var shapes_ok := 0
 	var shapes_txt := []
 	for sq in 12:
-		var sk_q = Skf.make(1000 + sq * 7919)
+		var sk_q = Skf.make(1000 + sq * 7919, Skf.CLASSES.keys()[sq % Skf.CLASSES.size()])
 		sk_q.rebuild()
 		var nq: int = sk_q.hold_cap()
 		var got_q: int = sk_q.crate_slots(nq).size()
@@ -2861,7 +2662,7 @@ func _test_cargo() -> void:
 		if got_q >= mini(nq, 2):
 			shapes_ok += 1
 	var ok2b: bool = slots.size() >= mini(cap, 2) and off_seat and shapes_ok == 12
-	rows.append("%s%d of %d crates stand in the hold, none in a seat %s; on 12 other skiffs %s" % ["" if ok2b else "(!) ", slots.size(), g.cargo_count(), off_seat, " ".join(shapes_txt)])
+	rows.append("%s%d of %d crates stand in the hold, none in a seat %s; on 12 other ships %s" % ["" if ok2b else "(!) ", slots.size(), g.cargo_count(), off_seat, " ".join(shapes_txt)])
 	ok = ok and ok2b
 	if not g.space.active:
 		var cpos: Vector2 = g.player.pos
@@ -2899,7 +2700,7 @@ func _test_cargo() -> void:
 	g.items["cargo"] = cargo0
 	g.items["coins"] = coins0
 	print("[cargo] " + "\n[cargo] ".join(rows))
-	_ok("the cargo hold: trade goods bought and sold at outposts, as many as the hull's room holds", ok, "; ".join(rows))
+	_ok("the cargo hold: trade goods bought and sold at outposts, as many as the ship's class carries", ok, "; ".join(rows))
 
 ## Busy scenes out in space (user, 23 Nov: the performance pass; "make sure it runs on lower end pc's with decent
 ## framerates"): a fight in a derelict station, a busy outpost's deck, pirates attacking among asteroids, the
@@ -3441,25 +3242,22 @@ func _test_spacebench() -> void:
 		if op != null:
 			break
 	if op != null:
-		var hr: Rect2i = op.hangar_rect()
-		var bay_x: float = float(hr.position.x) + 50.0 if op.hangar_side < 0 else float(hr.end.x) - 50.0
-		sk.pos = op.to_world(Vector2(bay_x, float(hr.end.y) - 26.0) - op.com)
-		sk.ang = op.axis_x().angle()
-		sk.vel = Vector2.ZERO
-		await _frames(20)
-		g._skiff_interact(g.player)
+		# (docked: its halls, an instance; user, 25 Nov)
+		if g.player.aboard != sk:
+			g.player.pos = sk.pos
+			g._skiff_interact(g.player)
+			await _frames(4)
+		g.pocket.dock_now(g.player, op)
 		await _frames(40)
+		var io = g.pocket.op
 		var walk := func(f: int) -> void:
-			g.test_move = (1 if (f / 100) % 2 == 0 else -1) * -op.hangar_side
+			g.test_move = (1 if (f / 100) % 2 == 0 else -1) * -io.hangar_side
 		var r2: Dictionary = await _bench_measure(300, walk)
 		g.test_move = 0
-		rows.append(_bench_line("aboard %s (%d spacers)" % [op.wname, g.space.folk.size()], r2))
+		rows.append(_bench_line("docked at %s (%d spacers)" % [io.wname, g.pocket.op_folk.size()], r2))
 		ok = ok and r2["avg"] < 16.7 and r2["p95"] < 25.0
 		_shot("bench_outpost.png")
-		g.player.pos = sk.pos
-		g.space.vel = Vector2.ZERO
-		await _frames(2)
-		g._skiff_interact(g.player)
+		g.pocket.leave(g.player)
 		await _frames(4)
 	else:
 		rows.append("(!) no outpost came in")

@@ -14,6 +14,7 @@ const Build := preload("res://scripts/build.gd")
 const PixelFont := preload("res://scripts/pixel_font.gd")
 const Galaxy := preload("res://scripts/galaxy.gd")
 const Icons := preload("res://scripts/icons.gd")
+const Skiff := preload("res://scripts/skiff.gd")
 
 var _book_head: Control = null   # the recipe book's heading in the forge (J scrolls there)
 var game
@@ -1838,7 +1839,20 @@ func update_hud(g) -> void:
 		hull_bar.max_value = 100.0
 		hull_bar.value = sk.hull_f * 100.0
 		hull_lbl.text = "Hull %d%%" % int(round(sk.hull_f * 100.0))
-	if g.frame % 6 == 0 and g.pocket.active:
+	if g.frame % 6 == 0 and g.pocket.active and g.pocket.place == "outpost":
+		# (docked: the outpost's halls, and what F does here)
+		var po := PackedStringArray([String(g.pocket.op.wname), "Docked · its shops along the deck"])
+		match String(g.pocket.near):
+			"ship":
+				po.append("[F] undock")
+			"keeper":
+				po.append("[F] trade")
+			"folk":
+				po.append("[F] talk")
+		if g.cargo_count() > 0 or g.items.has("skiff"):
+			po[1] += " · hold %d/%d crates" % [g.cargo_count(), g.hold_cap()]
+		info.text = "\n".join(po)
+	elif g.frame % 6 == 0 and g.pocket.active:
 		# (inside the ship: its pocket, how far the isle has grown, what F does here)
 		var pl := PackedStringArray(["Your ship's pocket", "An isle in a nebula · level %d of %d" % [g.pocket.isle.level, g.pocket.Isle.LEVELS.size() - 1]])
 		match String(g.pocket.near):
@@ -1904,8 +1918,8 @@ func update_hud(g) -> void:
 			lines[1] = depth_txt + " · " + lines[1]
 		if g.space.active and g.items.has("skiff"):
 			lines[1] += " · %d wisp cells" % g.player.inv[Defs.WISPCELL]
-			if g.cargo_count() > 0:
-				lines[1] += " · hold %d/%d" % [g.cargo_count(), g.hold_cap()]
+		if g.items.has("skiff") and (g.space.active or g.player.aboard != null or g.cargo_count() > 0):
+			lines[1] += " · hold %d/%d crates" % [g.cargo_count(), g.hold_cap()]       # (cargo: a stat of your ship's class)
 		info.text = "\n".join(lines)
 		var ql: String = g.quest.hud_line() if g.quest != null else ""
 		quest_lbl.visible = ql != ""
@@ -2039,6 +2053,7 @@ func _update_satchel(g) -> void:
 	for it in g.player.furn:
 		ik += String(it["name"]) + ";"
 	ik += "p%d" % int(g.items.get("potion", 0))
+	ik += "s%s%s" % [str(g.ships().keys()), g.ship_class()]
 	for did0 in Defs.DRAUGHTS:
 		ik += "%s%d%s" % [did0, int(g.items.get(did0, 0)), "*" if g.player.buffs.has(did0) else ""]
 	for sk0 in g.items.keys():
@@ -2116,6 +2131,21 @@ func _update_satchel(g) -> void:
 			elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
 				game.belt_pin("p:" + pid))
 		n += 1
+	# your ships (user, 25 Nov: classes forged at the Wisp Forge, "you keep the ones you've forged and swap
+	# between them"): click one to fly it
+	if g.ships().size() > 0:
+		var gsh := _sat_section("Ships")
+		for shk in Skiff.CLASSES:
+			if not g.ships().has(shk):
+				continue
+			var cd: Dictionary = Skiff.CLASSES[shk]
+			var on: bool = g.ship_class() == shk
+			var stip := "%s%s\nspeed x%.2f · armour x%.1f · %d crates · %d gun%s\n%s%s" % [cd["name"], "  (flying)" if on else "",
+				float(cd["speed"]), float(cd["armour"]), int(cd["cargo"]), int(cd["guns"]), "" if int(cd["guns"]) == 1 else "s",
+				cd["desc"], "" if on else "\nClick: fly this one (off the ship)"]
+			var ssl := _sat_slot(gsh, Icons.thing("ship_" + shk), "", on, stip, String(cd["name"]))
+			ssl.gui_input.connect(_on_ship_input.bind(shk))
+			n += 1
 	# set down whole: torches, doors, furniture, workshops
 	var placing := []
 	if g.player.inv[Defs.TORCH] > 0:
@@ -2585,6 +2615,14 @@ func _recipe_card(r: Dictionary) -> Control:
 	b.disabled = done or not unlocked or not aff
 	if not done and unlocked:
 		b.pressed.connect(_on_craft.bind(r))
+	# (a ship you've forged: the forge grows it another look from its parts, free)
+	var shk := String(r.get("ship", "skiff" if rid == "skiff" else ""))
+	if done and shk != "" and game.ships().has(shk):
+		p.modulate.a = 1.0
+		b.text = "Another look"
+		b.disabled = false
+		b.tooltip_text = "Grow this ship another look from its parts (its class and stats stay)"
+		b.pressed.connect(_on_reshape.bind(shk))
 	v.add_child(b)
 	_cards.append({"r": r, "b": b, "p": p, "chips": chips, "live": not done and unlocked})
 	return p
@@ -2604,11 +2642,20 @@ func _place_id(pl: Array) -> String:
 			return "f:" + String(game.player.furn[int(pl[1])]["name"])
 	return "s:" + String(pl[2])
 
+func _on_ship_input(ev: InputEvent, shk: String) -> void:
+	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+		if game.switch_ship(shk):
+			_inv_key = ""
+
 func _on_mat_input(ev: InputEvent, m: int) -> void:
 	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 		game.select_material(m)
 	elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
 		game.belt_pin("m%d" % m)             # (pinned to the item belt)
+
+func _on_reshape(shk: String) -> void:
+	game.reshape_ship(shk)
+	_render_forge()
 
 func _on_craft(r: Dictionary) -> void:
 	var ok: bool = game.craft_many(r, craft_amount) > 0

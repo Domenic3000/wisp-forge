@@ -32,8 +32,8 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | `docs/generation.md` | Structures (chests, dungeons, props) and terrain (foundations, packed ground, biome borders, roots, mud) |
 | `docs/rendering.md` | The sky into space, the parallax background, the close view and its picture, the map, fog of war, point lights, clouds |
 | `docs/space.md` | Space and travel between planets, asteroids, the galaxy (systems, sectors, nebulae, charting, the Starsail, the space map), space's view |
-| `docs/space-places.md` | Derelict wrecks, pirates, trading outposts, derelict stations and aliens, void life and anomalies |
-| `docs/ship.md` | Pixel bodies, the skiff, ship parts, hull damage and mending, cabin building, fuel, your own hull, the ship builder and pocket dimension, cargo |
+| `docs/space-places.md` | Derelict wrecks, pirates, trading outposts (docked into their halls, an instance), derelict stations and aliens, void life and anomalies |
+| `docs/ship.md` | Pixel bodies, ship classes (forged whole), ship parts, hull damage and mending, fuel, the pocket dimension (its isle, the home terrace), cargo; the old builder |
 | `docs/exotic-worlds.md` | The deep ocean world and the gas giant, with their mysteries |
 | `docs/progression.md` | The main quest, getting off the first planet, barriers by kind, cores, ores and gear, hazards, skiff upgrades |
 | `docs/climate.md` | Settlement and climate per planet kind, weather, sky events |

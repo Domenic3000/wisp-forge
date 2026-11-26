@@ -30,7 +30,7 @@ const BRAKE := 0.2              # hands off: how quickly it slows to a hover
 const SPACE_THRUST := 0.3
 const MAX_SPEED := 40.0
 const TILT := 0.42              # the most it tilts into a climb or a dive (radians)
-const SEATS := 2                # (as forged: a pilot and one more; a hull you design holds up to MAX_SEATS)
+const SEATS := 4                # (the party aboard: inside the ship, not drawn; pilot first)
 const MAX_SEATS := 8
 const MAX_W := 200              # the biggest hull you can grow it to (cells)
 const MAX_H := 110
@@ -58,9 +58,29 @@ var bump_at := Vector2.ZERO     # (where: the middle of what touched)
 var designed := false           # its hull has been built on (user, 23 Nov: "Design your own hull"): thrust from its engines
 static var _ratio0 := -1.0      # (a skiff as forged: its engine cells to its mass, what `drive` measures against)
 
-static func make(sd: int):
+## Ship classes (user, 25 Nov: "maybe we have prefab ships instead that you can get recipes for different ships";
+## chose classes from recipes, each with stats, its look grown from parts by its seed; no building on it, no seats
+## to sit in: you're inside). speed: thrust and cruise; armour: a hit carves less of it (radius / sqrt(armour));
+## cargo: crates its hold carries; guns: bolts the Wisp Cannon fires at once.
+const CLASSES := {
+	"skiff": {"name": "Wisp Skiff", "speed": 1.0, "armour": 1.0, "cargo": 3, "guns": 1,
+		"desc": "A small ship round a Core Drive: a planked hull under a glass canopy. Quick enough, carries a little."},
+	"cutter": {"name": "Wisp Cutter", "speed": 1.35, "armour": 0.8, "cargo": 2, "guns": 1,
+		"desc": "A long, slim hull on swept wings: the fastest ship there is, lightly built, room for two crates."},
+	"hauler": {"name": "Wisp Hauler", "speed": 0.75, "armour": 1.3, "cargo": 12, "guns": 0,
+		"desc": "A deep-bellied freighter with cargo pods slung under it: slow and sturdy, it carries twelve crates."},
+	"corvette": {"name": "Wisp Corvette", "speed": 1.1, "armour": 1.7, "cargo": 5, "guns": 2,
+		"desc": "A plated warship with a turret: it shrugs off hits and its cannon fires two bolts at once."},
+}
+var klass := "skiff"
+
+func cls() -> Dictionary:
+	return CLASSES.get(klass, CLASSES["skiff"])
+
+static func make(sd: int, k := "skiff"):
 	var s = load("res://scripts/skiff.gd").new()
 	s.design_seed = sd
+	s.klass = k if CLASSES.has(k) else "skiff"
 	s._design()
 	return s
 
@@ -188,15 +208,62 @@ func _design() -> void:
 	var length := 52 + rng.randi_range(0, 8)
 	var deck := 27 + rng.randi_range(0, 2)          # the deck's row; the canopy rises above it (room for a hat)
 	var depth := 9 + rng.randi_range(0, 3)          # hull depth below the deck
-	setup(length + 4, deck + depth + 2)
+	var main_m := Defs.PLANK
+	var band_m := Defs.WOOD
+	var trim_m := Defs.COPPER
+	match klass:
+		"cutter":
+			length = 66 + rng.randi_range(0, 8)
+			deck = 22 + rng.randi_range(0, 2)
+			depth = 6 + rng.randi_range(0, 2)
+		"hauler":
+			length = 74 + rng.randi_range(0, 8)
+			deck = 26 + rng.randi_range(0, 2)
+			depth = 13 + rng.randi_range(0, 2)
+		"corvette":
+			length = 72 + rng.randi_range(0, 8)
+			deck = 28 + rng.randi_range(0, 2)
+			depth = 12 + rng.randi_range(0, 2)
+			main_m = Defs.HULL
+			band_m = Defs.HULL
+			trim_m = Defs.WISPBAR
+	var extra := 12 if klass == "hauler" else (6 if klass == "cutter" else 0)
+	setup(length + 4, deck + depth + 2 + extra)
 	var cx := int(length * (0.5 + rng.randf_range(0.0, 0.06)))   # the cockpit's middle
 	var crx := 15 + rng.randi_range(0, 3)
-	_hull(length, deck, depth, rng)
-	_trim(length, deck)
-	_engine(deck, depth)
-	_fin(deck, rng)
-	_canopy(cx, deck, crx, deck - 1, rng)          # (last: its room stays clear)
-	seat_cells = [Vector2i(cx + 4, deck - 1), Vector2i(cx - 6, deck - 1)]
+	var cry := deck - 1
+	match klass:
+		"cutter":
+			cx = int(length * 0.62)
+			crx = 11 + rng.randi_range(0, 2)
+			cry = deck - 4
+		"hauler":
+			cx = int(length * 0.8)
+			crx = 12 + rng.randi_range(0, 2)
+			cry = deck - 4
+		"corvette":
+			cx = int(length * 0.66)
+			crx = 12 + rng.randi_range(0, 2)
+			cry = deck - 6
+	_hull(length, deck, depth, rng, main_m, band_m)
+	_trim(length, deck, trim_m)
+	_engine(deck, depth, 2 if klass == "hauler" else 1)
+	match klass:
+		"cutter":
+			_wing(length, deck, depth, rng)
+			_fin(deck, rng, 4)
+		"hauler":
+			_pods(length, deck, depth, rng)
+			_fin(deck, rng)
+		"corvette":
+			_turret(int(length * 0.3), deck, rng)
+			_fin(deck, rng)
+		_:
+			_fin(deck, rng)
+	_canopy(cx, deck, crx, cry, rng, Defs.HULL if klass == "corvette" else Defs.WOOD)   # (last: its room stays clear)
+	if main_m == Defs.HULL:
+		_plates()
+	seat_cells = [Vector2i(cx + 4, deck - 1), Vector2i(cx - 6, deck - 1), Vector2i(cx, deck - 1), Vector2i(cx - 2, deck - 1)]
 	riders = []
 	riders.resize(SEATS)
 	rebuild()
@@ -216,23 +283,23 @@ func _design() -> void:
 	_recount()
 
 ## the hull: planks from the deck down to a keel that rises toward the bow and the stern
-func _hull(length: int, deck: int, depth: int, rng: RandomNumberGenerator) -> void:
+func _hull(length: int, deck: int, depth: int, rng: RandomNumberGenerator, main_m := Defs.PLANK, band_m := Defs.WOOD) -> void:
 	var bow_rise := 0.55 + rng.randf() * 0.2
 	for i in length:
 		var t := float(i) / float(length - 1)         # 0 stern .. 1 bow
 		var keel := depth * (1.0 - pow(maxf(0.0, (t - 0.55) / 0.45), 1.6) * bow_rise - pow(maxf(0.0, (0.12 - t) / 0.12), 2.0) * 0.5)
 		for j in range(deck, deck + int(round(keel)) + 1):
-			put(i + 2, j, Defs.PLANK if (j - deck) % 4 != 3 else Defs.WOOD)
+			put(i + 2, j, main_m if (j - deck) % 4 != 3 else band_m)
 	# the bow comes up to a point above the deck
 	for k in 5:
 		for j2 in range(deck - k, deck):
-			put(length + 1 - k, j2, Defs.PLANK)
+			put(length + 1 - k, j2, main_m)
 
 ## a stripe of copper along the gunwale, and the keel's own dark timber
-func _trim(length: int, deck: int) -> void:
+func _trim(length: int, deck: int, trim_m := Defs.COPPER) -> void:
 	for i in range(2, length + 2):
 		if at(i, deck) != 0:
-			put(i, deck, Defs.COPPER)
+			put(i, deck, trim_m)
 	for i2 in range(2, length + 2):
 		for j in range(h - 1, -1, -1):
 			if at(i2, j) != 0:
@@ -241,7 +308,17 @@ func _trim(length: int, deck: int) -> void:
 
 ## a cabin over the cockpit: a timber frame, a glass shell, and the room inside left open (its back
 ## a pane of glass), so the riders sit in it and it can be built in
-func _canopy(cx: int, deck: int, rx: float, ry: float, rng: RandomNumberGenerator) -> void:
+## (plating's look: panels a few cells across with dark seams between, a light top edge on each; not random specks)
+func _plates() -> void:
+	for j in h:
+		for i in w:
+			var k := j * w + i
+			if cells[k] != Defs.HULL:
+				continue
+			var seam: bool = j % 5 == 4 or (i + (j / 5) * 4) % 9 == 0
+			vars[k] = 2 if seam else (3 if j % 5 == 0 else (1 if (i / 9 + j / 5) % 2 == 0 else 0))
+
+func _canopy(cx: int, deck: int, rx: float, ry: float, rng: RandomNumberGenerator, frame_m := Defs.WOOD) -> void:
 	var lean := rng.randf_range(-0.15, 0.25)          # (the dome leans back a little)
 	for j in range(deck - int(ry), deck):
 		for i in range(cx - int(rx) - 4, cx + int(rx) + 5):
@@ -250,9 +327,9 @@ func _canopy(cx: int, deck: int, rx: float, ry: float, rng: RandomNumberGenerato
 			if _ellipse(float(i - cx) + shift, up_by, rx, ry, 0.0) > 1.0:
 				continue
 			if _ellipse(float(i - cx) + shift, up_by, rx, ry, 1.5) > 1.0:
-				put(i, j, Defs.WOOD)                       # the frame
+				put(i, j, frame_m)                         # the frame
 			elif _ellipse(float(i - cx) + shift, up_by, rx, ry, 3.0) > 1.0:
-				put(i, j, Defs.GLASS if up_by > 2.5 else Defs.WOOD)   # the shell (timber at its foot)
+				put(i, j, Defs.GLASS if up_by > 2.5 else frame_m)   # the shell (timber at its foot)
 			else:
 				cells[j * w + i] = 0
 				bg[j * w + i] = Defs.GLASS                 # the room inside: a glass back pane
@@ -265,17 +342,69 @@ func _ellipse(x: float, y: float, rx: float, ry: float, inset: float) -> float:
 	return (x * x) / (ax * ax) + (y * y) / (ay * ay)
 
 ## the wisp-ore engine at the stern, glowing where it pushes
-func _engine(deck: int, depth: int) -> void:
+func _engine(deck: int, depth: int, n := 1) -> void:
 	for j in range(deck - 2, deck + depth - 3):
 		for i in range(0, 4):
 			put(i, j, Defs.WISP)
+	if n > 1:
+		# (a second engine below the first, for a heavy hull)
+		for j2 in range(deck + depth - 3, mini(h - 1, deck + depth + 3)):
+			for i2 in range(1, 5):
+				put(i2, j2, Defs.WISP)
 
 ## a fin at the stern
-func _fin(deck: int, rng: RandomNumberGenerator) -> void:
-	var ht := 7 + rng.randi_range(0, 4)
+func _fin(deck: int, rng: RandomNumberGenerator, more := 0) -> void:
+	var ht := 7 + rng.randi_range(0, 4) + more
 	for k in ht:
 		for i in range(4, 4 + maxi(1, 6 - k / 2)):
 			put(i + k / 3, deck - 1 - k, Defs.WOOD)
+
+## (a Cutter's) a swept wing under the hull from amidships aft, timber framed with a glass-thin trailing edge
+func _wing(length: int, deck: int, depth: int, rng: RandomNumberGenerator) -> void:
+	# (seen from the side: a thin blade swept back from under the hull, its tip trailing aft and a little down)
+	var root := int(length * 0.6)
+	var span := 22 + rng.randi_range(0, 6)
+	var y0 := deck + depth
+	for q in span:
+		var t := float(q) / float(span)
+		var x := root - q
+		var y := y0 + int(round(t * t * 5.0))
+		var thick := 3 if t < 0.5 else (2 if t < 0.85 else 1)
+		var from := (deck + depth - 4) if q < 5 else y      # (its root: up into the hull, so it holds)
+		for dj in range(from, y + thick):
+			put(x, dj, Defs.WOOD if dj == y + thick - 1 else Defs.PLANK)
+	for k in 3:
+		put(root - span - k, y0 + 5, Defs.COPPER)      # (a copper tip)
+
+## (a Hauler's) cargo pods slung under the hull: timber crates in a plank frame, held by a strut each
+func _pods(length: int, deck: int, depth: int, rng: RandomNumberGenerator) -> void:
+	var n := 3 + rng.randi_range(0, 1)
+	var pw := int((length - 24) / n) - 3
+	for p in n:
+		var x0 := 10 + p * (pw + 3)
+		var y0 := deck + depth + 2
+		for j in range(y0, mini(h, y0 + 8)):
+			for i in range(x0, x0 + pw):
+				var edge: bool = j == y0 or j == mini(h, y0 + 8) - 1 or i == x0 or i == x0 + pw - 1
+				put(i, j, Defs.PLANK if edge else Defs.WOOD)
+		# (the strut from the hull's underside, wherever that is over this pod)
+		var sx := x0 + pw / 2
+		var top := deck
+		while top < y0 and at(sx, top + 1) != 0:
+			top += 1
+		for j2 in range(top, y0):
+			put(sx, j2, Defs.WOOD)
+			put(sx + 1, j2, Defs.WOOD)
+
+## (a Corvette's) a turret on the deck: a plated dome and a barrel to the bow
+func _turret(tx: int, deck: int, rng: RandomNumberGenerator) -> void:
+	var r := 5 + rng.randi_range(0, 1)
+	for j in range(deck - r, deck):
+		for i in range(tx - r - 1, tx + r + 2):
+			if Vector2(float(i - tx), float(j - deck) * 1.3).length() <= float(r) + 0.5:
+				put(i, j, Defs.HULL)
+	for i2 in range(tx, tx + r + 7):
+		put(i2, deck - r + 2, Defs.STARIRON)
 
 # ------------------------------------------------------------- riders ---
 
@@ -479,7 +608,7 @@ func rebuild() -> void:
 const HOLD_ROOM := 120
 var room_cells := 0
 func hold_cap() -> int:
-	return clampi(room_cells / HOLD_ROOM, 2, 60)
+	return int(cls()["cargo"])
 
 ## where n crates (CRATE_W x CRATE_H cells, top-left corners) stand: in its room first (on the floor or on each
 ## other, as far from the helm as they go, never in a seat's space or over furniture), then lashed on its open
@@ -566,7 +695,7 @@ func thrust() -> float:
 ## a little engine is sluggish, more engine makes it lively (0.35 .. 1.5)
 func drive() -> float:
 	if not designed:
-		return 1.0
+		return float(cls()["speed"])
 	if _ratio0 < 0.0:
 		var ref = load("res://scripts/skiff.gd").make(1)
 		_ratio0 = float(ref.engine0) / maxf(ref.mass, 1.0)
@@ -578,7 +707,7 @@ func drive() -> float:
 func damage(p: Vector2, r: float) -> int:
 	if hull_f <= HULL_FLOOR:
 		return 0
-	return carve(p, r)
+	return carve(p, r / sqrt(float(cls()["armour"])))       # (a plated hull: a hit carves less)
 
 ## cells of the hull as forged that are gone
 func missing() -> int:
@@ -823,9 +952,12 @@ func save_cells() -> Dictionary:
 	d["designed"] = designed
 	d["marks"] = Array(seat_marks)
 	d["door"] = [door_cell.x, door_cell.y]
+	d["klass"] = klass
 	return d
 
 func load_cells(d: Dictionary) -> bool:
+	if String(d.get("klass", "skiff")) != klass or bool(d.get("designed", false)):
+		return false                    # (another class's cells, or a hull built in the old builder: forged afresh)
 	var nw := int(d.get("w", w))
 	var nh := int(d.get("h", h))
 	if bool(d.get("designed", false)) and (nw != w or nh != h):
