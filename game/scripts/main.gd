@@ -3706,6 +3706,13 @@ func _guardian_falls(e: Enemy) -> void:
 		if rid == "lionheart":
 			max_hp += 40
 			hp += 40
+		# (a relic with gear's stats: max health, mana and regen given once, as it's won)
+		var rmods: Dictionary = rel.get("mods", {})
+		max_hp += float(rmods.get("max_hp", 0.0))
+		hp += float(rmods.get("max_hp", 0.0))
+		max_mana += float(rmods.get("max_mana", 0.0))
+		mana_regen += float(rmods.get("mana_regen", 0.0))
+		_apply_gear()
 		ui.toast("RELIC: %s. %s" % [rel["name"], rel["desc"]], Color(1.0, 0.88, 0.45), 8.0)
 	var loot: Dictionary = bd["loot"]
 	for mt in loot:
@@ -5803,7 +5810,7 @@ func _toggle_build() -> void:
 	if build_on and not Build.CAT_ORDER.has(build_cat):
 		build_cat = Build.CAT_ORDER[0]
 	if build_on:
-		var bn: String = builds.biome(Build.cell_of(player.pos).x) if builds != null else "forest"
+		var bn: String = Defs.base_biome(builds.biome(Build.cell_of(player.pos).x)) if builds != null else "forest"
 		for si in Build.STYLES.size():
 			if Build.STYLES[si][1] == bn:
 				build_style = si
@@ -5863,7 +5870,7 @@ func hold_plan(id: String) -> void:
 	_plan_cache = {}
 	_struct_key = ""
 	# (a house in the style of the land you stand in, as build mode did)
-	var bn: String = builds.biome(Build.cell_of(player.pos).x) if builds != null else "forest"
+	var bn: String = Defs.base_biome(builds.biome(Build.cell_of(player.pos).x)) if builds != null else "forest"
 	for si in Build.STYLES.size():
 		if Build.STYLES[si][1] == bn:
 			build_style = si
@@ -8279,6 +8286,8 @@ func start_game(use_save: bool) -> void:
 		_delete_worlds()
 		# a new journey: a system of planets of its own (the test mode keeps the classic one)
 		Defs.world_seed = test_seed if testing else 1 + randi() % 0xFFFFFE
+		Defs.legacy_biomes = {}                  # (a new journey: every planet grows today's biomes)
+		Defs._planet_cache.clear()
 		space.load_state({})
 		player.inv.fill(0)
 		# (a modest start: a little Wisp Mote, no Spark Bolt and no levitation until they're forged)
@@ -9178,7 +9187,8 @@ func _save_path() -> String:
 func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1, "learned": learned.keys(),
-		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played, "space": space.save_state()}
+		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played, "space": space.save_state(),
+		"bset": Defs.BIOME_SET, "legacy_biomes": Defs.legacy_biomes.keys()}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
@@ -9197,6 +9207,19 @@ func _load_save():
 
 func _apply_save(s: Dictionary) -> void:
 	Defs.world_seed = int(s.get("world_seed", 0))      # (journeys from before every game had its own: the classic system)
+	# (planets made before each kind of world got its own biome keep the biomes their saved ground was grown with:
+	# a journey saved before then counts every planet it has a world file for; Defs.legacy_biomes)
+	Defs.legacy_biomes = {}
+	if int(s.get("bset", 1)) >= Defs.BIOME_SET:
+		for li in s.get("legacy_biomes", []):
+			Defs.legacy_biomes[int(li)] = true
+	else:
+		var sd := DirAccess.open(_save_dir())
+		if sd != null:
+			for fn in sd.get_files():
+				if fn.begins_with("world_") and fn.ends_with(".wfw"):
+					Defs.legacy_biomes[int(fn.trim_prefix("world_").trim_suffix(".wfw"))] = true
+	Defs._planet_cache.clear()
 	var sps = s.get("space", {})
 	space.load_state(sps if sps is Dictionary else {})
 	var a: Array = s.get("inv", [])

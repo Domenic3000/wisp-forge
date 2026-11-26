@@ -47,8 +47,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Back walls (and furniture, which is stamped as back wall) rest on settled powder below them (`support.comp`),
   the way front blocks do: a table set on sand or soil stays.
 - Biomes: at most 8 per planet (their parameters fill P.p[8..23]). Flora types are numbered in defs.gd; each
-  has a tree function in gen.comp (oak, pine, cactus, willow, charred, palm, jungle, acacia, mushroom) plus
-  undergrowth in `flora()`; plant materials get their look in render.comp's `plantColor`.
+  has a tree function in gen.comp (oak, pine, cactus, willow, charred, palm, jungle, acacia, mushroom, mangrove,
+  elder) plus undergrowth in `flora()`; plant materials get their look in render.comp's `plantColor`.
 - Roots (`ROOT`, background only): gen.comp `treeRoots` draws a taproot and a few side roots under each tree
   (`rootWidth` per flora type), into the ground below the surface and into the air where a slope drops away
   under the trunk, so no tree shows a flat underside. Roots score lowest in `flora` (every other part of any
@@ -58,6 +58,33 @@ Notes for development sessions on this part of the game. The rules that apply ev
   over caves); everywhere else it is generated as grass over dirt, so ground never hides a pool you sink into.
   render.comp draws mud dark and glossy with a wet top sheen and bubbles. react.comp: loose (unanchored) dirt
   touching water turns to mud; unanchored mud in the open with no water near dries back to dirt.
+
+## Each kind of world's own biome (user, 26 Nov: "do other worlds have unique biomes and unique enemies?"; chose a set of seven, each with its own ground, plants, 2-3 creatures and a guardian, showing up mostly on its kind of world)
+- `Defs.BIOMES`: basalt (Basalt Columns, volcanic), kelp (Kelp Isles, ocean), saltflats (Saltglass Flats, desert),
+  mangrove (Sunken Mangroves, marsh), crystalfields (Crystal Fields, frozen), elder (Elder Canopy, wild), meadow
+  (Flower Meadows, realm). Each kind's `pool` in `Defs.KINDS` weights its own one in (and the others rarely,
+  0.5, anywhere); the sea rule covers kelp as well as ocean (kelp: off 34, amp 16, so sand bars stand above the sea
+  and channels run deep enough for Marelle).
+- World materials are full (64), so the new biomes reuse materials: their look is gen.comp flora 11-17 and
+  render-only touches keyed by the column's flora. gen.comp `flora()`: 11 basalt column clusters (DEEPSTONE,
+  OBSIDIAN caps), 12 palms on the bars and kelp strands in the water, 13 salt pillars and knee-high salt heaps
+  (SANDSTONE), 14 `mangroveTree` (arched stilt roots, trunks may stand in up to 12 cells of water), 15 ice spires
+  tipped with FROST, 16 `elderTree` (a flared trunk, a wide crown of overlapping masses) with ferns, 17 hedgerows
+  (LEAF), dry-stone walls (MASONRY), flowers and a lone oak. Scenery stone is background with floraId 0, so
+  support.comp leaves it standing. render.comp: meadow petals on hedge tops and in the grass, the salt flats'
+  sand and pillars whitened and cracked, basalt fissures glowing, glints on the crystal fields' snow; the far tree
+  line maps elder/mangrove to jungle trees and meadow to sparse oaks.
+- Old saves keep their planets: `Defs.BIOME_SET` (2) is saved as "bset"; a save from before (or the
+  `world_N.wfw` files beside one) fills `Defs.legacy_biomes`, and `make_planet_for` grows those planets from
+  each kind's `pool_v1` (cache key "ws:i:v1"), so a planet already generated gets the same biomes (`_grown_planet`
+  draws one randf per biome pick whatever the pool, so radius, name and the rest never move). New journeys clear it.
+- Anything that looks up a biome's buildings, dungeons or styles goes through `Defs.base_biome(b)` (`BASE_BIOME`:
+  basalt -> ashland, kelp -> ocean, saltflats -> desert, mangrove -> marsh, crystalfields -> tundra, elder ->
+  forest, meadow -> forest).
+- Test: `_test_newbiomes` (tests/exotic.gd, section "newbiomes"): an old planet keeps its biomes; then a planet
+  with all seven (cache entry "0:7:v2" overridden), a picture of each (`saves/shots/newbiome_<b>.png`), plant
+  and scenery counts, its creatures, and `_test_guardians` for the seven (a swimmer's altar on the seabed where
+  the water is deepest).
 
 ## Ore is rarer (user, 25 Nov: "ore is much too abundant. it is very easy to find ore. i dont want it to be be super hard to find but currently it is everywhere")
 - gen.comp `ORE_T` (0.025) raises every common ore's threshold (copper, coal, crystal, frost, ember, wisp): about

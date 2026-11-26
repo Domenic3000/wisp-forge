@@ -90,6 +90,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `lair_<biome>_bp.png` (the whole blueprint) and `lair_<biome>_mid/_a/_b.png` in the game). Test: `_test_far_biomes` ("biomes": enters Cindrel and Thalassa, `_test_guardians(["ashland"])`
   etc., the sanctum under water, the swimmers in the sea).
 
+- The new biomes' guardians (26 Nov): Basalthor (basalt, relic basaltheart), Marelle the Kelp Wyrm (kelp, swims,
+  relic kelpcrown), Brinemaw (saltflats, saltglass), The Rootmother (mangrove, mangroveseed), Prismara
+  (crystalfields, prismheart), Old Mossjaw (elder, mossjaw), Queen Bombyla (meadow, honeycomb). Each has its
+  `SIGIL_MATS` entry. A guardian relic's max_hp / max_mana / mana_regen mods are granted once when it falls
+  (`_guardian_falls`), the rest through `gear()`.
+
 ## Heart bosses (user, 26 Nov: "i would like different bosses at the heart of different kinds of worlds"; chose every kind its own with Vulkhar staying on temperate worlds, a storm boss at the gas giant's Eye, and each giving its own relic)
 - `Defs.HEARTS` (kind -> a guardian-style definition: body plan and features, stats, `go`, moves/rage, "biome" (whose
   fighters `_call_type` calls), "relic", "loot", "wet"/"swim" for the deep ocean world's): Pyrrhax the Molten Wyrm

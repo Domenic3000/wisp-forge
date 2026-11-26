@@ -1128,6 +1128,20 @@ func _test_guardians(only_biomes := []) -> void:
 		# the altar: on level, clear ground in the biome (in a sea, on the seabed)
 		var gd_col := gd_mid
 		var gd_row: int = g.builds.ground_row(gd_mid)
+		if gd_wet:
+			# (a swimmer's altar on the seabed where the water's deepest near the middle: the kelp isles' middle
+			# can be a dry sand bar or a shallow pool)
+			var gd_deep := -1.0
+			for gd_dw in range(-1500, 1501, 8):
+				var gcw: int = gd_mid + gd_dw
+				if g.builds.biome(gcw) != gd_bio:
+					continue
+				var gxw := posmod(gcw, g.builds.N0)
+				var gdep: float = g.builds.surf[gxw * 8 + 5] - g.builds.surf[gxw * 8]
+				if gdep > gd_deep + 2.0:
+					gd_deep = gdep
+					gd_col = gcw
+			gd_row = g.builds.ground_row(gd_col)
 		if not gd_wet:
 			# (open, fairly level ground in the biome, with no building within 80 columns: a guardian boxed
 			# in between houses, you on a roof, can't get at you)

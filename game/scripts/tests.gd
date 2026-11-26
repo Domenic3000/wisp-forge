@@ -163,6 +163,8 @@ func run() -> void:
 			await _test_abyss()
 		elif only == "giant":
 			await _test_giant()
+		elif only == "newbiomes":
+			await _test_newbiomes()
 		elif only == "cores":
 			_go(g.player.pos)
 			await _frames(60)
@@ -3042,6 +3044,7 @@ func run() -> void:
 	await _test_abyss()
 	await _test_giant()
 	await _test_cores()
+	await _test_newbiomes()
 	await _test_worlds()
 	await _test_bench()
 

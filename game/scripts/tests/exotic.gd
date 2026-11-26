@@ -380,3 +380,94 @@ func _test_giant() -> void:
 	await _frames(60)
 	print("[giant] " + "\n[giant] ".join(rows))
 	_ok("a gas giant: its Thunderhead, isles over the clouds, the crushing air, the beacons and the Storm Crown", ok, "; ".join(rows))
+
+## Each kind of world's own biome (26 Nov: Basalt Columns, Kelp Isles, Saltglass Flats, Sunken Mangroves, Crystal
+## Fields, Elder Canopy, Flower Meadows): a planet is made whose biomes are the seven (the classic system's planet
+## NB_I, its biomes, shares, sea and guardians set by hand), and in each one at midday its plants or scenery stand
+## (a picture of each, saves/shots/newbiome_<name>.png), it has creatures of its own and its guardian, which is called
+## at an altar there and fought (`_test_guardians`); the planets of a journey saved before keep their old biomes.
+const NB_I := 7
+func _test_newbiomes() -> void:
+	var nb_list := ["basalt", "kelp", "saltflats", "mangrove", "crystalfields", "elder", "meadow"]
+	var nb_rows := []
+	var nb_ok := true
+	# (a planet saved before keeps the biomes it was made with; one made after grows the new ones)
+	# (the first planet of a grown system whose biomes come out differently now)
+	var nb_leg0: Dictionary = Defs.legacy_biomes.duplicate()
+	var nb_found := false
+	for nb_i in range(1, 30):
+		Defs.legacy_biomes = {nb_i: true}
+		var nb_old := Defs.make_planet_for(424242, nb_i)
+		Defs.legacy_biomes = {}
+		var nb_new := Defs.make_planet_for(424242, nb_i)
+		if str(nb_old["biomes"]) == str(nb_new["biomes"]):
+			continue
+		nb_found = true
+		var nb_same := true
+		for nb_k in ["radius", "starts", "name", "kind"]:
+			nb_same = nb_same and str(nb_old[nb_k]) == str(nb_new[nb_k])
+		var nb_oldset := true
+		for nb_b0 in nb_old["biomes"]:
+			nb_oldset = nb_oldset and not nb_list.has(nb_b0)
+		nb_rows.append("%s (%s): saved before, it keeps its old biomes (%s) and all else (%s); made now, %s" % [nb_old["name"], nb_old["kind"], ", ".join(nb_old["biomes"]), nb_same, ", ".join(nb_new["biomes"])])
+		nb_ok = nb_ok and nb_same and nb_oldset
+		break
+	Defs.legacy_biomes = nb_leg0
+	if not nb_found:
+		nb_rows.append("(!) no planet of 424242's first 30 grows a new biome")
+		nb_ok = false
+	# the planet of the seven
+	var nb_god0: bool = g.test_god
+	g.test_god = true
+	g._delete_worlds()
+	var nb_pl: Dictionary = Defs.make_planet_for(0, NB_I)
+	nb_pl["biomes"] = nb_list.duplicate()
+	var nb_st := PackedFloat32Array()
+	for nb_q in 7:
+		nb_st.append(float(nb_q) / 7.0)
+	nb_pl["starts"] = nb_st
+	nb_pl["guardians"] = nb_list.duplicate()
+	nb_pl["sea"] = 26.0
+	nb_pl["kind"] = "wild"
+	nb_pl["name"] = "Newfold"
+	Defs._planet_cache["0:%d:v2" % NB_I] = nb_pl
+	g._enter_planet(NB_I)
+	g.ui.title.visible = false
+	await _frames(60)
+	var toff: int = Defs.total_cells() * 4
+	for nb_b in nb_list:
+		var nb_mid := _biome_mid_col(nb_b)
+		if nb_mid < 0:
+			nb_rows.append("(!) %s: not on the planet" % nb_b)
+			nb_ok = false
+			continue
+		var nb_gr: int = g.builds.ground_row(nb_mid)
+		var nb_pos := _cell_pos(nb_mid, nb_gr - 30)
+		_go(nb_pos)
+		g.time = g.towns.time_for_hour(nb_pos, 12.5)
+		await _frames(150)
+		_shot("newbiome_%s.png" % nb_b)
+		# what stands in the background round it: plants (_plants) and the stone scenery (basalt, salt, ice)
+		var raw: PackedByteArray = g.gpu.read_world()
+		var nb_n := 0
+		for nb_c in range(nb_mid - 200, nb_mid + 200, 120):
+			nb_n += _plants(raw, toff, nb_c, g.builds.ground_row(nb_c + 60))
+		var nb_sc := 0
+		for j in range(nb_gr - 140, nb_gr + 30):
+			for i in range(-200, 200):
+				var bm := raw.decode_u32(toff + Defs.raw_idx(j, posmod(nb_mid + i, Defs.NS)) * 4) & 255
+				if bm == Defs.DEEPSTONE or bm == Defs.OBSIDIAN or bm == Defs.SANDSTONE or bm == Defs.ICE or bm == Defs.FROST or bm == Defs.MASONRY:
+					nb_sc += 1
+		var nb_cr: Array = Defs.creatures_of(nb_b)
+		var nb_good: bool = nb_n + nb_sc > 60 and not nb_cr.is_empty() and Defs.BOSSES.has(nb_b) and Defs.SIGIL_MATS.has(nb_b)
+		nb_ok = nb_ok and nb_good
+		nb_rows.append("%s%s (%s): %d plant cells, %d of its stone scenery; creatures %s" % ["" if nb_good else "(!) ", nb_b, Defs.BIOMES[nb_b]["name"], nb_n, nb_sc, ", ".join(nb_cr)])
+	g.test_god = nb_god0
+	_ok("each kind of world's own biome: made, its plants and scenery stand, its own creatures and guardian", nb_ok, "; ".join(nb_rows))
+	# and the seven guardians, each called at an altar in its biome
+	await _test_guardians(nb_list)
+	Defs._planet_cache.erase("0:%d:v2" % NB_I)
+	g._delete_worlds()
+	g._enter_planet(0)
+	g.ui.title.visible = false
+	await _frames(60)

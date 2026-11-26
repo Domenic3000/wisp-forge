@@ -402,7 +402,8 @@ func _pick(weights: Dictionary) -> String:
 	return weights.keys()[0]
 
 func _try_place(x: int, near_spawn: bool, build: bool) -> bool:
-	var b := biome(x)
+	# (each kind of world's own biome builds as the biome it grew from: Defs.BASE_BIOME, 26 Nov)
+	var b := Defs.base_biome(biome(x))
 	if b == "abyss" or b == "giant":
 		return false                  # (a deep ocean world's floor, a gas giant's far under its clouds: nothing)
 	var w := {}
@@ -2387,7 +2388,7 @@ const ROOM_KINDS := ["guard", "hall", "roost", "crypt", "treasure", "pool", "hal
 func _dungeon(x: int, build: bool) -> bool:
 	if cdist(x, spawn_col) < 280 or cdist(x, boss_col) < 320:
 		return false
-	var b := biome(x)
+	var b := Defs.base_biome(biome(x))
 	if not DUNGEON_NAMES.has(b):
 		return false
 	var nc := rng.randi_range(3, 4)

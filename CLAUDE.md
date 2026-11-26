@@ -29,7 +29,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | File | What it covers |
 |---|---|
 | `docs/world.md` | Planet geometry (shells, seams, the shell table, stamps cell for cell at any depth), worlds per game, the cell format of both layers, GPU counters |
-| `docs/generation.md` | Structures (chests, dungeons, props) and terrain (foundations, packed ground, biome borders, roots, mud) |
+| `docs/generation.md` | Structures (chests, dungeons, props), terrain (foundations, packed ground, biome borders, roots, mud), each kind of world's own biome |
 | `docs/rendering.md` | The sky into space, the parallax background, the close view and its picture, the map, fog of war, point lights, clouds |
 | `docs/space.md` | Space and travel between planets, asteroids, the galaxy (systems, sectors, nebulae, charting, the Starsail, the space map), space's view |
 | `docs/space-places.md` | Derelict wrecks, pirates, trading outposts (docked into their halls, an instance), derelict stations and aliens, void life and anomalies |

@@ -87,6 +87,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   the air, serpents and burrowers on the ground), each depth band's underground. Test: every creature hunts,
   stays on screen and moves (`saves/shots/creatures_N.png`). Test mode sets `test_no_wild` so none come by
   themselves into the other checks.
+- The new biomes' own (26 Nov, see generation.md): basalt: basaltmonitor, steammoth; kelp: tideotter,
+  kelpserpent (plus stormgull); saltflats: salthopper, miragefox (plus vulture); mangrove: mirecroc, heron (plus
+  reedfrog); crystalfields: crystalstag, shardlynx (plus snowhare); elder: mossbackelk, fernstalker (plus hare,
+  deer); meadow: meadowsheep, bumblewing, hedgefox (plus hare).
 - Foe AI (`scripts/foe_ai.gd`, static behaviours; each foe's `ai` entry in `Defs.ENEMY` picks and tunes them):
   `think` (line of sight through the collision grid every few frames, spells heard nearby, memory of where you
   were, `rally` alerts foes within 90 cells), `goal`, and attacks as small state machines on `Enemy.act`

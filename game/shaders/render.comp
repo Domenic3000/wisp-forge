@@ -494,6 +494,9 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 			float bk = bi + float(k);
 			float cx = (bk + 0.5) * 6.0;
 			int ftk = int(P.p[9 + 2 * layerBiome(2.0 * cx / RS0)].w) >> 4;
+			// (the elder trees' and the mangroves' woods show as round crowns, the meadow's lone oaks thinly)
+			if (ftk == 16 || ftk == 14) ftk = 7;
+			if (ftk == 17) { if (h2(ivec2(int(bk), 405), 9) > 0.15) continue; ftk = 1; }
 			if (!(ftk == 1 || ftk == 2 || ftk == 4 || ftk == 5 || ftk == 7)) continue;
 			float hr = h2(ivec2(int(bk), 403), 9);
 			if (hr > (ftk == 5 ? 0.3 : (ftk == 2 ? 0.95 : 0.75))) continue;
@@ -632,6 +635,14 @@ void main() {
 					bu = bgAtPos(screenToWorld(px + vec2(0.0, -1.0))); bd = bgAtPos(screenToWorld(px + vec2(0.0, 1.0)));
 					bl = bgAtPos(screenToWorld(px + vec2(-1.0, 0.0))); br = bgAtPos(screenToWorld(px + vec2(1.0, 0.0)));
 					bg = plantColor(b, ab, w, bu, bd, bl, br);
+					// a flower meadow's (flora 17): the heads of its flowers and the tops of its hedges in bloom
+					if (b == M_LEAF && bu != M_LEAF && r < sa.x + 10.0 && (int(P.p[9 + 2 * int(sa.y)].w) >> 4) == 17) {
+						uint ph = hashu(uint(w.x) * 2654435761u ^ uint(w.y) * 40503u ^ 0x3f1u);
+						if ((ph & 7u) < 5u) {
+							uint pk = (ph >> 4) % 5u;
+							bg = pk == 0u ? vec3(0.95, 0.45, 0.62) : (pk == 1u ? vec3(1.0, 0.86, 0.3) : (pk == 2u ? vec3(0.96, 0.95, 0.92) : (pk == 3u ? vec3(0.66, 0.46, 0.96) : vec3(0.92, 0.28, 0.26))));
+						}
+					}
 				} else {
 					bg = bgObjColor(b, ab, w, (c >> 8) & 255u, bu, bd, bl, br, cu, cd);
 				}
@@ -652,12 +663,23 @@ void main() {
 			if (t == 0u && b == 0u && (cd & 255u) == M_GRASS) {
 				uint gh = hashu(uint(w.x) * 2654435761u ^ 0x5bd1u);
 				if ((gh & 7u) < 5u) { bg = ramp(M_GRASS, (gh & 8u) != 0u ? 3 : 2); bgf = 0; }
-				if ((gh >> 8) % 23u == 0u) { bg = (gh & 16u) != 0u ? vec3(0.95, 0.35, 0.4) : vec3(1.0, 0.86, 0.3); bgf = 0; }
+				uint fm = (int(P.p[9 + 2 * int(sa.y)].w) >> 4) == 17 ? 4u : 23u;     // (a meadow: flowers all over)
+				if ((gh >> 8) % fm == 0u) { bg = (gh & 16u) != 0u ? vec3(0.95, 0.35, 0.4) : ((gh & 32u) != 0u ? vec3(0.66, 0.46, 0.96) : vec3(1.0, 0.86, 0.3)); bgf = 0; }
 			}
 		}
 		if (t == 0u) { col = bg; flag = bgf; }
 		else {
 			vec3 mc = fgColor(t, c, w, cu, cd, cl, cr);
+			// each kind of world's own biome's touches, by the biome's flora (26 Nov): the salt flats' crust white
+			// with cracks, glowing fissures through the basalt, a blue glint in the crystal fields' snow
+			int fh2 = int(P.p[9 + 2 * int(sa.y)].w) >> 4;
+			if (fh2 >= 11 && r > sa.x - 45.0) {
+				uint hb2 = hashu(uint(w.x) * 73856093u ^ uint(w.y) * 19349663u ^ 0x77u);
+				if (fh2 == 13 && (t == M_SAND || t == M_SANDSTONE) && r > sa.x - 26.0) {
+					mc = mix(mc, vec3(0.93, 0.92, 0.89), 0.78);
+					if ((hb2 & 31u) == 0u) mc *= 0.8;
+				}
+			}
 			if (t == M_WATER && bgf == 2) {
 				// open water over the sky: no sky through the sea, and lit like everything else, so a sea grows
 				// dark with depth (light.comp) and at night (user, 23 Nov: deep ocean worlds)
@@ -665,7 +687,14 @@ void main() {
 			}
 			else if (ALPHA[t] < 1.0) { col = mix(bg, mc, ALPHA[t]); flag = SELFL[t] == 1u ? 1 : bgf; }
 			else { col = mc; flag = int(SELFL[t]); }
+			if (fh2 == 11 && t == M_DEEPSTONE && r > sa.x - 40.0) {
+				float fn = abs(vnoise(vec2(w) / 9.0, 61) - 0.5);
+				if (fn < 0.02 + 0.008 * sin(TIME * 0.05 + float(w.x) * 0.1)) { col = mix(vec3(1.0, 0.35, 0.08), vec3(1.0, 0.72, 0.25), fract(float(w.y) * 0.37)); flag = 1; }
+			}
+			if (fh2 == 15 && t == M_SNOW && r > sa.x - 45.0 && hashu(uint(w.x) * 2246822519u ^ uint(w.y) * 3266489917u) % 31u == 0u) { col = vec3(0.55, 0.85, 1.0); flag = 1; }
 		}
+		// the salt pillars, white too
+		if (t == 0u && b == M_SANDSTONE && (int(P.p[9 + 2 * int(sa.y)].w) >> 4) == 13) col = mix(col, vec3(0.86, 0.85, 0.82), 0.7);
 	}
 	vec4 L4 = lightAt(px, pc.a.z, pc.a.w, P.p[2].z);
 	if (flag == 0) {

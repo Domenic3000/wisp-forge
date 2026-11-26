@@ -322,6 +322,67 @@ uint willowTree(vec2 q, float hh, float h3, int bb, float nz) {
 	return 0u;
 }
 
+// a mangrove (flora 14): a slim trunk standing on arched stilt roots over the mud and black water, a broad flat
+// crown, and moss hanging from it in strands
+uint mangroveTree(vec2 q, float hh, float h3, int bb, float nz) {
+	float h = 18.0 + floor(hh * 14.0);
+	float R = 9.0 + h3 * 6.0;
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	if (dy > 6.0 && dy < h && abs(da) < 1.3) return M_WOOD;
+	// stilt roots: arching from the trunk (8 up) down to the ground, three or four each side
+	int nr = 3 + int(hh * 2.0);
+	for (int k = 0; k < 4; k++) {
+		if (k >= nr) break;
+		for (int sd = -1; sd <= 1; sd += 2) {
+			float xk = float(sd) * (2.5 + float(k) * (1.6 + h3));
+			float t = da / xk;
+			if (t < 0.0 || t > 1.0) continue;
+			float yr = (8.0 - float(k) * 0.6) * (1.0 - t * t);
+			if (abs(dy - yr) < 0.75) return M_WOOD;
+		}
+	}
+	float e = length((q - vec2(0.0, h + 2.0)) / vec2(R, R * 0.42));
+	if (e < 1.0 - nz * 0.18) return M_LEAF;
+	// hanging moss
+	if (abs(da) < R * 0.9) {
+		int ci = int(floor(da + 200.0));
+		float hs = h2(ivec2(bb * 7 + ci, 95), SEED);
+		float Ls = 2.0 + h2(ivec2(bb * 7 + ci, 96), SEED) * 7.0;
+		float bot = h + 2.0 - R * 0.42 * sqrt(max(0.0, 1.0 - da * da / (R * R)));
+		if (hs < 0.3 && dy < bot && dy > bot - Ls) return M_LEAF;
+	}
+	return 0u;
+}
+
+// an elder tree (flora 16): a great trunk flaring at its foot, a few heavy boughs, and a crown of overlapping
+// masses as wide as it is tall (kept within the tree grid's reach: 34 either side)
+uint elderTree(vec2 q, float hh, float h3, float h4, int bb, float nz) {
+	float h = 54.0 + floor(hh * 30.0);
+	float tw = 3.2 + h3 * 1.6;
+	float da = q.x, dy = q.y;
+	if (dy < 0.0) return 0u;
+	// the trunk, flaring into buttress roots at its foot
+	if (dy < h - 10.0 && abs(da) < tw + max(0.0, 9.0 - dy) * 0.7) return M_WOOD;
+	// the crown: one great mass over the top and five more round it, low and wide, overlapping
+	vec2 top = vec2((h4 - 0.5) * 6.0, h - 2.0);
+	float e0 = length((q - top) / vec2(18.0 + h3 * 6.0, 11.0 + hh * 3.0));
+	if (e0 < 1.0 - nz * 0.2) return M_LEAF;
+	for (int k = 0; k < 5; k++) {
+		float hk = h2(ivec2(bb, 150 + k), SEED);
+		float sd = (k % 2 == 0) ? 1.0 : -1.0;
+		if (hk < 0.25) sd = -sd;
+		float rr = 10.0 + h2(ivec2(bb, 160 + k), SEED) * 5.0;
+		vec2 c = vec2(sd * (8.0 + hk * 14.0), h * (0.58 + 0.07 * float(k)) + hk * 5.0);
+		if (abs(c.x) + rr > 34.0) c.x = sign(c.x) * (34.0 - rr);
+		// the bough out to it, heavy
+		if (segDist(q, vec2(0.0, c.y - 10.0), c - vec2(sd * 3.0, 2.0)) < 1.4 + hk * 0.6) return M_WOOD;
+		float e = length((q - c) / vec2(rr, rr * 0.7));
+		if (e < 1.0 - nz * 0.22) return M_LEAF;
+	}
+	return 0u;
+}
+
 // charred tree: a burnt black trunk with bare, jagged branches
 uint charredTree(vec2 q, float hh, int bb) {
 	float h = 26.0 + floor(hh * 26.0);
@@ -417,6 +478,10 @@ uint mushroomTree(vec2 q, float hh, float h3, float h4) {
 // they show; below the surface they lie in the background behind the earth, found when you dig. q is
 // the cell from the trunk's foot (q.y < 0 below it), tw the trunk's width, mat its wood.
 float rootWidth(int ft) {
+	if (ft == 12) return 2.0;
+	if (ft == 14) return 3.0;
+	if (ft == 16) return 7.0;
+	if (ft == 17) return 4.0;
 	return ft == 1 ? 4.0 : (ft == 2 ? 3.0 : (ft == 4 ? 4.0 : (ft == 5 ? 2.0 : (ft == 6 ? 2.0 : (ft == 7 ? 5.5 : (ft == 8 ? 2.5 : 0.0))))));
 }
 uint treeRoots(vec2 q, float tw, float hh, float h3, int bb, uint mat) {
@@ -467,11 +532,16 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 		int ft = int(biomeB(int(ta.y)).w) >> 4;
 		float dens = ft == 1 ? 0.62 : (ft == 2 ? 0.7 : (ft == 4 ? 0.32 : (ft == 5 ? 0.33 : (ft == 3 ? 0.22 : (ft == 6 ? 0.24 :
 			(ft == 7 ? 0.62 : (ft == 8 ? 0.16 : (ft == 9 ? 0.42 : 0.0))))))));
+		// (each kind of world's own biome's: palms on the kelp isles' bars, mangroves, elder trees, a lone oak on a meadow)
+		if (ft == 12) dens = 0.2;
+		else if (ft == 14) dens = 0.42;
+		else if (ft == 16) dens = 0.3;
+		else if (ft == 17) dens = 0.06;
 		if (hb >= dens) continue;
 		float sp = abs(tth - spawnA); sp = min(sp, TAU - sp);
 		if (sp * RS0 < 30.0) continue;
 		if (onSite(tth, 26.0)) continue;
-		if (tb.y > ta.x + 0.5) continue; // trunk would be underwater
+		if (tb.y > ta.x + 0.5 && !(ft == 14 && tb.y < ta.x + 12.0)) continue; // trunk would be underwater (a mangrove stands in it)
 		float base = floor(ta.x);
 		vec2 q = vec2(da, r - base);
 		if (q.y > 112.0 || q.y < -18.0) continue;
@@ -495,6 +565,10 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 		else if (ft == 7) m = jungleTree(q, hh, h3, h4, bb, nz);
 		else if (ft == 8) m = acaciaTree(q, hh, h4, bb, nz);
 		else if (ft == 9) m = mushroomTree(q, hh, h3, h4);
+		else if (ft == 12) m = palmTree(q, hh, h3);
+		else if (ft == 14) m = mangroveTree(q, hh, h3, bb, nz);
+		else if (ft == 16) m = elderTree(q, hh, h3, h4, bb, nz);
+		else if (ft == 17) m = oakTree(q, hh, h3, h4, nz);
 		if (m != 0u) {
 			// wood wins over leaves (each tree stays one piece), and a root gives way to every other part
 			// of any tree (a root reaching under a downhill neighbour never cuts its branches or crown)
@@ -586,6 +660,131 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 			if (by >= 0.0 && by < hs && abs(dx) < 0.7 + hb) return M_STALK;
 			floraId = 0u;
 		}
+	}
+	// ---- each kind of world's own biome (26 Nov): stone scenery stands in the background with no plant id
+	// (floraId 0: nothing to fell or knit), the living undergrowth as the others' ----
+	if (floraType == 11) {
+		// basalt columns: clusters of hexagonal pillars, tallest in the middle, a dark seam between each
+		float bw6 = 17.0;
+		int b6 = int(floor(arc / bw6));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b6 + k;
+			float hb = h2(ivec2(bb, 170), SEED);
+			if (hb > 0.8) continue;
+			int nc = 3 + int(hb * 6.0);
+			float x0 = (float(bb) + 0.5) * bw6 - float(nc) * 1.5;
+			float lx = arc - x0;
+			if (lx < 0.0 || lx >= float(nc) * 3.0) continue;
+			int ci = int(floor(lx / 3.0));
+			float mid = abs(float(ci) - float(nc - 1) * 0.5) / max(float(nc) * 0.5, 1.0);
+			float hc = 5.0 + floor(h2(ivec2(bb * 11 + ci, 171), SEED) * 34.0 * (1.0 - mid * 0.55) + hb * 18.0);
+			float by = r - floor(surfA((x0 + float(ci) * 3.0 + 1.5) / RS0).x);
+			if (by < 0.0 || by >= hc) continue;
+			floraId = 0u;
+			return mod(lx, 3.0) < 0.9 || by >= hc - 1.0 ? M_OBSIDIAN : M_DEEPSTONE;
+		}
+	}
+	if (floraType == 12 && inWater) {
+		// kelp forests in the shallows: tall swaying strands up toward the surface, a float now and then
+		float wtop = surfB(th).y;
+		float bw7 = 3.0;
+		int b7 = int(floor(arc / bw7));
+		float hb = h2(ivec2(b7, 172), SEED);
+		if (hb < 0.6) {
+			float hs = (wtop - floor(sa.x)) * (0.55 + hb * 0.45);
+			float cx = (float(b7) + 0.5) * bw7 + sin(dy * 0.17 + float(b7)) * 1.2;
+			if (dy < hs && abs(arc - cx) < 0.75) return M_LEAF;
+			if (dy < hs && mod(dy + float(b7) * 3.0, 7.0) < 1.0 && abs(arc - cx - 1.0) < 0.8) return M_LEAF;
+		}
+	}
+	if (floraType == 13) {
+		// salt pillars: pale spires standing out of the flats, a ledge or two on the taller
+		float bw8 = 23.0;
+		int b8 = int(floor(arc / bw8));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b8 + k;
+			float hb = h2(ivec2(bb, 173), SEED);
+			if (hb > 0.55) continue;
+			float cx = (float(bb) + 0.5) * bw8;
+			float by = r - floor(surfA(cx / RS0).x);
+			float hs = 5.0 + floor(hb * 80.0);
+			float wd = (1.6 + hb * 7.0) * (1.0 - by / (hs * 1.35)) + (mod(by + float(bb), 8.0) < 1.0 ? 0.9 : 0.0);
+			if (by >= 0.0 && by < hs && abs(arc - cx) < wd) { floraId = 0u; return M_SANDSTONE; }
+		}
+		// crusted heaps of salt crystals, knee-high, all over the flats
+		float bw8b = 5.0;
+		int b8b = int(floor(arc / bw8b));
+		float hb8 = h2(ivec2(b8b, 181), SEED);
+		if (hb8 < 0.35) {
+			float cx8 = (float(b8b) + 0.5) * bw8b;
+			float hs8 = 1.0 + floor(hb8 * 9.0);
+			if (dy < hs8 && abs(arc - cx8) < (hs8 - dy) * 0.8 + 0.4) { floraId = 0u; return M_SANDSTONE; }
+		}
+	}
+	if (floraType == 15) {
+		// ice crystal spires, leaning, a glowing frost tip on each; small shards between
+		float bw9 = 19.0;
+		int b9 = int(floor(arc / bw9));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b9 + k;
+			float hb = h2(ivec2(bb, 174), SEED);
+			if (hb > 0.6) continue;
+			float cx = (float(bb) + 0.5) * bw9;
+			float by = r - floor(surfA(cx / RS0).x);
+			float big = hb < 0.35 ? 1.0 : 0.25;
+			float hs = 4.0 + floor((hb * 60.0 + 6.0) * big);
+			float lean = (h2(ivec2(bb, 175), SEED) - 0.5) * 0.7;
+			float wd = (1.2 + hb * 5.0 * big) * (1.0 - by / hs) + 0.3;
+			if (by >= 0.0 && by < hs && abs(arc - cx - by * lean) < wd) { floraId = 0u; return by > hs - 3.0 ? M_FROST : M_ICE; }
+		}
+	}
+	if (floraType == 16) {
+		// ferns under the elder trees: arching fronds round a short stem, and grass
+		float bw10 = 6.0;
+		int b10 = int(floor(arc / bw10));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b10 + k;
+			float hb = h2(ivec2(bb, 176), SEED);
+			if (hb > 0.55) continue;
+			float cx = (float(bb) + 0.5) * bw10;
+			float by = r - floor(surfA(cx / RS0).x);
+			float fw = 3.0 + hb * 9.0, fh = 3.0 + hb * 8.0;
+			float x = arc - cx;
+			if (by < 0.0 || abs(x) > fw) continue;
+			float yf = fh * (1.0 - (x / fw) * (x / fw));
+			floraId = 0xC000u | uint(bb + 400000) % 16000u;
+			if (abs(by - yf) < 0.9 || (abs(x) < 0.6 && by < fh)) return M_LEAF;
+			floraId = 0u;
+		}
+		float hr = h2(ivec2(col, 177), SEED);
+		if (hr < 0.4 && dy < 1.0 + floor(hr * 8.0)) return M_LEAF;
+	}
+	if (floraType == 17) {
+		// a meadow: hedgerows, the odd dry-stone wall, and flowers everywhere (render.comp colours their heads)
+		float bw11 = 41.0;
+		int b11 = int(floor(arc / bw11));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b11 + k;
+			float hb = h2(ivec2(bb, 178), SEED);
+			if (hb > 0.4) continue;
+			float cx = (float(bb) + 0.5) * bw11;
+			float hw = 7.0 + hb * 14.0;
+			float x = arc - cx;
+			float by = r - floor(surfA(cx / RS0).x);
+			if (abs(x) > hw || by < 0.0) continue;
+			if (hb < 0.25) {
+				float hh2 = 4.0 + hb * 6.0;
+				float top = hh2 - max(0.0, abs(x) - hw + 3.0) * 1.2;
+				floraId = 0xC000u | uint(bb + 500000) % 16000u;
+				if (by < top - nz * 1.2) return M_LEAF;
+				floraId = 0u;
+			} else if (by < 3.0 + step(0.5, h2(ivec2(int(arc) / 3, 179), SEED))) {
+				floraId = 0u;
+				return M_MASONRY;
+			}
+		}
+		float hr = h2(ivec2(col, 180), SEED);
+		if (hr < 0.55 && dy < 1.0 + floor(hr * 7.0)) return M_LEAF;
 	}
 	if (floraType == 4) {
 		float hr = h2(ivec2(col, 80), SEED);

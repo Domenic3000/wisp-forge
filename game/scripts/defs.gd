@@ -568,7 +568,9 @@ func _join_f(a) -> String:
 	return ", ".join(p)
 
 # ---------------------------------------------------------------- biomes ----
-# flora: 0 none, 1 trees, 2 pines, 3 cactus, 4 reeds, 5 dead trees, 6 kelp, 7 jungle, 8 acacia, 9 giant mushrooms
+# flora: 0 none, 1 trees, 2 pines, 3 cactus, 4 reeds, 5 dead trees, 6 kelp, 7 jungle, 8 acacia, 9 giant mushrooms,
+#   10 the deep sea floor; and each kind of world's own biome's (26 Nov): 11 basalt columns, 12 kelp forests and palm
+#   bars, 13 salt pillars, 14 mangroves, 15 ice crystal spires, 16 elder trees and ferns, 17 flowers and hedgerows
 # (a planet has at most 8 biomes: their parameters fill P.p[8..23])
 # ug (underground): 0 fungal, 1 crystal, 2 ice, 3 ember
 # flags: 1 snowcap, 2 pond, 4 lava lake, 8 spawn ok
@@ -586,6 +588,17 @@ const BIOMES := {
 	# a deep ocean world's sea floor, hundreds of cells down (user, 23 Nov: "are there super deep ocean worlds?")
 	"giant": {"name": "The Cloud Sea", "under": "The Crushing Deep", "off": 560.0, "amp": 30.0, "top": GRAVEL, "topD": 3, "sub": STONE, "subD": 20, "weather": "rain", "flora": 5, "ug": 3, "flags": 0},
 	"abyss": {"name": "The Abyss", "under": "Hadal Vaults", "off": 430.0, "amp": 26.0, "top": GRAVEL, "topD": 2, "sub": SAND, "subD": 10, "weather": "rain", "flora": 10, "ug": 1, "flags": 0},
+	# each kind of world's own biome (user, 26 Nov: "do other worlds have unique biomes and unique enemies?"; chose
+	# Basalt Columns, Kelp Isles, Salt Flats, Sunken Mangroves, Crystal Fields, Elder Canopy, Flower Meadows, each with a
+	# guardian). Made of the materials there are (world materials are full at 64): their look is their plants
+	# (gen.comp flora 11-17) and render.comp's touches by flora (salt-white crust, flowers, glowing fissures and snow)
+	"basalt": {"name": "Basalt Columns", "under": "Smoldering Vaults", "off": 2.0, "amp": 16.0, "top": DEEPSTONE, "topD": 0, "sub": STONE, "subD": 0, "weather": "ash", "flora": 11, "ug": 3, "flags": 0},
+	"kelp": {"name": "Kelp Isles", "under": "Abyssal Grottos", "off": 34.0, "amp": 16.0, "top": SAND, "topD": 3, "sub": SAND, "subD": 8, "weather": "rain", "flora": 12, "ug": 0, "flags": 0},
+	"saltflats": {"name": "Saltglass Flats", "under": "Prism Hollows", "off": 16.0, "amp": 1.5, "top": SANDSTONE, "topD": 2, "sub": SAND, "subD": 12, "weather": "clear", "flora": 13, "ug": 1, "flags": 8},
+	"mangrove": {"name": "Sunken Mangroves", "under": "Glowroot Caverns", "off": 18.0, "amp": 3.0, "top": MUD, "topD": 3, "sub": DIRT, "subD": 8, "weather": "rain", "flora": 14, "ug": 0, "flags": 2 | 8},
+	"crystalfields": {"name": "Crystal Fields", "under": "Frostvein Grottos", "off": -4.0, "amp": 7.0, "top": SNOW, "topD": 3, "sub": DIRT, "subD": 8, "weather": "snow", "flora": 15, "ug": 2, "flags": 8},
+	"elder": {"name": "Elder Canopy", "under": "Glowroot Caverns", "off": 0.0, "amp": 16.0, "top": GRASS, "topD": 1, "sub": DIRT, "subD": 14, "weather": "rain", "flora": 16, "ug": 0, "flags": 8},
+	"meadow": {"name": "Flower Meadows", "under": "Glowroot Caverns", "off": 6.0, "amp": 5.0, "top": GRASS, "topD": 1, "sub": DIRT, "subD": 10, "weather": "rain", "flora": 17, "ug": 0, "flags": 8},
 }
 
 ## Where the planets hang (world units, the home planet of the system at the centre): space travel
@@ -799,6 +812,10 @@ func planet_pos(i: int) -> Vector2:
 ## own, its size, sea, lava, wealth, sky and place in the system.
 const PLANET_SCALE := 1.5
 var world_seed := 0
+## Planets of this journey made before each kind of world got its own biome (26 Nov): their biomes are grown from
+## the old pools (`pool_v1`), as their saved ground was (index -> true; main sets it from the save, `bset`)
+var legacy_biomes := {}
+const BIOME_SET := 2
 var _planet_cache := {}
 
 ## Each planet has its own size: "radius" is its mean surface radius in cells (classic Verdance
@@ -1216,32 +1233,35 @@ const PLANET_KINDS := {
 	"temperate": {"pool": {"forest": 3, "jungle": 2, "marsh": 2, "tundra": 2, "mountain": 2, "savanna": 2, "desert": 2, "grove": 2},
 		"n": [6, 8], "must": ["forest"], "radius": [1250, 1450], "sea": [-1, -1], "lava": [0.8, 1.2], "rich": [0.9, 1.1],
 		"magma": [0.42, 0.5], "sky": Color(1, 1, 1), "adj": ["temperate cradle", "green", "gentle", "living"]},
-	"volcanic": {"pool": {"ashland": 6, "mountain": 2, "desert": 1},
+	"volcanic": {"pool": {"ashland": 5, "basalt": 3, "mountain": 2, "desert": 1}, "pool_v1": {"ashland": 6, "mountain": 2, "desert": 1},
 		"n": [4, 6], "must": ["ashland", "ashland"], "radius": [1000, 1200], "sea": [-1, -1], "lava": [2.2, 3.0], "rich": [1.3, 1.5],
 		"magma": [0.6, 0.72], "sky": Color(1.25, 0.78, 0.7), "adj": ["volcanic", "smouldering", "burning"]},
-	"ocean": {"pool": {"ocean": 6, "forest": 1, "marsh": 1, "tundra": 1, "jungle": 1},
+	"ocean": {"pool": {"ocean": 5, "kelp": 3, "forest": 1, "marsh": 1, "tundra": 1, "jungle": 1}, "pool_v1": {"ocean": 6, "forest": 1, "marsh": 1, "tundra": 1, "jungle": 1},
 		"n": [5, 8], "must": ["ocean", "ocean", "ocean"], "radius": [1450, 1700], "sea": [20, 32], "lava": [0.6, 1.0], "rich": [1.1, 1.3],
 		"magma": [0.36, 0.44], "sky": Color(0.85, 1.05, 1.15), "adj": ["water", "storm-swept", "island"]},
-	"desert": {"pool": {"desert": 6, "mountain": 2, "savanna": 2, "ashland": 1},
+	"desert": {"pool": {"desert": 5, "saltflats": 3, "mountain": 2, "savanna": 2, "ashland": 1}, "pool_v1": {"desert": 6, "mountain": 2, "savanna": 2, "ashland": 1},
 		"n": [4, 6], "must": ["desert", "desert"], "radius": [1300, 1550], "sea": [-1, -1], "lava": [1.2, 1.8], "rich": [1.4, 1.6],
 		"magma": [0.42, 0.5], "sky": Color(1.15, 1.0, 0.8), "adj": ["desert", "sun-baked", "parched"]},
-	"marsh": {"pool": {"marsh": 5, "grove": 2, "jungle": 2, "tundra": 1},
+	"marsh": {"pool": {"marsh": 4, "mangrove": 3, "grove": 2, "jungle": 2, "tundra": 1}, "pool_v1": {"marsh": 5, "grove": 2, "jungle": 2, "tundra": 1},
 		"n": [5, 7], "must": ["marsh", "marsh"], "radius": [900, 1100], "sea": [14, 20], "lava": [0.8, 1.2], "rich": [1.5, 1.7],
 		"magma": [0.6, 0.66], "sky": Color(0.85, 1.0, 0.85), "adj": ["marsh", "drowned", "misty"]},
-	"frozen": {"pool": {"tundra": 6, "mountain": 3, "grove": 1, "forest": 1},
+	"frozen": {"pool": {"tundra": 5, "crystalfields": 3, "mountain": 3, "grove": 1, "forest": 1}, "pool_v1": {"tundra": 6, "mountain": 3, "grove": 1, "forest": 1},
 		"n": [4, 7], "must": ["tundra", "tundra"], "radius": [1100, 1400], "sea": [-1, -1], "lava": [0.6, 1.0], "rich": [1.3, 1.5],
 		"magma": [0.42, 0.5], "sky": Color(0.9, 0.97, 1.12), "adj": ["frozen", "ice-bound", "wind-scoured"]},
-	"wild": {"pool": {"forest": 1, "jungle": 1, "marsh": 1, "tundra": 1, "mountain": 1, "savanna": 1, "desert": 1, "grove": 1, "ashland": 1, "ocean": 1},
+	"wild": {"pool": {"elder": 4, "forest": 1, "jungle": 1, "marsh": 1, "tundra": 1, "mountain": 1, "savanna": 1, "desert": 1, "grove": 1, "ashland": 1, "ocean": 1,
+		"basalt": 0.5, "kelp": 0.5, "saltflats": 0.5, "mangrove": 0.5, "crystalfields": 0.5, "meadow": 0.5},
+		"pool_v1": {"forest": 1, "jungle": 1, "marsh": 1, "tundra": 1, "mountain": 1, "savanna": 1, "desert": 1, "grove": 1, "ashland": 1, "ocean": 1},
 		"n": [6, 8], "must": [], "radius": [1200, 1600], "sea": [-1, -1], "lava": [0.9, 1.6], "rich": [1.3, 1.6],
 		"magma": [0.42, 0.55], "sky": Color(1.05, 0.95, 1.1), "adj": ["strange", "wild", "patchwork"]},
 	# a world of kingdoms: towns, castles and keeps on every good stretch of land (CLIMATES "realm")
-	"realm": {"pool": {"forest": 3, "savanna": 3, "mountain": 2, "tundra": 1, "desert": 1, "grove": 1},
+	"realm": {"pool": {"meadow": 4, "forest": 3, "savanna": 3, "mountain": 2, "tundra": 1, "desert": 1, "grove": 1}, "pool_v1": {"forest": 3, "savanna": 3, "mountain": 2, "tundra": 1, "desert": 1, "grove": 1},
 		"n": [5, 7], "must": ["forest", "savanna"], "radius": [1300, 1550], "sea": [-1, -1], "lava": [0.8, 1.1], "rich": [1.2, 1.4],
 		"magma": [0.42, 0.5], "sky": Color(1.04, 1.0, 0.95), "adj": ["settled", "crowded", "kingdom", "old"]},
 }
 const PLANET_ORDER := ["volcanic", "ocean", "desert", "marsh", "frozen", "wild", "realm"]
 const BIOME_WORDS := {"forest": "woods", "jungle": "jungle", "marsh": "bogs", "tundra": "snowfields", "mountain": "peaks",
-	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas", "abyss": "abyssal deeps", "giant": "cloud seas"}
+	"savanna": "grasslands", "desert": "dunes", "grove": "mushroom groves", "ashland": "ash plains", "ocean": "seas", "abyss": "abyssal deeps", "giant": "cloud seas",
+	"basalt": "basalt columns", "kelp": "kelp isles", "saltflats": "salt flats", "mangrove": "mangroves", "crystalfields": "crystal fields", "elder": "elder forests", "meadow": "flower meadows"}
 const NAME_A := ["Ver", "Cin", "Thal", "Ser", "Fen", "Ar", "Bel", "Cor", "Dra", "El", "Gal", "Hal", "Ith", "Kel", "Lor", "Mor",
 	"Nev", "Or", "Pyr", "Quel", "Ryn", "Syl", "Tor", "Ul", "Vel", "Wyn", "Zar", "Ash", "Brim", "Cal", "Del", "Em", "Fal", "Gry",
 	"Hes", "Ka", "Mal", "Nim", "Oss", "Per", "Rhe", "Sol", "Tav", "Va", "Yr"]
@@ -1254,7 +1274,7 @@ func make_planet(i: int) -> Dictionary:
 
 ## planet i of the system grown from ws (0: the classic one); a fresh copy each time
 func make_planet_for(ws: int, i: int) -> Dictionary:
-	var key := "%d:%d" % [ws, i]
+	var key := "%d:%d:%s" % [ws, i, "v1" if legacy_biomes.has(i) else "v2"]
 	if not _planet_cache.has(key):
 		_planet_cache[key] = _exotic_planet(ws, i) if i >= EXOTIC else (_classic_planet(i) if ws == 0 else _grown_planet(ws, i))
 	return (_planet_cache[key] as Dictionary).duplicate(true)
@@ -1367,7 +1387,7 @@ func _grown_planet(ws: int, i: int) -> Dictionary:
 	# biomes: the kind's must-haves, filled from its pool, then shuffled round the planet
 	var n := rng.randi_range(int(kd["n"][0]), int(kd["n"][1]))
 	var bl: Array = (kd["must"] as Array).duplicate()
-	var pool: Dictionary = kd["pool"]
+	var pool: Dictionary = kd["pool_v1"] if legacy_biomes.has(i) and kd.has("pool_v1") else kd["pool"]
 	var tot := 0.0
 	for bp_ in pool:
 		tot += float(pool[bp_])
@@ -1398,7 +1418,7 @@ func _grown_planet(ws: int, i: int) -> Dictionary:
 	var sea := -1.0
 	if float(kd["sea"][0]) >= 0.0:
 		sea = rng.randf_range(float(kd["sea"][0]), float(kd["sea"][1]))
-	if bl.has("ocean") and sea < 0.0:
+	if (bl.has("ocean") or bl.has("kelp")) and sea < 0.0:
 		sea = rng.randf_range(20.0, 30.0)
 	var sky: Color = kd["sky"]
 	sky = Color(sky.r + rng.randf_range(-0.06, 0.06), sky.g + rng.randf_range(-0.06, 0.06), sky.b + rng.randf_range(-0.06, 0.06))
@@ -1668,7 +1688,15 @@ const SIGIL_MATS := {
 	"tundra": {SNOW: 20, FROST: 8}, "mountain": {STONE: 30, FROST: 4}, "savanna": {DRYGRASS: 20, WOOD: 8},
 	"desert": {SAND: 30, CACTUS: 8}, "grove": {MYCELIUM: 16, SHROOM: 10}, "ashland": {ASH: 20, EMBER: 8},
 	"ocean": {WATER: 30, SAND: 10},
+	"basalt": {DEEPSTONE: 24, EMBER: 4}, "kelp": {SAND: 20, LEAF: 16}, "saltflats": {SANDSTONE: 24, SAND: 10},
+	"mangrove": {MUD: 16, WOOD: 12}, "crystalfields": {SNOW: 16, FROST: 10}, "elder": {WOOD: 24, LEAF: 16}, "meadow": {LEAF: 20, DIRT: 10},
 }
+
+## the older biome each new one borrows its buildings, dungeons and wardens' colours from (26 Nov)
+const BASE_BIOME := {"basalt": "ashland", "kelp": "ocean", "saltflats": "desert", "mangrove": "marsh", "crystalfields": "tundra",
+	"elder": "forest", "meadow": "forest"}
+static func base_biome(b: String) -> String:
+	return String(BASE_BIOME.get(b, b))
 const SIGIL_COMMON := {COPPER: 4, CRYSTAL: 2}
 
 ## a guardian's sigil: its name for the forge and the satchel
@@ -2735,6 +2763,49 @@ const BOSSES := {
 		"moves": {"dive": {}, "spit": {"proj": "surge", "n": 4, "spread": 0.2}, "summon": {"type": "c_reefeel", "n": 2, "max": 3}},
 		"rage": {"gust": {}, "spit2": {"proj": "surge", "n": 6, "spread": 0.16}},
 		"relic": "tidefin", "loot": {SAND: 30, CRYSTAL: 10, WATER: 40}, "wall": MASONRY, "floor": SANDSTONE, "trim": CRYSTAL, "glow": CRYSTAL},
+	# each kind of world's own biome's guardian (26 Nov)
+	"basalt": {"name": "Basalthor", "title": "the Pillar Titan", "lair": "Basalthor's Steps", "col": Color(0.95, 0.5, 0.25),
+		"body": {"plan": "beast", "len": 40, "tall": 20, "leg": 14, "head": 10, "neck": 4, "base": "#2e2e36", "belly": "#5a5a64",
+			"accent": "#ff7a2a", "dark": "#101014", "eye": "#ffb03a", "skin": "scales", "spikes": 7, "horns": true, "tail": "short"},
+		"w": 32.0, "h": 32.0, "hp": 660.0, "dmg": 16.0, "go": "walk", "speed": 0.9,
+		"moves": {"slam": {"far": true}, "erupt": {"mat": DEEPSTONE, "col": Color(0.4, 0.4, 0.45)}, "spit": {"proj": "rock", "n": 3, "spread": 0.2}},
+		"rage": {"rain": {"proj": "efire", "n": 6}},
+		"relic": "basaltheart", "loot": {DEEPSTONE: 40, OBSIDIAN: 16, EMBER: 8}, "wall": DEEPSTONE, "floor": OBSIDIAN, "trim": EMBER, "glow": EMBER},
+	"kelp": {"name": "Marelle", "title": "the Kelp Wyrm", "lair": "Marelle's Forest", "col": Color(0.4, 0.85, 0.5),
+		"body": {"plan": "serpent", "segs": 13, "rad": 7.0, "base": "#2a5a2a", "belly": "#a8c86a", "accent": "#3affd8", "dark": "#0e2a10", "eye": "#ffe14a", "teeth": true},
+		"w": 16.0, "h": 14.0, "hp": 600.0, "dmg": 14.0, "go": "slither", "speed": 2.2, "fly": true, "swim": true, "wet": true,
+		"moves": {"dive": {}, "spit": {"proj": "surge", "n": 4, "spread": 0.2}, "summon": {"type": "c_kelpserpent", "n": 2, "max": 3}},
+		"rage": {"gust": {}, "spit2": {"proj": "venom", "n": 5, "spread": 0.16}},
+		"relic": "kelpcrown", "loot": {SAND: 30, LEAF: 30, CRYSTAL: 8}, "wall": MASONRY, "floor": SANDSTONE, "trim": MOSSBLOCK, "glow": CRYSTAL},
+	"saltflats": {"name": "Brinemaw", "title": "the Salt Toad", "lair": "Brinemaw's Pan", "col": Color(1.0, 0.85, 0.85),
+		"body": {"plan": "toad", "len": 38, "tall": 24, "base": "#e4dad0", "belly": "#fff6ec", "accent": "#e8909a", "dark": "#6a5a54", "eye": "#ff5a6a", "skin": "spots"},
+		"w": 32.0, "h": 24.0, "hp": 620.0, "dmg": 14.0, "go": "hop", "speed": 1.0,
+		"moves": {"slam": {"far": true}, "spit": {"proj": "sandball", "n": 5, "spread": 0.22}, "summon": {"type": "c_salthopper", "n": 3, "max": 5}},
+		"rage": {"rain": {"proj": "sandball", "n": 8}},
+		"relic": "saltglass", "loot": {SANDSTONE: 30, SAND: 30, CRYSTAL: 8}, "wall": SANDSTONE, "floor": SANDSTONE, "trim": GLASS},
+	"mangrove": {"name": "The Rootmother", "title": "Keeper of the Mangroves", "lair": "The Rootmother's Tangle", "col": Color(0.55, 0.8, 0.4),
+		"body": {"plan": "fungus", "len": 30, "tall": 36, "base": "#5a4a34", "belly": "#a89a78", "accent": "#5e9a34", "dark": "#22180e", "eye": "#ffd23a", "skin": "moss"},
+		"w": 26.0, "h": 34.0, "hp": 620.0, "dmg": 13.0, "go": "walk", "speed": 0.6,
+		"moves": {"erupt": {"mat": WOOD, "col": Color(0.45, 0.32, 0.18)}, "spit": {"proj": "mudball", "n": 4, "spread": 0.25}, "summon": {"type": "c_mirecroc", "n": 1, "max": 2}},
+		"rage": {"cloud": {}},
+		"relic": "mangroveseed", "loot": {WOOD: 40, MUD: 30, LEAF: 20}, "wall": WOOD, "floor": MOSSBLOCK, "trim": WOOD},
+	"crystalfields": {"name": "Prismara", "title": "the Crystal Hind", "lair": "Prismara's Spires", "col": Color(0.75, 0.6, 1.0),
+		"body": {"plan": "beast", "len": 38, "tall": 17, "leg": 17, "head": 10, "neck": 9, "base": "#c8d8e8", "belly": "#f4faff",
+			"accent": "#e070ff", "dark": "#4a5a7a", "eye": "#f2a6ff", "skin": "fur", "spikes": 6, "antlers": 3, "tail": "short", "ears": true},
+		"w": 30.0, "h": 34.0, "hp": 600.0, "dmg": 15.0, "go": "walk", "speed": 1.2,
+		"moves": {"charge": {}, "rain": {"proj": "ice", "n": 7}, "spit": {"proj": "ice", "n": 3, "spread": 0.14}}, "rage": {"roar": {}},
+		"relic": "prismheart", "loot": {ICE: 30, FROST: 14, CRYSTAL: 10}, "wall": ICE, "floor": MASONRY, "trim": FROST, "glow": FROST},
+	"elder": {"name": "Old Mossjaw", "title": "the Elder Bear", "lair": "Mossjaw's Den", "col": Color(0.6, 0.75, 0.35),
+		"body": {"plan": "beast", "len": 42, "tall": 22, "leg": 14, "head": 12, "neck": 4, "base": "#4a3a28", "belly": "#7a6a4a",
+			"accent": "#5e9a34", "dark": "#1e160c", "eye": "#ffb03a", "skin": "moss", "tail": "short", "ears": true},
+		"w": 34.0, "h": 34.0, "hp": 680.0, "dmg": 16.0, "go": "walk", "speed": 1.0,
+		"moves": {"slam": {"far": true}, "charge": {}, "roar": {}}, "rage": {"erupt": {"mat": WOOD, "col": Color(0.45, 0.32, 0.18)}},
+		"relic": "mossjaw", "loot": {WOOD: 40, MOSSBLOCK: 20, AMBER: 6}, "wall": MOSSBLOCK, "floor": MASONRY, "trim": WOOD},
+	"meadow": {"name": "Queen Bombyla", "title": "of the Thousand Blooms", "lair": "The Queen's Hive", "col": Color(1.0, 0.82, 0.3),
+		"body": {"plan": "bird", "len": 26, "span": 38, "base": "#e8b83a", "belly": "#2a2222", "accent": "#fff2a0", "dark": "#3a2a10", "eye": "#1a1a1a", "skin": "fur"},
+		"w": 24.0, "h": 20.0, "hp": 560.0, "dmg": 13.0, "go": "fly", "speed": 2.4, "fly": true,
+		"moves": {"dive": {}, "gust": {}, "summon": {"type": "c_bumblewing", "n": 3, "max": 5}}, "rage": {"dive2": {}, "spit": {"proj": "spore", "n": 3, "spread": 0.4}},
+		"relic": "honeycomb", "loot": {LEAF: 30, AMBER: 8, DRYGRASS: 20}, "wall": MASONRY, "floor": MASONRY, "trim": WOOD},
 }
 
 ## The relics the guardians keep (items[id]; main.gd applies them where they matter).
@@ -2749,6 +2820,14 @@ const RELICS := {
 	"lionheart": {"name": "Lionheart", "desc": "+40 max health."},
 	"sunidol": {"name": "Sun Idol", "desc": "Your spells hit a quarter harder, and a desert world's sun can't scorch you."},
 	"lantern": {"name": "Glowcap Lantern", "desc": "A soft light goes with you."},
+	# the new biomes' guardians' (26 Nov): in "mods", as the heart bosses'
+	"basaltheart": {"name": "Basalt Heart", "desc": "Lava hurts you far less, and your staff digs a quarter faster.", "mods": {"lava_dmg": 0.4, "dig_rate": 1.25}},
+	"kelpcrown": {"name": "Kelp Crown", "desc": "You swim two fifths faster and hold your breath twice as long.", "mods": {"swim": 1.4, "breath": 2.0}},
+	"saltglass": {"name": "Saltglass Prism", "desc": "Spark Bolts strike a fifth harder, and spells cost a tenth less.", "mods": {"spell_spark": 1.2, "mana_cost": 0.9}},
+	"mangroveseed": {"name": "Mangrove Seed", "desc": "Draughts heal two fifths more, and you take a tenth less damage.", "mods": {"draught_heal": 1.4, "dmg_taken": 0.9}},
+	"prismheart": {"name": "Prism Heart", "desc": "Frostbite bites a third harder, and a soft light goes with you.", "mods": {"spell_frost": 1.33, "light": 1.0}},
+	"mossjaw": {"name": "Mossjaw's Claw", "desc": "+30 max health, and you take a tenth less damage.", "mods": {"max_hp": 30.0, "dmg_taken": 0.9}},
+	"honeycomb": {"name": "Royal Honeycomb", "desc": "Mana comes back faster, and you run a tenth faster.", "mods": {"mana_regen": 0.4, "speed": 1.1}},
 	# the heart bosses' (HEARTS): what they do is in "mods", the gear's stats (main `gear` reads them too)
 	"moltenheart": {"name": "Molten Heart", "desc": "Fireball strikes half again as hard, and fire and lava can't hurt you.",
 		"mods": {"spell_fireball": 1.5, "fire_dmg": 0.0, "lava_dmg": 0.0}},
@@ -2884,7 +2963,7 @@ const CREATURES := {
 		"body": {"plan": "beast", "len": 11, "tall": 5, "leg": 5, "head": 4, "neck": 2, "base": "#b89058", "belly": "#e0c898", "accent": "#5a3a1a",
 			"dark": "#3a2410", "eye": "#ffd25a", "skin": "spots", "tail": "tuft", "ears": true},
 		"moves": {"charge": {"v": 3.8}}, "drops": [[DRYGRASS, 4, 0.6], [COPPER, 1, 0.2]]},
-	"vulture": {"name": "Vulture", "where": ["savanna", "desert"], "temper": "neutral", "active": "day", "scavenge": true, "idle": {"soar": 4, "circle": 1, "perch": 1}, "w": 9.0, "h": 7.0, "hp": 22.0, "dmg": 6.0, "go": "fly", "speed": 1.6,
+	"vulture": {"name": "Vulture", "where": ["savanna", "desert", "saltflats"], "temper": "neutral", "active": "day", "scavenge": true, "idle": {"soar": 4, "circle": 1, "perch": 1}, "w": 9.0, "h": 7.0, "hp": 22.0, "dmg": 6.0, "go": "fly", "speed": 1.6,
 		"body": {"plan": "bird", "len": 9, "span": 11, "base": "#3a2e28", "belly": "#d8b8a0", "accent": "#e8a0a0", "dark": "#1a1410", "eye": "#ffd23a", "skin": "fur"},
 		"moves": {"dive": {"v": 3.6}}, "drops": [[DRYGRASS, 2, 0.5]]},
 	"sandviper": {"name": "Sand Viper", "where": ["desert"], "temper": "predator", "habitat": "soft", "eats": ["skink"], "w": 6.0, "h": 5.0, "hp": 30.0, "dmg": 9.0, "go": "burrow", "speed": 1.4,
@@ -2915,17 +2994,17 @@ const CREATURES := {
 			"dark": "#1a0a08", "eye": "#ffd23a", "skin": "scales", "spikes": 5, "tail": "long", "ears": true},
 		"moves": {"charge": {"v": 4.0}, "spit": {"proj": "efire", "n": 2, "spread": 0.2}}, "drops": [[EMBER, 3, 1.0], [OBSIDIAN, 2, 0.4]]},
 	# prey (ecology.gd): they live alongside the hunters, and run from them and from you
-	"hare": {"name": "Meadow Hare", "where": ["forest", "savanna", "mountain"], "temper": "prey", "active": "day", "pack": 2,
+	"hare": {"name": "Meadow Hare", "where": ["forest", "savanna", "mountain", "meadow", "elder"], "temper": "prey", "active": "day", "pack": 2,
 		"idle": {"graze": 4, "sniff": 2, "wander": 2, "rest": 1}, "w": 6.0, "h": 4.0, "hp": 10.0, "dmg": 0.0, "go": "walk", "speed": 1.4,
 		"body": {"plan": "beast", "len": 5, "tall": 3, "leg": 2, "head": 2.5, "neck": 0, "base": "#9a7a58", "belly": "#e8dcc8", "accent": "#6a5038",
 			"dark": "#2a2018", "eye": "#1a1a1a", "skin": "fur", "tail": "short", "ears": true, "long_ears": true},
 		"moves": {}, "drops": [[DRYGRASS, 2, 0.5]]},
-	"snowhare": {"name": "Snow Hare", "where": ["tundra"], "temper": "prey", "pack": 2,
+	"snowhare": {"name": "Snow Hare", "where": ["tundra", "crystalfields"], "temper": "prey", "pack": 2,
 		"idle": {"graze": 3, "sniff": 2, "wander": 2, "rest": 2}, "w": 6.0, "h": 4.0, "hp": 10.0, "dmg": 0.0, "go": "walk", "speed": 1.4,
 		"body": {"plan": "beast", "len": 5, "tall": 3, "leg": 2, "head": 2.5, "neck": 0, "base": "#e8eef2", "belly": "#ffffff", "accent": "#a8b4c0",
 			"dark": "#4a5460", "eye": "#1a1a1a", "skin": "fur", "tail": "short", "ears": true, "long_ears": true},
 		"moves": {}, "drops": [[SNOW, 2, 0.5]]},
-	"deer": {"name": "Glade Deer", "where": ["forest", "jungle"], "temper": "prey", "active": "day", "pack": 3,
+	"deer": {"name": "Glade Deer", "where": ["forest", "jungle", "elder"], "temper": "prey", "active": "day", "pack": 3,
 		"idle": {"graze": 5, "wander": 2, "sniff": 2, "rest": 1, "drink": 1}, "w": 13.0, "h": 14.0, "hp": 30.0, "dmg": 0.0, "go": "walk", "speed": 1.5,
 		"body": {"plan": "beast", "len": 12, "tall": 5, "leg": 7, "head": 3.5, "neck": 4, "antlers": 2, "base": "#a0683a", "belly": "#e8d0a8", "accent": "#7a5a3a",
 			"dark": "#3a2414", "eye": "#1a1a1a", "skin": "spots", "tail": "short", "ears": true},
@@ -2935,7 +3014,7 @@ const CREATURES := {
 		"body": {"plan": "beast", "len": 4, "tall": 2, "leg": 1, "head": 2, "neck": 0, "base": "#c89a5a", "belly": "#f0dca8", "accent": "#3a8aa8",
 			"dark": "#4a3418", "eye": "#1a1a1a", "skin": "scales", "tail": "long", "spikes": 0},
 		"moves": {}, "drops": [[SAND, 2, 0.5]]},
-	"reedfrog": {"name": "Reed Frog", "where": ["marsh", "jungle"], "temper": "prey", "habitat": "water",
+	"reedfrog": {"name": "Reed Frog", "where": ["marsh", "jungle", "mangrove"], "temper": "prey", "habitat": "water",
 		"w": 4.0, "h": 3.0, "hp": 8.0, "dmg": 0.0, "go": "hop", "speed": 0.9,
 		"body": {"plan": "toad", "len": 4, "tall": 3, "base": "#5aa83a", "belly": "#e8f0a0", "accent": "#e8d03a", "dark": "#1a3a14", "eye": "#1a1a1a", "skin": "spots"},
 		"moves": {}, "drops": [[SHROOM, 1, 0.2]]},
@@ -2979,9 +3058,69 @@ const CREATURES := {
 		"glow": Color(0.6, 1.0, 0.55),
 		"body": {"plan": "toad", "len": 10, "tall": 7, "base": "#101820", "belly": "#2a3a40", "accent": "#9aff7a", "dark": "#030608", "eye": "#e8ffd8", "skin": "warts"},
 		"moves": {"tongue": {}, "dive": {"v": 3.2}}, "drops": [[ABYSSPEARL, 2, 0.4]]},
-	"stormgull": {"name": "Storm Gull", "where": ["ocean"], "temper": "neutral", "active": "day", "scavenge": true, "w": 6.0, "h": 4.0, "hp": 18.0, "dmg": 6.0, "go": "fly", "speed": 1.9,
+	"stormgull": {"name": "Storm Gull", "where": ["ocean", "kelp"], "temper": "neutral", "active": "day", "scavenge": true, "w": 6.0, "h": 4.0, "hp": 18.0, "dmg": 6.0, "go": "fly", "speed": 1.9,
 		"body": {"plan": "bird", "len": 5, "span": 7, "base": "#e8eef0", "belly": "#ffffff", "accent": "#ffb03a", "dark": "#5a6670", "eye": "#1a1a1a", "skin": "fur"},
 		"moves": {"dive": {"v": 3.8}}, "drops": [[SAND, 2, 0.4]]},
+	# each kind of world's own biome's creatures (26 Nov)
+	"basaltmonitor": {"name": "Basalt Monitor", "where": ["basalt"], "temper": "predator", "w": 13.0, "h": 6.0, "hp": 38.0, "dmg": 9.0, "go": "walk", "speed": 1.3,
+		"body": {"plan": "beast", "len": 13, "tall": 4, "leg": 3, "head": 4, "neck": 1, "base": "#2e2e36", "belly": "#56565e", "accent": "#ff7a2a",
+			"dark": "#101014", "eye": "#ffb03a", "skin": "scales", "spikes": 4, "tail": "long"},
+		"moves": {"charge": {"v": 3.4}, "spit": {"proj": "efire", "n": 1, "spread": 0.0}}, "drops": [[DEEPSTONE, 4, 0.7], [EMBER, 1, 0.25]]},
+	"steammoth": {"name": "Steam Moth", "where": ["basalt"], "temper": "neutral", "active": "night", "w": 6.0, "h": 4.0, "hp": 16.0, "dmg": 6.0, "go": "fly", "speed": 1.2,
+		"body": {"plan": "bird", "len": 5, "span": 9, "base": "#8a7a6a", "belly": "#e8d8c8", "accent": "#ff9a3a", "dark": "#3a2e26", "eye": "#ffd23a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.0}}, "drops": [[ASH, 3, 0.6], [EMBER, 1, 0.15]]},
+	"tideotter": {"name": "Tide Otter", "where": ["kelp"], "temper": "prey", "active": "day", "pack": 2, "idle": {"graze": 5, "wander": 2, "sniff": 2, "rest": 1, "drink": 1},
+		"w": 10.0, "h": 6.0, "hp": 22.0, "dmg": 0.0, "go": "walk", "speed": 1.5,
+		"body": {"plan": "beast", "len": 10, "tall": 4, "leg": 3, "head": 3.5, "neck": 2, "base": "#6a4a32", "belly": "#c8a882", "accent": "#4a3222",
+			"dark": "#24180e", "eye": "#1a1a1a", "skin": "fur", "tail": "long", "ears": true},
+		"moves": {}, "drops": [[SAND, 2, 0.5], [LEAF, 2, 0.4]]},
+	"kelpserpent": {"name": "Kelp Serpent", "where": ["kelp"], "temper": "predator", "swim": true, "w": 4.0, "h": 3.0, "hp": 30.0, "dmg": 9.0, "go": "slither", "speed": 1.8,
+		"body": {"plan": "serpent", "segs": 16, "rad": 1.2, "base": "#2a5a2a", "belly": "#a8c86a", "accent": "#3affd8", "dark": "#0e2a10", "eye": "#ffe14a"},
+		"moves": {"dive": {"v": 3.6}}, "drops": [[LEAF, 3, 0.6], [CRYSTAL, 1, 0.12]]},
+	"salthopper": {"name": "Salt Hopper", "where": ["saltflats"], "temper": "prey", "active": "day", "pack": 3, "w": 6.0, "h": 4.0, "hp": 16.0, "dmg": 0.0, "go": "hop", "speed": 0.9,
+		"body": {"plan": "toad", "len": 6, "tall": 4, "base": "#ece4dc", "belly": "#fff8f0", "accent": "#e8909a", "dark": "#6a5a54", "eye": "#3a1a1a", "skin": "spots"},
+		"moves": {}, "drops": [[SANDSTONE, 2, 0.5], [SAND, 2, 0.5]]},
+	"miragefox": {"name": "Mirage Fox", "where": ["saltflats"], "temper": "predator", "active": "night", "eats": ["salthopper", "skink"], "w": 11.0, "h": 8.0, "hp": 28.0, "dmg": 8.0, "go": "walk", "speed": 1.6,
+		"body": {"plan": "beast", "len": 10, "tall": 4, "leg": 5, "head": 3.5, "neck": 2, "base": "#e8dcc8", "belly": "#fff6ea", "accent": "#e8a85a",
+			"dark": "#5a4a3a", "eye": "#5af0ff", "skin": "fur", "tail": "tuft", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[SAND, 3, 0.6], [CRYSTAL, 1, 0.15]]},
+	"mirecroc": {"name": "Mangrove Croc", "where": ["mangrove"], "temper": "territorial", "habitat": "water", "w": 16.0, "h": 6.0, "hp": 44.0, "dmg": 10.0, "go": "walk", "speed": 1.0,
+		"body": {"plan": "beast", "len": 16, "tall": 4, "leg": 2, "head": 5, "neck": 1, "base": "#3a4a2a", "belly": "#8a8a5a", "accent": "#5a6a3a",
+			"dark": "#18200e", "eye": "#ffd23a", "skin": "scales", "spikes": 5, "tail": "long"},
+		"moves": {"charge": {"v": 3.0}}, "drops": [[MUD, 4, 0.7], [WOOD, 2, 0.4]]},
+	"heron": {"name": "Mangrove Heron", "where": ["mangrove"], "temper": "predator", "active": "day", "habitat": "trees", "eats": ["reedfrog"], "w": 7.0, "h": 6.0, "hp": 20.0, "dmg": 6.0, "go": "fly", "speed": 1.6,
+		"body": {"plan": "bird", "len": 7, "span": 10, "base": "#c8d0d8", "belly": "#ffffff", "accent": "#e8b03a", "dark": "#4a5a6a", "eye": "#ffd23a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.6}}, "drops": [[LEAF, 2, 0.5], [MUD, 2, 0.4]]},
+	"crystalstag": {"name": "Crystal Stag", "where": ["crystalfields"], "temper": "prey", "active": "day", "pack": 2, "idle": {"graze": 5, "wander": 2, "sniff": 2, "rest": 1, "drink": 1},
+		"w": 13.0, "h": 14.0, "hp": 32.0, "dmg": 0.0, "go": "walk", "speed": 1.5,
+		"body": {"plan": "beast", "len": 12, "tall": 5, "leg": 7, "head": 3.5, "neck": 4, "antlers": 2, "base": "#b8c8d8", "belly": "#f0f8ff", "accent": "#8fe8ff",
+			"dark": "#3a4a5a", "eye": "#1a2a3a", "skin": "fur", "tail": "short", "ears": true},
+		"moves": {}, "drops": [[FROST, 1, 0.4], [SNOW, 3, 0.6]]},
+	"shardlynx": {"name": "Shard Lynx", "where": ["crystalfields"], "temper": "predator", "eats": ["crystalstag", "snowhare"], "w": 12.0, "h": 9.0, "hp": 32.0, "dmg": 9.0, "go": "walk", "speed": 1.6,
+		"body": {"plan": "beast", "len": 11, "tall": 5, "leg": 5, "head": 4, "neck": 2, "base": "#d8e8f4", "belly": "#f4faff", "accent": "#5ac8ff",
+			"dark": "#4a5a6a", "eye": "#5cf0ff", "skin": "fur", "spikes": 3, "tail": "short", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[FROST, 2, 0.4], [ICE, 3, 0.5]]},
+	"mossbackelk": {"name": "Mossback Elk", "where": ["elder"], "temper": "prey", "active": "day", "pack": 3, "idle": {"graze": 5, "wander": 2, "sniff": 2, "rest": 1, "drink": 1},
+		"w": 15.0, "h": 17.0, "hp": 40.0, "dmg": 0.0, "go": "walk", "speed": 1.4,
+		"body": {"plan": "beast", "len": 14, "tall": 6, "leg": 8, "head": 4, "neck": 5, "antlers": 3, "base": "#5a4a34", "belly": "#a08a68", "accent": "#5e9a34",
+			"dark": "#24180e", "eye": "#1a1a1a", "skin": "moss", "tail": "short", "ears": true},
+		"moves": {}, "drops": [[WOOD, 3, 0.5], [MOSSBLOCK, 2, 0.3]]},
+	"fernstalker": {"name": "Fern Stalker", "where": ["elder"], "temper": "predator", "eats": ["mossbackelk", "hare", "deer"], "w": 14.0, "h": 10.0, "hp": 40.0, "dmg": 10.0, "go": "walk", "speed": 1.6,
+		"body": {"plan": "beast", "len": 14, "tall": 5, "leg": 6, "head": 4.5, "neck": 2, "base": "#4a6a3a", "belly": "#a8c88a", "accent": "#2a3a1a",
+			"dark": "#16200e", "eye": "#ffd23a", "skin": "spots", "tail": "long", "ears": true},
+		"moves": {"charge": {"v": 4.0}}, "drops": [[LEAF, 3, 0.6], [AMBER, 1, 0.12]]},
+	"meadowsheep": {"name": "Meadow Sheep", "where": ["meadow"], "temper": "prey", "active": "day", "pack": 4, "idle": {"graze": 5, "wander": 2, "sniff": 2, "rest": 1, "drink": 1},
+		"w": 11.0, "h": 9.0, "hp": 26.0, "dmg": 0.0, "go": "walk", "speed": 1.1,
+		"body": {"plan": "beast", "len": 10, "tall": 6, "leg": 3, "head": 3, "neck": 1, "base": "#ecece4", "belly": "#f8f8f0", "accent": "#3a3430",
+			"dark": "#2a2622", "eye": "#1a1a1a", "skin": "fur", "tail": "short", "ears": true},
+		"moves": {}, "drops": [[LEAF, 2, 0.4], [DRYGRASS, 3, 0.5]]},
+	"bumblewing": {"name": "Bumblewing", "where": ["meadow"], "temper": "neutral", "active": "day", "w": 5.0, "h": 4.0, "hp": 14.0, "dmg": 5.0, "go": "fly", "speed": 1.3,
+		"body": {"plan": "bird", "len": 4, "span": 6, "base": "#e8b83a", "belly": "#2a2222", "accent": "#fff2a0", "dark": "#3a2a10", "eye": "#1a1a1a", "skin": "fur"},
+		"moves": {"dive": {"v": 3.0}}, "drops": [[LEAF, 1, 0.5], [AMBER, 1, 0.08]]},
+	"hedgefox": {"name": "Hedge Fox", "where": ["meadow"], "temper": "predator", "active": "night", "eats": ["hare"], "w": 11.0, "h": 8.0, "hp": 26.0, "dmg": 8.0, "go": "walk", "speed": 1.6,
+		"body": {"plan": "beast", "len": 10, "tall": 4, "leg": 5, "head": 3.5, "neck": 2, "base": "#c8642a", "belly": "#f4e8d8", "accent": "#2a1a12",
+			"dark": "#3a1a0a", "eye": "#ffd23a", "skin": "fur", "tail": "tuft", "ears": true},
+		"moves": {"charge": {"v": 3.8}}, "drops": [[LEAF, 2, 0.5], [DIRT, 2, 0.4]]},
 }
 
 ## the creatures that live in a place ("forest", "cave2"...)
