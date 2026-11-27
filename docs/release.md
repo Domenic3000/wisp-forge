@@ -64,6 +64,14 @@ hover over options and during the game occasional snaps that sound like audio cr
   on a normal-priority thread, a known Godot 4 trouble with USB interfaces (godotengine/godot #75109). No project
   setting switches IAudioClient3 off; a real fix is a custom export template (WASAPI on plain IAudioClient).
   `Audio check.bat` (beside the built game on that PC) runs it with `--verbose --log-file audio_log.txt`.
+- The fix being tried (26 Nov, user: "is it possible to do the real fix here?"): a 3-byte patch to Godot's
+  Windows runtime so `audio_device_init` never takes IAudioClient3 (`using_audio_client_3 = !p_input` compiles
+  to `mov eax,r12d; xor eax,1; mov [rsi+0x104],al`; `xor eax,1` (83 f0 01) becomes `xor eax,eax; nop`
+  (31 c0 90), found by the unique bytes 44 89 e0 83 f0 01 88 86 04 01 00 00). That is the path Godot already
+  falls back to; it keeps the 2024 buffer fix (#89283, in the shared writer loop). On the laptop the patched
+  build passes its audio check with a 2090-frame buffer (47 ms) instead of 512 (10.7 ms). Test copy:
+  build\Wisp Forge\Wisp Forge (audio fix).exe. If it cures the desktop, the same patch goes into a copy of the
+  4.7.2 Windows release template, used through export_presets.cfg's custom template.
 - Test "audio": no sample at the limit, every one-shot ends in silence, the limiter and the 16 players there.
 
 ## Saves and window
