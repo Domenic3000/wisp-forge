@@ -60,8 +60,11 @@ static func tick(g, e, tgt, dist: float, dx: float, dy: float, gacc: float, slow
 		var life: int = Ecology.tick(g, e, tgt, dist, gacc, slow_f)
 		g.prof_add("foes: ecology", Time.get_ticks_usec() - tq)
 		if life == Ecology.DONE:
-			if e.stranded_t > 0:
-				_trail(e)                      # (dug out, writhing on the open ground)
+			# (its body follows its head whatever its life is doing: fleeing a blast, writhing dug out on the open
+			# ground. 27 Nov; user: after a Starfall blast near a marsh worm "the body stopped moving with the head
+			# of the worm for a short period": running from the blast skipped this)
+			if e.stranded_t > 0 or go == "slither" or go == "burrow":
+				_trail(e)
 			_swim_hold(g, e, bd, gacc)
 			return
 		if life == Ecology.WANDER:

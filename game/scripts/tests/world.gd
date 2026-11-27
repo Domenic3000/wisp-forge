@@ -621,6 +621,7 @@ func _test_far_biomes() -> void:
 	var dp_bare := -1.0
 	var dp_charm := -1.0
 	var dp_was := ""
+	var dp_over := -1.0
 	if dp_col >= 0:
 		var dp_fin: bool = g.player.items.has("tidefin")
 		g.player.items.erase("tidefin")
@@ -638,6 +639,8 @@ func _test_far_biomes() -> void:
 			await _frames(1)
 		dp_bare = g.player.max_hp - g.player.hp
 		dp_was = g.hazard
+		# (27 Nov: how deep counts the water over you, not how far under the sea's level you are)
+		dp_over = g._water_above_now(g.player, g.player)
 		g.items["tidecharm"] = true
 		g.player.hp = g.player.max_hp
 		g.player.breath = g.player.max_breath
@@ -650,8 +653,8 @@ func _test_far_biomes() -> void:
 		if dp_fin:
 			g.player.items["tidefin"] = true
 		g.player.hp = g.player.max_hp
-	_ok("Thalassa's deep sea crushes you, but not with the Tide Charm", dp_bare > 1.5 and dp_charm < 0.05 and dp_was == "deep",
-		"the deepest sea near you %d cells (at column %d); 2 s near its floor: -%.1f health bare (%s), -%.1f with the charm" % [dp_best, dp_col, dp_bare, dp_was, dp_charm])
+	_ok("Thalassa's deep sea crushes you, but not with the Tide Charm", dp_bare > 1.5 and dp_charm < 0.05 and dp_was == "deep" and dp_over >= 35.0,
+		"the deepest sea near you %d cells (at column %d); %.0f cells of water over you there; 2 s near its floor: -%.1f health bare (%s), -%.1f with the charm" % [dp_best, dp_col, dp_over, dp_bare, dp_was, dp_charm])
 	var fb_col := -1
 	for fb_k in range(0, 3000, 8):
 		for fb_sgn in [1, -1]:

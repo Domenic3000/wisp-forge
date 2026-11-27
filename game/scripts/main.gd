@@ -5387,13 +5387,13 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 			var sea := float(planet.get("sea", -1.0))
 			if sea < 0.0 or not p.in_liquid:
 				return 0.0
-			var under: float = (Defs.RS0 - sea) - p.pos.length()
+			var under: float = _water_above(m, p)
 			return 0.0 if under < 35.0 else 1.0 + (under - 35.0) / 60.0
 		"crush":
 			var sea2 := float(planet.get("sea", -1.0))
 			if sea2 < 0.0 or not p.in_liquid:
 				return 0.0
-			var under2: float = (Defs.RS0 - sea2) - p.pos.length()
+			var under2: float = _water_above(m, p)
 			return 0.0 if under2 < 160.0 else 1.0 + (under2 - 160.0) / 80.0
 		"pressure":
 			# (a gas giant's: from PRESSURE_D under its mean surface, well into its cloud deck, harder the deeper)
@@ -5407,6 +5407,41 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 			var under4: float = Defs.RS0 - p.pos.length()
 			return 0.0 if under4 < VOID_D else 1.0 + (under4 - VOID_D) / 50.0
 	return 0.0
+
+## How much water is over you (27 Nov; user: "the deep condition doesnt depend on how much water im under. if i dig
+## down and go under just a little bit of water i get hurt from it": it was how far under the sea's level you were):
+## the water straight up from your head, counted in the collision grid; out in the open sea, where the water runs
+## on past the grid, the sea's top over this column (gpu `surf_b` .y)
+var _wa_cache := [-99, 0.0]          # [frame, value]: looked up every few ticks
+
+func _water_above(m: Mage, p: Body) -> float:
+	if frame - int(_wa_cache[0]) < 6 and m.local:
+		return float(_wa_cache[1])
+	var v := _water_above_now(m, p)
+	if m.local:
+		_wa_cache = [frame, v]
+	return v
+
+func _water_above_now(m: Mage, p: Body) -> float:
+	_use_grid(m)
+	var up := p.pos.normalized()
+	var head := p.pos + up * (float(p.h) * 0.5)
+	var k := 0.0
+	while k < 400.0:
+		var q := head + up * k
+		if not in_grid(q, 1.0):
+			# (still in water at the grid's edge: the open sea, as deep as its top over this column)
+			var a := atan2(p.pos.y, p.pos.x)
+			var wr: float = gpu.surf_b(a).y
+			if wr > gpu.surf_at(a).x and wr > head.length():
+				return wr - head.length()
+			return k
+		var gq := to_grid(q)
+		var t: int = gtype(int(floor(gq.x)), int(floor(gq.y)))
+		if Defs.KIND[t] != Defs.K_LIQUID:
+			return k
+		k += 1.0
+	return k
 
 const VOID_D := 120.0
 

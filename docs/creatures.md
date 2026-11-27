@@ -152,3 +152,6 @@ Notes for development sessions on this part of the game. The rules that apply ev
   on the first planet, 8 elsewhere, day or night), and fewer tries come to nothing. Upper caves: 60% the cave
   layer's own, then bats, then "cave1"; the middle: bats, imps, the layer's own, "cave2"; the deep: imps, "cave3".
 - Deep in an abyssal sea (terrain 3): "abyss" swimmers (see generation.md).
+- A serpent's body follows its head whatever its life is doing (boss_ai `tick`: Ecology DONE now runs `_trail` for
+  slither and burrow creatures; 27 Nov; user: after a Starfall blast near a marsh worm "the body stopped moving with
+  the head of the worm for a short period": running from the blast skipped it).

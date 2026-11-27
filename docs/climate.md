@@ -56,3 +56,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   sky), hail (weather.gd stones; a sting every 35-70 ticks in the open), bloodmoon (`spawn_mult` 2.5, up to 12 foes),
   fireworks (rockets that burst into coloured particles). The HUD's weather shows the event, then " · <hazard>!".
   Test: `_test_sky` ("sky").
+
+## The deep counts the water over you (27 Nov; user: "the deep condition doesnt depend on how much water im under. if i dig down and go under just a little bit of water i get hurt from it")
+- main `_hazard_level` "deep" (and the abyss world's "crush"): it measured how far under the sea's level you were,
+  so a flooded pit dug below sea level on an island hurt. Now `_water_above`: the water straight up from your head
+  in the collision grid (to its first cell that isn't liquid); still water at the grid's edge, the open sea's top
+  over the column (gpu `surf_b`.y). Looked up every 6 ticks. Test: Thalassa's deep sea check also reports the water
+  over you there (35+).
