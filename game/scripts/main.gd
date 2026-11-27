@@ -4615,7 +4615,7 @@ func _try_spawn() -> void:
 		return
 	var first_world := int(planet.get("index", 0)) == 0
 	spawn_timer = int(float(SPAWN_EVERY) * (FIRST_CALM if first_world else 1.0) / (maxf(float(clim.get("wild", 1.0)), 0.3) * spawn_mult()))
-	var below := player.pos.length() < gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - 14.0
+	var below: bool = player.pos.length() < gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - 14.0
 	if below:
 		spawn_timer = int(float(spawn_timer) * 0.55)        # (the caves are lived in: more often down there)
 	if frame < quiet_until and player.pos.distance_to(quiet_at) < QUIET_R and sky_ev != "bloodmoon":
@@ -9257,6 +9257,8 @@ func _update_skiff() -> void:
 	# faster above the air; with nobody at the controls the air drags at it as it falls
 	skiff.power = 1.5 if items.has("engine") else 1.0              # (the Star-Iron Engine)
 	skiff.fly(want, pl != null or crew_on_deck(), g, false, (Skiff.CRUISE_HIGH if high else Skiff.CRUISE) * skiff.power, 0.999 if high else 0.97)
+	if in_grid(skiff.pos, 40.0) and not high:
+		_skiff_water()
 	skiff.advance(_skiff_solid if in_grid(skiff.pos, 40.0) else Callable())
 	if skiff.bump > CRASH_PLANET:
 		space.skiff_crash(skiff)
@@ -9274,6 +9276,47 @@ func _update_skiff() -> void:
 		var lead: Vector2 = skiff.pos + skiff.vel.normalized() * 14.0
 		for k in 2:
 			_particle(lead + Vector2(randf() - 0.5, randf() - 0.5) * 16.0, -skiff.vel * (0.3 + randf() * 0.3), 10 + randi() % 8, Color8(255, 170, 90), true, 0.0)
+
+## A ship floats (27 Nov; user: "the ship can fly underwater just like above the water. i think we should resolve this
+## somehow"): how much of its hull is in water (five points along its keel and up its middle), and as much as is, it's
+## borne up to ride on the top, can't be driven down under it, and the water drags at it. Going in hard it splashes;
+## under way along the top it leaves a wake of foam.
+var skiff_wet := 0.0
+const SKIFF_LIFT := 0.14        # how hard the water bears it up, by how much of it is under
+
+func _skiff_water() -> void:
+	var up: Vector2 = skiff.pos.normalized()
+	var rt := Vector2(up.y, -up.x)
+	var hh := float(skiff.h) * 0.5
+	var hw := float(skiff.w) * 0.5
+	var pts := [skiff.pos - up * hh * 0.7, skiff.pos - up * hh * 0.7 + rt * hw * 0.6, skiff.pos - up * hh * 0.7 - rt * hw * 0.6,
+		skiff.pos - up * hh * 0.2, skiff.pos + up * hh * 0.3]
+	var n := 0
+	for q in pts:
+		if Defs.KIND[type_at(q)] == Defs.K_LIQUID:
+			n += 1
+	var f := float(n) / float(pts.size())
+	var was := skiff_wet
+	skiff_wet = f
+	if f <= 0.0:
+		return
+	var vdn := -skiff.vel.dot(up)
+	if was <= 0.0 and vdn > 0.4:
+		var keel: Vector2 = skiff.pos - up * hh * 0.7
+		vfx.splash_in(keel, up, vdn, 2.6)
+		audio.play("splash", keel, clampf(0.4 + vdn * 0.2, 0.4, 1.0), 0.8)
+	# borne up: no going down under it, and up toward the top as deep as it is
+	if vdn > 0.0:
+		skiff.vel += up * vdn * (0.2 + 0.7 * f)
+	skiff.vel += up * SKIFF_LIFT * f
+	skiff.vel *= 1.0 - 0.05 * f
+	if f >= 0.6:
+		skiff.grounded = false
+	var along := absf(skiff.vel.dot(rt))
+	if along > 0.5 and frame % 3 == 0:
+		vfx.wake(skiff.pos - up * hh * 0.45 - rt * signf(skiff.vel.dot(rt)) * hw * 0.8, up, -rt * signf(skiff.vel.dot(rt)))
+	if f >= 0.6 and frame % 10 == 0:
+		vfx.bubble(skiff.pos - up * hh * 0.6 + rt * randf_range(-hw, hw) * 0.6)
 
 ## Holding R by the skiff (or aboard): its hull is knit back as it was forged, a few cells a tick, from
 ## what's left outward. It's shaping magic (mana a cell, `MEND_MANA`) and takes matter: a piece of Hull

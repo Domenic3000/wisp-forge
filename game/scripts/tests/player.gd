@@ -546,10 +546,15 @@ func _test_water() -> void:
 	var width := 0
 	var splashes0: int = int(g.vfx.stats.get("splashes", 0))
 	var bub := 0
+	var float_ok := false
+	var float_txt := ""
 	if not _cs_found:
 		bad.append("no level ground near")
 	else:
 		var gr: int = g.builds.ground_row(st.x + 100)
+		var w_home: Vector2 = g.player.pos
+		_go(Build.cell_pos(st.x + 20, gr - 14))          # (beside it: the world is simulated round you)
+		await _frames(20)
 		var blk := PackedInt32Array()
 		blk.resize(10 * 24)
 		blk.fill(Defs.WATER | 0xFF00)
@@ -565,7 +570,7 @@ func _test_water() -> void:
 		if width < 70:
 			bad.append("the water spread only %d cells wide in 2.5 s" % width)
 		# a mage dropping in: a splash, and bubbles under water
-		var back: Vector2 = g.player.pos
+		var back: Vector2 = Build.cell_pos(st.x + 20, gr - 14)
 		var god0: bool = g.test_god
 		g.test_god = true
 		var blk2 := PackedInt32Array()
@@ -593,11 +598,54 @@ func _test_water() -> void:
 		clr.fill(0xFF00 | 0x10000)
 		g.stamps.append({"x0": posmod(st.x, Defs.NS), "y0": gr - 80, "w": 200, "h": 80, "data": clr})
 		await _frames(10)
+		# (27 Nov; user: "the ship can fly underwater just like above the water. i think we should resolve this
+		# somehow") a ship let fall into a tank of water rides on its top
+		var TW := 100
+		var TH := 64
+		var tank := PackedInt32Array()
+		tank.resize(TW * TH)
+		for ty in TH:
+			for tx in TW:
+				var wall: bool = tx < 3 or tx >= TW - 3 or ty >= TH - 3
+				tank[ty * TW + tx] = (Defs.STONE if wall else Defs.WATER) | 0xFF00
+		var t_r0: int = gr - 2 - TH
+		g.stamps.append({"x0": posmod(st.x + 50, Defs.NS), "y0": t_r0, "w": TW, "h": TH, "data": tank})
+		await _frames(3)
+		var had_skiff: bool = g.items.has("skiff")
+		var sk0 = g.skiff
+		g.items["skiff"] = true
+		g.call_skiff()
+		var sk = g.skiff
+		var tup: Vector2 = Build.cell_pos(st.x + 100, t_r0).normalized()
+		sk.pos = Build.cell_pos(st.x + 100, t_r0 - 40)
+		sk.vel = -tup * 2.0
+		g.cam_c = sk.pos
+		var splashed0: int = int(g.vfx.stats.get("splashes", 0))
+		for q2 in 180:
+			g.cam_c = sk.pos
+			await _frames(1)
+		_shot("ship_float.png")
+		var top_r: float = Build.cell_pos(st.x + 100, t_r0 + 1).length()          # (the water's top)
+		var keel_r: float = sk.pos.length() - float(sk.h) * 0.35
+		float_ok = g.skiff_wet > 0.0 and g.skiff_wet < 0.8 and keel_r > top_r - float(TH) * 0.5 and sk.vel.length() < 0.6
+		float_txt = "the ship rides with %.0f%% of it in the water, its keel %.0f under the top, still %s; splashed %s" % [g.skiff_wet * 100.0, top_r - keel_r, sk.vel.length() < 0.6, int(g.vfx.stats.get("splashes", 0)) > splashed0]
+		if not float_ok:
+			bad.append(float_txt)
+		if not had_skiff:
+			g.items.erase("skiff")
+		g.skiff = sk0
+		var tclr := PackedInt32Array()
+		tclr.resize(TW * (TH + 50))
+		tclr.fill(0xFF00)
+		g.stamps.append({"x0": posmod(st.x + 50, Defs.NS), "y0": t_r0 - 50, "w": TW, "h": TH + 50, "data": tclr})
+		await _frames(10)
+		_go(w_home)
+		await _frames(10)
 	var spl: int = int(g.vfx.stats.get("splashes", 0)) - splashes0
 	if spl < 1:
 		bad.append("no splash going in")
-	_ok("water: a spill runs out along the ground; going in splashes, bubbles rise", bad.is_empty(),
-		("spread %d cells wide in 2.5 s; %d splash(es); bubbles about for %d ticks (picture water.png)" % [width, spl, bub]) if bad.is_empty() else "; ".join(bad))
+	_ok("water: a spill runs out along the ground; going in splashes, bubbles rise; a ship floats", bad.is_empty(),
+		("spread %d cells wide in 2.5 s; %d splash(es); bubbles about for %d ticks; %s (pictures water.png, ship_float.png)" % [width, spl, bub, float_txt]) if bad.is_empty() else "; ".join(bad))
 
 ## (27 Nov; user: "i don't see my breath level underwater. can we make a graphical meter that feels part of the
 ## world") bubbles over the mage's head: as many as the eighths of breath left, one popping as it runs out, gone

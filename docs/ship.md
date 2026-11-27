@@ -190,3 +190,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   away while he mined), and a "Your skiff" marker points to it while you're off it. A quick right-click's
   `dig_tap` counts down in `_read_local_input` (it counted down only on the planet, so in space one click kept
   mining).
+
+## Ships float (27 Nov; user: "the ship can fly underwater just like above the water. i think we should resolve this somehow")
+- main `_skiff_water` (each tick on a planet, under the air's top): how much of the hull is in water (`skiff_wet`, five
+  points along the keel and up the middle). As much as is, it's borne up (`SKIFF_LIFT`), can't be driven down under
+  it (its downward speed is taken off), and the water drags at it; so it rides on the top. Going in hard it splashes
+  (vfx `splash_in`, size 2.6); under way along the top it leaves a wake; deep in, bubbles. Test: in `_test_water`
+  (ui section), a ship let fall into a tank rides on the top (ship_float.png).
