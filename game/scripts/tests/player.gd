@@ -541,7 +541,7 @@ func _test_ui() -> void:
 ## dropping into it splashes and breathes out bubbles
 func _test_water() -> void:
 	var pc: Vector2i = Build.cell_of(g.player.pos)
-	var st := _clear_stretch(pc.x + 120, 200, 40, 2)
+	var st := _clear_stretch(pc.x + 120, 180, 40, 4)
 	var bad := []
 	var width := 0
 	var splashes0: int = int(g.vfx.stats.get("splashes", 0))
@@ -551,20 +551,20 @@ func _test_water() -> void:
 	if not _cs_found:
 		bad.append("no level ground near")
 	else:
-		var gr: int = g.builds.ground_row(st.x + 100)
+		var gr: int = g.builds.ground_row(st.x + 90)
 		var w_home: Vector2 = g.player.pos
 		_go(Build.cell_pos(st.x + 20, gr - 14))          # (beside it: the world is simulated round you)
 		await _frames(20)
 		var blk := PackedInt32Array()
 		blk.resize(10 * 24)
 		blk.fill(Defs.WATER | 0xFF00)
-		g.stamps.append({"x0": posmod(st.x + 95, Defs.NS), "y0": gr - 32, "w": 10, "h": 24, "data": blk})
+		g.stamps.append({"x0": posmod(st.x + 85, Defs.NS), "y0": gr - 34, "w": 10, "h": 24, "data": blk})
 		await _frames(150)
-		var rr: Dictionary = g.gpu.read_rect(st.x, gr - 14, 200, 14)
+		var rr: Dictionary = g.gpu.read_rect(st.x, gr - 14, 180, 18)
 		var fg: PackedInt32Array = rr["fg"]
-		for x in 200:
-			for y in 14:
-				if (fg[y * 200 + x] & 255) == Defs.WATER:
+		for x in 180:
+			for y in 18:
+				if (fg[y * 180 + x] & 255) == Defs.WATER:
 					width += 1
 					break
 		if width < 70:
@@ -576,9 +576,9 @@ func _test_water() -> void:
 		var blk2 := PackedInt32Array()
 		blk2.resize(16 * 30)
 		blk2.fill(Defs.WATER | 0xFF00)
-		g.stamps.append({"x0": posmod(st.x + 92, Defs.NS), "y0": gr - 75, "w": 16, "h": 30, "data": blk2})
+		g.stamps.append({"x0": posmod(st.x + 82, Defs.NS), "y0": gr - 75, "w": 16, "h": 30, "data": blk2})
 		await _frames(2)
-		var wa: Vector2 = Build.cell_pos(st.x + 100, gr - 58)
+		var wa: Vector2 = Build.cell_pos(st.x + 90, gr - 58)
 		g.player.pos = wa
 		g.player.vx = 0.0
 		g.player.vy = 1.5
@@ -594,9 +594,9 @@ func _test_water() -> void:
 		g.cam_c = back
 		g.test_god = god0
 		var clr := PackedInt32Array()
-		clr.resize(200 * 80)
+		clr.resize(180 * 80)
 		clr.fill(0xFF00 | 0x10000)
-		g.stamps.append({"x0": posmod(st.x, Defs.NS), "y0": gr - 80, "w": 200, "h": 80, "data": clr})
+		g.stamps.append({"x0": posmod(st.x, Defs.NS), "y0": gr - 80, "w": 180, "h": 80, "data": clr})
 		await _frames(10)
 		# (27 Nov; user: "the ship can fly underwater just like above the water. i think we should resolve this
 		# somehow") a ship let fall into a tank of water rides on its top
@@ -607,17 +607,17 @@ func _test_water() -> void:
 		for ty in TH:
 			for tx in TW:
 				var wall: bool = tx < 3 or tx >= TW - 3 or ty >= TH - 3
-				tank[ty * TW + tx] = (Defs.STONE if wall else Defs.WATER) | 0xFF00
-		var t_r0: int = gr - 2 - TH
-		g.stamps.append({"x0": posmod(st.x + 50, Defs.NS), "y0": t_r0, "w": TW, "h": TH, "data": tank})
+				tank[ty * TW + tx] = ((Defs.STONE | 0x20000) if wall else Defs.WATER) | 0xFF00      # (the walls anchored)
+		var t_r0: int = gr - 6 - TH
+		g.stamps.append({"x0": posmod(st.x + 40, Defs.NS), "y0": t_r0, "w": TW, "h": TH, "data": tank})
 		await _frames(3)
 		var had_skiff: bool = g.items.has("skiff")
 		var sk0 = g.skiff
 		g.items["skiff"] = true
 		g.call_skiff()
 		var sk = g.skiff
-		var tup: Vector2 = Build.cell_pos(st.x + 100, t_r0).normalized()
-		sk.pos = Build.cell_pos(st.x + 100, t_r0 - 40)
+		var tup: Vector2 = Build.cell_pos(st.x + 90, t_r0).normalized()
+		sk.pos = Build.cell_pos(st.x + 90, t_r0 - 40)
 		sk.vel = -tup * 2.0
 		g.cam_c = sk.pos
 		var splashed0: int = int(g.vfx.stats.get("splashes", 0))
@@ -625,7 +625,7 @@ func _test_water() -> void:
 			g.cam_c = sk.pos
 			await _frames(1)
 		_shot("ship_float.png")
-		var top_r: float = Build.cell_pos(st.x + 100, t_r0 + 1).length()          # (the water's top)
+		var top_r: float = Build.cell_pos(st.x + 90, t_r0 + 1).length()          # (the water's top)
 		var keel_r: float = sk.pos.length() - float(sk.h) * 0.35
 		float_ok = g.skiff_wet > 0.0 and g.skiff_wet < 0.8 and keel_r > top_r - float(TH) * 0.5 and sk.vel.length() < 0.6
 		float_txt = "the ship rides with %.0f%% of it in the water, its keel %.0f under the top, still %s; splashed %s" % [g.skiff_wet * 100.0, top_r - keel_r, sk.vel.length() < 0.6, int(g.vfx.stats.get("splashes", 0)) > splashed0]
@@ -637,7 +637,7 @@ func _test_water() -> void:
 		var tclr := PackedInt32Array()
 		tclr.resize(TW * (TH + 50))
 		tclr.fill(0xFF00)
-		g.stamps.append({"x0": posmod(st.x + 50, Defs.NS), "y0": t_r0 - 50, "w": TW, "h": TH + 50, "data": tclr})
+		g.stamps.append({"x0": posmod(st.x + 40, Defs.NS), "y0": t_r0 - 50, "w": TW, "h": TH + 50, "data": tclr})
 		await _frames(10)
 		_go(w_home)
 		await _frames(10)

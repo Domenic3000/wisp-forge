@@ -62,8 +62,8 @@ void main() {
 		float shelf = 120.0 + (fbm(dir * RS0 / 90.0, seed + 40, 2) - 0.5) * 90.0;
 		float fall = smoothstep(shelf, shelf + 60.0 + 40.0 * fbm(dir * RS0 / 40.0, seed + 41, 1), ec);
 		float abyss = 500.0 + fbm(dir * RS0 / 330.0, seed + 42, 2) * 300.0;
-		float tr = 1.0 - abs(fbm(dir * RS0 / 150.0, seed + 43, 2) * 2.0 - 1.0);
-		abyss += pow(tr, 10.0) * 320.0;
+		float tr = 1.0 - abs(fbm(dir * RS0 / 420.0, seed + 43, 2) * 2.0 - 1.0);
+		abyss += pow(tr, 6.0) * 280.0;           // (trenches a few hundred cells across, not slots)
 		// (the shelf's own slope as it nears the edge, so the drop-off has a lip)
 		rs -= fall * abyss + smoothstep(shelf * 0.4, shelf, ec) * 20.0;
 	}

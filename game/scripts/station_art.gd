@@ -910,7 +910,15 @@ static func _wall_px(style: String, zone: int, ri: int, rj: int) -> Array:
 	return [c, v]
 
 ## a style's tile for a zone: [code image, variant image] (R8), a whole number of its periods, at least 40 x 24
+static var _tiles_mx := Mutex.new()     # (levels are painted on worker threads: two at once share this cache)
+
 static func _tile(style: String, zone: int) -> Array:
+	_tiles_mx.lock()
+	var got := _tile_locked(style, zone)
+	_tiles_mx.unlock()
+	return got
+
+static func _tile_locked(style: String, zone: int) -> Array:
 	var key := "%s%d" % [style, zone]
 	if _tiles.has(key):
 		return _tiles[key]

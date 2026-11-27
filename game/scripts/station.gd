@@ -749,24 +749,35 @@ func guarded(_k: int) -> bool:
 static var _lut_fg := PackedInt32Array()
 static var _lut_bg := PackedInt32Array()
 
+## (27 Nov; user: "when i was using the shift key in space to travel faster the game crashed": under the Starsail
+## a system's station and its outpost come in a moment apart, each grown on a worker thread, and both could fill
+## this table at once: two threads resizing one array. Now it's filled under a lock, into new arrays, and only then
+## put in place)
+static var _lut_mx := Mutex.new()
+
 static func _ensure_lut() -> void:
-	if _lut_fg.size() == 256 * 4:
-		return
-	_lut_fg.resize(256 * 4)
-	_lut_bg.resize(256 * 4)
-	for code in Art.PAINT:
-		for v2 in 4:
-			var pc := Art.color(int(code), v2)
-			_lut_fg[int(code) * 4 + v2] = _pack(pc)
-			_lut_bg[int(code) * 4 + v2] = _pack(pc)
-	for m in Defs.NM:
-		for v in 4:
-			var c := Color.hex((Defs.PAL[m * 4 + v] << 8) | 0xff)
-			var cf := c
-			if Defs.SELF[m] != 0:
-				cf.a = 250.0 / 255.0
-			_lut_fg[m * 4 + v] = _pack(cf)
-			_lut_bg[m * 4 + v] = _pack(c.darkened(0.55))
+	_lut_mx.lock()
+	if _lut_fg.size() != 256 * 4:
+		var fg := PackedInt32Array()
+		var bg := PackedInt32Array()
+		fg.resize(256 * 4)
+		bg.resize(256 * 4)
+		for code in Art.PAINT:
+			for v2 in 4:
+				var pc := Art.color(int(code), v2)
+				fg[int(code) * 4 + v2] = _pack(pc)
+				bg[int(code) * 4 + v2] = _pack(pc)
+		for m in Defs.NM:
+			for v in 4:
+				var c := Color.hex((Defs.PAL[m * 4 + v] << 8) | 0xff)
+				var cf := c
+				if Defs.SELF[m] != 0:
+					cf.a = 250.0 / 255.0
+				fg[m * 4 + v] = _pack(cf)
+				bg[m * 4 + v] = _pack(c.darkened(0.55))
+		_lut_bg = bg
+		_lut_fg = fg
+	_lut_mx.unlock()
 
 static func _pack(c: Color) -> int:
 	return c.r8 | (c.g8 << 8) | (c.b8 << 16) | (c.a8 << 24)

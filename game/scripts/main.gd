@@ -351,7 +351,6 @@ void fragment() {
 	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
 	// (brightness, settings: a gamma, so black stays black and white white)
 	c = pow(max(c, vec3(0.0)), vec3(1.0 / bright));
-	if (dith < 0.5) { COLOR = vec4(c, 1.0); return; }
 	vec3 v = c * 31.0;
 	vec3 k = round(v);
 	ivec2 g = ivec2(floor(FRAGCOORD.xy / px));
@@ -359,7 +358,8 @@ void fragment() {
 	vec3 q = floor(v + d);
 	// (a channel already on one of the 32 levels, give or take its 8 bits, stays put)
 	vec3 on = step(abs(v - k), vec3(0.08));
-	COLOR = vec4(mix(q, k, on) / 31.0, 1.0);
+	// (dithering off, brightness only: the colour as it is; Godot allows no return in fragment)
+	COLOR = vec4(dith < 0.5 ? c : mix(q, k, on) / 31.0, 1.0);
 }"
 var post_rect: ColorRect
 var _post_key := ""
@@ -9300,7 +9300,7 @@ func _skiff_water() -> void:
 	skiff_wet = f
 	if f <= 0.0:
 		return
-	var vdn := -skiff.vel.dot(up)
+	var vdn: float = -skiff.vel.dot(up)
 	if was <= 0.0 and vdn > 0.4:
 		var keel: Vector2 = skiff.pos - up * hh * 0.7
 		vfx.splash_in(keel, up, vdn, 2.6)

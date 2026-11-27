@@ -126,8 +126,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   terrain 2 holds as well (gen.comp `TV2` is true on 3; `TV3` adds).
 - Abyssal seas (surface.comp): an "ocean" biome gets flags 32 from gpu_world `build_surface` on terrain 3. Its
   columns keep the sandy shelf for `shelf` cells (120 +-45) out from each shore, dip 20 toward the lip, then drop off
-  over 60-100 cells into the abyss: 500-800 cells of water (fbm /330), with narrow trenches (a ridged fbm /150 to the
-  10th power) up to 320 deeper. The deep ground under it follows (deepR = rs - 40). The floor's plants are the deep
+  over 60-100 cells into the abyss: 500-800 cells of water (fbm /330), with trenches a few hundred cells across (a ridged fbm /420 to the
+  6th power) up to 280 deeper. The deep ground under it follows (deepR = rs - 40). The floor's plants are the deep
   ocean world's (gen.comp flora 6 on terrain 3 takes flora 10's branch: kelp above 170 down, then glowing coral fans,
   tube worms and glowcaps). Deep in that water (150+ under the sea's top) main `_try_spawn` brings the abyss's own
   (lantern eels, abyss jellies, gulpers). Water darkens with depth as every sea does.
