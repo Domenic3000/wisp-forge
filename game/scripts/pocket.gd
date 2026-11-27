@@ -791,6 +791,13 @@ func _undock(m) -> void:
 func _op_tick(m) -> void:
 	for f in op_folk:
 		f.tick()
+	# (27 Nov: its halls are a level, with doors between the rooms and the corridors: they open for you and the folk)
+	if op.lv:
+		var pts := [b]
+		for f0 in op_folk:
+			pts.append(f0.b)
+		for ev in op.doors_tick(pts):
+			game.audio.play("door" if String(ev[1]) == "open" else "door_shut", op.to_world(ev[0]), 0.4)
 	if game.frame % 20 == 3:
 		for i in op_folk.size():
 			var fa = op_folk[i]
@@ -844,6 +851,8 @@ func _op_interact(m) -> bool:
 
 ## the glowing cells of its halls, gathered into a few halos (blocks of 16)
 func _gather_op_lights() -> Array:
+	if op.lv:
+		return op.lights                 # (a level's were gathered as it was grown, off the main thread)
 	var out := []
 	for by in range(0, op.h, 16):
 		for bx in range(0, op.w, 16):
@@ -891,6 +900,8 @@ func _draw_op() -> void:
 		draw_set_transform_matrix(xf * Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2.ZERO))
 	draw_texture(op.texture(), Vector2.ZERO)
 	draw_set_transform_matrix(Transform2D.IDENTITY)
+	if op.lv:
+		op.draw_level(self, xf * Transform2D(Vector2(-1, 0), Vector2(0, 1), Vector2.ZERO), false, t)
 	# the keepers, each behind a counter drawn in front of them; the spacers
 	for kp in op.keepers:
 		var kt: ImageTexture = op.keeper_texture(kp)

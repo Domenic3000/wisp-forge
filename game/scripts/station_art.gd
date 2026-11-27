@@ -660,6 +660,8 @@ const ROLE_STYLES := {
 	"hall": ["plate", "steel", "hex"], "reactor": ["rib", "grate"], "dock": ["rib"], "hangar": ["rib"],
 	"market": ["lux"], "shipwright": ["rib", "grate"], "cantina": ["wood"], "charts": ["hex", "steel"],
 	"promenade": ["lux", "steel"], "observatory": ["steel", "hex"],
+	"brig": ["steel", "grate"], "cabins": ["wood", "lux", "plate"], "armory": ["steel", "rib"], "galley": ["tile", "plate"],
+	"corridor": ["plate", "rib", "steel", "hex", "grate"], "shaft": ["rib", "grate"],
 }
 
 static func style_for(role: String, rng: RandomNumberGenerator) -> String:
@@ -822,7 +824,372 @@ static func furnish(cv: Cv, role: String, x0: int, y0: int, x1: int, y1: int) ->
 				wx += 26
 		"observatory":
 			window(cv, x0 + 8, y0 + 6, mw - 16, 22)
+		"brig":
+			brig(cv, x0, y0, x1, fl)
+		"cabins":
+			cabins(cv, x0, y0, x1, fl)
+		"armory":
+			armory(cv, x0, y0, x1, fl)
+		"galley":
+			galley(cv, x0, y0, x1, fl)
 	if cv.dead and role != "nest" and role != "vault":
 		debris(cv, x0, x1, fl)
 		if cv.chance(0.6):
 			cables(cv, x0 + cv.ri(4, 20), x1 - cv.ri(4, 20), y0 + 4, 8.0)
+
+# ================================================================== levels ===
+# (27 Nov; user: "can we make the derelict space staions feel linke they are not just squares and are much larger.
+# like whole levels by themselves complete with hallways doors you cant see through destroyed rooms"; "there are
+# curently no hallways, doors, and decorative rooms, sleeping areas, mess halls, brig, crew quarters, so on".)
+# A level is four or five times the old halls' cells, so its walls are laid by blitting small pattern tiles into
+# images (`wall_bulk`, native and quick) and only the details are put cell by cell (`wall_detail`).
+
+static var _tiles := {}
+
+## a wall style's pattern at (ri, rj) from its anchor: zone 0 the upper panels (from the room's corner), zone 1 the
+## wainscot (from its top row): [code, variant] (the same patterns `wall` draws cell by cell)
+static func _wall_px(style: String, zone: int, ri: int, rj: int) -> Array:
+	var c := PLATE
+	var v := 0
+	if zone == 1:
+		match style:
+			"wood":
+				return [WOOD_D, 1 if ri % 6 == 0 else (0 if ri % 6 < 3 else 2)]
+			"tile":
+				c = TRIM_T
+				v = 0 if (ri / 4 + rj / 4) % 2 == 0 else 2
+				if ri % 4 == 0 or rj % 4 == 0:
+					c = GROUT
+				return [c, v]
+			"grate":
+				return [METAL_D, 1 if (ri % 3 == 0 or rj % 3 == 0) else 0]
+			"lux":
+				return [CARPET_B, (ri / 2 + rj) % 2]
+			_:
+				c = int({"hex": PLATE_D, "rib": METAL_D, "steel": PLATE_D}.get(style, PLATE_D))
+				v = 0 if (ri / 16) % 2 == 0 else 2
+				if ri % 16 == 0:
+					c = SEAM
+				return [c, v]
+	match style:
+		"plate", "lux", "steel":
+			c = STEEL if style == "steel" else PLATE
+			v = 0 if ((ri / 20) + (rj / 12)) % 2 == 0 else 2
+			if ri % 20 == 0 or rj % 12 == 0:
+				c = SEAM
+			elif (ri % 20 == 2 or ri % 20 == 18) and rj % 12 == 2:
+				c = RIVET
+		"rib":
+			c = PLATE_D
+			v = 0 if (rj / 6) % 2 == 0 else 1
+			if ri % 14 == 0 or ri % 14 == 1:
+				c = METAL_D
+				v = 2 if ri % 14 == 0 else 3
+		"tile":
+			c = TILE
+			v = 0 if ((ri / 5) + (rj / 5)) % 2 == 0 else 1
+			if ri % 5 == 0 or rj % 5 == 0:
+				c = GROUT
+		"wood":
+			c = WOOD
+			v = (ri / 4) % 3
+			if ri % 4 == 0:
+				c = WOOD_D
+				v = 1
+		"hex":
+			c = HEX
+			var off := 4 if (rj / 5) % 2 == 0 else 0
+			v = ((ri + off) / 8) % 2
+			if (ri + off) % 8 == 0 or rj % 5 == 0:
+				c = SEAM
+		"grate":
+			c = GRATE
+			v = 2 if (ri % 4 == 0 or rj % 4 == 0) else 0
+			if ri % 4 == 0 and rj % 4 == 0:
+				c = METAL_D
+	return [c, v]
+
+## a style's tile for a zone: [code image, variant image] (R8), a whole number of its periods, at least 40 x 24
+static func _tile(style: String, zone: int) -> Array:
+	var key := "%s%d" % [style, zone]
+	if _tiles.has(key):
+		return _tiles[key]
+	var per: Vector2i = {"plate": Vector2i(40, 24), "lux": Vector2i(40, 24), "steel": Vector2i(40, 24), "rib": Vector2i(14, 12),
+		"tile": Vector2i(10, 10), "wood": Vector2i(12, 1), "hex": Vector2i(16, 10), "grate": Vector2i(4, 4)}.get(style, Vector2i(40, 24))
+	if zone == 1:
+		per = {"wood": Vector2i(6, 1), "tile": Vector2i(8, 8), "grate": Vector2i(3, 3), "lux": Vector2i(2, 2)}.get(style, Vector2i(32, 1))
+	var tw: int = per.x * int(ceil(40.0 / float(per.x)))
+	var th: int = per.y * int(ceil(24.0 / float(per.y)))
+	var ic := Image.create(tw, th, false, Image.FORMAT_R8)
+	var iv := Image.create(tw, th, false, Image.FORMAT_R8)
+	for j in th:
+		for i in tw:
+			var px: Array = _wall_px(style, zone, i, j)
+			ic.set_pixel(i, j, Color(float(px[0]) / 255.0, 0, 0))
+			iv.set_pixel(i, j, Color(float(px[1]) / 255.0, 0, 0))
+	_tiles[key] = [ic, iv]
+	return _tiles[key]
+
+static func r8(code: int) -> Color:
+	return Color(float(code) / 255.0, 0.0, 0.0)
+
+## fill a rectangle of the code and variant images with a tile, anchored at its top-left corner
+static func _tile_fill(bi: Image, vi: Image, tl: Array, x0: int, y0: int, x1: int, y1: int) -> void:
+	var ic: Image = tl[0]
+	var iv: Image = tl[1]
+	var tw := ic.get_width()
+	var th := ic.get_height()
+	var ty := y0
+	while ty < y1:
+		var hh := mini(th, y1 - ty)
+		var tx := x0
+		while tx < x1:
+			var ww := mini(tw, x1 - tx)
+			bi.blit_rect(ic, Rect2i(0, 0, ww, hh), Vector2i(tx, ty))
+			vi.blit_rect(iv, Rect2i(0, 0, ww, hh), Vector2i(tx, ty))
+			tx += tw
+		ty += th
+
+## a room's back wall laid in bulk (the panels, the trim line, the wainscot, the kick plate): images of codes and
+## variants, R8, the station's size. The cornice, the light strip and a derelict's decay come after (`wall_detail`).
+static func wall_bulk(bi: Image, vi: Image, x0: int, y0: int, x1: int, y1: int, style: String) -> void:
+	if x1 <= x0 or y1 <= y0:
+		return
+	var wain := y1 - clampi((y1 - y0) / 3, 14, 40)
+	var trim: int = {"wood": TRIM_G, "tile": CERAMIC, "hex": TRIM_T, "grate": HAZARD, "lux": TRIM_G, "steel": CHROME, "rib": PIPE}.get(style, METAL)
+	_tile_fill(bi, vi, _tile(style, 0), x0, y0, x1, wain - 1)
+	bi.fill_rect(Rect2i(x0, wain - 1, x1 - x0, 1), r8(trim))
+	vi.fill_rect(Rect2i(x0, wain - 1, x1 - x0, 1), r8(1))
+	_tile_fill(bi, vi, _tile(style, 1), x0, wain, x1, y1 - 3)
+	var kick := METAL_D if style != "wood" else WOOD_D
+	bi.fill_rect(Rect2i(x0, y1 - 3, x1 - x0, 3), r8(kick))
+	vi.fill_rect(Rect2i(x0, y1 - 3, x1 - x0, 1), r8(2))
+	vi.fill_rect(Rect2i(x0, y1 - 2, x1 - x0, 2), r8(0))
+
+## a wall's details, cell by cell: the cornice under the roof (where it comes down to: `drop`), the light strip under
+## it (dead or red in a derelict's broken rooms), and a derelict's decay in drifts and streaks
+static func wall_detail(cv: Cv, x0: int, y0: int, x1: int, y1: int, style: String, drop := PackedInt32Array()) -> void:
+	for i in range(x0, x1):
+		var dj := y0 + (int(drop[i - x0]) if i - x0 < drop.size() else 0)
+		cv.p(i, dj, METAL_D, 1)
+		cv.p(i, dj + 1, METAL_D, 3)
+	for i2 in range(x0 + 4, x1 - 4):
+		if (i2 - x0) % 18 < 10:
+			var lc := LAMP_W if style != "wood" and style != "lux" else LAMP_WARM
+			if cv.dead:
+				lc = LAMP_R if (i2 - x0) / 18 % 4 == 1 else LAMP_DEAD
+			cv.p(i2, y0 + 2 + (int(drop[i2 - x0]) if i2 - x0 < drop.size() else 0), lc, 0)
+	if cv.dead:
+		decay_fast(cv, x0, y0, x1, y1)
+
+## a derelict's decay over a big wall, quickly: drifts of grime and scorching here and there, rust streaking down
+## from the cornice, a few panels torn away with the cables behind
+static func decay_fast(cv: Cv, x0: int, y0: int, x1: int, y1: int) -> void:
+	var area := (x1 - x0) * (y1 - y0)
+	for b in maxi(2, area / 1400):
+		var cx := cv.ri(x0, x1 - 1)
+		var cy := cv.ri(y0, y1 - 1)
+		var r := cv.ri(5, 16)
+		for j in range(maxi(y0, cy - r), mini(y1, cy + r)):
+			for i in range(maxi(x0, cx - r), mini(x1, cx + r)):
+				var d := Vector2(i - cx, (j - cy) * 1.3).length() / float(r)
+				var n := cv.n2(float(i) * 1.6, float(j) * 1.6)
+				if d + n * 0.45 < 0.75:
+					cv.bg[j * cv.w + i] = SCORCH if d < 0.35 and n > 0.0 else GRIME
+					cv.bgv[j * cv.w + i] = (i + j) % 4
+	for s in maxi(2, (x1 - x0) / 24):
+		var sx := cv.ri(x0 + 2, x1 - 3)
+		var ln := cv.ri(6, mini(46, y1 - y0 - 6))
+		for q in ln:
+			cv.p(sx + (1 if q % 9 > 6 else 0), y0 + 3 + q, RUST, (sx + q) % 4)
+	for k in cv.ri(1, 2 + (x1 - x0) / 120):
+		var px := cv.ri(x0 + 6, maxi(x0 + 7, x1 - 18))
+		var py := cv.ri(y0 + 5, maxi(y0 + 6, y1 - 26))
+		cv.r(px, py, px + 12, py + 10, BLACK, 0)
+		for q2 in 4:
+			var col: int = [CABLE, CABLE_R, CABLE_Y, CABLE][q2]
+			for jj in range(py, py + 10):
+				cv.p(px + 2 + q2 * 3 + (1 if jj % 5 == 2 else 0), jj, col, jj % 4)
+
+## claw marks scored across a wall (a derelict: the hive came through here)
+static func claws(cv: Cv, x: int, y: int) -> void:
+	for q in 4:
+		for t in 14:
+			cv.p(x + q * 3 + t / 2, y + t, SCORCH, 2 if t % 4 == 0 else 3)
+
+## a smear of the hive's goo across the floor and up the wall
+static func smear(cv: Cv, x0: int, fl: int, ln: int) -> void:
+	for i in ln:
+		cv.p(x0 + i, fl - 1, GOO, i % 4)
+		if (i * 7) % 5 == 0:
+			for q in cv.ri(1, 6):
+				cv.p(x0 + i, fl - 1 - q, GOO, (i + q) % 4)
+
+## a catwalk's railing over a one-way floor at row y, from x0 to x1: posts and a rail in the back layer
+static func railing(cv: Cv, x0: int, x1: int, y: int) -> void:
+	for i in range(x0, x1):
+		cv.p(i, y - 9, METAL, 3)
+		cv.p(i, y - 5, METAL_D, 1)
+		if (i - x0) % 8 == 0:
+			for j in range(y - 9, y):
+				cv.p(i, j, METAL_D, 0)
+	for i2 in range(x0, x1):
+		cv.p(i2, y + 1, METAL_D, 2)
+		if (i2 - x0) % 12 == 6:
+			for j2 in range(y + 2, y + 5):
+				cv.p(i2, j2, METAL_D, 0)
+
+## a door's panel (`w` across, `h` high): plates with a seam down its middle, a window slot, hazard stripes at its
+## foot, a light over it (a derelict's grimed and its light red)
+static func door_image(w: int, h: int, dead: bool) -> Image:
+	var im := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in h:
+		for x in w:
+			var c := color(STEEL if not dead else PLATE_D, 0 if (y / 6) % 2 == 0 else 2)
+			if x == 0 or x == w - 1:
+				c = color(METAL_D, 1)
+			elif x == w / 2:
+				c = color(METAL_D, 3)
+			if y >= h - 5:
+				c = color(HAZARD, 0) if ((x + y) / 2) % 2 == 0 else color(BLACK, 0)
+			if y >= 8 and y < 18 and x > 1 and x < w - 2 and x != w / 2:
+				c = color(WINDOW, 3) if not dead else color(SCREEN_DEAD, 0)
+				c.a = 1.0
+			if y < 3 and x > 1 and x < w - 2:
+				c = color(LED_G if not dead else LED_R, 0)
+			if dead and (x * 7 + y * 3) % 11 == 0:
+				c = c.darkened(0.3)
+			im.set_pixel(x, y, c)
+	return im
+
+## a corridor dressed along its length (x0..x1, its floor fl): a grated floor strip, pipes and conduits along the
+## upper wall, signs pointing on, consoles, vents, fire boxes, benches in its bays; a derelict's lit only by red
+## emergency lamps, goo smeared along it, claws on the walls, a body bag or two
+static func corridor(cv: Cv, x0: int, y0: int, x1: int, fl: int, prof: PackedInt32Array) -> void:
+	var ln := x1 - x0
+	for i in range(x0, x1):
+		cv.p(i, fl - 1, GRATE, 1 if (i - x0) % 3 == 0 else 0)
+	var py := fl - 40
+	pipes(cv, x0, x1, py, 2)
+	var x := x0 + cv.ri(14, 30)
+	while x < x1 - 20:
+		var ch: int = prof[x - x0] if x - x0 < prof.size() else 64
+		match cv.ri(0, 6):
+			0:
+				signboard(cv, x, fl - ch + 8, 16, LED_G if cv.chance(0.5) else LED_Y)
+			1:
+				vent(cv, x, fl - 30)
+			2:
+				cv.r(x, fl - 26, x + 6, fl - 16, RED if not cv.dead else RUST, 0)       # (a fire box)
+				cv.p(x + 2, fl - 22, CHROME, 0)
+			3:
+				screen(cv, x, fl - 28, 10, 6)
+			4:
+				if ch >= 90:
+					window(cv, x, fl - ch + 10, 30, 18)
+					x += 24
+			5:
+				poster(cv, x, fl - 30, 6, 9)
+			_:
+				for q in range(fl - 34, fl - 2, 4):
+					cv.p(x, q, PIPE_CU, 2)
+		x += cv.ri(26, 52)
+	if cv.dead:
+		for k in cv.ri(1, 3):
+			claws(cv, cv.ri(x0 + 4, maxi(x0 + 5, x1 - 20)), fl - cv.ri(20, 40))
+		if cv.chance(0.7):
+			smear(cv, cv.ri(x0, maxi(x0 + 1, x1 - 40)), fl, cv.ri(14, 38))
+		for q2 in cv.ri(0, 2):
+			var bx := cv.ri(x0 + 10, maxi(x0 + 11, x1 - 24))
+			cv.r(bx, fl - 4, bx + 14, fl - 1, FAB_G, 1)          # (a body bag)
+			cv.r(bx + 1, fl - 5, bx + 13, fl - 4, FAB_G, 3)
+		if cv.chance(0.6):
+			cables(cv, x0 + cv.ri(4, 20), x0 + mini(ln - 4, cv.ri(60, 140)), py - 4, 10.0)
+		debris(cv, x0, x1, fl)
+
+## a brig: barred cells along the floor (a cot and a pan in each), a guard's desk by the door
+static func brig(cv: Cv, x0: int, y0: int, x1: int, fl: int) -> void:
+	var cw := 38
+	var cx := x0 + 30
+	desk(cv, x0 + 6, fl)
+	signboard(cv, x0 + 4, fl - 40, 20, LED_R)
+	while cx + cw < x1 - 4:
+		cv.r(cx, fl - 36, cx + cw, fl, STEEL, 2)
+		cv.r(cx + 4, fl - 7, cx + 22, fl - 5, METAL, 1)          # (a cot)
+		cv.r(cx + 5, fl - 9, cx + 21, fl - 7, FAB_G if not cv.dead else GRIME, 0)
+		cv.r(cx + 28, fl - 5, cx + 33, fl, CERAMIC, 0)
+		cv.r(cx, fl - 37, cx + cw, fl - 35, METAL_D, 0)
+		for b in range(cx, cx + cw + 1, 3):
+			if cv.dead and cv.chance(0.15):
+				for q in 12:
+					cv.p(b + q / 4, fl - 1 - q / 3, METAL, 0)       # (a bar torn out, lying bent)
+				continue
+			for j in range(fl - 35, fl):
+				cv.p(b, j, METAL, 3 if j % 9 == 0 else 0)
+		if cv.dead and cv.chance(0.5):
+			claws(cv, cx + 8, fl - 30)
+		cx += cw + 6
+
+## cabins: a row of small private rooms, each a bed, a nightstand with a lamp, a wardrobe and a porthole
+static func cabins(cv: Cv, x0: int, y0: int, x1: int, fl: int) -> void:
+	var cw := 46
+	var cx := x0 + 4
+	while cx + cw <= x1 - 2:
+		for j in range(fl - 46, fl):
+			cv.p(cx, j, METAL_D, 2)
+		cv.r(cx, fl - 47, cx + cw, fl - 46, METAL_D, 0)
+		cv.r(cx + 3, fl - 6, cx + 23, fl - 4, WOOD_D, 0)
+		var fab: int = [FAB_B, FAB_R, FAB_G][cv.ri(0, 2)]
+		if not (cv.dead and cv.chance(0.5)):
+			cv.r(cx + 4, fl - 9, cx + 22, fl - 6, fab, 0)
+			cv.r(cx + 4, fl - 10, cx + 8, fl - 7, PILLOW, 0)
+		cv.r(cx + 25, fl - 7, cx + 31, fl, WOOD, 1)
+		cv.r(cx + 26, fl - 10, cx + 29, fl - 7, LAMP_WARM if not cv.dead else LAMP_DEAD, 0)
+		locker(cv, cx + 35, fl)
+		window(cv, cx + 10, fl - 34, 10, 8)
+		if cv.lived and cv.chance(0.6):
+			poster(cv, cx + 24, fl - 30, 5, 7)
+		if cv.dead and cv.chance(0.4):
+			smear(cv, cx + 4, fl, 18)
+		cx += cw
+
+## an armory: racks of rifles on the wall, lockers, ammunition crates with hazard stripes, a red alarm lamp
+static func armory(cv: Cv, x0: int, y0: int, x1: int, fl: int) -> void:
+	var rx := x0 + 6
+	while rx + 30 < x1 - 30:
+		cv.r(rx, fl - 46, rx + 30, fl - 18, METAL_D, 0)
+		for g in 4:
+			var gy := fl - 42 + g * 6
+			if cv.dead and cv.chance(0.4):
+				continue
+			cv.r(rx + 3, gy, rx + 24, gy + 2, METAL, 0)
+			cv.r(rx + 20, gy, rx + 27, gy + 3, WOOD_D, 0)
+			cv.p(rx + 12, gy + 2, METAL, 1)
+		rx += 36
+	locker(cv, x1 - 26, fl)
+	locker(cv, x1 - 18, fl)
+	for q in 3:
+		var bx := x0 + 10 + q * 14
+		cv.r(bx, fl - 7, bx + 11, fl, HAZARD, 0)
+		cv.r(bx, fl - 7, bx + 11, fl - 6, METAL_D, 0)
+	cv.r(x1 - 12, fl - 60, x1 - 8, fl - 56, LAMP_R, 0)
+
+## a galley: counters and ovens along the floor, pots hung from a rail, shelves of stores, a sink and a cold store
+static func galley(cv: Cv, x0: int, y0: int, x1: int, fl: int) -> void:
+	counter(cv, x0 + 4, fl, mini(70, x1 - x0 - 50))
+	for q in 2:
+		var ox := x0 + 8 + q * 22
+		cv.r(ox, fl - 30, ox + 16, fl - 14, CHROME, 2)
+		cv.r(ox + 2, fl - 27, ox + 14, fl - 19, SCREEN_A if not cv.dead else BLACK, 0)
+	cv.r(x0 + 4, fl - 44, x1 - 34, fl - 43, METAL, 1)
+	for px in range(x0 + 10, x1 - 40, 9):
+		for j in range(fl - 43, fl - 39):
+			cv.p(px, j, METAL_D, 0)
+		cv.r(px - 2, fl - 39, px + 3, fl - 35, PIPE_CU if px % 2 == 0 else METAL, 2)
+	shelf(cv, x0 + 6, fl - 54, 40)
+	for q2 in range(x0 + 7, x0 + 45, 3):
+		cv.r(q2, fl - 57, q2 + 2, fl - 54, FOOD if not cv.dead else GRIME, cv.ri(0, 3))
+	cv.r(x1 - 30, fl - 34, x1 - 14, fl, CHROME, 0)
+	cv.r(x1 - 29, fl - 33, x1 - 15, fl - 18, CHROME, 3)
+	cv.r(x1 - 46, fl - 12, x1 - 34, fl - 9, CERAMIC, 0)
+	cv.p(x1 - 40, fl - 13, WATER if not cv.dead else GRIME, 0)

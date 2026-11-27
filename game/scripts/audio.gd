@@ -1082,6 +1082,13 @@ func _build_sfx() -> void:
 	sfx["screech"] = _wav(_sweep(0.22, 2400.0, 1500.0, "square", 9.0, 0.07))
 	sfx["hiss"] = _wav(_mix(_noise(0.45, 0.8, 6.0, 0.45), _sweep(0.4, 900.0, 520.0, "square", 7.0, 0.035)))
 	sfx["chitter"] = _wav(_mix(_sweep(0.11, 1800.0, 2700.0, "square", 26.0, 0.06), _noise(0.09, 0.7, 36.0, 0.25)))
+	# a level's doors and the dark round them (27 Nov: "creepy abandonded ambience"): a pneumatic hiss and a clunk, a
+	# door shutting, metal struck somewhere far off, something scuttling through the ducts, the hull groaning
+	sfx["door"] = _wav(_mixn([_noise(0.35, 0.7, 7.0, 0.32), _sweep(0.3, 600.0, 300.0, "sine", 8.0, 0.05), _late(_drop(0.12, 140.0, 70.0, 30.0, 30.0, 0.4), 0.18)]))
+	sfx["door_shut"] = _wav(_mixn([_noise(0.25, 0.6, 9.0, 0.28), _late(_drop(0.18, 110.0, 50.0, 25.0, 24.0, 0.6), 0.12), _late(_band(0.05, 0.2, 0.9, 80.0, 0.3, 2000.0), 0.12)]))
+	sfx["clank"] = _wav(_lowpass(_mixn([_fm(0.9, 310.0, 2.76, 3.0, 4.0, 0.18, 6.0), _drop(0.25, 120.0, 60.0, 12.0, 14.0, 0.35), _noise(0.6, 0.05, 5.0, 0.3)]), 0.4))
+	sfx["scuttle"] = _wav(_lowpass(_mixn([_grains(0.9, 46, 0.004, 0.8, 0.32, 2.5), _late(_sweep(0.08, 1600.0, 2300.0, "square", 30.0, 0.025), 0.5)]), 0.5))
+	sfx["groan"] = _wav(_lowpass(_creak(1.4, 52.0, 0.22), 0.35))
 	sfx["spit"] = _wav(_mix(_noise(0.2, 0.35, 15.0, 0.5), _sweep(0.16, 520.0, 190.0, "sine", 13.0, 0.22)))
 	# a hit landing: a sharp smack, a body under it, a flick of grit
 	sfx["hit"] = _wav(_mixn([_band(0.04, 0.2, 0.95, 90.0, 0.6, 3000.0), _drop(0.12, 210.0, 80.0, 35.0, 30.0, 0.45), _grains(0.08, 6, 0.005, 0.6, 0.12, 20.0)]))

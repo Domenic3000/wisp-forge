@@ -165,6 +165,61 @@ Notes for development sessions on this part of the game. The rules that apply ev
   behind (it's a ship adrift). Preview offline: /home/claude/tools/back_preview.py. Cost: about 0.2 s more to grow
   an outpost's halls, 0.3 ms of GPU drawing a frame. (A derelict station visited before 27 Nov is laid out anew:
   what you'd opened there may not match.)
+- LEVELS (27 Nov; user: "can we make the derelict space staions feel linke they are not just squares and are much
+  larger. like whole levels by themselves complete with hallways doors you cant see through destroyed rooms. not just
+  all square rooms. room to maneuver around where the enemies are. creepy abandonded ambience. loong hallways, as if it
+  is a real spaceship that was killed by aliens. there should be room to move around in each room. room for a full jump
+  and levitation in the rooms. same thing with outposts ... there are curently no hallways, doors, and decorative
+  rooms, sleeping areas, mess halls, brig, crew quarters, so on"; "currently the rooms or only like 2 player lengths
+  high"). The HALLS you dock into (a derelict station's, an outpost's) are grown as a level: station.gd `lv`,
+  `_build_level_station` / outpost.gd `_build_level_outpost`; the SHELLS out in space keep the old grid (`_build_station`
+  with `halls` false), so nothing out there changed. `_lay_level`: `decks` (3-4 for a derelict, 4 for an outpost; each
+  136-176 rows inside, `FS` 10 between) across 1800-2450 columns (`HM` 28 of hull round it). Pieces placed first
+  (`fixed`): at an end (`end` -1/1, one after another inward: a derelict's bay at the lowest deck's `dock_side` end, its
+  vault then nest at the top deck's other end; an outpost's hangar two decks high at `hangar_side`, then the market, a
+  hallway, the shipwright, a hallway, the cantina, a hallway and the cartographer along the lowest deck, the reactor two
+  decks high at the far end up top); in the middle (`_place_mid`, `_fits`: clear of the rest, leaving no gap or room for
+  a room): the reactor (two decks), the SHAFTS (`_add_shafts`: one or two between each pair of decks, now and then
+  three decks long, `SW` 60 wide). The rest of each deck (`_fill_deck`): ROOMS (170-300 wide) and CORRIDORS (110-460
+  long, `CH` 64 high with bays to `CH_BAY` 100, `_corr_profile`) turn about. `mods` holds them all ("kind" room /
+  corridor / shaft, "d0"/"d1" the decks they span; "r" the lowest deck, -1 for a shaft; "c" the order along it).
+  Neighbours on a deck share a bulkhead (`BW` 8) with a DOOR at that deck's floor (`doors`: "x", "y1", "a", "b", "f"
+  0..1 open, "n" rows shut, "sealed", "d"). The cells are laid in bulk through R8 images (`Image.fill_rect`, then
+  `get_data`; the plates' pattern row by row), the back wall too (station_art.gd `wall_bulk`: each style's tile blitted;
+  `wall_detail` the cornice, light strip and `decay_fast` cell by cell): a level is 1.3-1.8 million cells, and the
+  old cell-by-cell way would have taken seconds. `_level_body`: the doors shut (cells HULL, a lintel and a lamp; the
+  nest's door into the vault sealed with runestone, `seal_cells`), `_frame_piece` (a shaft's one-way landing at each
+  deck's floor and ledges every 26 rows, `_ledges`; the reactor's catwalk right across at the upper deck's floor; a
+  tall room's balcony at each upper door; in a room 170+ wide, now and then a MEZZANINE (`MEZZ` 54 up, one-way, a ledge
+  half way, a railing, furnished up there: `_upstairs`) and a DAIS with steps of four rows), `_wmask` (cells near a
+  way: `_near_way` looks closer only there). `_dress_all` -> `_dress_level`: the roof's shape (`_shape_level`: as
+  `_shape`, deeper for a tall room; a soffit now and then; a derelict's broken rooms caved in over where `_destroy`
+  heaps rubble, slopes of four rows a column, never in a doorway), lamps, gravity runes, the reactor's core (bigger),
+  the nest grown over, the vault, a corridor (`Art.corridor`: grated floor, pipes, signs, fire boxes, consoles,
+  windows in its bays; a derelict's: claws, goo, body bags, hanging cables), a shaft (a sign at each landing, hazard
+  stripes), a room (`Art.furnish` about its floor, pipes, windows and posters up a tall wall); new kinds of room:
+  BRIG (barred cells, a cot and a pan each, a guard's desk), CABINS (small private rooms: a bed, a lamp, a wardrobe,
+  a porthole), ARMORY (rifle racks, lockers, ammunition), GALLEY (counters, ovens, hanging pots, a cold store); an
+  outpost's shops `_dress_op` about their floors. Then caches (`_caches_level`), aliens (`_plan_aliens_level`: by a
+  room's width, along corridors, now and then in a shaft), `_finish_level`: `rebuild` is plain numbers for a level
+  (com its middle), its pictures painted there (`_pre_fg`, `_pre_bg`, on the worker; the doors' cells left clear in
+  the picture), an outpost's halos gathered (`_gather_lights`, every other cell). `meta["ms"]`: how long it took.
+  Queries: `module_at` -> `_room_at` (the rectangles; a bulkhead goes to the nearer), `body_xf`.
+  DOORS: `doors_tick(pts)` (points in its cells: you, a woken alien (space.gd `_level_tick`; `doors_for_aliens`), the
+  spacers (pocket.gd `_op_tick`)): within 44 across and 36 up it opens (0.1 a tick), else shuts (0.05), never on
+  anyone in it; `_door_set` sets its cells (the panel slides up into the lintel); returns "open"/"shut" for the sounds
+  ("door", "door_shut"). Its picture: `draw_level` draws each panel as far shut as it is (`Art.door_image`). THE DARK
+  (a derelict's): `see_from(k)` (each tick, from the room you're in): that room and, through each open door of it,
+  the room past it; `vis` eases; `draw_level` blacks out what you can't see (and a broken room stays dim, its light
+  failing now and then); `seen(k)`: aliens in the dark aren't drawn (space.gd `_draw_aliens`, their bars). On `_mid`
+  under the aliens, over the halls' picture. AMBIENCE: `_level_tick`'s `_creep_t`: every 4-12 s a sound out of the
+  dark somewhere near (clank, scuttle, creak, groan, chitter; audio.gd). LEVITATION now works in a powered room
+  (`_station_move`, as on a planet). A corridor or a shaft is named on coming in only when its gravity differs
+  (`_st_last_pw`). The seal (`open_seal`) turns the vault's door into a door again. Tests: `_test_stations` (4 grown:
+  rooms, corridors, shafts, every door clear, every room reached room by room through the doors,
+  `_level_rooms_reached`; the powered room's jump and levitation; a door shut and dark past it, walked up to: open,
+  the room past it seen; stepped away: shut and dark again), `_test_outposts` (3 grown). Pictures
+  `station_layout_*.png`, `outpost_layout_*.png`, `station_door.png`, `station_levitate.png`.
 - DERELICT STATIONS AND ALIENS (scripts/station.gd, alien.gd; user, 23 Nov: "much bigger more complex outposts ...
   Derelict space stations and everything with aliens and such to fight"; inside, chosen "Both, by section"):
   `Station` extends wreck.gd, kind "station"; `make_station(seed)` lays out a grid (`cols` 4-6 x `rows` 2-3, a corner

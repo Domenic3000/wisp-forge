@@ -245,6 +245,9 @@ var wreck_halls := {}           # a boarded wreck's seed (String) -> its save (w
 var in_station = null           # the station the local mage is inside (its rooms), or null
 var frame_st = null             # the station whose floor is "down" now (you're within its bounds), or null
 var st_room := -1               # (the room you were in last: a note when you come into another)
+var _st_last_pw := true          # (a corridor or a shaft is told only when its gravity isn't what you just had)
+var _creep_t := 300             # (ticks to the next sound out of the dark, in a derelict's halls)
+var doors_for_aliens := true     # (the tests' door check keeps the aliens out of it)
 var _st_jump := false
 var _st_b := Vector2.ZERO       # (the mage's place in the station's cells last tick, and the world point it was put at:
 var _st_w := Vector2.INF        # kept, so a single float's rounding far out never moves you a hair a tick)
@@ -413,6 +416,7 @@ func _tick() -> void:
 		_align_far(focus)
 	_pmark("rocks")
 	_update_aliens(focus)
+	_level_tick(m)
 	_update_folk(focus)
 	_update_acid()
 	_update_sbolts()
@@ -3765,8 +3769,11 @@ func _station_frame(focus: Vector2) -> void:
 					game.ui.toast(a.role_name(rk) + who, Color(1.0, 0.9, 0.65), 2.0)
 				else:
 					var pw: bool = a.mods[rk]["powered"]
-					game.ui.toast("%s · %s" % [a.role_name(rk), "its gravity holds" if pw else "no gravity: the movement keys push you"],
-						Color(0.85, 0.8, 1.0) if pw else Color(0.6, 0.75, 0.9), 2.0)
+					var pk := String(a.mods[rk].get("kind", "room"))
+					if pk == "room" or pw != _st_last_pw:
+						game.ui.toast("%s · %s" % [a.role_name(rk), "its gravity holds" if pw else "no gravity: the movement keys push you"],
+							Color(0.85, 0.8, 1.0) if pw else Color(0.6, 0.75, 0.9), 2.0)
+					_st_last_pw = pw
 		break
 	if in_station == null:
 		st_room = -1
@@ -3806,8 +3813,16 @@ func _station_move(m, st) -> void:
 				bv.y = (-4.6 if m.items.has("boots") else -3.9) * sqrt(game.gear("jump", m))
 				game.audio.play("jump", m.pos, 0.6)
 				m.ground_t = 99
+		# (levitating, as on a planet: held up a little more than the pull, mana going; 27 Nov, rooms tall enough for it)
+		m.floating = jump and not m.on_ground and m.air_time > 10 and m.mana > 0.5 and (game.items.has("levitate") or game.items.has("roc"))
+		if m.floating:
+			game.audio.play("levitate", m.pos, 0.35)
+			bv.y = maxf(bv.y - Alien.G - 0.28, -2.5)
+			if not game.items.has("stormcrown"):
+				m.mana -= (0.27 if game.items.has("roc") else 0.55) * game.gear("levitate", m)
+			if randf() < 0.6:
+				game._particle(m.pos + ay * (float(m.h) * 0.5) + ax * (randf() * 3.0 - 1.5), ay * (0.4 + randf() * 0.4) + vel, 18, Color8(140, 220, 255), true, 0.0)
 		bv.y = minf(bv.y + Alien.G, 6.0)
-		m.floating = false
 	else:
 		var want := Vector2(float(m.input.move), (1.0 if m.input.down else 0.0) - (1.0 if jump else 0.0))
 		if want != Vector2.ZERO and m.mana > ST_JET_MANA:
@@ -4113,6 +4128,31 @@ func _update_aliens(focus: Vector2) -> void:
 			if al.act == "leap":
 				al.v *= -0.3
 
+## A derelict's halls each tick (a level, station.gd; 27 Nov, user: "doors you cant see through ... creepy abandonded
+## ambience"): its doors open for you and for the aliens hunting you and shut behind; what you can see from where you
+## stand (past a shut door it's dark); and the dark round you is never quite quiet.
+func _level_tick(m) -> void:
+	var st = inst
+	if st == null or st.kind != "station" or not st.lv:
+		return
+	var pts := []
+	var mb = null
+	if m.aboard == null and not m.dead:
+		mb = st.to_body(m.pos) + st.com
+		pts.append(mb)
+	for al in aliens:
+		if doors_for_aliens and al.st == st and not al.dead and al.awake:
+			pts.append(al.b)
+	for ev in st.doors_tick(pts):
+		game.audio.play("door" if String(ev[1]) == "open" else "door_shut", st.to_world((ev[0] as Vector2) - st.com), 0.55)
+	st.see_from(st.module_at(mb) if mb != null else -1)
+	_creep_t -= 1
+	if _creep_t <= 0 and mb != null:
+		_creep_t = randi_range(240, 720)
+		var snd: String = ["clank", "scuttle", "creak", "groan", "chitter", "clank", "scuttle"][randi() % 7]
+		var off := Vector2.from_angle(randf() * TAU) * randf_range(50.0, 110.0)
+		game.audio.play(snd, m.pos + off, randf_range(0.25, 0.5), randf_range(0.8, 1.1))
+
 ## an alien wakes, and its room with it
 func alien_wake(al) -> void:
 	var woke := false
@@ -4217,6 +4257,8 @@ func _draw_mid_parts() -> void:
 	var xf := _world_xf()
 	if inst == null:
 		vl.draw_mid(_mid, xf)
+	if inst != null and inst.kind == "station" and inst.lv:
+		inst.draw_level(_mid, xf * inst.body_xf(), true, float(game.frame))
 	_draw_aliens(xf)
 	var zs: float = minf(float(game.zoom), 4.0)
 	for oa in rocks:
@@ -4257,6 +4299,8 @@ func _draw_aliens(xf: Transform2D) -> void:
 		var sp: Vector2 = xf * al.world()
 		if sp.x < -60.0 or sp.y < -60.0 or sp.x > scr.x + 60.0 or sp.y > scr.y + 60.0:
 			continue
+		if not al.st.seen(al.st.module_at(al.b)):
+			continue                    # (in the dark past a shut door)
 		var t: ImageTexture = al.frame()
 		var tw := float(t.get_width())
 		var th := float(t.get_height())
@@ -4282,6 +4326,8 @@ func _draw_alien_marks(xf: Transform2D) -> void:
 			continue
 		var sp: Vector2 = xf * al.world()
 		if sp.x < -60.0 or sp.y < -60.0 or sp.x > scr.x + 60.0 or sp.y > scr.y + 60.0:
+			continue
+		if not al.st.seen(al.st.module_at(al.b)):
 			continue
 		if al.hp < al.hp_max or (al.kind == "brood" and al.awake):
 			var up_s: Vector2 = xf.basis_xform(-al.st.axis_y()).normalized()

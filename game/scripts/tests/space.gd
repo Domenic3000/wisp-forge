@@ -992,7 +992,10 @@ func _test_outposts() -> void:
 	var op_big := 0
 	var op_folk := 0
 	var sealed := 0
-	for q in 6:
+	var op_ms := []
+	var oq0 = null
+	# (27 Nov: the halls are a level now, four or five times the cells: three grown, not six)
+	for q in 3:
 		var shell = O.make_outpost(5003 + q * 977, q)
 		var shr: Rect2i = shell.hangar_rect()
 		var mx: int = shr.position.x - 2 if shell.hangar_side < 0 else shr.end.x + 1
@@ -1004,6 +1007,9 @@ func _test_outposts() -> void:
 		if pane >= 30 and shell.folk_plan.is_empty():
 			sealed += 1
 		var oq = O.make_outpost(5003 + q * 977, q, true)
+		op_ms.append(int(oq.meta.get("ms", -1)))
+		if q == 0:
+			oq0 = oq
 		var hr: Rect2i = oq.hangar_rect()
 		var free := true
 		for j in range(hr.end.y - 47, hr.end.y):
@@ -1029,9 +1035,8 @@ func _test_outposts() -> void:
 			op_folk += 1
 		if q < 2:
 			_station_picture(oq, "outpost_layout_%d.png" % q)
-	var op_ok2: bool = op_fit == 6 and op_deck == 6 and op_big == 6 and op_folk == 6 and sealed == 6
-	var oq0 = O.make_outpost(5003, 0, true)
-	op_rows.append("%s6 outposts' halls grown (%d rooms, %dx%d the first): 24+ rooms on 4 decks %d; the hangar holds the skiff in %d; the market by the hangar and the shipwright, cantina and cartographer along one deck of doorways in %d; 13+ spacers in %d; the shell out in space sealed, nobody in it, %d" % ["" if op_ok2 else "(!) ", oq0.mods.size(), oq0.w, oq0.h, op_big, op_fit, op_deck, op_folk, sealed])
+	var op_ok2: bool = op_fit == 3 and op_deck == 3 and op_big == 3 and op_folk == 3 and sealed == 3
+	op_rows.append("%s3 outposts' halls grown as levels (%d rooms and corridors, %d doors, %dx%d the first; grown in %s ms): 24+ on 4 decks %d; the hangar holds the skiff in %d; the market by the hangar and the shipwright, cantina and cartographer along the lowest deck in %d; 13+ spacers in %d; the shell out in space sealed, nobody in it, %d" % ["" if op_ok2 else "(!) ", oq0.mods.size(), oq0.doors.size(), oq0.w, oq0.h, str(op_ms), op_big, op_fit, op_deck, op_folk, sealed])
 	op_ok = op_ok and op_ok2
 	# ---- up into space in the skiff, out to the outpost
 	g.player.dead = false
@@ -1574,7 +1579,8 @@ func _test_stations() -> void:
 	var n_good := 0
 	var lay_txt := []
 	var shells_ok := 0
-	for q in 10:
+	# (27 Nov: the halls are a level now, four or five times the cells: four grown, not ten)
+	for q in 4:
 		# (the shell out in space: its bay sealed by a pane, no aliens, no caches; user, 25 Nov: docked into an
 		# instance instead)
 		var shq = S.make_station(7001 + q * 1543)
@@ -1588,6 +1594,12 @@ func _test_stations() -> void:
 			shells_ok += 1
 		var sq = S.make_station(7001 + q * 1543, true)
 		var reach_shut := _station_rooms_reached(sq)
+		# (and every door's doorway clear when it's open: nothing grown into one)
+		var doors_clear := 0
+		for dq in sq.doors:
+			var dcx: float = float(int(dq["x"])) + float(sq.BW) * 0.5
+			if dq["sealed"] or sq.box_free(Vector2(dcx, float(int(dq["y1"])) - 9.0), 3.5, 8.5):
+				doors_clear += 1
 		sq.open_seal()
 		var reach_open := _station_rooms_reached(sq)
 		var n_pow := 0
@@ -1608,14 +1620,25 @@ func _test_stations() -> void:
 		for sp in sq.spawns:
 			if sp["kind"] == "brood":
 				n_brood += 1
-		var good: bool = all_but_vault and vault_shut and vault_open and n_pow >= 2 and n_pow < sq.mods.size() and has_vc and n_brood == 1 and sq.caches.size() >= 3 and sq.mods.size() >= 18
+		var n_corr := 0
+		var n_shaft := 0
+		var tall := 0
+		for md2 in sq.mods:
+			if String(md2["kind"]) == "corridor":
+				n_corr += 1
+			elif String(md2["kind"]) == "shaft":
+				n_shaft += 1
+			elif int(md2["y1"]) - int(md2["y0"]) >= 130:
+				tall += 1
+		var good: bool = all_but_vault and vault_shut and vault_open and n_pow >= 2 and n_pow < sq.mods.size() and has_vc and n_brood == 1 and sq.caches.size() >= 8 and sq.mods.size() >= 24 \
+			and n_corr >= 6 and n_shaft >= sq.rows - 1 and doors_clear == sq.doors.size()
 		if good:
 			n_good += 1
-		lay_txt.append("%s%dx%d %d rooms (%d powered), %d aliens, %d caches; all reached %s, vault shut %s then open %s" % ["" if good else "(!) ", sq.cols, sq.rows, sq.mods.size(), n_pow, sq.spawns.size(), sq.caches.size(), all_but_vault, vault_shut, vault_open])
+		lay_txt.append("%s%d decks, %d rooms (%d of them 130+ high), %d corridors, %d shafts (%d powered), %d doors (%d clear), %d aliens, %d caches, %dx%d grown in %s ms; all reached %s, vault shut %s then open %s" % ["" if good else "(!) ", sq.rows, sq.mods.size() - n_corr - n_shaft, tall, n_corr, n_shaft, n_pow, sq.doors.size(), doors_clear, sq.spawns.size(), sq.caches.size(), sq.w, sq.h, str(sq.meta.get("ms", -1)), all_but_vault, vault_shut, vault_open])
 		if q < 3:
 			_station_picture(sq, "station_layout_%d.png" % q)
-	var ok2: bool = n_good == 10 and shells_ok == 10
-	rows.append("%s10 stations' halls grown: %d sound; their shells sealed and empty %d. %s" % ["" if ok2 else "(!) ", n_good, shells_ok, " | ".join(lay_txt)])
+	var ok2: bool = n_good == 4 and shells_ok == 4
+	rows.append("%s4 stations' halls grown as levels: %d sound; their shells sealed and empty %d. %s" % ["" if ok2 else "(!) ", n_good, shells_ok, " | ".join(lay_txt)])
 	ok = ok and ok2
 	# ---- up into space in the skiff, out to the station
 	g.player.dead = false
@@ -1715,10 +1738,13 @@ func _test_stations() -> void:
 		var role: String = st.mods[k3]["role"]
 		if role == "vault" or role == "nest":
 			continue
-		var plain: bool = role == "quarters" or role == "stores" or role == "hall" or role == "dock"
-		if st.mods[k3]["powered"] and (pr < 0 or plain and not ["quarters", "stores", "hall", "dock"].has(String(st.mods[pr]["role"]))):
+		# (a level's: a plain room with nothing standing in its middle, no mezzanine or dais to land on)
+		var plain: bool = (role == "quarters" or role == "stores" or role == "hall" or role == "dock") and String(st.mods[k3].get("kind", "room")) == "room" \
+			and not st.mods[k3].has("mezz") and not st.mods[k3].has("dais")
+		if st.mods[k3]["powered"] and String(st.mods[k3].get("kind", "room")) == "room" and not st.mods[k3].has("mezz") and not st.mods[k3].has("dais") \
+				and (pr < 0 or plain and not ["quarters", "stores", "hall", "dock"].has(String(st.mods[pr]["role"]))):
 			pr = k3
-		elif not st.mods[k3]["powered"] and br < 0:
+		elif not st.mods[k3]["powered"] and (br < 0 or String(st.mods[br].get("kind", "room")) != "room") and String(st.mods[k3].get("kind", "room")) != "shaft":
 			br = k3
 	var calm := func() -> void:
 		for al2 in g.space.aliens:
@@ -1751,14 +1777,29 @@ func _test_stations() -> void:
 		var rise: float = b2.y - top
 		var landed: bool = g.player.on_ground
 		_shot("station_powered.png")
-		pw_ok = on_floor and walked > 12.0 and rise > 20.0 and landed
-		pw_txt = "%s: fell to the floor %s, walked %.0f cells, jumped %.0f up and landed %s" % [st.role_name(pr), on_floor, walked, rise, landed]
+		# levitating, held up well past a jump (27 Nov: "room for a full jump and levitation in the rooms")
+		var lev0: float = (st.to_body(g.player.pos) + st.com).y
+		var lev_top := lev0
+		g.test_jump = true
+		for k4b in 100:
+			await _frames(1)
+			lev_top = minf(lev_top, (st.to_body(g.player.pos) + st.com).y)
+			if k4b == 70:
+				_shot("station_levitate.png")
+		g.test_jump = false
+		await _frames(100)
+		var lev_rise: float = lev0 - lev_top
+		pw_ok = on_floor and walked > 12.0 and rise > 20.0 and landed and lev_rise > 50.0
+		pw_txt = "%s (%d high): fell to the floor %s, walked %.0f cells, jumped %.0f up and landed %s, levitated %.0f up" % [st.role_name(pr), int(pm["y1"]) - int(pm["y0"]), on_floor, walked, rise, landed, lev_rise]
 		# a ledge (a hatch's one-way floor's ledge) in a powered room
 		var ledge = null
 		for k5 in st.mods.size():
 			if not st.mods[k5]["powered"] or ledge != null:
 				continue
 			var lm: Dictionary = st.mods[k5]
+			# (a level's: a shaft's ledges, a catwalk, a mezzanine; looked for only where they are)
+			if st.lv and String(lm.get("kind", "room")) != "shaft" and not lm.has("mezz") and not lm.has("catwalks"):
+				continue
 			for j in range(int(lm["y0"]) + 4, int(lm["y1"]) - 4):
 				for i in range(int(lm["x0"]) + 4, int(lm["x1"]) - 4):
 					if ledge == null and st.at(i, j) == Defs.SCAFFOLD and st.at(i + 6, j) == Defs.SCAFFOLD and st.at(i + 12, j) == Defs.SCAFFOLD:
@@ -1778,9 +1819,47 @@ func _test_stations() -> void:
 			var b5: Vector2 = st.to_body(g.player.pos) + st.com
 			var dropped: bool = b5.y + 8.5 > float(ledge.y) + 3.0
 			pw_ok = pw_ok and on_ledge and dropped
-			pw_txt += "; stood on a hatch's ledge %s, dropped through it %s" % [on_ledge, dropped]
+			pw_txt += "; stood on a one-way ledge %s, dropped through it %s" % [on_ledge, dropped]
 	rows.append("%s%s" % ["" if pw_ok else "(!) ", pw_txt])
 	ok = ok and pw_ok
+	# ---- a door (27 Nov, "doors you cant see through"): shut, the room past it dark; walk up and it opens and the room
+	# past it comes into sight; step away and it shuts behind you, dark again (the aliens kept out of it)
+	var door_ok := false
+	var door_txt := "no door"
+	if pr >= 0:
+		calm.call()
+		g.space.doors_for_aliens = false
+		var dd = null
+		for dq2 in st.doors:
+			if not dq2["sealed"] and (int(dq2["a"]) == pr or int(dq2["b"]) == pr) and int(dq2["d"]) == int(st.mods[pr]["d1"]):
+				dd = dq2
+				break
+		if dd != null:
+			var other: int = int(dd["b"]) if int(dd["a"]) == pr else int(dd["a"])
+			var dcx: float = float(int(dd["x"])) + float(st.BW) * 0.5
+			var ps: float = -1.0 if int(dd["a"]) == pr else 1.0
+			_st_put(st, Vector2(dcx + ps * 80.0, float(int(dd["y1"])) - 9.5))
+			await _frames(50)
+			var shut0: bool = float(dd["f"]) == 0.0 and st.vis[other] < 0.3
+			g.test_move = -int(ps)
+			var opened := -1
+			for kd2 in 150:
+				await _frames(1)
+				if float(dd["f"]) >= 1.0 and opened < 0:
+					opened = kd2
+				if opened >= 0 and st.vis[other] > 0.6:
+					break
+			g.test_move = 0
+			var seen_past: bool = st.vis[other] > 0.6
+			_shot("station_door.png")
+			_st_put(st, Vector2(dcx + ps * 100.0, float(int(dd["y1"])) - 9.5))
+			await _frames(100)
+			var shut1: bool = float(dd["f"]) == 0.0 and st.vis[other] < 0.3
+			door_ok = shut0 and opened >= 0 and seen_past and shut1
+			door_txt = "a door from the %s to the %s: shut, dark past it %s; walked up, open in %d ticks, the room past it in sight %s; stepped away, shut and dark again %s" % [st.role_name(pr), st.role_name(other), shut0, opened, seen_past, shut1]
+		g.space.doors_for_aliens = true
+	rows.append("%s%s" % ["" if door_ok else "(!) ", door_txt])
+	ok = ok and door_ok
 	# ---- a dead room: no gravity; the movement keys push you
 	var bk_ok := false
 	var bk_txt := "no dead room"

@@ -41,9 +41,10 @@ const ST_FATES := ["Something came aboard with the last supply run, and stayed."
 	"The reactor still hums, but nobody has answered a hail in years.",
 	"A storm belt's lightning broke its back; the dark halls belong to the swarm now.",
 	"Its log speaks of eggs found in an asteroid, and then of nothing at all."]
-const ROLE_NAMES := {"dock": "Docking bay", "reactor": "Reactor", "hydro": "Hydroponics", "quarters": "Quarters",
+const ROLE_NAMES := {"dock": "Docking bay", "reactor": "Reactor", "hydro": "Hydroponics", "quarters": "Crew quarters",
 	"lab": "Laboratory", "stores": "Stores", "hall": "Hall", "nest": "The nest", "vault": "The vault", "mess": "Mess hall",
-	"medbay": "Medbay", "engineering": "Engineering", "command": "Command deck", "lounge": "Lounge", "comms": "Comms"}
+	"medbay": "Medbay", "engineering": "Engineering", "command": "Command deck", "lounge": "Lounge", "comms": "Comms",
+	"corridor": "Corridor", "shaft": "Access shaft", "brig": "Brig", "cabins": "Cabins", "armory": "Armory", "galley": "Galley"}
 
 var cols := 0
 var rows := 0
@@ -81,6 +82,9 @@ func state_key() -> String:
 	return str(seed_) + ("h" if halls else "")
 
 func _build_station(sd: int) -> void:
+	if halls:
+		_build_level_station(sd)
+		return
 	seed_ = sd
 	kind = "station"
 	wname = station_name(sd)
@@ -588,6 +592,9 @@ func _shape(k: int, rng: RandomNumberGenerator) -> PackedInt32Array:
 ## near a room's ways in or out (a doorway, a hatch and the ledge under it, the dock's mouth): growth,
 ## girders, troughs and crates keep clear of them
 func _near_way(i: int, j: int, pad := 8) -> bool:
+	if not _wmask.is_empty():
+		if i < 0 or j < 0 or i >= w or j >= h or _wmask[j * w + i] == 0:
+			return false
 	for r in ways:
 		if (r as Rect2i).grow(pad).has_point(Vector2i(i, j)):
 			return true
@@ -699,6 +706,8 @@ func _plan_aliens(rng: RandomNumberGenerator) -> void:
 
 ## the room a body point (cells, from the corner) is in (its walls split between it and the next), or -1
 func module_at(b: Vector2) -> int:
+	if lv:
+		return _room_at(b)
 	var c := int(floor((b.x - float(OX) - float(T) * 0.5) / float(PX)))
 	var r := int(floor((b.y - float(OY) - float(T) * 0.5) / float(PY)))
 	var v := Vector2i(c, r)
@@ -774,6 +783,19 @@ func _paint(src: PackedByteArray, sv: PackedByteArray, back: bool) -> Image:
 	return Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, px.to_byte_array())
 
 func texture() -> ImageTexture:
+	if _pre_fg != null:
+		# (a level: its pictures were painted as it was grown, off the main thread)
+		if tex == null:
+			img = _pre_fg
+			tex = ImageTexture.create_from_image(img)
+			bg_tex = ImageTexture.create_from_image(_pre_bg)
+			dirty = false
+			img_dirty = false
+			_bg_dirty = false
+		elif img_dirty:
+			tex.update(img)
+			img_dirty = false
+		return tex
 	if img_dirty and tex != null and img != null:
 		tex.update(img)
 		img_dirty = false
@@ -796,17 +818,18 @@ func texture() -> ImageTexture:
 
 ## a cell changed after its picture was made: its pixel painted again
 func _repaint(i: int, j: int) -> void:
-	if img == null or dirty:
+	var im: Image = img if img != null else _pre_fg
+	if im == null or (dirty and _pre_fg == null):
 		dirty = true
 		return
 	var m := cells[j * w + i]
 	if m == 0:
-		img.set_pixel(i, j, Color(0, 0, 0, 0))
+		im.set_pixel(i, j, Color(0, 0, 0, 0))
 	else:
 		var c := Color.hex((Defs.PAL[m * 4 + (vars[j * w + i] & 3)] << 8) | 0xff)
 		if Defs.SELF[m] != 0:
 			c.a = 250.0 / 255.0
-		img.set_pixel(i, j, c)
+		im.set_pixel(i, j, c)
 	img_dirty = true
 
 ## a cache opened: its lid comes away (wreck.gd's, painted cell by cell)
@@ -826,6 +849,18 @@ func open_seal() -> void:
 	if seal_open:
 		return
 	seal_open = true
+	if lv:
+		# (a level's seal is the nest's door into the vault: the runestone falls away and it's a door again, shut)
+		for c0 in seal_cells:
+			cells[c0] = 0
+			_repaint(c0 % w, c0 / w)
+		for dr in doors:
+			if dr["sealed"]:
+				dr["sealed"] = false
+				dr["f"] = 0.0
+				dr["n"] = 0
+				_door_set(dr)
+		return
 	for c in seal_cells:
 		cells[c] = 0
 	# (a hatch's top row goes back to a one-way floor)
@@ -859,3 +894,1111 @@ func apply_state(d: Dictionary) -> void:
 			open_cache(caches[int(k)])
 	if bool(d.get("seal", false)):
 		open_seal()
+
+# ================================================================== levels ===
+# (27 Nov; user: "can we make the derelict space staions feel linke they are not just squares and are much larger. like
+# whole levels by themselves complete with hallways doors you cant see through destroyed rooms. not just all square
+# rooms. room to maneuver around where the enemies are. creepy abandonded ambience. loong hallways, as if it is a real
+# spaceship that was killed by aliens. there should be room to move around in each room. room for a full jump and
+# levitation in the rooms. same thing with outposts ... there are curently no hallways, doors, and decorative rooms,
+# sleeping areas, mess halls, brig, crew quarters, so on"; "with room to jump and move around. currently the rooms or
+# only like 2 player lengths high".)
+# Its HALLS (the instance you dock into) are a LEVEL: three or four DECKS stacked, each a run of tall ROOMS (136-176
+# high: a jump is about 44, so there's room to jump and levitate) and long CORRIDORS (64 high, bays rising to 100),
+# side by side through BULKHEADS with a DOOR in each at the deck's floor: solid, it opens as you (or a woken alien, or a
+# spacer) come near and shuts behind you, and in a derelict what's past a shut door is dark (`see_from`, `draw_level`).
+# SHAFTS join the decks (one-way landings at each deck's floor, ledges every 26 rows to climb by), and the REACTOR is a
+# great room two decks high with a catwalk across it. Rooms aren't boxes: domes, arches and vaults in their roofs,
+# soffits hanging over one side, MEZZANINES (one-way catwalks with railings, furnished up there too), raised DAISES
+# with steps; a derelict's broken rooms are DESTROYED (the roof caved in over a heap of rubble, girders down, breaches,
+# scorching, claw marks and the hive's goo). The shells out in space keep the old grid (`_build_station`).
+const BW := 8             # the bulkheads between a level's rooms, corridors and shafts
+const FS := 10            # the slab between two decks
+const HDOOR := 44         # a level's doorways and doors (the mage is 24 tall, a brute 22)
+const CH := 64            # a corridor's ceiling (its bays rise to CH_BAY)
+const CH_BAY := 100
+const SW := 60            # a shaft's width
+const HM := 28            # the hull round a level (the station goes on behind it: station_back.gd)
+const LSTEP := 26         # one-way ledges up a shaft or a tall room, this far apart (a jump is about 44)
+const MEZZ := 54          # a mezzanine's floor, this far over its room's floor (a ledge half way to climb by)
+const NO_FEATURES := ["dock", "vault", "nest", "hangar", "reactor", "market", "shipwright", "cantina", "charts"]
+
+var lv := false           # laid out as a level (its halls, since 27 Nov); else the old grid (the shells out in space)
+var decks := []           # [{"top", "floor"}]: each deck's highest row inside, and its floor's row
+var doors := []           # [{"x" (its bulkhead's first column), "y1" (the deck's floor row), "a", "b" (the rooms either
+                          #   side), "f" (0 shut .. 1 open), "n" (rows of it shut), "sealed", "d" (its deck)}]
+var vis := PackedFloat32Array()   # how much of each room you can see (a derelict's: past a shut door it's dark)
+var lights := []          # (an outpost's halos: gathered as it's grown)
+var _wmask := PackedByteArray()   # cells near a way in or out: `_near_way` looks closer only there
+var _pre_fg: Image        # (its pictures, painted as it's grown, off the main thread)
+var _pre_bg: Image
+var _door_tex: ImageTexture
+
+## a level's mass and middle: plain numbers (nothing of it moves; the cell-by-cell sums cost half a second)
+func rebuild() -> void:
+	if lv:
+		com = Vector2(float(w), float(h)) * 0.5
+		mass = float(w * h) * 0.5
+		return
+	super.rebuild()
+
+## the room (or corridor, or shaft) a point is in: the one whose inside holds it, else the nearest within a bulkhead
+func _room_at(b: Vector2) -> int:
+	for k in mods.size():
+		var md: Dictionary = mods[k]
+		if b.x >= float(md["x0"]) and b.x < float(md["x1"]) and b.y >= float(md["y0"]) and b.y < float(md["y1"]):
+			return k
+	var best := -1
+	var bd := float(BW) + 1.5
+	for k2 in mods.size():
+		var md2: Dictionary = mods[k2]
+		var dx := maxf(maxf(float(md2["x0"]) - b.x, b.x - float(md2["x1"])), 0.0)
+		var dy := maxf(maxf(float(md2["y0"]) - b.y, b.y - float(md2["y1"])), 0.0)
+		var dd := maxf(dx, dy)
+		if dd < bd:
+			bd = dd
+			best = k2
+	return best
+
+## the transform from its cells (from the corner) to the world
+func body_xf() -> Transform2D:
+	var ax := axis_x()
+	var ay := axis_y()
+	return Transform2D(ax, ay, pos - ax * com.x - ay * com.y)
+
+func _build_level_station(sd: int) -> void:
+	seed_ = sd
+	kind = "station"
+	wname = station_name(sd)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = sd
+	fate = ST_FATES[rng.randi_range(0, ST_FATES.size() - 1)]
+	var t0 := Time.get_ticks_msec()
+	var nd := rng.randi_range(3, 4)
+	var width := rng.randi_range(1800, 2250) if nd == 4 else rng.randi_range(2000, 2450)
+	var dh := []
+	for d in nd:
+		dh.append(rng.randi_range(136, 176))
+	dock_side = -1 if rng.randf() < 0.5 else 1
+	var rd := 1 if nd == 4 else rng.randi_range(0, 1)
+	var fixed := [
+		{"role": "dock", "kind": "room", "d0": nd - 1, "d1": nd - 1, "w": rng.randi_range(250, 290), "end": dock_side},
+		{"role": "vault", "kind": "room", "d0": 0, "d1": 0, "w": rng.randi_range(150, 180), "end": -dock_side},
+		{"role": "nest", "kind": "room", "d0": 0, "d1": 0, "w": rng.randi_range(270, 320), "end": -dock_side},
+		{"role": "reactor", "kind": "room", "d0": rd, "d1": rd + 1, "w": rng.randi_range(220, 270), "end": 0},
+	]
+	_add_shafts(rng, nd, fixed)
+	# (laid out again if a deck came out cut off from the rest, or the reactor found no room: it never should)
+	for attempt in 4:
+		_reset_level()
+		_lay_level(rng, nd, width, dh, fixed)
+		for k in mods.size():
+			match String(mods[k]["role"]):
+				"dock": dock = k
+				"vault": vault = k
+				"nest": nest = k
+				"reactor": reactor = k
+		if reactor >= 0 and not _bfs(dock).has(9999):
+			break
+	if reactor < 0:
+		reactor = dock
+	# every other room's role, dealt from a deck (corridors and shafts are what they are)
+	var pool := ["quarters", "cabins", "mess", "galley", "medbay", "brig", "engineering", "command", "lounge", "comms", "hydro",
+		"lab", "stores", "armory", "hall", "quarters", "stores"]
+	var bag := []
+	for md in mods:
+		if String(md["role"]) == "":
+			md["role"] = _deal(pool, bag, rng)
+	# power: the rooms nearest the reactor still have it (gravity, light); the bay and the vault too, never the nest
+	var rdist := _bfs(reactor)
+	var order := range(mods.size())
+	order.sort_custom(func(a, b): return int(rdist[a]) < int(rdist[b]))
+	var n_pow := maxi(3, int(ceil(float(mods.size()) * rng.randf_range(0.4, 0.6))))
+	var npw := 0
+	for i7 in order:
+		if npw >= n_pow:
+			break
+		if i7 == nest:
+			continue
+		mods[i7]["powered"] = true
+		npw += 1
+	mods[vault]["powered"] = true
+	mods[dock]["powered"] = true
+	mods[nest]["powered"] = false
+	# the nest's door into the vault is sealed with runestone until the Broodmother falls
+	for dr in doors:
+		if (int(dr["a"]) == nest and int(dr["b"]) == vault) or (int(dr["a"]) == vault and int(dr["b"]) == nest):
+			dr["sealed"] = true
+	_level_body(rng, sd)
+	# the bay's mouth (out to space, past the hull) and its apron
+	var dm: Dictionary = mods[dock]
+	_mouth(int(dm["x0"]), int(dm["x1"]), int(dm["y1"]), MOUTH, dock_side)
+	_dress_all(rng, sd)
+	for k3 in mods.size():
+		_caches_level(k3, rng)
+	_plan_aliens_level(rng)
+	meta = {"rooms": mods.size(), "powered": npw, "dock": dock, "nest": nest, "vault": vault, "reactor": reactor,
+		"decks": nd, "doors": doors.size(), "size": [w, h]}
+	_finish_level()
+	meta["ms"] = Time.get_ticks_msec() - t0
+
+## (a level begun again from nothing)
+func _reset_level() -> void:
+	mods = []
+	doors = []
+	decks = []
+	ways = []
+	seal_cells = PackedInt32Array()
+	caches = []
+	spawns = []
+	dock = -1
+	nest = -1
+	vault = -1
+	reactor = -1
+
+## shafts between the decks: one or two for each pair (now and then running a deck further), placed among the rest
+func _add_shafts(rng: RandomNumberGenerator, nd: int, fixed: Array) -> void:
+	for d in nd - 1:
+		var n := 1 + (1 if rng.randf() < 0.6 else 0)
+		for q in n:
+			var d1 := d + 1
+			if d + 2 < nd and rng.randf() < 0.25:
+				d1 = d + 2
+			fixed.append({"role": "shaft", "kind": "shaft", "d0": d, "d1": d1, "w": SW, "end": 0})
+
+## the decks, the pieces on them, their doors and the cells (hull everywhere, each piece hollowed out)
+func _lay_level(rng: RandomNumberGenerator, nd: int, width: int, dh: Array, fixed: Array) -> void:
+	lv = true
+	var yy := HM
+	for d in nd:
+		decks.append({"top": yy, "floor": yy + int(dh[d])})
+		yy += int(dh[d]) + FS
+	setup(width + HM * 2, yy - FS + HM)
+	rows = nd
+	var lo_x := HM
+	var hi_x := HM + width
+	var cl := []
+	var cr := []
+	for d2 in nd:
+		cl.append(lo_x)
+		cr.append(hi_x)
+	# the pieces placed first: those at an end (the bay, the hangar, the vault and the nest, an outpost's shops) one
+	# after another inward, then those in the middle (the reactor, the shafts) clear of them
+	var vert := []
+	for f in fixed:
+		var e: int = int(f.get("end", 0))
+		if e == 0:
+			continue
+		var d0: int = f["d0"]
+		var d1: int = f["d1"]
+		var fw: int = f["w"]
+		var x0 := 0
+		if e < 0:
+			for d3 in range(d0, d1 + 1):
+				x0 = maxi(x0, int(cl[d3]))
+			for d4 in range(d0, d1 + 1):
+				cl[d4] = x0 + fw + BW
+		else:
+			var x1 := hi_x
+			for d5 in range(d0, d1 + 1):
+				x1 = mini(x1, int(cr[d5]))
+			x0 = x1 - fw
+			for d6 in range(d0, d1 + 1):
+				cr[d6] = x0 - BW
+		vert.append({"x0": x0, "x1": x0 + fw, "d0": d0, "d1": d1, "role": f["role"], "kind": f["kind"]})
+	for f2 in fixed:
+		if int(f2.get("end", 0)) != 0:
+			continue
+		var px := _place_mid(rng, vert, cl, cr, int(f2["d0"]), int(f2["d1"]), int(f2["w"]))
+		if px >= 0:
+			vert.append({"x0": px, "x1": px + int(f2["w"]), "d0": f2["d0"], "d1": f2["d1"], "role": f2["role"], "kind": f2["kind"]})
+	for v in vert:
+		_add_piece(String(v["kind"]), int(v["x0"]), int(v["x1"]), int(v["d0"]), int(v["d1"]), String(v["role"]), rng)
+	# what's left of each deck dealt out as rooms and corridors, turn about
+	for d7 in nd:
+		var occ := []
+		for v2 in vert:
+			if int(v2["d0"]) <= d7 and d7 <= int(v2["d1"]):
+				occ.append(v2)
+		occ.sort_custom(func(p, q): return int(p["x0"]) < int(q["x0"]))
+		var a := lo_x
+		var left := "edge"
+		for v3 in occ:
+			var b := int(v3["x0"]) - BW
+			if b - a >= 40:
+				_fill_deck(rng, d7, a, b, left)
+			a = int(v3["x1"]) + BW
+			left = "corridor" if String(v3["kind"]) == "shaft" else String(v3["kind"])
+		if hi_x - a >= 40:
+			_fill_deck(rng, d7, a, hi_x, left)
+	# side by side on a deck, two pieces share a bulkhead with a door in it at that deck's floor
+	cols = 0
+	for d8 in nd:
+		var on := []
+		for k in mods.size():
+			if int(mods[k]["d0"]) <= d8 and d8 <= int(mods[k]["d1"]):
+				on.append(k)
+		on.sort_custom(func(p, q): return int(mods[p]["x0"]) < int(mods[q]["x0"]))
+		for q2 in range(on.size() - 1):
+			var ka: int = on[q2]
+			var kb: int = on[q2 + 1]
+			if int(mods[kb]["x0"]) - int(mods[ka]["x1"]) != BW:
+				continue
+			doors.append({"x": int(mods[ka]["x1"]), "y1": int(decks[d8]["floor"]), "a": ka, "b": kb, "f": 0.0, "n": 0, "sealed": false, "d": d8})
+			(mods[ka]["links"] as Array).append(kb)
+			(mods[kb]["links"] as Array).append(ka)
+		var c := 0
+		for k2 in on:
+			if int(mods[k2]["d1"]) == d8:
+				mods[k2]["c"] = c
+				c += 1
+		cols = maxi(cols, on.size())
+	# the cells: hull everywhere, each piece hollowed out, a corridor's ceiling brought down to its line, the doorways
+	var ci := Image.create(w, h, false, Image.FORMAT_R8)
+	ci.fill(Art.r8(Defs.HULL))
+	for md in mods:
+		var mx0: int = md["x0"]
+		var my0: int = md["y0"]
+		var my1: int = md["y1"]
+		ci.fill_rect(Rect2i(mx0, my0, int(md["x1"]) - mx0, my1 - my0), Art.r8(0))
+		if String(md["kind"]) == "corridor":
+			var pf: PackedInt32Array = md["prof"]
+			var i := 0
+			while i < pf.size():
+				var hg := pf[i]
+				var e2 := i
+				while e2 < pf.size() and pf[e2] == hg:
+					e2 += 1
+				var open_top := my1 - hg
+				if open_top > my0:
+					ci.fill_rect(Rect2i(mx0 + i, my0, e2 - i, open_top - my0), Art.r8(Defs.HULL))
+				i = e2
+	for dr in doors:
+		ci.fill_rect(Rect2i(int(dr["x"]), int(dr["y1"]) - HDOOR, BW, HDOOR), Art.r8(0))
+	cells = ci.get_data()
+	# the plates' look (as `_plate`: courses four rows high, a seam every ten columns with rivets), row by row
+	var rowv := []
+	for jm in 8:
+		var row := PackedByteArray()
+		row.resize(w)
+		for i2 in w:
+			var pv := 1 if (jm / 4) % 2 == 0 else 2
+			if i2 % 10 == 0:
+				pv = 0
+			elif (i2 % 10 == 1 or i2 % 10 == 9) and jm % 4 == 1:
+				pv = 3
+			row[i2] = pv
+		rowv.append(row)
+	var vv := PackedByteArray()
+	for j in h:
+		vv.append_array(rowv[j % 8])
+	vars = vv
+
+## somewhere in the middle for a piece spanning decks d0..d1: clear of the others, leaving either no room at all or
+## room for a room between them. -1 if nowhere.
+func _place_mid(rng: RandomNumberGenerator, vert: Array, cl: Array, cr: Array, d0: int, d1: int, fw: int) -> int:
+	var lo := 0
+	var hi := 1 << 30
+	for d in range(d0, d1 + 1):
+		lo = maxi(lo, int(cl[d]))
+		hi = mini(hi, int(cr[d]))
+	if hi - lo < fw:
+		return -1
+	for gmin in [140, 100]:
+		for tries in 60:
+			var x0 := rng.randi_range(lo, hi - fw)
+			if _fits(x0, fw, d0, d1, vert, cl, cr, gmin):
+				return x0
+	# (right beside another, or at an end)
+	var cands := [lo, hi - fw]
+	for v in vert:
+		cands.append(int(v["x1"]) + BW)
+		cands.append(int(v["x0"]) - BW - fw)
+	for x1 in cands:
+		if int(x1) >= lo and int(x1) <= hi - fw and _fits(int(x1), fw, d0, d1, vert, cl, cr, 100):
+			return int(x1)
+	return -1
+
+func _fits(x0: int, fw: int, d0: int, d1: int, vert: Array, cl: Array, cr: Array, gmin: int) -> bool:
+	var x1 := x0 + fw
+	for d in range(d0, d1 + 1):
+		var gl := (x0 - BW) - int(cl[d])
+		if gl != -BW and gl < gmin:
+			return false
+		var gr := int(cr[d]) - (x1 + BW)
+		if gr != -BW and gr < gmin:
+			return false
+	for v in vert:
+		if int(v["d1"]) < d0 or int(v["d0"]) > d1:
+			continue
+		var vx0: int = v["x0"]
+		var vx1: int = v["x1"]
+		if vx1 <= x0:
+			var g := (x0 - BW) - (vx1 + BW)
+			if g != -BW and g < gmin:
+				return false
+		elif vx0 >= x1:
+			var g2 := (vx0 - BW) - (x1 + BW)
+			if g2 != -BW and g2 < gmin:
+				return false
+		else:
+			return false
+	return true
+
+## a stretch a..b of deck d (inside: walls between the pieces) dealt out as rooms and corridors, turn about
+func _fill_deck(rng: RandomNumberGenerator, d: int, a: int, b: int, left: String) -> void:
+	var span := b - a
+	var out := []
+	var t := "corridor" if left == "room" else "room"
+	var rem := span
+	while rem > 0:
+		var wmin := 150 if t == "room" else 90
+		if rem < wmin:
+			break
+		var wv := rng.randi_range(170, 300) if t == "room" else (rng.randi_range(280, 460) if rng.randf() < 0.4 else rng.randi_range(110, 220))
+		wv = mini(wv, rem)
+		if rem - wv - BW < 100:
+			wv = rem
+		out.append([t, wv])
+		rem -= wv + BW
+		t = "room" if t == "corridor" else "corridor"
+	if out.is_empty():
+		out.append(["corridor" if span < 150 else "room", span])
+	var tot := -BW
+	for p in out:
+		tot += int(p[1]) + BW
+	out[out.size() - 1][1] = int(out[out.size() - 1][1]) + (span - tot)
+	var x := a
+	for p2 in out:
+		_add_piece(String(p2[0]), x, x + int(p2[1]), d, d, "corridor" if String(p2[0]) == "corridor" else "", rng)
+		x += int(p2[1]) + BW
+
+func _add_piece(knd: String, x0: int, x1: int, d0: int, d1: int, role: String, rng: RandomNumberGenerator) -> void:
+	var fl: int = decks[d1]["floor"]
+	var y0: int = decks[d0]["top"]
+	if knd == "corridor":
+		y0 = fl - CH_BAY
+	var md := {"c": 0, "r": d1 if knd != "shaft" else -1, "x0": x0, "y0": y0, "x1": x1, "y1": fl, "role": role, "powered": false,
+		"links": [], "kind": knd, "d0": d0, "d1": d1}
+	if knd == "corridor":
+		md["prof"] = _corr_profile(rng, x1 - x0)
+	if role == "" and knd == "shaft":
+		md["role"] = "shaft"
+	mods.append(md)
+
+## a corridor's ceiling, column by column: CH high, rising into a bay or two along a long one (chamfered: four rows a
+## column), clear of its ends
+func _corr_profile(rng: RandomNumberGenerator, ln: int) -> PackedInt32Array:
+	var pf := PackedInt32Array()
+	pf.resize(ln)
+	pf.fill(CH)
+	if ln > 150:
+		for k in rng.randi_range(1, 1 + ln / 220):
+			var bw2 := rng.randi_range(46, 90)
+			var bx := rng.randi_range(30, maxi(31, ln - bw2 - 30))
+			for i in range(bx, mini(ln, bx + bw2)):
+				var e := mini(i - bx, bx + bw2 - 1 - i)
+				pf[i] = maxi(pf[i], mini(CH_BAY, CH + e * 4))
+	return pf
+
+## the back wall in bulk, the doors shut, the frames (shafts' landings and ledges, catwalks and balconies in the rooms
+## two decks high, mezzanines, daises), the ways kept clear, the roofs' shapes: after the roles are known
+func _level_body(rng: RandomNumberGenerator, sd: int) -> void:
+	var bi := Image.create(w, h, false, Image.FORMAT_R8)
+	var vi := Image.create(w, h, false, Image.FORMAT_R8)
+	for md in mods:
+		var role: String = md["role"]
+		var sty := Art.style_for(role if String(md["kind"]) == "room" else String(md["kind"]), rng)
+		md["style"] = sty
+		Art.wall_bulk(bi, vi, int(md["x0"]), int(md["y0"]), int(md["x1"]), int(md["y1"]), sty)
+	for dr in doors:
+		bi.fill_rect(Rect2i(int(dr["x"]), int(dr["y1"]) - HDOOR, BW, HDOOR), Art.r8(Defs.HULL))
+		vi.fill_rect(Rect2i(int(dr["x"]), int(dr["y1"]) - HDOOR, BW, HDOOR), Art.r8(2))
+	bg = bi.get_data()
+	bgv = vi.get_data()
+	# the doors: shut (or sealed), a lintel and a lamp over each
+	for dr2 in doors:
+		var dx: int = dr2["x"]
+		var dy: int = dr2["y1"]
+		ways.append(Rect2i(dx - 12, dy - HDOOR - 2, BW + 24, HDOOR + 2))
+		for i in range(dx - 2, dx + BW + 2):
+			put(i, dy - HDOOR - 1, Defs.COPPERBAR, 2)
+			put(i, dy - HDOOR - 2, Defs.COPPERBAR, 0)
+		put(dx + BW / 2, dy - HDOOR - 4, Defs.CRYSTAL if not dr2["sealed"] else Defs.EMBER, 0)
+		if dr2["sealed"]:
+			for j in range(dy - HDOOR, dy):
+				for i2 in range(dx, dx + BW):
+					put(i2, j, Defs.RUNESTONE if (i2 + j) % 7 != 0 else Defs.WISP, 0)
+					seal_cells.append(j * w + i2)
+		else:
+			_door_set(dr2)
+	for k in mods.size():
+		_frame_piece(k, rng)
+	# (the cells near a way in or out: everything that might stand in one looks closer there)
+	var mi := Image.create(w, h, false, Image.FORMAT_R8)
+	for r in ways:
+		mi.fill_rect((r as Rect2i).grow(10).intersection(Rect2i(0, 0, w, h)), Color(1.0 / 255.0, 0, 0))
+	_wmask = mi.get_data()
+
+## a shaft's landings and ledges; a tall room's catwalk or balconies and the ledges up to them; a room's mezzanine
+## and dais
+func _frame_piece(k: int, rng: RandomNumberGenerator) -> void:
+	var md: Dictionary = mods[k]
+	var x0: int = md["x0"]
+	var x1: int = md["x1"]
+	var y1: int = md["y1"]
+	var d0: int = md["d0"]
+	var d1: int = md["d1"]
+	var knd: String = md["kind"]
+	if knd == "shaft":
+		for d in range(d0, d1):
+			var fy: int = decks[d]["floor"]
+			for i in range(x0, x1):
+				put(i, fy, Defs.SCAFFOLD, 0)
+			ways.append(Rect2i(x0, fy - 22, x1 - x0, 24))
+		for d2 in range(d0 + 1, d1 + 1):
+			_ledges(x0, x1, int(decks[d2]["floor"]), int(decks[d2 - 1]["floor"]), 26)
+		return
+	if d1 > d0:
+		for d3 in range(d0, d1):
+			var fy2: int = decks[d3]["floor"]
+			if String(md["role"]) == "reactor":
+				# a catwalk right across, ledges up to it along both walls
+				for i3 in range(x0, x1):
+					put(i3, fy2, Defs.SCAFFOLD, 0)
+				ways.append(Rect2i(x0, fy2 - 22, x1 - x0, 24))
+				_ledges(x0, x0 + 64, int(decks[d3 + 1]["floor"]), fy2, 28)
+				_ledges(x1 - 64, x1, int(decks[d3 + 1]["floor"]), fy2, 28)
+				md["catwalks"] = (md.get("catwalks", []) as Array) + [[x0, x1, fy2]]
+				continue
+			# a balcony at each door this deck has into it, ledges up to it
+			for dr in doors:
+				if int(dr["d"]) != d3 or (int(dr["a"]) != k and int(dr["b"]) != k):
+					continue
+				var on_left: bool = int(dr["x"]) < x0
+				var bx0 := x0 if on_left else x1 - 60
+				var bx1 := x0 + 60 if on_left else x1
+				for i4 in range(bx0, bx1):
+					put(i4, fy2, Defs.SCAFFOLD, 0)
+				ways.append(Rect2i(bx0, fy2 - 22, bx1 - bx0, 24))
+				_ledges(bx0 - (0 if on_left else 30), bx1 + (30 if on_left else 0), int(decks[d3 + 1]["floor"]), fy2, 30)
+				md["catwalks"] = (md.get("catwalks", []) as Array) + [[bx0, bx1, fy2]]
+		return
+	if knd != "room" or NO_FEATURES.has(String(md["role"])) or x1 - x0 < 170:
+		return
+	var rw := x1 - x0
+	# a mezzanine along one wall (a one-way catwalk; a ledge at its end to climb by)
+	if rng.randf() < 0.5:
+		var left := rng.randf() < 0.5
+		var span := int(float(rw) * rng.randf_range(0.32, 0.45))
+		var mx0 := x0 if left else x1 - span
+		var mx1 := x0 + span if left else x1
+		var my := y1 - MEZZ
+		for i5 in range(mx0, mx1):
+			put(i5, my, Defs.SCAFFOLD, 0)
+		var lx := mx1 - 6 if left else mx0 - 22
+		for i6 in range(lx, lx + 28):
+			put(i6, y1 - 28, Defs.SCAFFOLD, 0)
+		ways.append(Rect2i(mx0, my - 22, mx1 - mx0, 24))
+		ways.append(Rect2i(lx, y1 - 50, 28, 24))
+		md["mezz"] = [mx0, mx1, my, left]
+	# a dais in the middle, steps up either side
+	if rng.randf() < 0.3:
+		var dw := int(float(rw) * rng.randf_range(0.22, 0.3))
+		var dhh := rng.randi_range(3, 4) * 4
+		var dx0 := x0 + rw / 2 - dw / 2 + rng.randi_range(-20, 20)
+		var mz: Array = md.get("mezz", [])
+		if not mz.is_empty() and dx0 < int(mz[1]) + 30 and dx0 + dw > int(mz[0]) - 30:
+			return
+		for i7 in range(dx0 - dhh, dx0 + dw + dhh):
+			var hgt := dhh
+			if i7 < dx0:
+				hgt = ((i7 - (dx0 - dhh)) / 4 + 1) * 4
+			elif i7 >= dx0 + dw:
+				hgt = ((dx0 + dw + dhh - 1 - i7) / 4 + 1) * 4
+			hgt = mini(hgt, dhh)
+			for j in range(y1 - hgt, y1):
+				put(i7, j, Defs.HULL, 0 if j == y1 - hgt else (1 if (j / 4) % 2 == 0 else 2))
+		md["dais"] = [dx0 - dhh, dx0 + dw + dhh, y1 - dhh]
+
+## one-way ledges to climb by, from a floor (row fy) up toward a landing (row top), every `step` rows, turn about
+## between the two ends of x0..x1 (26 wide)
+func _ledges(x0: int, x1: int, fy: int, top: int, step: int) -> void:
+	var side := 0
+	var ly := fy - step
+	while ly > top + 12:
+		var lx := x0 if side == 0 else x1 - 26
+		for i in range(lx, lx + 26):
+			put(i, ly, Defs.SCAFFOLD, 0)
+		ways.append(Rect2i(lx, ly - 22, 26, 24))
+		side = 1 - side
+		ly -= step
+
+## the mouth of a bay or a hangar at the end of a level: open from its floor up, out through the hull to space
+func _mouth(x0: int, x1: int, y1: int, mh: int, side: int) -> void:
+	var a := 0 if side < 0 else x1
+	var b := x0 if side < 0 else w
+	ways.append(Rect2i(a, y1 - mh, b - a, mh))
+	for j in range(y1 - mh, y1):
+		for i in range(a, b):
+			cells[j * w + i] = 0
+			bg[j * w + i] = 0
+	# the apron: lights along its top, hazard stripes at the lip
+	for i2 in range(a, b):
+		if (i2 - a) % 6 == 2:
+			put(i2, y1, Defs.CRYSTAL, 0)
+		put(i2, y1 - mh - 1, Defs.COAL if ((i2 + y1) / 3) % 2 == 0 else Defs.SUNSTONE, 0)
+
+## every piece dressed
+func _dress_all(rng: RandomNumberGenerator, sd: int) -> void:
+	var noise := FastNoiseLite.new()
+	noise.seed = sd
+	noise.frequency = 0.09
+	for k in mods.size():
+		_dress_level(k, rng, noise)
+		if has_method("_dress_op"):
+			call("_dress_op", k, rng, noise)
+
+## a piece's look: its roof's shape, the wall's details, lamps, the floor (gravity runes where there's power), what
+## it holds for its role, upstairs on its mezzanine too; a derelict's broken ones destroyed
+func _dress_level(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void:
+	var md: Dictionary = mods[k]
+	var x0: int = md["x0"]
+	var y0: int = md["y0"]
+	var x1: int = md["x1"]
+	var y1: int = md["y1"]
+	var pw: bool = md["powered"]
+	var role: String = md["role"]
+	var knd: String = md["kind"]
+	var derelict := kind == "station"
+	var cv := Art.Cv.new()
+	cv.bg = bg
+	cv.bgv = bgv
+	cv.w = w
+	cv.h = h
+	cv.rng = rng
+	cv.noise = noise
+	cv.dead = not pw
+	cv.lived = kind == "outpost"
+	var rw := x1 - x0
+	var drop := PackedInt32Array()
+	drop.resize(rw)
+	if knd == "room" and int(md["d0"]) == int(md["d1"]):
+		drop = _shape_level(k, rng, noise)
+	elif knd == "corridor":
+		var pf: PackedInt32Array = md["prof"]
+		for i in rw:
+			drop[i] = CH_BAY - pf[i]
+	if role != "nest" and role != "vault":
+		Art.wall_detail(cv, x0, y0, x1, y1, String(md.get("style", "plate")), drop)
+	# the floor: gravity runes glowing in it where there's power
+	for i2 in range(x0, x1):
+		if at(i2, y1) == Defs.HULL:
+			if pw:
+				put(i2, y1, Defs.WISP if (i2 - x0) % 8 == 4 else Defs.RUNESTONE, 0)
+			elif (i2 - x0) % 8 == 4:
+				put(i2, y1, Defs.RUNESTONE, 0)
+	# lamps under the roof (where it comes down to): lit, or dead
+	if knd != "shaft":
+		for i3 in range(x0 + 8, x1 - 6, 16):
+			var lj: int = y0 + int(drop[i3 - x0])
+			if at(i3, lj) == 0 and at(i3 + 1, lj) == 0 and at(i3, lj - 1) != 0 and not _near_way(i3, lj, 2) and not _near_way(i3 + 1, lj, 2):
+				put(i3, lj, Defs.CRYSTAL if pw else Defs.COPPERBAR, 0)
+				put(i3 + 1, lj, Defs.CRYSTAL if pw else Defs.COPPERBAR, 0)
+	for cw in md.get("catwalks", []):
+		Art.railing(cv, int(cw[0]), int(cw[1]), int(cw[2]))
+	var mx := (x0 + x1) / 2
+	var my := (y0 + y1) / 2
+	match role:
+		"reactor":
+			# a great wisp core on the back wall, rings of crystal round it, conduits to the roof and the floor
+			var cr := int(float(mini(rw, y1 - y0)) * 0.2)
+			for j4 in range(my - cr - 6, my + cr + 6):
+				for i4 in range(mx - cr - 6, mx + cr + 6):
+					var dd := Vector2(i4 - mx, j4 - my).length()
+					if dd < float(cr):
+						bg[j4 * w + i4] = Defs.WISP if pw else Defs.WISPBAR
+						bgv[j4 * w + i4] = int(dd) % 4
+					elif dd < float(cr) + 3.0 or (absf(dd - float(cr) - 5.0) < 0.8 and int(dd * 3.0 + float(i4)) % 5 != 0):
+						bg[j4 * w + i4] = Defs.CRYSTAL if pw else Defs.COPPERBAR
+						bgv[j4 * w + i4] = 0
+			for cx in [mx - 6, mx + 6]:
+				for j5 in range(y0 + 4, my - cr - 6):
+					bg[j5 * w + int(cx)] = Defs.COPPERBAR
+					bg[j5 * w + int(cx) + 1] = Defs.COPPERBAR
+				for j6 in range(my + cr + 6, y1):
+					bg[j6 * w + int(cx)] = Defs.COPPERBAR
+					bg[j6 * w + int(cx) + 1] = Defs.COPPERBAR
+			Art.pipes(cv, x0, x1, y0 + 8, 3)
+		"dock":
+			for i13 in range(x0, x1):
+				if ((i13 / 4) % 2) == 0:
+					put(i13, y1, Defs.SUNSTONE, 0)
+			for cx2 in [x0 + 24, x1 - 24]:
+				for i14 in range(int(cx2) - 3, int(cx2) + 3):
+					if not _near_way(i14, y1 - 1, 2):
+						put(i14, y1 - 1, Defs.COPPERBAR, 2)
+		"nest":
+			# the hive: xenite grown over the walls, the floor and the roof, egg sacs on the floor
+			for j15 in range(y0, y1):
+				for i15 in range(x0, x1):
+					var wall_d := mini(mini(i15 - x0, x1 - 1 - i15), mini(j15 - y0, y1 - 1 - j15))
+					var n := noise.get_noise_2d(i15 * 2.3, j15 * 2.3)
+					if wall_d < 4 and n > 0.05 and not _near_way(i15, j15, 4):
+						put(i15, j15, Defs.XENITE, (i15 + j15) % 4)
+					if n > -0.2:
+						bg[j15 * w + i15] = Defs.XENITE if n > 0.25 else Defs.COAL
+						bgv[j15 * w + i15] = (i15 * 3 + j15) % 4
+			for ex in range(x0 + 14, x1 - 14, 13):
+				if rng.randf() < 0.7 and not _near_way(ex, y1 - 3):
+					for je in range(y1 - 6, y1):
+						for ie in range(ex - 2, ex + 3):
+							if Vector2(ie - ex, (je - (y1 - 3)) * 0.8).length() < 2.8:
+								put(ie, je, Defs.XENITE, 1 if (ie + je) % 2 == 0 else 3)
+			# strands hanging from the roof
+			for sx in range(x0 + 10, x1 - 10, 9):
+				if rng.randf() < 0.5:
+					var sl := rng.randi_range(10, 50)
+					for q in sl:
+						bg[(y0 + q) * w + sx + (1 if q % 7 > 4 else 0)] = Defs.XENITE
+		"vault":
+			for j16 in range(y0, y1):
+				for i16 in range(x0, x1):
+					bg[j16 * w + i16] = Defs.RUNESTONE
+					bgv[j16 * w + i16] = (i16 / 4 + j16 / 4) % 3
+					if (i16 - x0) % 10 == 5 and (j16 - y0) % 10 == 5:
+						bg[j16 * w + i16] = Defs.WISP
+		"corridor":
+			Art.corridor(cv, x0, y0, x1, y1, md["prof"])
+		"shaft":
+			# a sign at each landing, pipes up its back wall, hazard stripes along its landings
+			for d in range(int(md["d0"]), int(md["d1"]) + 1):
+				var fy: int = decks[d]["floor"]
+				Art.signboard(cv, x0 + 18, fy - 34, 24, Art.LED_Y)
+				for i17 in range(x0, x1):
+					cv.p(i17, fy - 1, Art.HAZARD if ((i17 - x0) / 3) % 2 == 0 else Art.BLACK, 0)
+			for px in [x0 + 6, x1 - 8]:
+				for j17 in range(y0, y1):
+					cv.p(int(px), j17, Art.PIPE, 2 if j17 % 22 == 0 else 0)
+		"hangar":
+			pass
+		_:
+			# what the room holds, at the floor (its things on the wall about head height up), its mezzanine's
+			# things up there, and on a tall wall with nothing above, pipes, windows and signs
+			var band_top := y0 if role == "hall" or role == "promenade" or role == "observatory" else maxi(y0, y1 - 84)
+			var mz: Array = md.get("mezz", [])
+			if mz.is_empty():
+				Art.furnish(cv, role, x0, band_top, x1, y1)
+				if y1 - y0 > 120 and band_top > y0:
+					Art.pipes(cv, x0, x1, y1 - 100, 2)
+					var wx := x0 + rng.randi_range(10, 40)
+					while wx + 24 < x1 - 10:
+						if rng.randf() < 0.45:
+							Art.window(cv, wx, y0 + int(drop[wx - x0]) + 12, 22, 14)
+						elif rng.randf() < 0.4:
+							Art.poster(cv, wx, y1 - 116, 8, 11)
+						wx += rng.randi_range(40, 70)
+			else:
+				var mx0: int = mz[0]
+				var mx1: int = mz[1]
+				var myy: int = mz[2]
+				# downstairs, and upstairs on the catwalk
+				Art.furnish(cv, role, x0, maxi(y0, y1 - 84), x1, y1)
+				Art.furnish(cv, _upstairs(role), mx0 + 2, maxi(y0, myy - 70), mx1 - 2, myy)
+				Art.railing(cv, mx0, mx1, myy)
+			if derelict and pw:
+				Art.debris(cv, x0, x1, y1)
+	if derelict and not pw and role != "vault":
+		_destroy(k, rng, noise, cv)
+
+## what stands up on a mezzanine, by the room under it
+func _upstairs(role: String) -> String:
+	match role:
+		"quarters", "cabins":
+			return "quarters"
+		"mess", "galley", "lounge":
+			return "lounge"
+		"lab", "medbay":
+			return "lab"
+		"engineering", "armory":
+			return "stores"
+		"command", "comms":
+			return "comms"
+		"hydro":
+			return "hydro"
+		"brig":
+			return "stores"
+	return "stores"
+
+## a room's roof: its shape by role (as `_shape`), deeper for a tall room, sometimes a soffit hanging over one side;
+## in a derelict's broken rooms caved in over a heap of rubble
+func _shape_level(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> PackedInt32Array:
+	var md: Dictionary = mods[k]
+	var x0: int = md["x0"]
+	var y0: int = md["y0"]
+	var x1: int = md["x1"]
+	var y1: int = md["y1"]
+	var role: String = md["role"]
+	var rw := x1 - x0
+	var rh := y1 - y0
+	var drop := PackedInt32Array()
+	drop.resize(rw)
+	if role == "dock" or role == "hangar" or role == "reactor" or role == "nest" or role == "vault":
+		return drop
+	var sc := float(rh) / 64.0 * 0.8
+	var kind_s := "chamfer"
+	match role:
+		"observatory", "command":
+			kind_s = "dome"
+		"lounge", "quarters", "mess", "cantina", "cabins", "galley":
+			kind_s = "arch" if rng.randf() < 0.6 else "chamfer"
+		"engineering", "stores", "comms", "shipwright", "armory":
+			kind_s = "duct"
+		"hall", "promenade":
+			kind_s = "vault"
+	var duct_l := rng.randf() < 0.5
+	for i in rw:
+		var u := (float(i) + 0.5) / float(rw) * 2.0 - 1.0
+		var d := 0.0
+		match kind_s:
+			"dome":
+				d = 18.0 * sc * (1.0 - sqrt(maxf(0.0, 1.0 - u * u)))
+			"arch":
+				d = 11.0 * sc * (1.0 - sqrt(maxf(0.0, 1.0 - u * u)))
+			"vault":
+				d = (12.0 if absf(u) > 0.82 else (6.0 if absf(u) > 0.55 else 0.0)) * sc
+			"duct":
+				var side := i < 40 if duct_l else i >= rw - 40
+				d = 9.0 * sc if side else 0.0
+				d = maxf(d, 8.0 - float(mini(i, rw - 1 - i)))
+			_:
+				d = maxf(0.0, 10.0 - float(mini(i, rw - 1 - i)))
+		drop[i] = int(d)
+	# a soffit: the roof hanging low over one side (an L of a room), its inner corner chamfered
+	if rh > 120 and rng.randf() < 0.3 and not md.has("mezz"):
+		var sw2 := int(float(rw) * rng.randf_range(0.25, 0.38))
+		var sd2 := rh - rng.randi_range(96, 112)
+		var on_l := rng.randf() < 0.5
+		for i2 in rw:
+			var inn := (sw2 - i2) if on_l else (i2 - (rw - sw2))
+			if inn >= 0:
+				drop[i2] = maxi(int(drop[i2]), sd2 - maxi(0, 12 - inn))
+	# caved in: a jagged chunk of the roof come down, over the heap it made
+	if kind == "station" and not bool(md["powered"]) and rng.randf() < 0.7:
+		var cw := rng.randi_range(30, 70)
+		var cx := rng.randi_range(x0 + 50, maxi(x0 + 51, x1 - 50 - cw))
+		for i3 in range(cx, cx + cw):
+			var u2 := float(i3 - cx) / float(cw)
+			var dep := int((sin(u2 * PI) * float(rng.randi_range(26, 46))) + noise.get_noise_2d(float(i3) * 3.0, 7.0) * 8.0)
+			drop[i3 - x0] = maxi(int(drop[i3 - x0]), dep)
+		md["cave"] = [cx, cx + cw]
+	for i4 in rw:
+		var ci := x0 + i4
+		for j in range(y0, y0 + int(drop[i4])):
+			if _near_way(ci, j, 3):
+				drop[i4] = j - y0
+				break
+			put(ci, j, Defs.HULL, 0 if j == y0 + int(drop[i4]) - 1 else (1 if (j / 4) % 2 == 0 else 2))
+	if kind_s == "duct":
+		for i5 in rw:
+			var ci5 := x0 + i5
+			var dj: int = y0 + int(drop[i5])
+			if int(drop[i5]) >= 6 and at(ci5, dj) == 0 and not _near_way(ci5, dj, 3):
+				bg[dj * w + ci5] = Art.PIPE
+				bgv[dj * w + ci5] = 3 if ci5 % 12 == 0 else 0
+	return drop
+
+## a derelict's broken room torn up: scorched near its walls, a heap of rubble under where its roof caved in (or just
+## on the floor), a girder fallen, a breach through an outer wall into the dark beyond, claws and goo
+func _destroy(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite, cv) -> void:
+	var md: Dictionary = mods[k]
+	var x0: int = md["x0"]
+	var y0: int = md["y0"]
+	var x1: int = md["x1"]
+	var y1: int = md["y1"]
+	for j in range(y0 - BW, y1 + FS):
+		for i in range(x0 - BW, x1 + BW):
+			if i > x0 + 6 and i < x1 - 6 and j > y0 + 6 and j < y1 - 4:
+				continue
+			if at(i, j) == Defs.HULL and noise.get_noise_2d(i * 5.0, j * 5.0) > 0.4:
+				put(i, j, Defs.COAL, 0)
+	if String(md["kind"]) == "room" and x1 - x0 >= 160:
+		var cave: Array = md.get("cave", [])
+		var hx0: int = int(cave[0]) - 10 if not cave.is_empty() else rng.randi_range(x0 + 50, x1 - 120)
+		var hx1: int = int(cave[1]) + 10 if not cave.is_empty() else hx0 + rng.randi_range(40, 70)
+		var top := rng.randi_range(10, 22)
+		var prev := 0
+		for i2 in range(hx0, hx1):
+			if _near_way(i2, y1 - 2, 6):
+				prev = 0
+				continue
+			var u := float(i2 - hx0) / float(hx1 - hx0)
+			var hg := int(sin(u * PI) * float(top) + noise.get_noise_2d(float(i2) * 4.0, 31.0) * 4.0)
+			hg = clampi(hg, 0, prev + 4)
+			prev = hg
+			for j2 in range(y1 - hg, y1):
+				var rr := absi(int(noise.get_noise_2d(float(i2) * 9.0, float(j2) * 9.0) * 100.0)) % 10
+				put(i2, j2, Defs.HULL if rr < 6 else (Defs.COAL if rr < 9 else Defs.COPPERBAR), rr % 4)
+		# (and back down the far side, never a cliff)
+		var i3 := hx1
+		while prev > 0 and i3 < x1 - 2:
+			prev -= 4
+			for j3 in range(y1 - maxi(prev, 0), y1):
+				if at(i3, j3) == 0:
+					put(i3, j3, Defs.HULL, 1)
+			i3 += 1
+	if rng.randf() < 0.6 and x1 - x0 > 60:
+		var gx := rng.randi_range(x0 + 6, x1 - 40)
+		var gy := rng.randi_range(y0 + 10, maxi(y0 + 11, y1 - 60))
+		for q in 34:
+			var gi := gx + q
+			var gj := gy + q / 2
+			if not _near_way(gi, gj) and gj < y1 - 20:
+				put(gi, gj, Defs.COPPERBAR, 2)
+				put(gi, gj + 1, Defs.COPPERBAR, 0)
+	var outer := []
+	if int(md["d0"]) == 0:
+		outer.append(Vector2(rng.randi_range(x0 + 20, x1 - 20), y0 - 2))
+	if x0 <= HM + 1 and k != dock:
+		outer.append(Vector2(x0 - 2, rng.randi_range(y0 + 20, y1 - 60)))
+	if x1 >= w - HM - 1 and k != dock:
+		outer.append(Vector2(x1 + 1, rng.randi_range(y0 + 20, y1 - 60)))
+	if not outer.is_empty() and rng.randf() < 0.75:
+		_breach(outer[rng.randi_range(0, outer.size() - 1)], rng.randf_range(9.0, 15.0), noise)
+	for q2 in rng.randi_range(1, 3):
+		Art.claws(cv, rng.randi_range(x0 + 6, maxi(x0 + 7, x1 - 20)), y1 - rng.randi_range(24, 60))
+	if rng.randf() < 0.7:
+		Art.smear(cv, rng.randi_range(x0 + 4, maxi(x0 + 5, x1 - 40)), y1, rng.randi_range(16, 40))
+
+## a level's crates, by the role of the room they're in
+func _caches_level(k: int, rng: RandomNumberGenerator) -> void:
+	if kind != "station":
+		return
+	var mk: Dictionary = mods[k]
+	var fl: int = int(mk["y1"])
+	var a0: int = int(mk["x0"]) + 3
+	var a1: int = int(mk["x1"]) - 3
+	match String(mk["role"]):
+		"stores", "armory":
+			_crate_near(a0 + 12, fl, "stores", a0, a1)
+			_crate_near(a1 - 24, fl, "stores", a0, a1)
+		"quarters", "cabins", "lab", "brig":
+			_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, "quarters" if String(mk["role"]) != "lab" else "lab", a0, a1)
+		"medbay":
+			_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, "lab", a0, a1)
+		"nest":
+			_crate_near(a1 - 18, fl, "nest", a0, a1)
+		"vault":
+			_crate_near((a0 + a1) / 2 - CRATE_W / 2, fl, VAULT_CRATE, a0, a1)
+		"corridor", "shaft", "dock":
+			if rng.randf() < 0.2:
+				_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, "stores", a0, a1)
+		_:
+			if rng.randf() < 0.55:
+				_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, "stores", a0, a1)
+	var mz: Array = mk.get("mezz", [])
+	if not mz.is_empty() and rng.randf() < 0.5:
+		_crate_near(int(mz[0]) + 6, int(mz[2]), "stores", int(mz[0]) + 2, int(mz[1]) - 2)
+
+## where a level's aliens live: more in a big room, a few along the corridors, now and then one in a shaft, the brood
+## in her nest
+func _plan_aliens_level(rng: RandomNumberGenerator) -> void:
+	var id := 0
+	for k in mods.size():
+		var md: Dictionary = mods[k]
+		var role: String = md["role"]
+		var knd: String = md["kind"]
+		if role == "dock" or role == "vault":
+			continue
+		var pw: bool = md["powered"]
+		var rw: int = int(md["x1"]) - int(md["x0"])
+		var list := []
+		if role == "nest":
+			list = ["brood", "skitter", "skitter", "skitter", "drifter", "drifter"]
+		elif knd == "corridor":
+			for q in clampi(rw / 180, 0, 2):
+				if rng.randf() < 0.6:
+					list.append("skitter" if pw or rng.randf() < 0.5 else "drifter")
+		elif knd == "shaft":
+			if rng.randf() < 0.45:
+				list.append("drifter" if not pw else "skitter")
+		else:
+			for q2 in clampi(rw / 110, 1, 3):
+				if pw:
+					list.append("brute" if rng.randf() < 0.28 and role != "reactor" else "skitter")
+				else:
+					list.append("drifter" if rng.randf() < 0.55 else "skitter")
+		for kd in list:
+			var half: Vector2 = {"skitter": Vector2(5, 3), "drifter": Vector2(5.5, 6.5), "brute": Vector2(7, 10), "brood": Vector2(19, 13)}[kd]
+			var x0: int = md["x0"]
+			var x1: int = md["x1"]
+			var y1: int = md["y1"]
+			var ytop: int = maxi(int(md["y0"]), y1 - 130)
+			var flier: bool = kd == "drifter" or kd == "brood"
+			var b := Vector2(float(rng.randi_range(x0 + 14, x1 - 14)), float(y1) - half.y - 1.0)
+			if flier:
+				b.y = float(rng.randi_range(ytop + int(half.y) + 4, y1 - 30))
+			if kd == "brood":
+				b = Vector2(float(x0 + x1) * 0.5, float(y1) - 70.0)
+			for t in 20:
+				if box_free(b, half.x + 0.5, half.y + 0.5):
+					break
+				b.x = float(rng.randi_range(x0 + int(half.x) + 2, x1 - int(half.x) - 2))
+				if flier:
+					b.y = float(rng.randi_range(ytop + int(half.y) + 4, y1 - int(half.y) - 4))
+				else:
+					b.y = float(y1) - half.y - 1.0
+			spawns.append({"id": id, "kind": kd, "b": b, "mod": k})
+			id += 1
+
+## the last of growing a level: its mass, its pictures painted (the doors' panels are drawn apart, `draw_level`)
+func _finish_level() -> void:
+	rebuild()
+	rad = maxf(3.0, sqrt(mass / PI))
+	ang = 0.0
+	omega = 0.0
+	_pre_fg = _paint(cells, vars, false)
+	for dr in doors:
+		if not dr["sealed"]:
+			_pre_fg.fill_rect(Rect2i(int(dr["x"]), int(dr["y1"]) - HDOOR, BW, HDOOR), Color(0, 0, 0, 0))
+	_pre_bg = _paint(bg, bgv, true)
+	vis.resize(mods.size())
+	vis.fill(0.0)
+	_bg_dirty = true
+	dirty = true
+
+# ------------------------------------------------------------------- doors ---
+
+## the doors: each opens as someone comes near it (you, a woken alien, a spacer: `pts`, in its cells) and shuts behind
+## them, never on anyone in it; a sealed one stays shut. Returns what happened: [[where (cells), "open" / "shut"]]
+func doors_tick(pts: Array) -> Array:
+	var ev := []
+	for dr in doors:
+		if dr["sealed"]:
+			continue
+		var cx := float(int(dr["x"])) + float(BW) * 0.5
+		var cy := float(int(dr["y1"])) - float(HDOOR) * 0.5
+		var want := false
+		for p in pts:
+			if absf((p as Vector2).x - cx) < 44.0 and absf((p as Vector2).y - cy) < 36.0:
+				want = true
+				break
+		var f0: float = dr["f"]
+		var f1 := minf(1.0, f0 + 0.1) if want else maxf(0.0, f0 - 0.05)
+		if f1 == f0:
+			continue
+		if f1 < f0:
+			var busy := false
+			for p2 in pts:
+				var pv: Vector2 = p2
+				if absf(pv.x - cx) < float(BW) * 0.5 + 9.0 and pv.y > float(int(dr["y1"]) - HDOOR) - 12.0 and pv.y < float(int(dr["y1"])) + 2.0:
+					busy = true
+			if busy:
+				continue
+		dr["f"] = f1
+		_door_set(dr)
+		if f0 == 0.0:
+			ev.append([Vector2(cx, cy), "open"])
+		elif f1 == 0.0:
+			ev.append([Vector2(cx, cy), "shut"])
+	return ev
+
+## a door's cells as its panel stands: shut from its top down by how far it's open (the panel slides up into the
+## lintel); its picture is drawn apart (`draw_level`), so the cells change and nothing is painted
+func _door_set(dr: Dictionary) -> void:
+	var n := int(round((1.0 - float(dr["f"])) * float(HDOOR)))
+	var n0: int = dr["n"]
+	if n == n0:
+		return
+	var x: int = dr["x"]
+	var ytop: int = int(dr["y1"]) - HDOOR
+	for j in range(ytop + mini(n, n0), ytop + maxi(n, n0)):
+		var m := Defs.HULL if j < ytop + n else 0
+		for i in range(x, x + BW):
+			cells[j * w + i] = m
+	dr["n"] = n
+
+## every door open (the tests' look at what's reachable)
+func open_all_doors() -> void:
+	for dr in doors:
+		if not dr["sealed"]:
+			dr["f"] = 1.0
+			_door_set(dr)
+
+## what you can see from room k (a derelict's): that room, and through each open door of it the room beyond; what
+## you saw before fades back into the dark
+func see_from(k: int) -> void:
+	if vis.size() != mods.size():
+		vis.resize(mods.size())
+		vis.fill(0.0)
+	var want := PackedFloat32Array()
+	want.resize(mods.size())
+	want.fill(0.0)
+	if k >= 0:
+		want[k] = 1.0
+		for dr in doors:
+			if float(dr["f"]) > 0.2 and (int(dr["a"]) == k or int(dr["b"]) == k):
+				want[int(dr["b"]) if int(dr["a"]) == k else int(dr["a"])] = 1.0
+	for q in vis.size():
+		vis[q] = move_toward(vis[q], want[q], 0.07)
+
+## can you see room k (well enough to see what's in it)?
+func seen(k: int) -> bool:
+	return not lv or kind != "station" or k < 0 or k >= vis.size() or vis[k] > 0.5
+
+## a level's doors drawn over its picture (each as far shut as it is), and in a derelict the dark: rooms you can't
+## see into black, a broken room dim even when you're in it, its emergency light failing now and then. `xf`: its
+## cells (from the corner) to the screen.
+func draw_level(ci: CanvasItem, xf: Transform2D, dark: bool, t: float) -> void:
+	ci.draw_set_transform_matrix(xf)
+	if _door_tex == null:
+		_door_tex = ImageTexture.create_from_image(Art.door_image(BW, HDOOR, kind == "station"))
+	for dr in doors:
+		if dr["sealed"]:
+			continue
+		var n: int = dr["n"]
+		if n <= 0:
+			continue
+		ci.draw_texture_rect_region(_door_tex, Rect2(float(int(dr["x"])), float(int(dr["y1"]) - HDOOR), float(BW), float(n)),
+			Rect2(0.0, float(HDOOR - n), float(BW), float(n)))
+	if dark and vis.size() == mods.size():
+		var tick := int(t / 5.0)
+		for k in mods.size():
+			var md: Dictionary = mods[k]
+			var a := (1.0 - vis[k]) * 0.95
+			if not md["powered"]:
+				var fl := 0.32
+				if ((tick * 7919 + k * 104729) >> 3) % 61 < 2:
+					fl = 0.62
+				a = maxf(a, fl)
+			if a > 0.01:
+				ci.draw_rect(Rect2(float(int(md["x0"])), float(int(md["y0"])), float(int(md["x1"]) - int(md["x0"])), float(int(md["y1"]) - int(md["y0"]))), Color(0.0, 0.0, 0.015, a))
+	ci.draw_set_transform_matrix(Transform2D.IDENTITY)
+
+## an outpost's glowing cells gathered into halos (blocks of 16, every other cell looked at), as it's grown
+func _gather_lights() -> void:
+	lights = []
+	for by in range(0, h, 16):
+		for bx in range(0, w, 16):
+			var n := 0
+			var col := Color(0, 0, 0)
+			var sx := 0.0
+			var sy := 0.0
+			for j in range(by, mini(by + 16, h), 2):
+				var row := j * w
+				for i in range(bx, mini(bx + 16, w), 2):
+					var mt: int = cells[row + i]
+					if mt == 0 or Defs.SELF[mt] == 0:
+						var bm: int = bg[row + i]
+						if bm >= 128 and Art.glows(bm):
+							n += 1
+							col += Art.GLOW[bm]
+							sx += float(i)
+							sy += float(j)
+						continue
+					n += 1
+					col += Color.hex((Defs.PAL[mt * 4] << 8) | 0xff)
+					sx += float(i)
+					sy += float(j)
+			if n > 0:
+				lights.append([Vector2(sx / n + 0.5, sy / n + 0.5), 12.0 + sqrt(float(n * 4)) * 4.0, col / float(n)])

@@ -28,7 +28,8 @@ const KEEP_ROLE := {"market": "outpost", "shipwright": "shipwright", "cantina": 
 const OP_ROOMS := {"hangar": "Hangar", "market": "Market", "shipwright": "Shipwright", "cantina": "Cantina",
 	"charts": "Cartographer", "quarters": "Quarters", "hydro": "Gardens", "reactor": "Reactor", "stores": "Stores",
 	"promenade": "Promenade", "observatory": "Observatory", "hall": "Hall", "mess": "Mess hall", "medbay": "Medbay",
-	"lounge": "Lounge", "engineering": "Engineering", "comms": "Comms"}
+	"lounge": "Lounge", "engineering": "Engineering", "comms": "Comms", "corridor": "Corridor", "shaft": "Access shaft",
+	"brig": "Security and brig", "cabins": "Guest cabins", "armory": "Armory", "galley": "Galley"}
 ## each shop's colour (its counter's front, its sign)
 const SHOP_COL := {"market": Color(1.0, 0.82, 0.4), "shipwright": Color(0.6, 0.78, 0.95), "cantina": Color(0.95, 0.55, 0.35),
 	"charts": Color(0.7, 0.6, 1.0)}
@@ -73,6 +74,9 @@ static func make_outpost(sd: int, system := -1, in_side := false) -> RefCounted:
 	return op
 
 func _build_outpost(sd: int) -> void:
+	if halls:
+		_build_level_outpost(sd)
+		return
 	seed_ = sd
 	kind = "outpost"
 	wname = outpost_name(sd)
@@ -270,6 +274,125 @@ func _build_outpost(sd: int) -> void:
 	_bg_dirty = true
 	dirty = true
 
+## (27 Nov: the halls you dock into as a level, as a derelict's are: station.gd's "levels") The hangar, two decks high,
+## at one end of the lowest two decks (a balcony at its upper door); along the lowest deck from it the market, then a
+## hallway, the shipwright, a hallway, the cantina, a hallway, the cartographer; the reactor two decks high at the far
+## end up top; shafts between the decks; and the rest dealt out as quarters, cabins, a mess and a galley, gardens,
+## stores, a promenade, a lounge, a medbay, engineering, comms, security with its brig, an armory and halls, with
+## long corridors between them. Every room has power; doors open for you and for the spacers walking it.
+func _build_level_outpost(sd: int) -> void:
+	seed_ = sd
+	kind = "outpost"
+	wname = outpost_name(sd)
+	fate = ""
+	var t0 := Time.get_ticks_msec()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = sd
+	var nd := 4
+	var width := rng.randi_range(2050, 2400)
+	var dh := []
+	for d in nd:
+		dh.append(rng.randi_range(132, 160))
+	hangar_side = -1 if rng.randf() < 0.5 else 1
+	var lo := nd - 1
+	var fixed := [{"role": "hangar", "kind": "room", "d0": lo - 1, "d1": lo, "w": rng.randi_range(300, 340), "end": hangar_side}]
+	var run := [["market", "room", 190, 230], ["corridor", "corridor", 130, 200], ["shipwright", "room", 200, 240],
+		["corridor", "corridor", 110, 180], ["cantina", "room", 220, 260], ["corridor", "corridor", 130, 200], ["charts", "room", 190, 220]]
+	var keep_order := ["shipwright", "cantina", "charts"]
+	for q in range(keep_order.size() - 1, 0, -1):
+		var sw := rng.randi_range(0, q)
+		var tmp: String = keep_order[q]
+		keep_order[q] = keep_order[sw]
+		keep_order[sw] = tmp
+	var ki := 0
+	for it in run:
+		var role: String = it[0]
+		if role != "market" and role != "corridor":
+			role = keep_order[ki]
+			ki += 1
+		fixed.append({"role": role, "kind": it[1], "d0": lo, "d1": lo, "w": rng.randi_range(int(it[2]), int(it[3])), "end": hangar_side})
+	fixed.append({"role": "reactor", "kind": "room", "d0": 0, "d1": 1, "w": rng.randi_range(230, 270), "end": -hangar_side})
+	_add_shafts(rng, nd, fixed)
+	for attempt in 4:
+		_reset_level()
+		keepers = []
+		_lay_level(rng, nd, width, dh, fixed)
+		hangar = -1
+		reactor = -1
+		for k in mods.size():
+			if String(mods[k]["role"]) == "hangar":
+				hangar = k
+			elif String(mods[k]["role"]) == "reactor":
+				reactor = k
+		if not _bfs(hangar).has(9999):
+			break
+	dock = hangar
+	# the observatory: the widest room up top; the rest dealt from a deck
+	var obs := -1
+	for k2 in mods.size():
+		var mk: Dictionary = mods[k2]
+		if String(mk["role"]) == "" and int(mk["d0"]) == 0 and (obs < 0 or int(mk["x1"]) - int(mk["x0"]) > int(mods[obs]["x1"]) - int(mods[obs]["x0"])):
+			obs = k2
+	if obs >= 0:
+		mods[obs]["role"] = "observatory"
+	var pool := ["quarters", "cabins", "mess", "galley", "hydro", "stores", "promenade", "lounge", "medbay", "engineering", "comms",
+		"brig", "hall", "quarters", "hydro", "promenade"]
+	var bag := []
+	for md in mods:
+		md["powered"] = true
+		if String(md["role"]) == "":
+			md["role"] = _deal(pool, bag, rng)
+	# the lowest deck from the hangar outward (its shops first: the market by the hangar's door)
+	var deck := []
+	for k3 in mods.size():
+		if k3 != hangar and int(mods[k3]["d0"]) <= lo and lo <= int(mods[k3]["d1"]):
+			deck.append(k3)
+	deck.sort_custom(func(a, b): return (int(mods[a]["x0"]) < int(mods[b]["x0"])) == (hangar_side < 0))
+	_level_body(rng, sd)
+	var hm: Dictionary = mods[hangar]
+	_mouth(int(hm["x0"]), int(hm["x1"]), int(hm["y1"]), MOUTH_H, hangar_side)
+	_dress_all(rng, sd)
+	# the keepers, each behind a counter in their shop, facing the hangar
+	for d3 in deck.size():
+		var role2: String = mods[deck[d3]]["role"]
+		if not KEEP_ROLE.has(role2):
+			continue
+		var kp := Trader.new()
+		kp.shop = role2
+		kp.role = String(KEEP_ROLE[role2])
+		kp.room = deck[d3]
+		kp.fseed = (seed_ ^ 0x51ED) + d3 * 7919
+		kp.name = load("res://scripts/folk_art.gd").name_for(kp.fseed)
+		kp.town = {"name": wname, "seed": seed_, "sys": sys}
+		kp.facing = hangar_side
+		var mk2: Dictionary = mods[deck[d3]]
+		kp.b = Vector2(float(int(mk2["x0"]) + int(mk2["x1"])) * 0.5 - float(hangar_side) * 14.0, float(int(mk2["y1"])))
+		keepers.append(kp)
+	# the spacers who live and work here: some along the lowest deck, the rest anywhere but the hangar and the shafts
+	var nfolk := rng.randi_range(16, 22)
+	var homes := []
+	var low_homes := []
+	for i9 in mods.size():
+		if i9 != hangar and String(mods[i9]["kind"]) != "shaft":
+			homes.append(i9)
+			if int(mods[i9]["d1"]) == lo:
+				low_homes.append(i9)
+	for f in nfolk:
+		var hr: int = homes[rng.randi_range(0, homes.size() - 1)]
+		if f < 5:
+			hr = low_homes[rng.randi_range(0, low_homes.size() - 1)]
+		var fm: Dictionary = mods[hr]
+		var fb := Vector2(float(rng.randi_range(int(fm["x0"]) + 12, int(fm["x1"]) - 12)), float(int(fm["y1"])) - 9.5)
+		for t in 12:
+			if box_free(fb, 3.5, 9.0):
+				break
+			fb.x = float(rng.randi_range(int(fm["x0"]) + 12, int(fm["x1"]) - 12))
+		folk_plan.append({"fseed": (seed_ * 31 + f * 104729) & 0xFFFFFF, "room": hr, "b": fb})
+	meta = {"rooms": mods.size(), "hangar": hangar, "deck": deck, "reactor": reactor, "decks": nd, "doors": doors.size(), "size": [w, h]}
+	_finish_level()
+	_gather_lights()
+	meta["ms"] = Time.get_ticks_msec() - t0
+
 ## the rooms beside room i (the hangar's four cells all count), never the hangar itself
 func _op_nb(i: int) -> Array:
 	var out := []
@@ -290,6 +413,8 @@ func _dress_op(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void
 	var x1: int = md["x1"]
 	var y1: int = md["y1"]
 	var mx := (x0 + x1) / 2
+	if lv and String(md["role"]) != "hangar" and String(md["role"]) != "observatory":
+		y0 = maxi(y0, y1 - 84)          # (a level's rooms are tall: a shop's things stand about its floor)
 	match String(md["role"]):
 		"hangar":
 			# a bay: dark ribbed back wall, a gantry along the roof with hooks, landing lights and clamps

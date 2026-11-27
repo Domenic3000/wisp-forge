@@ -570,6 +570,8 @@ func _st_put(st, b: Vector2) -> void:
 ## which of a station's rooms a body the mage's size can drift to from outside (hatches' one-way floors
 ## open, as they are with no gravity)
 func _station_rooms_reached(st) -> Array:
+	if st.lv:
+		return _level_rooms_reached(st)
 	var saved: PackedByteArray = st.cells.duplicate()
 	for k in st.cells.size():
 		if st.cells[k] == Defs.SCAFFOLD:
@@ -588,6 +590,32 @@ func _station_rooms_reached(st) -> Array:
 				break
 		out.append(hit)
 	return out
+
+## (a level, 27 Nov: four or five times the old halls' cells, too many to flood cell by cell) which rooms you can get
+## to from its bay, room by room through its doors (each opened): a door that's sealed stops you, and so does one whose
+## way through isn't clear for a body the mage's size, in its doorway and a step either side of it
+func _level_rooms_reached(st) -> Array:
+	var got := []
+	got.resize(st.mods.size())
+	got.fill(false)
+	st.open_all_doors()
+	got[st.dock] = true
+	var q := [st.dock]
+	while not q.is_empty():
+		var k: int = q.pop_back()
+		for dr in st.doors:
+			if dr["sealed"] or (int(dr["a"]) != k and int(dr["b"]) != k):
+				continue
+			var o: int = int(dr["b"]) if int(dr["a"]) == k else int(dr["a"])
+			if got[o]:
+				continue
+			var cx: float = float(int(dr["x"])) + float(st.BW) * 0.5
+			var cy: float = float(int(dr["y1"])) - 9.0
+			var clear: bool = st.box_free(Vector2(cx, cy), 3.5, 8.5) and st.box_free(Vector2(cx - 12.0, cy), 3.5, 8.5) and st.box_free(Vector2(cx + 12.0, cy), 3.5, 8.5)
+			if clear:
+				got[o] = true
+				q.append(o)
+	return got
 
 ## a picture of a grown station (back layer under its cells), twice size
 func _station_picture(st, file: String) -> void:

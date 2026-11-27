@@ -59,6 +59,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
   skiff ramming rock ("pirates": 0 cells holed, alone 4), and, in the run before, open water icing over on a
   frozen world. Run them alone before chasing them.
 
+- (27 Nov) Derelict stations' and outposts' halls are levels now (docs/space-places.md LEVELS), four or five times the
+  cells: "stations" grows 4 (not 10) and "outposts" 3 (not 6), about 0.3-0.45 s each on the laptop (their `meta["ms"]`
+  is in the report). What's reachable in a level is worked out room by room through its doors
+  (`_level_rooms_reached`), not by flooding its cells (seconds a level). The door check turns `space.doors_for_aliens`
+  off while it runs, so a woken alien by the door can't hold it open.
+
 - (26 Nov) Village guards stand by in the test mode (towns.gd `test_guards` false: `_guard_target` finds nothing),
   so they don't spear the foes other checks set up near a village; `_test_guards` turns them on. A done request
   doesn't grow the village during `_test_requests` (`no_grow`). "foes appear out of sight" clears `quiet_until`
