@@ -252,7 +252,7 @@ func resize(w: int, h: int) -> void:
 	grid_buf = rd.storage_buffer_create(GS * GS * MAXP)    # one collision grid per player
 	nav_buf = rd.storage_buffer_create(NG * NGP * MAXP)    # and its nav map
 	grid = PackedByteArray()
-	sets["grid"] = _mkset("grid", [[0, world_buf], [1, params_buf], [7, grid_buf], [3, counts_buf], [8, aux_buf]])
+	sets["grid"] = _mkset("grid", [[0, world_buf], [1, params_buf], [2, surf_buf], [7, grid_buf], [3, counts_buf], [8, aux_buf]])     # (the surface table: the marsh's ground fog)
 	sets["navmap"] = _mkset("navmap", [[7, grid_buf], [11, nav_buf]])
 	light_a = rd.storage_buffer_create(LW * LH * 16)
 	light_b = rd.storage_buffer_create(LW * LH * 16)

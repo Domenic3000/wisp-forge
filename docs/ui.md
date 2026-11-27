@@ -86,6 +86,11 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (map_view `_you`, `you_dir`). PLANET WAYPOINTS: a click on the planet map (`set_planet_waypoint`: put on the
   ground under a point in the air), a right click or Backspace clears; `planet_state["waypoint"]`, shown on the
   map with a line and on the minimap, cleared within `WAYPOINT_REACH` (`_check_planet_waypoint`). Test:
+  ZOOM AND THE POINTER (26 Nov, user: in space "the cursor doesnt change when hovering over the minimap it goes behind
+  it ... a cursor for the space minimap and a zoom function as well"): ui `mouse_over_minimap` is part of
+  `mouse_over_ui` (the pointer shows over it, not the reticle; a click there never casts); the wheel over it calls
+  minimap `zoom_by` (each step x1.6): `sp_zoom` (0.25-16, scales `_rad`) in space, `pl_zoom` (0.5-4, `_cells()`) on a
+  planet, shown under it as "x2.6" when not 1. Test:
   `_test_minimap` ("minimap"; in the full run right after the skiff's own check; pictures `minimap_planet.png`,
   `map_waypoint.png`, `minimap_space.png`, `map_space_facing.png`).
 - The Esc menu pauses (user, 23 Nov: "escape menu doesnt pause"): main `menu_paused()` (state play/dead with

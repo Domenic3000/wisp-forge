@@ -5108,9 +5108,11 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 		"sun":
 			return 1.0 if exposed and not p.in_liquid and sun_overhead(p.pos) > 0.72 else 0.0
 		"miasma":
-			if m.fog < 0.25 or p.pos.length() > gpu.surf_at(atan2(p.pos.y, p.pos.x)).x + 70.0:
+			# (26 Nov, user chose "fog over all the land": the mist lies over all of a marsh world's ground up to ~150
+			# cells over it, clouds.comp `groundFog`, and it chokes you wherever it is, the thicker the worse)
+			if m.fog < 0.08 or p.pos.length() > gpu.surf_at(atan2(p.pos.y, p.pos.x)).x + 150.0:
 				return 0.0
-			return clampf(m.fog * 1.6, 0.4, 1.5)
+			return clampf(m.fog * 2.6, 0.4, 1.5)
 		"deep":
 			var sea := float(planet.get("sea", -1.0))
 			if sea < 0.0 or not p.in_liquid:
@@ -5823,6 +5825,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 		shipyard.mouse(ev)
 	elif ev is InputEventMouseButton and ev.pressed and state == "play" and not menu_paused():
 		var wheel: bool = ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN
+		if wheel and ui.mouse_over_minimap():
+			ui.minimap.zoom_by(1 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
+			return                  # (the wheel over the minimap zooms it)
 		if wheel and ui.mouse_over_ui(false):
 			return                  # scrolling the satchel (past its end, too) never changes the spell
 		if (build_on or hand_live) and ev.button_index == MOUSE_BUTTON_LEFT and not ui.mouse_over_ui():

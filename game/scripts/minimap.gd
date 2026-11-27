@@ -34,6 +34,25 @@ var mode := ""                  # "space" or "planet"
 var drawn := []                 # what was drawn this frame: [where (UI px, local), text, colour] (hover, tests)
 var stats := {}                 # counts by kind, for the tests
 var facing := Vector2.UP        # (which way the "you" arrow pointed, for the tests)
+## (user, 26 Nov: "it would be nice if there was a cursor for the space minimap and a zoom function as well"): the
+## wheel over it zooms it (main's wheel, ui `mouse_over_minimap`), each view its own; 1 is as it was
+var sp_zoom := 1.0
+var pl_zoom := 1.0
+const SP_ZOOM := [0.25, 16.0]
+const PL_ZOOM := [0.5, 4.0]
+
+## the wheel over the minimap: in (+) or out (-), by a step
+func zoom_by(steps: int) -> void:
+	var f := pow(1.6, float(steps))
+	if mode == "space":
+		sp_zoom = clampf(sp_zoom * f, SP_ZOOM[0], SP_ZOOM[1])
+	else:
+		pl_zoom = clampf(pl_zoom * f, PL_ZOOM[0], PL_ZOOM[1])
+	queue_redraw()
+
+## cells a UI pixel on the planet, zoomed
+func _cells() -> float:
+	return CELLS / pl_zoom
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -68,7 +87,7 @@ func _draw() -> void:
 # ----------------------------------------------------------------- space ---
 
 func _rad(d: float) -> float:
-	return (SP_R - 3.0) * minf(1.0, log(1.0 + maxf(d, 0.0) / SP_K) / log(1.0 + SP_FAR / SP_K))
+	return (SP_R - 3.0) * minf(1.0, log(1.0 + maxf(d, 0.0) * sp_zoom / SP_K) / log(1.0 + SP_FAR / SP_K))
 
 func _draw_space() -> void:
 	var sp = game.space
@@ -154,7 +173,12 @@ func _draw_space() -> void:
 	for mk2 in sp.map_marks:
 		if String(mk2["kind"]) == "waypoint":
 			wl = "Waypoint %s" % _km(float(mk2["dist"]))
+	if absf(sp_zoom - 1.0) > 0.01:
+		wl = ("%s  " % wl if wl != "" else "") + _zoom_text(sp_zoom)
 	_footer(wl, SP_R * 2.0 + 4.0)
+
+static func _zoom_text(z: float) -> String:
+	return "x%s" % (("%.1f" % z) if z < 10.0 else str(int(round(z))))
 
 func _sp(c: Vector2, xf: Transform2D, d: Vector2) -> Vector2:
 	var sd: Vector2 = xf.basis_xform(d)
@@ -190,11 +214,11 @@ func _draw_planet() -> void:
 	var rsea: float = (Defs.RS0 - sea) if sea >= 0.0 else -1.0
 	var names: Array = g.planet.get("biomes", ["forest"])
 	for x in int(PW):
-		var a: float = a0 + s * (float(x) + 0.5 - PW * 0.5) * CELLS / r0
+		var a: float = a0 + s * (float(x) + 0.5 - PW * 0.5) * _cells() / r0
 		var sv: Vector4 = g.gpu.surf_at(a)
-		var ys := cy - (sv.x - rp) / CELLS
+		var ys := cy - (sv.x - rp) / _cells()
 		if rsea > sv.x:
-			var yw := cy - (rsea - rp) / CELLS
+			var yw := cy - (rsea - rp) / _cells()
 			if yw < PH and ys > 0.0:
 				draw_rect(Rect2(float(x), clampf(yw, 0.0, PH), 1.0, clampf(ys, 0.0, PH) - clampf(yw, 0.0, PH)), Color(0.18, 0.36, 0.7, 0.85))
 		if ys < PH:
@@ -255,13 +279,15 @@ func _draw_planet() -> void:
 	# you, the way you face
 	_you(Vector2(PW * 0.5, cy), Vector2(float(g.player.facing), 0.0))
 	draw_rect(Rect2(Vector2.ZERO, Vector2(PW, PH)), TRIM, false, 1.0)
+	if absf(pl_zoom - 1.0) > 0.01:
+		wl = ("%s  " % wl if wl != "" else "") + _zoom_text(pl_zoom)
 	_footer(wl, PW)
 
 ## a world point on the planet in the side view (unclamped)
 func _pp(me: Vector2, s: float, q: Vector2) -> Vector2:
 	var a0 := atan2(me.y, me.x)
-	var dx: float = wrapf(atan2(q.y, q.x) - a0, -PI, PI) * Defs.RS0 * s / CELLS
-	var dy: float = (q.length() - me.length()) / CELLS
+	var dx: float = wrapf(atan2(q.y, q.x) - a0, -PI, PI) * Defs.RS0 * s / _cells()
+	var dy: float = (q.length() - me.length()) / _cells()
 	return Vector2(PW * 0.5 + dx, PH * 0.5 - dy)
 
 ## a place in the side view: inside it a dot, past its edge a pip on the edge pointing the way

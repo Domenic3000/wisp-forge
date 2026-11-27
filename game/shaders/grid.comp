@@ -5,6 +5,7 @@
 #include "common"
 #include "world"
 #include "params"
+#include "surf_ro"
 #include "bglayer"
 #include "clouds"
 layout(std430, set = 0, binding = 7) restrict writeonly buffer Grid { uint g[]; } grid;

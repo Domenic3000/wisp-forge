@@ -106,7 +106,7 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Hazards (`Defs.HAZARDS`, CLIMATES keys "cold" frozen, "sun" desert, "miasma" marsh, "deep" ocean; main `_hazards`
   / `_hazard_level`, local player only, `hazard` = the one hurting you now): cold under the open sky (x1.6 at night,
   x1.6 in wind; a fire, torch or lava within ~14 cells, `_near_warmth`, keeps it off), sun under the open sky when
-  `sun_overhead` > 0.72, miasma in fog (`m.fog` > 0.25) near the ground, deep in liquid 35+ under the sea's level (the Abyss Pearl beds).
+  `sun_overhead` > 0.72, miasma in the marsh's mist over all the land (`m.fog` 0.08 and up, within 150 of the ground; 26 Nov), deep in liquid 35+ under the sea's level (the Abyss Pearl beds).
   Each is borne by a ward (Wards: Hearth Charm, Sun Veil, Fen Mask, Tide Charm; `items[id]`) or a guardian's relic
   (rimefang, sunidol, pearl, tidefin: relics are keys past hazards). Volcanic heat stays the Heat Ward's (or the
   Cinderheart's).

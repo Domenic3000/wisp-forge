@@ -722,11 +722,21 @@ void main() {
 	// clouds: drawn over everything at their height (sky, hills, mountain tops, and you when you
 	// fly in). Lit tops, darker bellies (darker still in rain), and stippled pixel edges and
 	// drifting wisps inside, from a fixed 4x4 pattern so the fog reads as pixel art.
-	float cdn = cloudDensity(pos);
+	// a marsh world's ground fog: a soft mist over the land, see-through (clouds.comp `groundFog`), green-grey by
+	// day, dim at night, drifting
+	float gfog = groundFog(pos);
+	if (gfog > 0.0) {
+		vec2 upf = pos / max(r, 1.0);
+		float dayf = clamp(dot(upf, sunDir()) * 1.6 + 0.15, 0.06, 1.0);
+		float wf = vnoise(vec2(th * RS0 * 0.06 + TIME * 0.015, r * 0.08 - TIME * 0.01), 93);
+		vec3 fc = mix(vec3(0.09, 0.11, 0.1), vec3(0.6, 0.67, 0.57), dayf) * P.p[4].rgb;
+		col = mix(col, fc, clamp(gfog * (0.7 + 0.6 * wf), 0.0, 0.42));
+	}
+	float cdn = cloudSky(pos);
 	if (cdn > 0.0) {
 		vec2 up = pos / max(r, 1.0);
-		float above = cloudDensity(pos + up * 6.0);
-		float below = cloudDensity(pos - up * 5.0);
+		float above = cloudSky(pos + up * 6.0);
+		float below = cloudSky(pos - up * 5.0);
 		float day = clamp(dot(up, sunDir()) * 1.6 + 0.15, 0.025, 1.0);
 		float rain = P.p[3].z;
 		float cl = (70.0 + 185.0 * max(0.15, day) * (1.0 - rain * 0.45)) / 255.0;

@@ -1519,6 +1519,23 @@ func _test_minimap() -> void:
 	if g.player.aboard == sk:
 		g._skiff_interact(g.player)
 	await _frames(20)
+	# (26 Nov, user: "a cursor for the space minimap and a zoom function as well"): the wheel over it zooms each view
+	var mmz = g.ui.minimap
+	var mz_mode: String = mmz.mode
+	mmz.mode = "space"
+	var r5a: float = mmz._rad(5000.0)
+	mmz.zoom_by(2)
+	var r5b: float = mmz._rad(5000.0)
+	mmz.zoom_by(-2)
+	mmz.mode = "planet"
+	var ce0: float = mmz._cells()
+	mmz.zoom_by(2)
+	var ce1: float = mmz._cells()
+	mmz.zoom_by(-2)
+	mmz.mode = mz_mode
+	var ok_z: bool = r5b > r5a + 4.0 and ce1 < ce0 and absf(mmz.sp_zoom - 1.0) < 0.01 and absf(mmz.pl_zoom - 1.0) < 0.01
+	rows.append("%szoomed in: 5k out in space %.0f -> %.0f px from the middle, on a planet %.1f -> %.1f cells a pixel" % ["" if ok_z else "(!) ", r5a, r5b, ce0, ce1])
+	ok = ok and ok_z
 	_ok("the minimap, the map's arrow, waypoints, and a view that turns only when you turn it", ok, "; ".join(rows))
 
 func _test_stations() -> void:

@@ -139,8 +139,14 @@ func _test_hazards() -> void:
 	var hz_open: bool = g.exposed
 	var hz_res := {}
 	var hz_why := []
-	for hz_k in ["cold", "sun"]:
+	for hz_k in ["cold", "sun", "miasma"]:
 		var hz_d: Dictionary = Defs.HAZARDS[hz_k]
+		if hz_k == "miasma":
+			# (26 Nov, the marsh's fog over all the land: it lies on the ground you stand on, and chokes you)
+			g.time = hz_time0
+			g.clim["fog"] = 1.0
+			await _frames(40)
+			_shot("marsh_fog.png")
 		if hz_k == "sun":
 			# (the sun straight overhead)
 			var hz_pa: float = atan2(g.player.pos.y, g.player.pos.x)
@@ -156,7 +162,11 @@ func _test_hazards() -> void:
 		var hz_ward: float = g.player.max_hp - g.player.hp
 		g.items.erase(String(hz_d["ward"]))
 		g.clim[hz_k] = 0.0
-		hz_res[hz_k] = [hz_bare, hz_ward, hz_was]
+		if hz_k == "miasma":
+			hz_res[hz_k] = [hz_bare, hz_ward, hz_was, g.player.fog]
+			g.clim["fog"] = 0.0
+		else:
+			hz_res[hz_k] = [hz_bare, hz_ward, hz_was]
 	g.time = hz_time0
 	g.spawn_timer = 600
 	# (and digging what the staff can't cut no longer counts as star iron: the GPU's counters moved)
@@ -179,9 +189,10 @@ func _test_hazards() -> void:
 	var hz_ok := hz_open and hz_blk and hz_si1 == hz_si0
 	for hz_k2 in hz_res:
 		hz_ok = hz_ok and float(hz_res[hz_k2][0]) > 0.8 and float(hz_res[hz_k2][1]) < 0.05 and String(hz_res[hz_k2][2]) == hz_k2
-	_ok("a planet's cold and midday sun hurt you in the open, but not with their wards; too-hard digging gives no star iron", hz_ok,
-		"in the open %s; the cold: -%.1f health in 2.5 s bare (%s), -%.1f with the Hearth Charm; the sun overhead: -%.1f bare (%s), -%.1f with the Sun Veil; digging stone with no power: blocked %s, star iron %d -> %d" % [hz_open,
-		float(hz_res["cold"][0]), hz_res["cold"][2], float(hz_res["cold"][1]), float(hz_res["sun"][0]), hz_res["sun"][2], float(hz_res["sun"][1]), hz_blk, hz_si0, hz_si1] + ("" if hz_ok else "; what hurt: " + "; ".join(hz_why.slice(0, 12))))
+	_ok("a planet's cold, midday sun and marsh fog hurt you in the open, but not with their wards; too-hard digging gives no star iron", hz_ok,
+		"in the open %s; the cold: -%.1f health in 2.5 s bare (%s), -%.1f with the Hearth Charm; the sun overhead: -%.1f bare (%s), -%.1f with the Sun Veil; the marsh fog over the land (%.2f deep): -%.1f bare (%s), -%.1f with the Fen Mask; digging stone with no power: blocked %s, star iron %d -> %d" % [hz_open,
+		float(hz_res["cold"][0]), hz_res["cold"][2], float(hz_res["cold"][1]), float(hz_res["sun"][0]), hz_res["sun"][2], float(hz_res["sun"][1]),
+		float(hz_res["miasma"][3]), float(hz_res["miasma"][0]), hz_res["miasma"][2], float(hz_res["miasma"][1]), hz_blk, hz_si0, hz_si1] + ("" if hz_ok else "; what hurt: " + "; ".join(hz_why.slice(0, 12))))
 
 func _test_vfx() -> void:
 	var vx_god0: bool = g.test_god

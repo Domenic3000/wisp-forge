@@ -41,19 +41,30 @@ float cloudHigh(vec2 pos) {
 	return clamp((n - cover) * 5.0, 0.0, 1.0) * edge;
 }
 
-// Ground fog (a marsh world's: P.p[125].w): low wisps lying in the lowlands, below the mean surface and a
-// little above it, drifting slowly; never thick enough to hide the way.
+// Ground fog (a marsh world's: P.p[125].w; user, 26 Nov: "the fog was hard to see through, and it cut off abruptly
+// under the surface with a straight edge ... it only exists above the surface and in a thin layer"; chose fog over
+// all the land): a mist lying on the land itself (each column's ground, the surface table: surf_ro must come before
+// this), fading in a few cells under the ground line so it has no edge of its own, thickest low down and thinning
+// up to ~150 cells over the ground, a little thicker in the lowlands and thinner on the hills; patchy, drifting.
+// render.comp draws it as a soft see-through haze, not as cloud; grid.comp's fog depth (the miasma) reads it.
 float groundFog(vec2 pos) {
 	float f = P.p[125].w;
 	if (f <= 0.0) return 0.0;
-	float hgt = length(pos) - RS0;
-	if (hgt < -70.0 || hgt > 46.0) return 0.0;
+	float r = length(pos);
+	float hgt = r - RS0;
+	if (hgt < -420.0 || hgt > 420.0) return 0.0;
+	float th = atan(pos.y, pos.x);
+	if (th < 0.0) th += TAU;
+	float sr = surfA(th).x;
+	float above = r - sr;
+	if (above < -10.0 || above > 150.0) return 0.0;
 	float wnd = P.p[121].y * 0.5;
 	float cw = cos(wnd), sw = sin(wnd);
 	vec2 q = vec2(pos.x * cw - pos.y * sw, pos.x * sw + pos.y * cw);
-	float n = fbm(q / 38.0, 4251, 3);
-	float edge = 1.0 - smoothstep(14.0, 46.0, hgt);
-	return clamp((n - 0.44) * 2.6, 0.0, 0.5) * edge * f;
+	float n = fbm(q / 46.0, 4251, 3);
+	float low = clamp(0.8 + (RS0 - sr) / 140.0, 0.6, 1.15);
+	float edge = smoothstep(-10.0, 3.0, above) * (1.0 - smoothstep(24.0, 150.0, above));
+	return clamp(0.36 + (n - 0.5) * 0.6, 0.06, 0.62) * low * edge * f;
 }
 
 // A gas giant's cloud deck (P.p[125].x < -0.5; user, 24 Nov: "gas giants with no ground or only clouds"):
@@ -75,4 +86,6 @@ float cloudDeck(vec2 pos) {
 	return clamp(0.62 + n * 0.5 + smoothstep(top - 12.0, top - 70.0, hgt), 0.0, 1.0) * edge;
 }
 
-float cloudDensity(vec2 pos) { return max(max(max(cloudLow(pos), cloudHigh(pos)), groundFog(pos)), cloudDeck(pos)); }
+// the clouds drawn as clouds (render.comp draws the ground fog apart, as haze)
+float cloudSky(vec2 pos) { return max(max(cloudLow(pos), cloudHigh(pos)), cloudDeck(pos)); }
+float cloudDensity(vec2 pos) { return max(cloudSky(pos), groundFog(pos)); }

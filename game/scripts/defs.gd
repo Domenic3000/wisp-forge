@@ -942,7 +942,7 @@ const HAZARDS := {
 	"sun": {"ward": "sunveil", "relic": "sunidol", "dmg": 0.010, "name": "The sun",
 		"msg": "The midday sun of %s scorches you in the open: forge the Sun Veil, or keep to the shade until it's lower"},
 	"miasma": {"ward": "fenmask", "relic": "pearl", "dmg": 0.012, "name": "The miasma",
-		"msg": "The fog of %s chokes you: forge the Fen Mask, or climb out of the lowlands"},
+		"msg": "The fog of %s chokes you: forge the Fen Mask, or climb high above the land, out of the mist"},
 	"deep": {"ward": "tidecharm", "relic": "tidefin", "dmg": 0.03, "name": "The deep",
 		"msg": "The deep sea of %s crushes you: forge the Tide Charm, or stay nearer the surface"},
 	# (a deep ocean world's: 160+ under the sea, past where the Tide Charm holds)

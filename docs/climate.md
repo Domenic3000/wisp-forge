@@ -13,7 +13,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
   storm, turning with each spell of weather; pushes you while `exposed`, i.e. `_open_sky`: nothing solid 6-72
   cells over you, above the ground), "heat" (volcanic: the open air hurts 0.012 a tick without the Heat Ward or the
   Cinderheart), "freeze" (frozen: P.p[125].x, react.comp ices open water over from the top near the surface),
-  "fog" (marsh: P.p[125].w, clouds.comp `groundFog` in the lowlands), "dust" (desert: dust storms in clear-weather
+  "fog" (marsh: P.p[125].w, clouds.comp `groundFog`: since 26 Nov, user: "the fog was hard to see through, and it cut off
+  abruptly under the surface with a straight edge"; chose fog over all the land: a mist on each column's own ground
+  (the surface table, so grid.comp includes surf_ro and its set has binding 2), fading in 10 cells under it, thinning
+  up to 150 over it, thicker in the lowlands; render.comp draws it as a see-through haze apart from the clouds
+  (`cloudSky`), at most 0.42 over what's behind; the miasma (main `_hazard_level`) hurts wherever it lies, m.fog
+  0.08 and up, within 150 of the ground), "dust" (desert: dust storms in clear-weather
   biomes), "wild" (wild: creatures spawn more often). `_update_climate` blows snow (a blizzard), sand or embers
   across the view as particles. Prism Crystal is rarer (gen.comp thresholds, chest loot), and so are draughts in
   chests (0.1 + rare x 0.3).

@@ -2698,6 +2698,11 @@ func _set_panel_style(p: PanelContainer, sb: StyleBox) -> void:
 static func _on_screen(c: Control) -> Rect2:
 	return c.get_global_transform_with_canvas() * Rect2(Vector2.ZERO, c.size)
 
+## the pointer over the minimap? (user, 26 Nov: in space "the cursor doesnt change when hovering over the minimap it
+## goes behind it"): the pointer shows there instead of the reticle, and the wheel zooms it
+func mouse_over_minimap() -> bool:
+	return minimap_panel != null and minimap_panel.is_visible_in_tree() and _on_screen(minimap_panel).has_point(get_viewport().get_mouse_position())
+
 ## True when the pointer is over a clickable HUD element (satchel, spell slots; with
 ## `slots` false, only the panels: the wheel still picks a spell over the slots).
 func mouse_over_ui(slots := true) -> bool:
@@ -2710,6 +2715,8 @@ func mouse_over_ui(slots := true) -> bool:
 	var m := get_viewport().get_mouse_position()
 	if satchel_panel and _on_screen(satchel_panel).has_point(m):
 		return true
+	if mouse_over_minimap():
+		return true                         # (the pointer shows over it, and a click there never casts)
 	if slots and hotbar and hotbar.is_visible_in_tree() and _on_screen(hotbar).has_point(m):
 		return true
 	if build_bar and build_bar.visible and _on_screen(build_bar).has_point(m):
