@@ -497,15 +497,50 @@ func _test_wrecks() -> void:
 	var dig_at: Vector2 = wk.cell_world(int(wk.w * 0.4), int(wk.h) - 7)
 	g.player.pos = dig_at + (dig_at - wk.pos).normalized() * 14.0
 	g.space.vel = wk.vel
+	# (27 Nov: digging out here as on a planet: mana by hardness, the cells nearest the aim first, "+n Hull
+	# Plating" popping up; the test mode's free magic is off for it)
+	var dig_c: Vector2 = wk.to_body(dig_at) + wk.com
+	var free0: bool = g.free_magic
+	g.free_magic = false
+	g.player.mana = g.player.max_mana
+	var mana_d0: float = g.player.mana
+	g.popups.clear()
+	var popped := false
+	var mana_min: float = mana_d0
 	g.test_dig = true
 	for k4 in 60:
 		g.test_aim = dig_at
 		await _frames(1)
+		mana_min = minf(mana_min, g.player.mana)
+		for pu in g.popups:
+			if String(pu[1]).ends_with(Defs.NAMES[Defs.HULL]):
+				popped = true
 	g.test_dig = false
+	await _frames(30)
+	for pu2 in g.popups:
+		if String(pu2[1]).ends_with(Defs.NAMES[Defs.HULL]):
+			popped = true
+	var mana_used: bool = mana_min < mana_d0 - 0.5
+	g.free_magic = free0
 	g.player.tier = tier0
-	var wr_ok5: bool = g.player.inv[Defs.HULL] > hull1
-	wr_rows.append("%ssalvage: dug %d hull plating from its keel" % ["" if wr_ok5 else "(!) ", g.player.inv[Defs.HULL] - hull1])
+	var mid_gone: bool = wk.at(int(dig_c.x), int(dig_c.y)) == 0
+	var wr_ok5: bool = g.player.inv[Defs.HULL] > hull1 and popped and mana_used and mid_gone
+	wr_rows.append("%ssalvage: dug %d hull plating from its keel (the middle first %s), \"+n Hull Plating\" popped up %s, mana spent %s (%.1f -> %.1f)" % ["" if wr_ok5 else "(!) ", g.player.inv[Defs.HULL] - hull1, mid_gone, popped, mana_used, mana_d0, mana_min])
 	wr_ok = wr_ok and wr_ok5
+	# ---- the Wisp Forge out here (C): it comes to you anywhere (27 Nov: "maybe we should be able to craft in space")
+	var fg_rec: Dictionary = g.recipe_by_id("plank")
+	for fg_c in fg_rec.get("cost", {}):
+		g.player.inv[int(fg_c)] += int(fg_rec["cost"][fg_c])
+	g.toggle_forge()
+	await _frames(12)
+	var fg_open: bool = g.state == "forge"
+	var fg_made: bool = not fg_rec.is_empty() and g.craft(fg_rec)
+	if g.state == "forge":
+		g.toggle_forge()
+	await _frames(6)
+	var wr_ok5f: bool = fg_open and fg_made and g.state == "play"
+	wr_rows.append("%sthe Wisp Forge out in space: opened %s, forged planks %s, closed %s" % ["" if wr_ok5f else "(!) ", fg_open, fg_made, g.state == "play"])
+	wr_ok = wr_ok and wr_ok5f
 	# ---- Mending out in the open (user, 23 Nov: "Healing spell didn't work in space"): chosen, a click heals
 	# (it doesn't push the jet), and the healing comes in out here
 	var md_known: bool = g.player.known.has("mend")
@@ -1473,10 +1508,19 @@ func _test_minimap() -> void:
 	var mm_ok: bool = mm.mode == "space" and int(mm.stats.get("planet", 0)) + int(mm.stats.get("star", 0)) >= 1 and int(mm.stats.get("rock", 0)) >= 1
 	var xf: Transform2D = g.screen_xf()
 	var face_ok: bool = mm.facing.dot(xf.basis_xform(g.facing_dir(g.player)).normalized()) > 0.95
+	# (27 Nov, user: "the waypoint should be easy to see on the mini map when in space": a waypoint set out here, drawn
+	# last with its ring, its line from you, and an arrow on the rim when it's past the minimap's reach)
+	var wp_was = g.space.waypoint
+	var pg: PackedFloat64Array = g.space.player_g()
+	g.space.waypoint = PackedFloat64Array([pg[0] + 2500.0, pg[1] - 1500.0])
 	g.space.zoom_i = 2
 	await _frames(40)
+	var wp_drawn: int = int(mm.stats.get("waypoint", 0))
 	_shot("minimap_space.png")
+	g.space.waypoint = wp_was
 	g.space.zoom_i = 0
+	rows.append("%sa waypoint out in space on the minimap: drawn %d" % ["" if wp_drawn >= 1 else "(!) ", wp_drawn])
+	ok = ok and wp_drawn >= 1
 	# the chart's arrow: north up, the way you face in space's own directions
 	g.open_map()
 	await _frames(20)

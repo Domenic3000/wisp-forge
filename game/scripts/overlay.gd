@@ -142,7 +142,8 @@ func _draw_popups() -> void:
 		var t := int(pu[3])
 		var age := float(70 - t)                 # (main POPUP_TICKS)
 		var wp: Vector2 = pu[0]
-		var sp: Vector2 = game.world_to_screen(wp + wp.normalized() * age * 0.12)
+		var pup: Vector2 = pu[4] if pu.size() > 4 else wp.normalized()
+		var sp: Vector2 = game.world_to_screen(wp + pup * age * 0.12)
 		var col: Color = pu[2]
 		col = col.lightened(0.25)
 		col.a = clampf(float(t) / 20.0, 0.0, 1.0) * clampf(age / 6.0, 0.0, 1.0)

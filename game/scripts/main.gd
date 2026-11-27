@@ -6689,11 +6689,13 @@ func _pick_flush() -> void:
 	var ks := _pick_acc.keys()
 	ks.sort_custom(func(a, b): return int(_pick_acc[a]) > int(_pick_acc[b]))
 	var up: Vector2 = _pick_at.normalized()
+	if space != null and space.active:
+		up = view_up()                  # (out in space, up on the screen: 27 Nov, digging there pops these up too)
 	var k := 0
 	for t in ks:
 		if k >= 3:
 			break
-		popups.append([_pick_at + up * (4.0 + 6.0 * k), "+%d %s" % [int(_pick_acc[t]), Defs.NAMES[int(t)]], Defs.COLOR[int(t)], POPUP_TICKS])
+		popups.append([_pick_at + up * (4.0 + 6.0 * k), "+%d %s" % [int(_pick_acc[t]), Defs.NAMES[int(t)]], Defs.COLOR[int(t)], POPUP_TICKS, up])
 		k += 1
 	while popups.size() > 12:
 		popups.pop_front()

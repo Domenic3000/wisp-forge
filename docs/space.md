@@ -47,7 +47,15 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `rocks_state` does before saving), written by
   `_world_meta` via `rocks_state`; `_reanchor` drops them, they were saved with the old home). Out there:
   `mine` (hold dig: cells within `dig_r` of the reach point, `HARD <= tier`, the brush's rate, into `inv`, dust
-  streams to you), `_update_rocks` (drift, spin, rebuild a few frames after digging, `_split` once you stop:
+  streams to you; since 27 Nov `_mine_at` digs as on a planet (user: "gathering doesnt work the same in space as it
+  does on land. i dont see the little indicators of what i harvested ... i could harvest the ship itself but it was
+  like by pixels not the normal way as on a planet"): the cells nearest the aim first, so a round hole opens from the
+  middle out (it took scattered cells at random), at the same pace (`_dig_carry`: each cell's old chance summed and
+  carried over); mana by each cell's hardness (main `dig_mana`; under `MANA_FLOOR` the staff fizzles; the Prospector's
+  Beam, `beam`, is the ship's and costs none); the tether and runes (`vfx.dig`); "+n Hull Plating" popping up (main
+  `_pick_acc`/`_pick_at`, flushed with `view_up()` out here; a popup's fifth element is its up). The same for a
+  boarded wreck's hull. Test: `_test_wrecks`' salvage row (the middle first, the popup, mana spent with free magic
+  off) and its Wisp Forge row (C opens it and forges out here)), `_update_rocks` (drift, spin, rebuild a few frames after digging, `_split` once you stop:
   pieces drift apart, scraps under `ROCK_SCRAP` crumble), `_rock_push` (the mage moved in 2-cell steps near
   rock and pushed back out along the rock's radius), the skiff's own `advance(collide)` against `_rock_solid`.
   The camera frames the nearest rock (`_follow`; `live` stays false up there, judged by height over the

@@ -134,6 +134,7 @@ func _draw_space() -> void:
 		draw_rect(Rect2(bp.floor() - Vector2(1, 1), Vector2(2, 2)), Color(0.6, 0.85, 1.0, 0.8) if b.kind == "manta" else Color(1.0, 0.4, 0.45))
 		_count("beast")
 	# what used to have an arrow at the edge
+	var wp_at = null
 	for mk in sp.map_marks:
 		var wp: Vector2 = mk["pos"]
 		var d2: Vector2 = wp - me
@@ -151,8 +152,7 @@ func _draw_space() -> void:
 			"star":
 				_diamond(p2, 2.0, col2)
 			"waypoint":
-				var on := 0.7 + 0.3 * sin(float(Time.get_ticks_msec()) * 0.006)
-				_diamond(p2, 3.0, Color(1.0, 0.82, 0.3, on))
+				wp_at = p2                      # (drawn last, over everything: `_waypoint_mark`)
 			"skiff":
 				_skiff(p2, col2)
 			"pirate":
@@ -163,6 +163,8 @@ func _draw_space() -> void:
 				draw_rect(Rect2(p2.floor() - Vector2(1, 1), Vector2(2, 2)), col2)
 		drawn.append([p2, "%s  %s" % [String(mk["text"]), _km(float(mk["dist"]))], col2])
 		_count(kind if kind != "" else "mark")
+	if wp_at != null:
+		_waypoint_mark(c, wp_at)
 	# north (the galaxy chart's up) on the rim
 	var nd: Vector2 = xf.basis_xform(Vector2(0, -1)).normalized()
 	_text(c + nd * (SP_R - 5.0) + Vector2(-2, 3), "N", Color(0.7, 0.72, 0.95, 0.8))
@@ -176,6 +178,32 @@ func _draw_space() -> void:
 	if absf(sp_zoom - 1.0) > 0.01:
 		wl = ("%s  " % wl if wl != "" else "") + _zoom_text(sp_zoom)
 	_footer(wl, SP_R * 2.0 + 4.0)
+
+## the waypoint in space, easy to pick out (27 Nov; user: "the waypoint should be easy to see on the mini map when in
+## space"): a dotted gold line from you to it, a ring pulsing out round it, a bigger diamond, and on the rim (it's
+## farther than the minimap reaches) an arrow pointing out to it
+func _waypoint_mark(c: Vector2, p: Vector2) -> void:
+	var tt := float(Time.get_ticks_msec()) * 0.001
+	var gold := Color(1.0, 0.82, 0.3)
+	var d := p - c
+	var ln := d.length()
+	if ln > 6.0:
+		var dir := d / ln
+		var s0 := 6.0
+		while s0 < ln - 5.0:
+			draw_line(c + dir * s0, c + dir * minf(s0 + 2.0, ln - 5.0), Color(gold.r, gold.g, gold.b, 0.55), 1.0)
+			s0 += 4.0
+	var ph := fmod(tt * 0.9, 1.0)
+	draw_arc(p, 4.0 + ph * 6.0, 0.0, TAU, 20, Color(gold.r, gold.g, gold.b, 0.8 * (1.0 - ph)), 1.0)
+	var on := 0.8 + 0.2 * sin(tt * 6.0)
+	_diamond(p, 4.0, Color(1.0, 0.9, 0.45, on))
+	draw_rect(Rect2(p.floor() - Vector2(0, 0), Vector2(1, 1)), Color(1, 1, 1, on))
+	if ln >= SP_R - 6.0 and ln > 0.001:
+		var dir2 := d / ln
+		var side := Vector2(-dir2.y, dir2.x)
+		var tip := c + dir2 * (SP_R + 1.0)
+		draw_colored_polygon(PackedVector2Array([tip + dir2 * 1.0, tip - dir2 * 4.0 + side * 3.0, tip - dir2 * 4.0 - side * 3.0]), Color(0, 0, 0, 0.7))
+		draw_colored_polygon(PackedVector2Array([tip, tip - dir2 * 3.0 + side * 2.0, tip - dir2 * 3.0 - side * 2.0]), gold)
 
 static func _zoom_text(z: float) -> String:
 	return "x%s" % (("%.1f" % z) if z < 10.0 else str(int(round(z))))

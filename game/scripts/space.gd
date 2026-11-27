@@ -248,6 +248,7 @@ var st_room := -1               # (the room you were in last: a note when you co
 var _st_last_pw := true          # (a corridor or a shaft is told only when its gravity isn't what you just had)
 var _creep_t := 300             # (ticks to the next sound out of the dark, in a derelict's halls)
 var doors_for_aliens := true     # (the tests' door check keeps the aliens out of it)
+var _dig_carry := 0.0            # (digging out here: the part of a cell owed from the ticks before, `_mine_at`)
 var _st_jump := false
 var _st_b := Vector2.ZERO       # (the mage's place in the station's cells last tick, and the world point it was put at:
 var _st_w := Vector2.INF        # kept, so a single float's rounding far out never moves you a hair a tick)
@@ -902,7 +903,7 @@ func _beam(m, sk) -> void:
 		d = d.normalized() * BEAM_REACH
 	var p: Vector2 = sk.pos + d
 	beam_to = p
-	_mine_at(m, p, m.dig_r * 1.2)
+	_mine_at(m, p, m.dig_r * 1.2, true)
 
 ## can you go to planet i? (home, and any planet whose barrier you can pass: Defs.BARRIERS, main `barrier_ok`)
 func reachable(i: int) -> bool:
@@ -2144,34 +2145,72 @@ func _split(a) -> void:
 func mine(m) -> void:
 	_mine_at(m, game._reach(m, m.input.aim), m.dig_r)
 
-## digs the asteroid cells within r of p into m's satchel (what m's staff can cut)
-func _mine_at(m, p: Vector2, r: float) -> void:
+## Digs the cells within r of p into m's satchel (what m's staff can cut: asteroids, a wreck's hull) the way digging
+## on a planet does (27 Nov; user: "gathering doesnt work the same in space as it does on land. i dont see the little
+## indicators of what i harvested ... i could harvest the ship itself but it was like by pixels not the normal way as
+## on a planet"): the cells nearest p go first, so a round hole opens from the middle out (it took scattered pixels
+## at random), at the same pace as before (`_dig_carry`: the chances summed); each cell costs mana by its hardness as on
+## a planet (main `dig_mana`; under MANA_FLOOR the staff fizzles), with the staff's tether and runes (vfx `dig`) and
+## "+3 Hull Plating" rising from where it was dug (main `_pick_acc`, `popups`). The skiff's Prospector's Beam (`beam`)
+## is the ship's own: no mana, no tether.
+func _mine_at(m, p: Vector2, r: float, beam := false) -> void:
 	if m.aboard == null:
 		vl.sear(m, p, r)
+	if not beam:
+		if not game.has_mana(m, game.MANA_FLOOR, p, "dig"):
+			return
+		game.vfx.dig(m, p, r)
 	var hard := false
-	var got := 0
+	var cand := []                 # [distance from p, rock, cell index, i, j]
+	var want := 0.0
 	for a in _rocks_near(p, r + 2.0):
 		var b: Vector2 = a.to_body(p) + a.com
 		for j in range(maxi(0, int(b.y - r - 1.0)), mini(a.h, int(b.y + r + 2.0))):
 			for i in range(maxi(0, int(b.x - r - 1.0)), mini(a.w, int(b.x + r + 2.0))):
 				var ck: int = j * a.w + i
 				var t: int = a.cells[ck]
-				if t == 0 or Vector2(i + 0.5, j + 0.5).distance_to(b) > r or a.guarded(ck):
+				if t == 0 or a.guarded(ck):
+					continue
+				var dd := Vector2(i + 0.5, j + 0.5).distance_to(b)
+				if dd > r:
 					continue
 				if Defs.HARD[t] > m.tier:
 					hard = true
 					continue
-				if randf() > minf(0.95, 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2) * game.dig_speed(m, false)):
-					continue
-				a.take(ck)
-				m.inv[t] += 1
-				got += 1
-				if randf() < 0.5:
-					game.parts.append({"pos": a.cell_world(i, j), "vel": Vector2(randf() - 0.5, randf() - 0.5), "life": 60,
-						"col": Defs.COLOR[t], "self": true, "grav": 0.0, "home": true})
+				want += minf(0.95, 0.32 / (1.0 + float(Defs.HARD[t]) * 1.2) * game.dig_speed(m, false))
+				cand.append([dd, a, ck, i, j])
+	if cand.is_empty():
+		_dig_carry = 0.0
+	else:
+		_dig_carry += want
+	var n := int(_dig_carry)
+	_dig_carry -= float(n)
+	var got := 0
+	var spent := 0.0
+	if n > 0:
+		cand.sort_custom(func(x, y): return float(x[0]) < float(y[0]))
+		for c in cand.slice(0, n):
+			var a2 = c[1]
+			var ck2: int = c[2]
+			var t2: int = a2.cells[ck2]
+			a2.take(ck2)
+			m.inv[t2] += 1
+			got += 1
+			spent += game.dig_mana(t2)
+			if m.local:
+				game._pick_acc[t2] = int(game._pick_acc.get(t2, 0)) + 1
+			if randf() < 0.5:
+				game.parts.append({"pos": a2.cell_world(int(c[3]), int(c[4])), "vel": Vector2(randf() - 0.5, randf() - 0.5), "life": 60,
+					"col": Defs.COLOR[t2], "self": true, "grav": 0.0, "home": true})
 	if got > 0:
 		_mining = 0
 		game.audio.play("dig", p, 0.7)
+		if m.local:
+			game._pick_at = p
+		if not beam and not game.free_magic:
+			m.mana = maxf(0.0, m.mana - spent)
+			m.mana_spent_t = 20
+		stats["mined"] = int(stats.get("mined", 0)) + got
 	if hard:
 		m.dig_blocked = 30
 

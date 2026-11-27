@@ -86,6 +86,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (map_view `_you`, `you_dir`). PLANET WAYPOINTS: a click on the planet map (`set_planet_waypoint`: put on the
   ground under a point in the air), a right click or Backspace clears; `planet_state["waypoint"]`, shown on the
   map with a line and on the minimap, cleared within `WAYPOINT_REACH` (`_check_planet_waypoint`). Test:
+  THE WAYPOINT IN SPACE (27 Nov, user: "the waypoint should be easy to see on the mini map when in space"): minimap
+  `_draw_space` keeps it for last, `_waypoint_mark`: a dotted gold line from you, a ring pulsing out round it, a
+  bigger diamond, and an arrow on the rim when it's past the radar's reach. Checked in `_test_minimap` (drawn, and in
+  `minimap_space.png`).
   ZOOM AND THE POINTER (26 Nov, user: in space "the cursor doesnt change when hovering over the minimap it goes behind
   it ... a cursor for the space minimap and a zoom function as well"): ui `mouse_over_minimap` is part of
   `mouse_over_ui` (the pointer shows over it, not the reticle; a click there never casts); the wheel over it calls
