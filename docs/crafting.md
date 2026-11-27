@@ -45,15 +45,21 @@ Notes for development sessions on this part of the game. The rules that apply ev
   Structures, Satchel]: the Furniture (2), Outdoors (3) and Workshops (7) tabs' pieces and code stay (tests set
   `build_cat` to them), out of the player's reach. Torches are a Satchel-tab piece (`Build.carried_pieces(furn,
   items, inv)`). The cabin/pocket builder (`_cabin_edit`) sets carried furniture down too ("carried").
-- AMOUNT: ui `craft_amount` (1..99, `_amount_box`: − n +, Shift by 10; `set_craft_amount`), in the forge's tab row
-  and the workshop panel. main `recipe_repeatable(r)` (give, potion, sigil, furniture, station) and
+- AMOUNT, PER ITEM (26 Nov, user: "the whisp forge has a global setting. i wanted it a per item for the number
+  selection"): ui `amounts` (a forge recipe's by its id, a workshop mix's by "p:<id>"; `amount_of`, `set_amount`,
+  1..99, kept while the game runs), `_amount_box(key, changed)` (− n +, Shift by 10) beside each repeatable card's
+  Forge button, each "Send to the ..." button and each Load row in the workshop panel; `_forge_text(r)`. main `recipe_repeatable(r)` (give, potion, sigil, furniture, station) and
   `craft_many(r, n)` (as many as the satchel pays, `craft_quiet` holds the per-item toasts and saves, one toast and
   save after); ui `_on_craft` uses it ("Forge ×N" on repeatable cards).
 - THE BOOK holds the workshops' mixes: after the forge's own categories a section per workshop ("Kiln (workshop)",
   ..., a tab each) of `_process_card`s (`workshops.known_recipes(kind)`: the plain ones and the secrets found), and
   the unfound secrets as `_secret_page`s among the Recipe Book's pages (their riddle once heard).
 - THE WORKSHOP PANEL: under "It makes", a Load button on each known mix: `workshops.load_recipe(st, pr, n)` (what
-  else is loaded goes back first; as many batches as the satchel and what's in already hold). Loading by hand
+  else is loaded goes back first; then n MORE batches on top of what's in, as many as the satchel holds, a batch
+  under way keeping its progress. 26 Nov, user: loading "does not add to whatever is in there it starts it over
+  with exactly how many you have set").
+- The door's recipe (id "door") is first among `Build.furniture_recipes`, category Furniture (26 Nov, user: "the
+  door is still in materials and probably should be in furniture"); it was in Defs.RECIPES under Materials. Loading by hand
   (click the satchel) is as before, and still how secrets are found.
 - Test: `_test_crafting` ("crafting"; in the full run after `_test_workshops`; pictures `forge_workshops.png`,
   `workshop_recipes.png`).

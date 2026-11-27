@@ -1299,15 +1299,20 @@ func _lying(v, t: Texture2D) -> void:
 	var mod := _lit(c)
 	mod.a = game.towns.alpha_of(v)
 	var ts := t.get_size()
+	# (lying along their own floor, which leans with the curve as you walk away from them, like the standing
+	# folk: towns, 26 Nov)
+	var wr := 0.0
+	if game.close_view() and not game.unrolled():
+		wr = wrapf(game.view_angle() - atan2(v.pos.y, v.pos.x), -PI, PI)
 	if v.bedroll:
 		# a rolled-out blanket under them, in a colour from their seed
 		var bc := Color.from_hsv(fposmod(float(v.fseed % 97) / 97.0, 1.0), 0.45, 0.55) * mod
 		bc.a = mod.a
-		draw_set_transform(c, 0.0, Vector2.ONE / z)
+		draw_set_transform(c, wr, Vector2.ONE / z)
 		# (its underside on the floor: they lie 4.5 cells over the floor's top, towns.gd `_settle_sleeper`)
 		draw_rect(Rect2(-ts.y * 0.5 - 1.0, 1.5, ts.y + 2.0, 3.0), bc)
 		draw_rect(Rect2(-ts.y * 0.5 - 1.0, 3.5, ts.y + 2.0, 1.0), bc.darkened(0.35))
-	draw_set_transform(c, PI * 0.5 if head_right else -PI * 0.5, Vector2.ONE / z)
+	draw_set_transform(c, wr + (PI * 0.5 if head_right else -PI * 0.5), Vector2.ONE / z)
 	draw_texture(t, -(ts * 0.5).floor(), mod)
 	# a quilt over the body from the shoulders down (just the body's width), its own colour, edged and
 	# folded back at the top, with a stripe
@@ -1337,7 +1342,9 @@ func _draw_folk() -> void:
 		if v.lying:
 			_lying(v, tex[fk + "_sleep"])
 			continue
-		_sprite(fk + "_" + _folk_frame(v), v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), false, v.w)
+		# (turned with the world under them, like the open doors: upright on screen they leaned with your up as
+		# you moved; user, 26 Nov: "villagers rotate with the player up and down direction instead of the world")
+		_sprite(fk + "_" + _folk_frame(v), v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), true, v.w)
 
 ## Which of a villager's frames (folk_art.gd POSES) to show (user, 26 Nov: "villagers are still basic
 ## animations"): running from a foe with both arms up; a four-step walk; talking to you (a hand out, then at

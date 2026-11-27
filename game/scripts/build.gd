@@ -238,7 +238,10 @@ static func carried_pieces(furn: Array, items: Dictionary = {}, inv: PackedInt32
 ## Furniture recipes for the Wisp Forge, from the same catalogue (the indoor pieces): forging one
 ## makes a piece with a design of its own and puts it in the satchel.
 static func furniture_recipes() -> Array:
-	var out := []
+	# the door first (it was under Materials; user, 26 Nov: "the door is still in materials and probably should
+	# be in furniture"): the same recipe, id "door", filed with the furniture
+	var out := [{"id": "door", "cat": "Furniture", "name": "Wooden Door", "cost": {Defs.PLANK: 8}, "give": {Defs.WOODDOOR: 1},
+		"desc": "Click it in the satchel (I), then a doorway: Conjure hangs it."}]
 	for p in pieces():
 		if (int(p["cat"]) == 2 or int(p["cat"]) == 3) and p.has("prop"):
 			out.append({"id": "furn_" + String(p["prop"]), "cat": "Furniture" if int(p["cat"]) == 2 else "Outdoors",

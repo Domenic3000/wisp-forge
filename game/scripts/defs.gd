@@ -1759,7 +1759,6 @@ const RECIPES := [
 	{"id": "masonry", "cat": "Materials", "name": "Stone Blocks x4", "cost": {STONE: 4}, "give": {MASONRY: 4}, "desc": "Strong building blocks (span 28)."},
 	{"id": "torch", "cat": "Materials", "name": "Torches x4", "cost": {WOOD: 1, COAL: 1}, "give": {TORCH: 4}, "desc": "Light that never goes out."},
 	{"id": "sandstone", "cat": "Materials", "name": "Sandstone x4", "cost": {SAND: 6}, "give": {SANDSTONE: 4}, "desc": "Pressed sand, for desert houses."},
-	{"id": "door", "cat": "Materials", "name": "Wooden Door", "cost": {PLANK: 8}, "give": {WOODDOOR: 1}, "desc": "Click it in the satchel (I), then a doorway: Conjure hangs it."},
 	{"id": "obsid", "cat": "Materials", "name": "Obsidian x4", "cost": {LAVA: 4, WATER: 4}, "give": {OBSIDIAN: 4}, "desc": "Quench lava in water."},
 	{"id": "spark", "cat": "Spells", "name": "Spark Bolt", "cost": {STONE: 24, COAL: 6, COPPER: 4}, "spell": "spark"},
 	{"id": "levitate", "cat": "Staff & Body", "name": "Levitation", "cost": {COPPERBAR: 3, WISP: 4, LEAF: 10}, "desc": "Hold jump in the air to float on your mana. Wisp is cut with the Copper Focus; copper ingots come from a Smelter."},

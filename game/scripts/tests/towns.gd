@@ -601,6 +601,27 @@ func _test_guards() -> void:
 	var ok2: bool = hits >= 1 and dealt > 0.0
 	gd_rows.append("%sa skeleton in the village: struck %d times by the guards, %.0f health taken" % ["" if ok2 else "(!) ", hits, dealt])
 	gd_ok = gd_ok and ok2
+	# (26 Nov, user: "the town gaurds get stuck rapidly flipping left and right when im near them") a foe right
+	# under a guard, in a cave below the street, is out of reach: not taken as a target, and the guard doesn't
+	# spin on the spot over it
+	if not guards.is_empty():
+		var gu = guards[0]
+		var below = g.spawn_enemy("skeleton", gu.pos - gu.pos.normalized() * 60.0)
+		below.awake = true
+		var tgt = g.towns._guard_target(gu)
+		var flips := 0
+		var f0: int = gu.facing
+		for f3 in 90:
+			await _frames(1)
+			below.pos = gu.pos - gu.pos.normalized() * 60.0 + g.basis_r(atan2(gu.pos.y, gu.pos.x)) * (0.6 if f3 % 2 == 0 else -0.6)
+			if gu.facing != f0:
+				flips += 1
+				f0 = gu.facing
+		g.enemies.erase(below)
+		var ok_b: bool = tgt != below and flips <= 1
+		gd_rows.append("%sa foe in a cave right under a guard: %s, the guard turned %d times in 90 frames" % ["" if ok_b else "(!) ",
+			"ignored" if tgt != below else "taken as a target", flips])
+		gd_ok = gd_ok and ok_b
 	# requests done: the village grows a house, its folk build it
 	var rep: Dictionary = g.planet_state.get("town_rep", {})
 	var grown0: Dictionary = (g.planet_state.get("grown", {}) as Dictionary).duplicate()

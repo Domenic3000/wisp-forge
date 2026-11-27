@@ -91,6 +91,13 @@ Notes for development sessions on this part of the game. The rules that apply ev
   provoked) draws them to it, and in reach the spear strikes for `GUARD_HIT` every `GUARD_EVERY` ticks
   (`strike_t` on main's Villager; overlay shows "jab"). They can't be hurt. `line_for` gives a guard's lines
   (`GUARD_LINES`). Test: `_test_guards` (tests/towns.gd, section "guards"; after `_test_towns`).
+- (26 Nov, user: "the town gaurds get stuck rapidly flipping left and right when im near them") a guard ignores a
+  foe more than `GUARD_HIGH` (30) above or below it (in a cave under the street, up in the sky: it can't get at
+  it, and standing over it its side flickered every frame), only turns once a foe is `GUARD_TURN` (3) to one side,
+  and stands still under one it can't reach. The test also puts a foe in a cave right under a guard.
+- (26 Nov, user: "villagers rotate with the player up and down direction instead of the world") overlay
+  `_draw_folk` draws them with `_sprite`'s `turn` (with the world under them, like the open doors), and `_lying`
+  turns a sleeper and the bedroll the same way.
 
 ## Villages that grow (26 Nov, the roadmap's "a village that grows as you help it")
 - `_finish` (a request done) calls `_maybe_grow`: at `GROW_AT` (2, 5, 9) requests done in a village

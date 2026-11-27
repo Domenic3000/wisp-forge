@@ -34,6 +34,8 @@ const GUARDS_MAX := 4
 const GUARD_SIGHT := 170.0
 const GUARD_ROAM := 90
 const GUARD_REACH := 12.0
+const GUARD_TURN := 3.0          # (how far to one side a foe must be before a guard turns to it)
+const GUARD_HIGH := 30.0         # (a foe further above or below than this is out of a guard's reach: ignored)
 const GUARD_HIT := 9.0
 const GUARD_EVERY := 34
 ## A village grows as you help it (26 Nov): at GROW_AT requests done there (`town_rep`), its folk build a new house
@@ -530,8 +532,12 @@ func _guard(v) -> void:
 	if foe != null:
 		var d: Vector2 = foe.pos - p
 		var along := d.dot(game.basis_r(a))
-		v.facing = 1 if along > 0.0 else -1
-		if absf(along) < GUARD_REACH + foe.w * 0.5 and absf(d.dot(up)) < 16.0 + foe.h * 0.5:
+		# (a dead zone: with the foe right over or under them its side flickered, and they spun on the spot;
+		# user, 26 Nov: "the town gaurds get stuck rapidly flipping left and right when im near them")
+		if absf(along) > GUARD_TURN:
+			v.facing = 1 if along > 0.0 else -1
+		var reach_up: bool = absf(d.dot(up)) < 16.0 + foe.h * 0.5
+		if absf(along) < GUARD_REACH + foe.w * 0.5 and reach_up:
 			if v.strike_t <= 0:
 				v.strike_t = GUARD_EVERY
 				game._hurt_enemy(foe, GUARD_HIT, float(v.facing) * 1.6, -0.5)
@@ -539,7 +545,7 @@ func _guard(v) -> void:
 				for k in 5:
 					game._particle(foe.pos - game.basis_r(a) * float(v.facing) * foe.w * 0.4, game.basis_r(a) * float(v.facing) * randf_range(0.3, 1.2) + up * randf_range(-0.4, 0.6), 10 + randi() % 8, Color(1.0, 0.95, 0.8), true, 0.05)
 				stats["guard_hits"] = int(stats.get("guard_hits", 0)) + 1
-		else:
+		elif absf(along) > GUARD_REACH * 0.5:
 			want = signf(along) * 1.25
 			if v.hit_wall and v.on_ground:
 				var s0 := -signf(along)                       # (in columns: basis_r points toward fewer)
@@ -590,6 +596,9 @@ func _guard_target(v):
 				continue
 		var dd: float = (e.pos as Vector2).distance_to(v.pos)
 		if dd >= bd:
+			continue
+		# (only what they could get at: not a foe in a cave under the street or up in the sky)
+		if absf((e.pos as Vector2).length() - (v.pos as Vector2).length()) > GUARD_HIGH + e.h * 0.5:
 			continue
 		var off := fposmod(float(_col(e.pos)) - float(int(t["x0"])) + float(GUARD_ROAM), float(Defs.NS))
 		if off > float(int(t["w"]) + 2 * GUARD_ROAM):

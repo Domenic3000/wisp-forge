@@ -835,7 +835,7 @@ func _test_inworld() -> void:
 			m.inv[int(fg_c)] += int(fg_r["cost"][fg_c]) * 25
 		g.toggle_forge()
 		await _frames(5)
-		g.ui.craft_amount = 20
+		g.ui.set_amount(String(fg_r["id"]), 20)
 		var fg_t0 := Time.get_ticks_usec()
 		var fg_made: int = g.craft_many(fg_r, 20)
 		var fg_t1 := Time.get_ticks_usec()
@@ -847,7 +847,7 @@ func _test_inworld() -> void:
 			var fg_ft := Time.get_ticks_usec()
 			await _frames(1)
 			fg_worst = maxf(fg_worst, float(Time.get_ticks_usec() - fg_ft) / 1000.0)
-		g.ui.craft_amount = 1
+		g.ui.amounts.erase(String(fg_r["id"]))
 		g.toggle_forge()
 		await _frames(5)
 		fg_rows.append("%s x%d: %.1f ms forging, %.1f ms the cards updated, worst frame after %.1f ms" % [fg_id, fg_made, float(fg_t1 - fg_t0) / 1000.0, float(fg_t2 - fg_t1) / 1000.0, fg_worst])
@@ -1487,12 +1487,15 @@ func _test_crafting() -> void:
 	ok = ok and ok2
 	for k in 4:
 		g.player.furn.pop_back()
-	# ---- the forge's book shows the workshops' mixes, the amount on its buttons
-	g.ui.set_craft_amount(10)
+	# ---- the forge's book shows the workshops' mixes, each card's own amount on its button (26 Nov, user: "i
+	# wanted it a per item for the number selection"): ten for the plank, the rest left at one
+	g.ui.amounts = {}
+	g.ui.set_amount("plank", 10)
 	g.toggle_forge()
 	await _frames(6)
 	var heads := []
 	var amt_btn := 0
+	var other_btn := 0
 	var stack := [g.ui.forge_list]
 	while not stack.is_empty():
 		var n = stack.pop_back()
@@ -1502,6 +1505,8 @@ func _test_crafting() -> void:
 				heads.append(String(ch.text))
 			if ch is Button and String(ch.text) == "Forge ×10":
 				amt_btn += 1
+			if ch is Button and String(ch.text).begins_with("Forge ×") and String(ch.text) != "Forge ×10":
+				other_btn += 1
 	var at_kiln := 0
 	for hc in g.ui.forge_tabs.get_children():
 		if hc is Button and String(hc.text) == "Kiln":
@@ -1511,8 +1516,8 @@ func _test_crafting() -> void:
 	await _frames(4)
 	_shot("forge_workshops.png")
 	g.toggle_forge()
-	var ok3: bool = heads.size() >= 3 and amt_btn > 3 and at_kiln == 1
-	rows.append("%sthe forge's book: %s; %d buttons say Forge ×10" % ["" if ok3 else "(!) ", ", ".join(heads), amt_btn])
+	var ok3: bool = heads.size() >= 3 and amt_btn == 1 and other_btn == 0 and at_kiln == 1
+	rows.append("%sthe forge's book: %s; %d button says Forge ×10 (the plank's own amount), %d other cards show an amount" % ["" if ok3 else "(!) ", ", ".join(heads), amt_btn, other_btn])
 	ok = ok and ok3
 	# ---- a workshop: click a known recipe and it loads itself (Amount batches; anything else goes back)
 	var st = g.workshops.add("kiln", g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 30.0)
@@ -1525,6 +1530,10 @@ func _test_crafting() -> void:
 			pr_glass = pr
 	var nb: int = g.workshops.load_recipe(st, pr_glass, 10)
 	var loaded_ok: bool = nb == 6 and int(st.store.get(Defs.SAND, 0)) == 24 and not st.store.has(Defs.DIRT) and g.player.inv[Defs.SAND] == 1
+	# (26 Nov, user: loading "does not add to whatever is in there"): two more on top makes eight, not two
+	g.player.inv[Defs.SAND] += 8
+	var nb2: int = g.workshops.load_recipe(st, pr_glass, 2)
+	var added_ok: bool = nb2 == 2 and int(st.store.get(Defs.SAND, 0)) == 32 and g.player.inv[Defs.SAND] == 1
 	var mp: Dictionary = g.workshops.match_process(st)
 	g.state = "station"
 	g.ui.show_station(st)
@@ -1532,10 +1541,10 @@ func _test_crafting() -> void:
 	_shot("workshop_recipes.png")
 	g.workshops.close()
 	g.workshops.list.erase(st)
-	var ok4: bool = loaded_ok and String(mp.get("id", "")) == "k_glass"
-	rows.append("%sglass ×10 asked, %d batches loaded (24 sand), the dirt given back %s, the kiln knows the mix %s" % ["" if ok4 else "(!) ", nb, not st.store.has(Defs.DIRT), String(mp.get("id", ""))])
+	var ok4: bool = loaded_ok and added_ok and String(mp.get("id", "")) == "k_glass"
+	rows.append("%sglass ×10 asked, %d batches loaded (24 sand), the dirt given back %s, then ×2 more: %d added (%d sand in), the kiln knows the mix %s" % ["" if ok4 else "(!) ", nb, not st.store.has(Defs.DIRT), nb2, int(st.store.get(Defs.SAND, 0)), String(mp.get("id", ""))])
 	ok = ok and ok4
-	g.ui.set_craft_amount(1)
+	g.ui.amounts = {}
 	print("[crafting] " + "\n[crafting] ".join(rows))
 	_ok("crafting together: workshops and furniture forged into the satchel, build mode for building, the book shows the workshops' mixes, a known mix loads itself, an amount to forge many", ok, "; ".join(rows))
 

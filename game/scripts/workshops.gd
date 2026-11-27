@@ -204,9 +204,11 @@ func load_mat(st, m: int, n: int) -> int:
 	st.store[m] = int(st.store.get(m, 0)) + n
 	return n
 
-## (user, 25 Nov: "if you click a known recipe it will load by itself"): load n batches of a recipe it
-## knows, as many as the satchel holds; anything loaded that isn't in it goes back first (a mix it knows must
-## be exactly its kinds). How many batches went in.
+## (user, 25 Nov: "if you click a known recipe it will load by itself"): load n more batches of a recipe it
+## knows, as many as the satchel holds, on top of what's in already (user, 26 Nov: "when i use the forge and load 1
+## or 5 or however many it is set to it does not add to whatever is in there it starts it over with exactly how
+## many you have set"); anything loaded that isn't in it goes back first (a mix it knows must be exactly its kinds),
+## and a batch under way keeps going. How many batches went in.
 func load_recipe(st, pr: Dictionary, n: int) -> int:
 	if pr.is_empty() or pr["at"] != st.kind:
 		return 0
@@ -214,19 +216,16 @@ func load_recipe(st, pr: Dictionary, n: int) -> int:
 	for m in st.store.keys():
 		if not need.has(int(m)):
 			unload(st, int(m))
-	# (what's already in counts toward the batches)
-	var batches := maxi(1, n)
-	var can := batches
+	var fresh: bool = st.store.is_empty()
+	var can := maxi(1, n)
 	for m2 in need:
-		var have: int = game.player.inv[int(m2)] + int(st.store.get(int(m2), 0))
-		can = mini(can, have / int(need[m2]))
+		can = mini(can, game.player.inv[int(m2)] / int(need[m2]))
 	if can <= 0:
 		return 0
 	for m3 in need:
-		var want: int = int(need[m3]) * can - int(st.store.get(int(m3), 0))
-		if want > 0:
-			load_mat(st, int(m3), want)
-	st.prog = 0.0
+		load_mat(st, int(m3), int(need[m3]) * can)
+	if fresh:
+		st.prog = 0.0
 	return can
 
 ## the recipes a station of this kind can be loaded with by a click: its plain ones and the secrets found
