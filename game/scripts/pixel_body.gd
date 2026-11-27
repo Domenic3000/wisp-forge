@@ -276,6 +276,9 @@ func texture() -> ImageTexture:
 	for j2 in h:
 		for i2 in w:
 			var dk: int = deco[j2 * w + i2] if deco.size() == w * h else 0
+			if dk > Props.PALETTE.size():
+				bimg.set_pixel(i2, j2, Color(1.0, 0.62, 0.25))       # (a torch's flame: pocket_isle.gd FLAME)
+				continue
 			if dk > 0:
 				# (furniture, in front of the back wall: its own palette colour, a touch shaded)
 				bimg.set_pixel(i2, j2, Color.html(String(Props.PALETTE[dk - 1])).darkened(0.08))

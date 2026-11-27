@@ -2578,6 +2578,7 @@ func _test_pocket() -> void:
 	var ok3: bool = near_h == "heart" and grew
 	rows.append("%sthe Isle Heart (near: %s) grew the isle %d -> %d, ground now %d cells out %s" % ["" if ok3 else "(!) ", near_h, lv0, isle.level, Isle.LEVELS[isle.level], grew])
 	ok = ok and ok3
+	await _test_pocket_build()
 	# ---- out by the arch: back up into the ship, aboard, where you came in
 	var ax: int = Isle.W / 2 + Isle.ARCH_DX
 	pk.b = Vector2(float(ax) + 0.5, isle.top_at(ax, 0) - 9.0)
@@ -3460,3 +3461,165 @@ func _test_spacebench() -> void:
 	g.test_god = god0
 	print("[spacebench] " + "\n[spacebench] ".join(rows))
 	_ok("busy scenes out in space hold 60 fps with room to spare (a station fight, an outpost, pirates among rocks, the Starsail)", ok, "; ".join(rows))
+
+## Building in the pocket as outside (26 Nov, user: "the pocket dimension inside the ship the building does not work like
+## the main world. i can only free hand draw pixels and take them away, and i cant place any workshops or anything"):
+## a kiln from the satchel set down on the isle's floor, its panel opened with F there, firing sand into glass while
+## you're in, saved with the isle (pocket.dat) and taken up again; a torch standing on the floor, glowing; a line of
+## planks laid by pressing, dragging and letting go. A picture: saves/shots/pocket_workshop.png.
+func _test_pocket_build() -> void:
+	var pb_rows := []
+	var pb_ok := true
+	var pk = g.pocket
+	var isle = pk.isle
+	var m = g.player
+	var ws = g.workshops
+	if g.build_on:
+		g._toggle_build()
+	# ---- a kiln: where it fits, a little way along the isle from you
+	var cx0 := int(floor(pk.b.x))
+	var spot := {}
+	for off in range(14, 200, 3):
+		for sgn in [1, -1]:
+			var cxs: int = cx0 + off * int(sgn)
+			var top := int(floor(isle.top_at(cxs, isle.level)))
+			var f: Dictionary = g._pocket_station_fit(isle, "kiln", cxs, top - 3)
+			if f["ok"]:
+				spot = f
+				spot["cx"] = cxs
+				spot["cy"] = top - 3
+				break
+		if not spot.is_empty():
+			break
+	var n0: int = ws.pocket_list.size()
+	g.items["st_kiln"] = 1
+	g.hold_carried("station", -1, "kiln")
+	g.build_flip = false
+	g.test_aim = isle.cell_world(int(spot.get("cx", cx0)), int(spot.get("cy", 0)))
+	await _frames(3)
+	g.test_cast = true
+	await _frames(4)
+	g.test_cast = false
+	await _frames(4)
+	var placed: bool = not spot.is_empty() and ws.pocket_list.size() == n0 + 1 and not g.items.has("st_kiln")
+	var st = ws.pocket_list.back() if placed else null
+	var stands := false
+	if st != null:
+		var bb: Vector2 = isle.to_body(st.pos) + isle.com
+		var bot := int(round(bb.y + st.h * 0.5 - 1.0))
+		var c0 := int(round(bb.x - st.w * 0.5))
+		var held := 0
+		for i in int(st.w):
+			if isle.solid_cell(c0 + i, bot + 1):
+				held += 1
+		stands = held * 2 >= int(st.w) and st.pocket
+	pb_rows.append("%sa kiln from the satchel set down in the pocket %s, standing on the isle %s" % ["" if placed and stands else "(!) ", placed, stands])
+	pb_ok = pb_ok and placed and stands
+	if st == null:
+		_ok("building in the pocket as outside: workshops, torches, shapes", false, "; ".join(pb_rows))
+		return
+	# ---- F beside it (not holding Conjure): its panel
+	var sel0: int = m.sel
+	m.sel = 0 if m.known[0] != "conjure" else 1
+	pk.near = ""
+	m.pos = st.pos + Vector2(6.0, 0.0)
+	g._interact()
+	var opened: bool = g.state == "station" and ws.open_st == st
+	ws.close()
+	m.pos = isle.to_world(pk.b)
+	m.sel = sel0
+	# ---- it works while you're in: sand fired into glass
+	m.inv[Defs.SAND] += 8
+	m.inv[Defs.COAL] += 2
+	ws.load_mat(st, Defs.SAND, 8)
+	ws.add_fuel(st, Defs.COAL, 2)
+	var key := "m%d" % Defs.GLASS
+	var fired := false
+	for fw in 900:
+		await _frames(1)
+		if fw == 200:
+			_shot("pocket_workshop.png")
+		if int(st.out.get(key, 0)) > 0:
+			fired = true
+			break
+	pb_rows.append("%sF beside it opens its panel %s; it fired sand into glass in the pocket %s (%s)" % ["" if opened and fired else "(!) ", opened, fired, str(st.out)])
+	pb_ok = pb_ok and opened and fired
+	# ---- saved with the isle, and read back
+	pk.save()
+	var saved_ok := false
+	var fs := FileAccess.open(pk._path(), FileAccess.READ)
+	if fs:
+		var dd = fs.get_var()
+		if dd is Dictionary:
+			var back: Array = ws.unpack(dd.get("stations", []), true)
+			saved_ok = back.size() == ws.pocket_list.size() and not back.is_empty() and back.back().kind == "kiln" \
+				and back.back().pos.distance_to(st.pos) < 0.01 and back.back().pocket
+	# ---- taken up again: back in the satchel, what it made with it
+	var gl0: int = m.inv[Defs.GLASS]
+	var took: bool = ws.take_at(m, st.pos) and int(g.items.get("st_kiln", 0)) == 1 and ws.pocket_list.size() == n0
+	var gl_back: bool = m.inv[Defs.GLASS] > gl0
+	pb_rows.append("%ssaved in pocket.dat and read back %s; taken up into the satchel %s, its glass with it %s" % ["" if saved_ok and took and gl_back else "(!) ", saved_ok, took, gl_back])
+	pb_ok = pb_ok and saved_ok and took and gl_back
+	g.items.erase("st_kiln")
+	# ---- a torch where the kiln stood: on the floor, its flame glowing
+	var fl0 := 0
+	for k0 in isle.deco.size():
+		if int(isle.deco[k0]) == 200:
+			fl0 += 1
+	m.inv[Defs.TORCH] += 2
+	var tc0: int = m.inv[Defs.TORCH]
+	g.hold_carried("torch")
+	g.test_aim = isle.cell_world(int(spot["cx"]), int(spot["cy"]))
+	await _frames(3)
+	g.test_cast = true
+	await _frames(4)
+	g.test_cast = false
+	await _frames(4)
+	var fl1 := 0
+	for k1 in isle.deco.size():
+		if int(isle.deco[k1]) == 200:
+			fl1 += 1
+	isle.gather_lights()
+	var glow := false
+	var tw: Vector2 = isle.to_body(g.test_aim) + isle.com
+	for lt in isle.lights:
+		var lc: Color = lt[2]
+		if (lt[0] as Vector2).distance_to(tw) < 16.0 and lc.r > lc.b:
+			glow = true
+	var torch_ok: bool = fl1 - fl0 == 5 and m.inv[Defs.TORCH] == tc0 - 1 and glow
+	pb_rows.append("%sa torch set down: %d flame cells, a torch used %s, glowing %s" % ["" if torch_ok else "(!) ", fl1 - fl0, m.inv[Defs.TORCH] == tc0 - 1, glow])
+	pb_ok = pb_ok and torch_ok
+	# ---- a line of planks: press, drag, let go
+	g.select_material(Defs.PLANK)
+	g.hand_shape = 1
+	g.hand_thick = 1
+	m.inv[Defs.PLANK] += 40
+	var pl0: int = m.inv[Defs.PLANK]
+	var lx: int = int(spot["cx"])
+	var lj: int = int(floor(isle.top_at(lx, isle.level))) - 30
+	var before := 0
+	for li in range(lx - 6, lx + 7):
+		if isle.at(li, lj) == Defs.PLANK:
+			before += 1
+	g.test_aim = isle.cell_world(lx - 6, lj)
+	await _frames(3)
+	g.test_cast = true
+	await _frames(3)
+	g.test_aim = isle.cell_world(lx + 6, lj)
+	await _frames(3)
+	g.test_cast = false
+	await _frames(4)
+	var after := 0
+	for li2 in range(lx - 6, lx + 7):
+		if isle.at(li2, lj) == Defs.PLANK:
+			after += 1
+	var line_ok: bool = after - before == 13 and m.inv[Defs.PLANK] == pl0 - 13
+	pb_rows.append("%sa line of planks laid by dragging: %d cells, %d planks used" % ["" if line_ok else "(!) ", after - before, pl0 - m.inv[Defs.PLANK]])
+	pb_ok = pb_ok and line_ok
+	for li3 in range(lx - 6, lx + 7):
+		if isle.at(li3, lj) == Defs.PLANK:
+			isle.remove(li3, lj)
+	g.hand_shape = 0
+	g.test_aim = Vector2.ZERO
+	print("[pocketbuild] " + "\n[pocketbuild] ".join(pb_rows))
+	_ok("building in the pocket as outside: a workshop set down, worked, saved and taken up; a torch; shapes", pb_ok, "; ".join(pb_rows))

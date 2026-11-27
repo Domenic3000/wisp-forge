@@ -696,7 +696,7 @@ func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float,
 	# planet's curve in the round map view. `turn`: always turned with the world under it (an open door
 	# stands with its house, which leans with the curve: upright it seemed to turn as you walked)
 	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)
-	if turn and game.close_view() and not game.unrolled():
+	if turn and game.close_view() and not game.unrolled() and not game.pocket.active:
 		rot = wrapf(game.view_angle() - atan2(wpos.y, wpos.x), -PI, PI)
 	var z: float = game.zoom
 	var sc := Vector2((-1.0 if flip else 1.0) * (2.0 - squash), squash) / z
@@ -923,6 +923,8 @@ func _draw_in_space() -> void:
 ## inside the ship's pocket dimension (pocket.gd draws the nebula and the isle under this): you, the sparks,
 ## what you're building, the cursor
 func _draw_in_pocket() -> void:
+	if game.pocket.place == "isle":
+		_draw_stations()             # (workshops set down in the pocket)
 	for p in game.parts:
 		_px(p["pos"], p["col"])
 	var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
@@ -1400,7 +1402,7 @@ func _draw_tray(st) -> void:
 	var base: Vector2 = game.workshops._world(st, Vector2(side * (st.w * 0.5 + 3.0), st.h * 0.5))
 	var sp: Vector2 = game.world_to_screen(base)
 	var rot := 0.0 if game.close_view() else wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(base.y, base.x), -PI, PI)
-	if game.close_view() and not game.unrolled():
+	if game.close_view() and not game.unrolled() and not game.pocket.active:
 		rot = wrapf(game.view_angle() - atan2(base.y, base.x), -PI, PI)
 	var lc: Color = _lit(sp)
 	var lit := Color(lc.r, lc.g, lc.b, 1.0)
@@ -1442,7 +1444,7 @@ func _draw_tray(st) -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_stations() -> void:
-	for st in game.workshops.list:
+	for st in game.workshops.here_list():
 		var ssp: Vector2 = game.world_to_screen(st.pos)
 		if ssp.x < -30 or ssp.y < -30 or ssp.x > game.VW + 30 or ssp.y > game.VH + 30:
 			continue

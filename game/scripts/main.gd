@@ -84,6 +84,7 @@ class Station extends Body:
 	var ritual := 0           # an altar calling a guardian: ticks left (summoning.gd)
 	var summon := ""          # whose
 	var summon_at := Vector2.ZERO
+	var pocket := false       # standing in your ship's pocket (its frame: the screen's up), not on the planet
 	func _init() -> void:
 		step_h = 0
 
@@ -5452,7 +5453,7 @@ func drink_draught(m: Mage, id: String) -> bool:
 ## is there an anvil (a workshop station) within reach of the mage? (masterwork ore gear)
 func anvil_near(m: Mage = null) -> bool:
 	var who: Mage = m if m != null else player
-	for st in workshops.list:
+	for st in workshops.here_list():
 		if st.kind == "anvil" and st.pos.distance_to(who.pos) < Defs.ANVIL_REACH:
 			return true
 	return false
@@ -6146,6 +6147,11 @@ func pocket_unmake(m: Mage, body) -> bool:
 			wisp_note("Levelling the ground is for a planet's land: here, take away with a line or brush (G).")
 		return true
 	var L: Array = UNMAKE_LAYERS[unmake_layer]
+	if not cabin_cast:
+		_cabin_latch = false
+	if cabin_cast and not _cabin_latch and String(L[0]) in ["furn", "all"] and workshops.take_at(m, m.input.aim):
+		_cabin_latch = true           # (a workshop under it: taken up whole, into the satchel)
+		return true
 	_hand_over = {"cat": Build.CAT_REMOVE, "name": "Unmake", "kind": "remove", "layer": String(L[0]), "cost": {}}
 	var t0 := build_thick
 	build_thick = maxi(unmake_thick, 2)
@@ -6328,7 +6334,13 @@ func hand_body(m: Mage, body) -> bool:
 		hand_live = true
 		_pocket_plan(m, body, hp)
 		return true
-	if hk != "block" and hk != "wall" and hk != "carried":
+	if hk == "door":
+		# (a room's doorway stays open in here: there's nothing outside to keep out)
+		if m.input.cast and not m.cast_latch:
+			m.cast_latch = true
+			wisp_note("Doors don't hang in the pocket: a doorway stays open in here.")
+		return false
+	if not (hk in ["block", "wall", "carried", "station", "torch"]):
 		if m.input.cast and not m.cast_latch:
 			m.cast_latch = true
 			wisp_note("That can't be set down in the pocket.")
@@ -8819,6 +8831,14 @@ func _cabin_edit(m: Mage, sk) -> void:
 	var cells := []       # [i, j]
 	var prev := []        # [world point, colour]
 	var ok := true
+	if kind == "station":
+		_pocket_station(m, sk, piece, ci, cj)
+		return
+	if (kind == "block" or kind == "wall") and pocket.active and hand_shape > 0 and not build_on:
+		_pocket_shape(m, sk, piece, ci, cj)
+		return
+	if kind != "remove":
+		_pk_drag = false
 	match kind:
 		"block", "wall":
 			var mat: int = piece["mat"]
@@ -8846,9 +8866,19 @@ func _cabin_edit(m: Mage, sk) -> void:
 				audio.play("place", sk.pos, 0.4)
 			elif cabin_cast and not ok and not cells.is_empty():
 				_build_need(piece)
-		"prop", "carried":
-			# (a piece from the satchel keeps its own pixels and costs nothing; one from the catalogue is grown)
-			var d: Dictionary = {"rows": piece["rows"], "wall": piece.get("wall", false)} if kind == "carried" else Build.design(piece, build_seed)
+		"prop", "carried", "torch":
+			# (a piece from the satchel keeps its own pixels and costs nothing; one from the catalogue is grown; a
+			# torch stands on the floor, its flame glowing: pocket_isle.gd's lights read a torch on the back layer)
+			var d: Dictionary
+			if kind == "carried":
+				d = {"rows": piece["rows"], "wall": piece.get("wall", false)}
+			elif kind == "torch":
+				var trows := []
+				for tr0 in Build.STANDING:
+					trows.append(String(tr0).replace("t", "e"))
+				d = {"rows": trows, "wall": false}
+			else:
+				d = Build.design(piece, build_seed)
 			var rows: Array = d["rows"]
 			var on_wall: bool = d.get("wall", false)
 			var pw: int = String(rows[0]).length()
@@ -8873,14 +8903,15 @@ func _cabin_edit(m: Mage, sk) -> void:
 				_cabin_latch = true
 				if ok:
 					for c2 in cells:
-						sk.deco[int(c2[1]) * sk.w + int(c2[0])] = int(c2[2]) + 1
+						var flame: bool = kind == "torch" and int(c2[2]) == TORCH_FLAME_IDX
+						sk.deco[int(c2[1]) * sk.w + int(c2[0])] = TORCH_FLAME_DECO if flame else int(c2[2]) + 1
 						sk.touch(int(c2[0]), int(c2[1]))
 					for cm in cost:
 						m.inv[int(cm)] -= int(cost[cm])
 					if kind == "carried" and int(piece["item"]) < m.furn.size():
 						m.furn.remove_at(int(piece["item"]))
 					sk.dirty = true
-					cabin_stats["furniture"] += 1
+					cabin_stats["furniture" if kind != "torch" else "torches"] = int(cabin_stats.get("furniture" if kind != "torch" else "torches", 0)) + 1
 					build_seed = randi()
 					vfx.place_flash(sk.cell_world(ci, cj), float(maxi(pw, ph)))
 					audio.play("place", sk.pos, 0.6)
@@ -8908,6 +8939,7 @@ func _cabin_edit(m: Mage, sk) -> void:
 			build_prev = {"cells": prev, "ok": ok}
 			if cabin_cast and ok and frame % 3 == 0:
 				var furn := 0
+				var flames := 0
 				for c3 in cells:
 					var cv: Vector2i = c3
 					var k4: int = cv.y * sk.w + cv.x
@@ -8921,12 +8953,17 @@ func _cabin_edit(m: Mage, sk) -> void:
 						m.inv[gb] += 1
 						sk.touch(cv.x, cv.y)
 					if layer in ["furn", "all"] and sk.deco[k4] != 0:
+						if int(sk.deco[k4]) == TORCH_FLAME_DECO:
+							flames += 1
+						else:
+							furn += 1
 						sk.deco[k4] = 0
 						sk.touch(cv.x, cv.y)
-						furn += 1
 					cabin_stats["removed"] += 1
 				if furn > 0:
 					m.inv[Defs.PLANK] += maxi(1, furn / 10)
+				if flames > 0:
+					m.inv[Defs.TORCH] += (flames + TORCH_FLAMES - 1) / TORCH_FLAMES     # (a torch back for each one)
 				sk.dirty = true
 				sk.rebuild()
 				vfx.shape_burst(prev.map(func(e): return e[0]), false)
@@ -8934,6 +8971,142 @@ func _cabin_edit(m: Mage, sk) -> void:
 			if cabin_cast and not _cabin_latch:
 				_cabin_latch = true
 				ui.toast(("In the pocket" if pocket.active else "Inside the skiff") + ": blocks, back walls and furniture (the Remove tab takes them out)", Color(1, 0.7, 0.5), 2.0)
+
+## the pocket's torch: Build.STANDING with its flame cells ("t") kept as pocket_isle.gd's FLAME (drawn as a flame,
+## and they glow); TORCH_FLAMES of them in one torch
+const TORCH_FLAME_IDX := 33
+const TORCH_FLAMES := 5
+const TORCH_FLAME_DECO := 200      # (pocket_isle.gd FLAME: a furniture cell that's a torch's flame)
+var _pk_drag := false
+var _pk_from := Vector2i.ZERO
+
+## (user, 26 Nov: in the pocket "i can only free hand draw pixels") a line, rectangle or frame of blocks or back walls
+## in the isle's cells, as outside: press where it starts, drag, let go; G changes the shape (the brush is shape 0)
+func _pocket_shape(m: Mage, sk, piece: Dictionary, ci: int, cj: int) -> void:
+	var mt: int = piece["mat"]
+	var back: bool = piece["kind"] == "wall"
+	if cabin_cast and not _pk_drag:
+		_pk_drag = true
+		_pk_from = Vector2i(ci, cj)
+	var from := _pk_from if _pk_drag else Vector2i(ci, cj)
+	var cells: Array = Build.shape_cells(from, Vector2i(ci, cj), hand_shape, maxi(hand_thick, 1))
+	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
+	var good := []
+	var prev := []
+	if not too_big:
+		for c in cells:
+			var cv: Vector2i = c
+			if not sk.in_room(cv.x, cv.y):
+				continue
+			if back:
+				if int(sk.bg[cv.y * sk.w + cv.x]) == mt:
+					continue
+			elif sk.at(cv.x, cv.y) != 0:
+				continue
+			good.append(cv)
+			prev.append([sk.cell_world(cv.x, cv.y), Defs.COLOR[mt]])
+	var need := good.size()
+	var ok: bool = not too_big and need > 0 and need <= m.inv[mt]
+	build_prev = {"cells": prev, "ok": ok}
+	var what := "%s %s: %d %s" % [Build.SHAPES[hand_shape], piece["name"], need, Defs.NAMES[mt]]
+	if too_big:
+		what = "Too big to lay in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS
+	elif need > m.inv[mt]:
+		what += " (you have %d)" % m.inv[mt]
+	build_prev["text"] = what
+	if _pk_drag and not cabin_cast:
+		_pk_drag = false
+		if ok:
+			for c2 in good:
+				var cw: Vector2i = c2
+				if sk.place(cw.x, cw.y, mt, back):
+					m.inv[mt] -= 1
+					cabin_stats["blocks" if not back else "walls"] += 1
+			sk.dirty = true
+			vfx.shape_burst(prev.map(func(e): return e[0]), true)
+			audio.play("place", m.pos, 0.6)
+		elif need > m.inv[mt] and need > 0:
+			_build_need(piece)
+
+## Would a workshop of kind sk stand with its middle column cx, on the isle's floor under row cy? {ok, why, c0,
+## bottom, pos} (as outside, `_station_fit`: on level ground under most of it, nothing in the way)
+func _pocket_station_fit(sk, kind: String, cx: int, cy: int) -> Dictionary:
+	var sw: int = int(Defs.STATIONS[kind]["w"])
+	var sh: int = int(Defs.STATIONS[kind]["h"])
+	var c0 := cx - sw / 2
+	var bot := -1
+	for b0 in range(cy - sh / 2, cy + 40):            # (the first floor under where its top would be)
+		var held := 0
+		for i in sw:
+			if sk.solid_cell(c0 + i, b0 + 1):
+				held += 1
+		if held * 2 >= sw:
+			bot = b0
+			break
+	var ok := bot >= 0
+	var why := "" if ok else "no floor under it"
+	if not ok:
+		bot = cy + sh / 2
+	if ok:
+		for j in sh:
+			for i2 in sw:
+				var ci2 := c0 + i2
+				var cj2 := bot - sh + 1 + j
+				if not sk.in_room(ci2, cj2) or sk.at(ci2, cj2) != 0:
+					why = "something's in the way"
+					ok = false
+				elif int(sk.deco[cj2 * sk.w + ci2]) != 0:
+					why = "furniture is in the way (Unmake takes it)"
+					ok = false
+	var spos: Vector2 = (sk.cell_world(c0, bot) + sk.cell_world(c0 + sw - 1, bot - sh + 1)) * 0.5
+	for ost in workshops.pocket_list:
+		if ost.pos.distance_to(spos) < (sw + ost.w) * 0.5:
+			if ok:
+				why = "another workshop is there"
+			ok = false
+	return {"ok": ok, "why": why, "c0": c0, "bottom": bot, "pos": spos}
+
+## a workshop from your satchel set down in the pocket (user, 26 Nov: "i cant place any workshops"): where you
+## point, or slid along the floor to the nearest spot where it fits; its picture as the ghost
+func _pocket_station(m: Mage, sk, piece: Dictionary, ci: int, cj: int) -> void:
+	if not cabin_cast:
+		_cabin_latch = false
+	var kind: String = piece["station"]
+	var fit := _pocket_station_fit(sk, kind, ci, cj)
+	if not fit["ok"]:
+		for off in [2, -2, 4, -4, 6, -6, 8, -8, 10, -10, 12, -12]:
+			var f2 := _pocket_station_fit(sk, kind, ci + int(off), cj)
+			if f2["ok"]:
+				fit = f2
+				break
+	var sw: int = int(Defs.STATIONS[kind]["w"])
+	var sh: int = int(Defs.STATIONS[kind]["h"])
+	var simg: Image = WorkshopArt.frames(kind)["body"]
+	var prev := []
+	for j in sh:
+		for i in sw:
+			var px := simg.get_pixel(sw - 1 - i if build_flip else i, j)
+			if px.a > 0.5:
+				prev.append([sk.cell_world(int(fit["c0"]) + i, int(fit["bottom"]) - sh + 1 + j), px])
+	var have := int(m.items.get("st_" + kind, 0))
+	var ok: bool = bool(fit["ok"]) and have > 0
+	build_prev = {"cells": prev, "ok": ok, "text": "%s%s" % [Defs.STATIONS[kind]["name"], "" if fit["ok"] else ": " + String(fit["why"])]}
+	if cabin_cast and not _cabin_latch:
+		_cabin_latch = true
+		if not ok:
+			ui.toast("It won't stand there: %s" % String(fit["why"]) if not fit["ok"] else "You have none to set down", Color(1, 0.7, 0.5), 1.8)
+			return
+		var nst = workshops.add_pocket(kind, fit["pos"])
+		nst.facing = -1 if build_flip else 1
+		m.items["st_" + kind] = have - 1
+		if have - 1 <= 0:
+			m.items.erase("st_" + kind)
+		cabin_stats["stations"] = int(cabin_stats.get("stations", 0)) + 1
+		vfx.place_flash(nst.pos, float(maxi(sw, sh)))
+		audio.play("place", nst.pos, 0.7)
+		if not m.items.has("tip_station"):
+			m.items["tip_station"] = true
+			ui.toast("%s set down: press F beside it to load it and light its fire" % Defs.STATIONS[kind]["name"], Color(1, 0.85, 0.5), 4.0)
 
 ## a piece of furniture's cells in the cabin with its left at x0 (resting on the floor under row cj, unless
 ## it hangs on a wall): [[[i, j, palette index]...], whether every one is free room]

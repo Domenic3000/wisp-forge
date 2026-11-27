@@ -128,6 +128,7 @@ var v := Vector2.ZERO
 var near := ""                  # what F would do: "arch", "heart" or ""
 var _offer_t := 0               # (the heart's offer stands this long: F again grows the isle)
 var _calm_note := -1000
+var _decon_latch := false
 var motes: Array = []           # [cell position, phase, speed, colour]
 var t := 0.0
 var bgrect: ColorRect
@@ -190,6 +191,8 @@ func reset() -> void:
 	op_folk.clear()
 	_dock_task = -1
 	_dock_from = null
+	if game != null and game.workshops != null:
+		game.workshops.pocket_list = []     # (another slot's: read again with its isle)
 
 func _path() -> String:
 	return game._save_dir().path_join("pocket.dat")
@@ -199,12 +202,16 @@ func _ensure() -> void:
 		return
 	isle = Isle.new()
 	var ok := false
+	game.workshops.pocket_list = []
 	if FileAccess.file_exists(_path()):
 		var f := FileAccess.open(_path(), FileAccess.READ)
 		if f:
 			var d = f.get_var()
 			if d is Dictionary:
 				ok = isle.load_isle(d)
+				if ok:
+					# (its workshops: user, 26 Nov, "i cant place any workshops" in the pocket)
+					game.workshops.pocket_list = game.workshops.unpack(d.get("stations", []), true)
 	if not ok:
 		isle.make()
 	motes.clear()
@@ -217,7 +224,9 @@ func save() -> void:
 		return
 	var f := FileAccess.open(_path(), FileAccess.WRITE)
 	if f:
-		f.store_var(isle.save_isle())
+		var d: Dictionary = isle.save_isle()
+		d["stations"] = game.workshops.pack(game.workshops.pocket_list)
+		f.store_var(d)
 
 # ------------------------------------------------------------ in and out ---
 
@@ -357,6 +366,14 @@ func tick() -> void:
 	if not game.raising.is_empty() and place == "isle":
 		game._raise_tick()               # (a plan rising into the isle: the world's tick waits while you're here)
 	if place == "isle":
+		game.workshops.tick()            # (its workshops work while you're here)
+		# Shift + right-click takes a workshop up whole, as outside
+		if m.input.decon and not _decon_latch:
+			_decon_latch = true
+			game.workshops.take_at(m, m.input.aim)
+		elif not m.input.decon:
+			_decon_latch = false
+	if place == "isle":
 		_near(m)
 	if _offer_t > 0:
 		_offer_t -= 1
@@ -448,6 +465,8 @@ func interact(m) -> bool:
 		"heart":
 			_heart(m)
 			return true
+	if game.workshops.interact(m):       # (a workshop standing in the pocket: its tray, or its panel)
+		return true
 	return false
 
 ## G at the arch: out by your ship

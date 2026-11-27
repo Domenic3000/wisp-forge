@@ -33,6 +33,8 @@ const ART := 1
 const BUILD_UP := 200               # how far over the ground you can build
 
 var level := 0
+## a furniture cell (deco) that's a torch's flame: drawn as one, and it glows (main TORCH_FLAME_DECO, the same)
+const FLAME := 200
 var natural := PackedByteArray()    # 1: the isle's own ground; 2: dug out of it (left open)
 var guard := PackedByteArray()      # 1: the heart's obelisk and the arch: never taken or built over
 var design_bg := PackedByteArray()  # (the cabin builder's Remove gives a back wall's "as forged" back: none here)
@@ -626,6 +628,8 @@ func _front_col(i: int, j: int) -> Color:
 func _back_col(i: int, j: int) -> Color:
 	var k := j * W + i
 	var dk: int = deco[k]
+	if dk == FLAME:
+		return Color(1.0, 0.62, 0.25)       # (a torch's flame: main `_cabin_edit`, 26 Nov)
 	if dk > 0:
 		return Color.html(String(Props.PALETTE[dk - 1])).darkened(0.08)
 	var bm := bg[k]
@@ -694,6 +698,8 @@ func gather_lights() -> void:
 			for j in range(by, mini(by + 12, H)):
 				for i in range(bx, mini(bx + 12, W)):
 					var m := cells[j * W + i]
+					if m == 0 and deco[j * W + i] == FLAME:
+						m = Defs.TORCH                     # (a torch set down in the pocket glows)
 					if m == 0 and (guard[j * W + i] == 1 or bg[j * W + i] == Defs.WISPBAR):
 						m = bg[j * W + i]              # (the obelisk and the terrace's lanterns glow from the back layer)
 					var c := Color(0, 0, 0)

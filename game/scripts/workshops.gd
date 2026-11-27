@@ -26,6 +26,10 @@ const FUEL_MAX := 18000.0     # (twenty coal)
 
 var game
 var list: Array = []          # main Station bodies on this planet
+## (user, 26 Nov: "the pocket dimension inside the ship the building does not work like the main world ... i cant
+## place any workshops or anything"): the workshops standing in your ship's pocket, saved with it (pocket.dat); they
+## work while you're there, as a planet's work while you're on it
+var pocket_list: Array = []
 var open_st = null            # the station whose panel is open
 var stats := {"batches": 0, "sparks": 0, "doused": 0}      # (for the tests)
 var spark_mult := 1.0         # (the tests raise it)
@@ -36,12 +40,34 @@ func _init(g) -> void:
 
 # ------------------------------------------------------------ saving ---
 func load_from(ps: Dictionary) -> void:
-	list.clear()
+	list = unpack(ps.get("stations", []), false)
 	open_st = null
-	for e in ps.get("stations", []):
+
+func save_to(ps: Dictionary) -> void:
+	ps["stations"] = pack(list)
+
+## stations as saved (a planet's, or the pocket's)
+func pack(arr: Array) -> Array:
+	var a := []
+	for st in arr:
+		var sto := {}
+		for k in st.store:
+			sto[str(k)] = st.store[k]
+		a.append({"kind": st.kind, "pos": [st.pos.x, st.pos.y], "fuel": st.fuel, "heat": st.heat, "prog": st.prog,
+			"cur": st.cur, "facing": st.facing, "store": sto, "out": st.out})
+	return a
+
+func unpack(saved, in_pocket: bool) -> Array:
+	var out := []
+	if typeof(saved) != TYPE_ARRAY:
+		return out
+	for e in saved:
 		if typeof(e) != TYPE_DICTIONARY or not Defs.STATIONS.has(String(e.get("kind", ""))):
 			continue
-		var st = add(String(e["kind"]), Vector2(float(e["pos"][0]), float(e["pos"][1])))
+		var st = game.new_station(String(e["kind"]))
+		st.pos = Vector2(float(e["pos"][0]), float(e["pos"][1]))
+		st.pocket = in_pocket
+		st.on_ground = true
 		st.fuel = float(e.get("fuel", 0.0))
 		st.heat = float(e.get("heat", 0.0))
 		st.prog = float(e.get("prog", 0.0))
@@ -51,16 +77,8 @@ func load_from(ps: Dictionary) -> void:
 			st.store[int(k)] = int(e["store"][k])
 		for k2 in e.get("out", {}):
 			st.out[String(k2)] = int(e["out"][k2])
-
-func save_to(ps: Dictionary) -> void:
-	var a := []
-	for st in list:
-		var sto := {}
-		for k in st.store:
-			sto[str(k)] = st.store[k]
-		a.append({"kind": st.kind, "pos": [st.pos.x, st.pos.y], "fuel": st.fuel, "heat": st.heat, "prog": st.prog,
-			"cur": st.cur, "facing": st.facing, "store": sto, "out": st.out})
-	ps["stations"] = a
+		out.append(st)
+	return out
 
 ## a new station of `kind` standing at world point `pos` (its middle)
 func add(kind: String, pos: Vector2):
@@ -69,12 +87,29 @@ func add(kind: String, pos: Vector2):
 	list.append(st)
 	return st
 
+## one set down in the pocket, at the pocket's point `pos` (its middle)
+func add_pocket(kind: String, pos: Vector2):
+	var st = game.new_station(kind)
+	st.pos = pos
+	st.pocket = true
+	st.on_ground = true
+	pocket_list.append(st)
+	return st
+
+## are we in the pocket's isle (its workshops the ones at hand)?
+func in_pocket() -> bool:
+	return game.pocket != null and game.pocket.active and game.pocket.place == "isle"
+
+## the workshops where you are: the pocket's in there, the planet's outside
+func here_list() -> Array:
+	return pocket_list if in_pocket() else list
+
 # --------------------------------------------------------- the panel ---
 ## the station nearest the local mage within reach (null: none)
 func nearest(m, reach := REACH):
 	var best = null
 	var bd := reach * reach
-	for st in list:
+	for st in here_list():
 		var d: float = st.pos.distance_squared_to(m.pos)
 		if d < bd:
 			bd = d
@@ -110,7 +145,7 @@ const SEND_REACH := 160.0
 func nearest_kind(kind: String, m, reach := SEND_REACH):
 	var best = null
 	var bd := reach * reach
-	for st in list:
+	for st in here_list():
 		if st.kind != kind:
 			continue
 		var d: float = st.pos.distance_squared_to(m.pos)
@@ -294,8 +329,9 @@ func take_out(st, here := false) -> void:
 ## Shift + right-click on a station: take it up (into the satchel as a station you can set down again for
 ## free, `items["st_<kind>"]`), with what's in it and what it made. True if there was one at p.
 func take_at(m, p: Vector2) -> bool:
-	for k in range(list.size() - 1, -1, -1):
-		var st = list[k]
+	var arr: Array = here_list()
+	for k in range(arr.size() - 1, -1, -1):
+		var st = arr[k]
 		var l := _local(st, p)
 		if absf(l.x) > st.w * 0.5 + 1.0 or absf(l.y) > st.h * 0.5 + 1.0:
 			continue
@@ -305,7 +341,7 @@ func take_at(m, p: Vector2) -> bool:
 		take_out(st)
 		var key: String = "st_" + st.kind
 		game.items[key] = int(game.items.get(key, 0)) + 1
-		list.remove_at(k)
+		arr.remove_at(k)
 		if open_st == st:
 			close()
 		game.ui.toast("%s taken up: it's in your satchel (I), click it there to set it down again" % Defs.STATIONS[st.kind]["name"], Color(1, 0.85, 0.5), 2.5)
@@ -315,13 +351,17 @@ func take_at(m, p: Vector2) -> bool:
 
 ## p in a station's own frame (x along the ground, y down), from its middle
 func _local(st, p: Vector2) -> Vector2:
-	var a := atan2(st.pos.y, st.pos.x)
+	var a := _ang(st)
 	var o: Vector2 = p - st.pos
 	return Vector2(o.dot(game.basis_r(a)), o.dot(game.basis_d(a)))
 
 func _world(st, l: Vector2) -> Vector2:
-	var a := atan2(st.pos.y, st.pos.x)
+	var a := _ang(st)
 	return st.pos + game.basis_r(a) * l.x + game.basis_d(a) * l.y
+
+## the angle whose up is a station's: away from the planet's middle, or in the pocket the screen's up
+func _ang(st) -> float:
+	return -PI * 0.5 if st.pocket else atan2(st.pos.y, st.pos.x)
 
 # ------------------------------------------------------------ working ---
 ## the process what's loaded makes (exactly its kinds, enough of each), or {}
@@ -371,6 +411,9 @@ func waiting(st) -> String:
 	return ""
 
 func _night(st) -> bool:
+	if st.pocket:
+		# (the pocket keeps the hours of where you came in from)
+		return game._local_daylight(game.pocket.back.get("pos", game.player.pos)) < 0.3
 	return game._local_daylight(st.pos) < 0.3
 
 func is_secret_known(id: String) -> bool:
@@ -378,12 +421,55 @@ func is_secret_known(id: String) -> bool:
 
 func tick() -> void:
 	work_all()
-	_physics()
+	if in_pocket():
+		_pocket_physics()
+	else:
+		_physics()
 
 func work_all() -> void:
 	_t += 1
-	for st in list:
+	for st in here_list():
 		_work(st)
+
+## the pocket's workshops: each stands on the isle (taken from under it, it drops until something holds it; off
+## the isle altogether, it comes back to your satchel); a lit one smokes and glows (no sparks: nothing in here burns)
+func _pocket_physics() -> void:
+	var isle = game.pocket.isle
+	if isle == null:
+		return
+	for k in range(pocket_list.size() - 1, -1, -1):
+		var st = pocket_list[k]
+		var bb: Vector2 = isle.to_body(st.pos) + isle.com
+		var c0 := int(round(bb.x - st.w * 0.5))
+		var bot := int(round(bb.y + st.h * 0.5 - 1.0))
+		var held := 0
+		for i in int(st.w):
+			if isle.solid_cell(c0 + i, bot + 1):
+				held += 1
+		if held == 0:
+			st.pos = isle.cell_world(c0, bot + 1) + (st.pos - isle.cell_world(c0, bot))
+			if bot > isle.h + 10:
+				for mt in st.store:
+					game.player.inv[int(mt)] += int(st.store[mt])
+				st.store.clear()
+				take_out(st)
+				game.items["st_" + st.kind] = int(game.items.get("st_" + st.kind, 0)) + 1
+				pocket_list.remove_at(k)
+				game.ui.toast("The %s fell from the isle: it's back in your satchel" % Defs.STATIONS[st.kind]["name"], Color(1, 0.85, 0.5), 2.5)
+			continue
+		if st.lit and st.kind != "altar":
+			var top := _world(st, Vector2(0, -st.h * 0.5 + 0.5))
+			var mouth := _world(st, Vector2(0, st.h * 0.5 - 3.0))
+			var hk: float = st.heat
+			if (_t + st.kind.length()) % 7 == 0:
+				game.vfx.spawn(Vfx.SMOKE, top, Vector2(0, -1) * (0.25 + randf() * 0.2) + Vector2(randf() - 0.5, randf() - 0.5) * 0.1,
+					90 + randi() % 60, Color(0.35, 0.33, 0.32, 0.55 * hk), Color(0.5, 0.5, 0.5, 0.0), 1.5, 5.0, false, -0.004, 0.99)
+			if randf() < 0.12 * hk:
+				game.vfx.spawn(Vfx.DOT, mouth, Vector2(0, -1) * (0.3 + randf() * 0.5) + Vector2(randf() - 0.5, randf() - 0.5) * 0.4,
+					20 + randi() % 25, Color(1, 0.8, 0.35), Color(1, 0.3, 0.1, 0), 1.0, 0.5, true, 0.01)
+		if not st.out.is_empty() and (_t + int(absf(st.pos.x))) % 24 == 0:
+			var gp := _world(st, Vector2((randf() - 0.5) * st.w * 0.6, -st.h * 0.5 - 2.0))
+			game._particle(gp, Vector2(0, -0.25), 45, Color(1.0, 0.85, 0.35), true, -0.004)
 
 func _work(st) -> void:
 	if st.kind == "altar":

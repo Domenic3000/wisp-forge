@@ -232,6 +232,21 @@ Notes for development sessions on this part of the game. The rules that apply ev
   each band: solids, back walls, furniture, torches, doorways left open); Unmake takes away (`pocket_unmake`); B opens
   the plans. The pocket's tick runs `_raise_tick`. `hand_live` is cleared after the input is read (cleared before,
   the cast button never reached the pocket's builder).
+- (26 Nov, user: "the pocket dimension inside the ship the building does not work like the main world. i can only
+  free hand draw pixels and take them away, and i cant place any workshops or anything") Now in the pocket, as
+  outside: G's shapes for blocks and back walls (main `_pocket_shape`: press, drag, let go, `Build.shape_cells` in
+  the isle's cells; the brush is still shape 0); WORKSHOPS from the satchel (`_pocket_station`, `_pocket_station_fit`:
+  on the isle's floor under most of it, slid along to fit, its picture as the ghost) kept in workshops.gd
+  `pocket_list` (Station `pocket` true: its frame is the screen's up, `_ang`), saved in pocket.dat ("stations",
+  `pack`/`unpack`), read again with the isle (`_ensure`), let go with another slot (`reset`). `here_list()` is the
+  list where you are: F (pocket.gd `interact`), Shift + right-click and Unmake (furniture or everything) take one up,
+  the Wisp Forge's "Send to", the anvil; they work while you're in (pocket.gd's tick calls `workshops.tick`:
+  `_pocket_physics` drops one whose floor is taken, back to the satchel off the isle; smoke and glow, no sparks; the
+  hours of where you came in from for a night mix). TORCHES stand on the floor (Build.STANDING; the flame cells are
+  furniture cells of value 200, pocket_isle.gd FLAME / main TORCH_FLAME_DECO: drawn as flame, they glow, and taken
+  away they give the torch back). Doors still don't hang in here (the wisp says so). Overlay `_draw_in_pocket` draws
+  the pocket's workshops; `_sprite`'s turn and the tray are upright there. Test: `_test_pocket_build` (inside
+  `_test_pocket`, section "pocket"; picture pocket_workshop.png).
 - The isle's art: trees, bushes, the arch's pillars and the obelisk's plinth stand on the ground really there
   (`_ground_row`; the edge curves away under its smooth top); an isle saved before is mended on load
   (`_ground_features`: only empty cells straight under them, down to ground).
