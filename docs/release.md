@@ -70,8 +70,15 @@ hover over options and during the game occasional snaps that sound like audio cr
   (31 c0 90), found by the unique bytes 44 89 e0 83 f0 01 88 86 04 01 00 00). That is the path Godot already
   falls back to; it keeps the 2024 buffer fix (#89283, in the shared writer loop). On the laptop the patched
   build passes its audio check with a 2090-frame buffer (47 ms) instead of 512 (10.7 ms). Test copy:
-  build\Wisp Forge\Wisp Forge (audio fix).exe. If it cures the desktop, the same patch goes into a copy of the
-  4.7.2 Windows release template, used through export_presets.cfg's custom template.
+  build\Wisp Forge\Wisp Forge (audio fix).exe.
+- IN EVERY BUILD (26 Nov, user: "that is better i think"): engine\windows_release_x86_64_wasapi.exe is Godot's
+  4.7.2 windows_release_x86_64.exe with that patch (tools/wasapi_patch.py, 0 = Windows' own buffer: a 100 ms
+  one was tried and didn't help further); game/export_presets.cfg's custom_template/release points at it
+  (relative to game/), and Build game.bat stops with how to make it if it's missing. The engine folder isn't in
+  git: on another machine, run the tool on the installed template once.
+- What's left is the desktop's own (26 Nov, LatencyMon there): nvlddmkm.sys DPCs up to 1.5 ms, Wdf01000.sys (the
+  USB interface's driver framework) the most DPC time, nearly all on CPU 1; NVIDIA "Prefer maximum performance"
+  made it better. The onboard output, YouTube and other games are clean.
 - Test "audio": no sample at the limit, every one-shot ends in silence, the limiter and the 16 players there.
 
 ## Saves and window

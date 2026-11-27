@@ -79,6 +79,17 @@ if not exist "%TDIR%\windows_release_x86_64.exe" (
   echo Templates installed.>> "%LOG%"
 )
 
+rem ---- the Windows template with the audio fix (game\export_presets.cfg uses it): Godot's own, with its
+rem low-latency WASAPI mode turned off, which crackled on USB audio interfaces (docs\release.md, tools\wasapi_patch.py) ----
+if not exist "%~dp0engine\windows_release_x86_64_wasapi.exe" (
+  echo engine\windows_release_x86_64_wasapi.exe is missing: nothing built.>> "%LOG%"
+  echo engine\windows_release_x86_64_wasapi.exe is missing. It is Godot's windows_release_x86_64.exe with the audio fix:
+  echo   python tools\wasapi_patch.py "%TDIR%\windows_release_x86_64.exe" engine\windows_release_x86_64_wasapi.exe 0
+  pause
+  exit /b 1
+)
+echo Template: engine\windows_release_x86_64_wasapi.exe (the audio fix)>> "%LOG%"
+
 rem ---- export: one .exe with the game packed inside it ----
 set "OUT=%~dp0build\Wisp Forge"
 if exist "%OUT%" rmdir /s /q "%OUT%"
