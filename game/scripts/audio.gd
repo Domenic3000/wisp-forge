@@ -1104,6 +1104,8 @@ func _build_sfx() -> void:
 	sfx["fire"] = _wav(_mixn([_band(0.55, 0.02, 0.25, 4.5, 0.9, 25.0), _grains(0.5, 30, 0.004, 0.7, 0.18, 4.0), _drop(0.3, 160.0, 70.0, 8.0, 7.0, 0.3)]))
 	# a wave let go: a rushing gush with bubbles in it
 	sfx["water"] = _wav(_mixn([_band(0.6, 0.03, 0.3, 4.0, 0.7, 30.0), _bubbles(0.5, 16, 0.1)]))
+	# (a breath bubble popping over your head, 27 Nov: one quick rising blip)
+	sfx["bubble_pop"] = _wav(_mixn([_sweep(0.07, 700.0, 1500.0, "sine", 40.0, 0.12), _band(0.03, 0.4, 0.9, 90.0, 0.05, 2000.0)]))
 	sfx["splash"] = _wav(_mixn([_band(0.35, 0.05, 0.6, 9.0, 0.6, 600.0), _bubbles(0.3, 10, 0.08)]))
 	sfx["frost"] = _wav(_mix(_chime([1568.0, 2093.0], 0.04, 0.3, 0.12), _noise(0.3, 0.6, 12.0, 0.2)))
 	# a blast: a sharp crack, a deep body, and a rolling tail of rubble

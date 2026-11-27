@@ -120,3 +120,34 @@ Notes for development sessions on this part of the game. The rules that apply ev
   149 -> 92, frost 58 -> 25, prism crystal 54 -> 18 (`_test_quest` prints it). Each kind's own ore is as it was.
   Only worlds made from now on: saved worlds keep their cells.
 
+
+## Terrain 3 (27 Nov; user: "the ocean isnt nearly deep enough on the water world i went to. how do we make it really feel like a deep dark vast ocean. same thing with other worlds. they feel a bit shallow still i can dig away the entire surface very easily. Underground feels vast, but i want the biomes to feel vast as well. i also feel a lack of enemies digging underground, we need developed cave systel with underground foliage and creatures living there as well."; chose "New journeys only", "Abyssal", and all of "Deeper biome ground", "A cave layer per biome", "Wider biomes")
+- `Defs.TERRAIN_SET` 3: new journeys only (a journey saved with "tset" 2 keeps terrain 2; 1 keeps 1). Everything of
+  terrain 2 holds as well (gen.comp `TV2` is true on 3; `TV3` adds).
+- Abyssal seas (surface.comp): an "ocean" biome gets flags 32 from gpu_world `build_surface` on terrain 3. Its
+  columns keep the sandy shelf for `shelf` cells (120 +-45) out from each shore, dip 20 toward the lip, then drop off
+  over 60-100 cells into the abyss: 500-800 cells of water (fbm /330), with narrow trenches (a ridged fbm /150 to the
+  10th power) up to 320 deeper. The deep ground under it follows (deepR = rs - 40). The floor's plants are the deep
+  ocean world's (gen.comp flora 6 on terrain 3 takes flora 10's branch: kelp above 170 down, then glowing coral fans,
+  tube worms and glowcaps). Deep in that water (150+ under the sea's top) main `_try_spawn` brings the abyss's own
+  (lantern eels, abyss jellies, gulpers). Water darkens with depth as every sea does.
+- Deeper ground (gen.comp `strata`): the top layer (sand, snow, ash, mud, mycelium) 3x + 2 deep, the subsoil 6x + 20
+  (+-13): about 70-110 cells of the biome's own ground under most biomes (grass stays one cell; stone biomes stay
+  stone). Below terrain 2's depth, sand has packed into sandstone (a tunnel through it doesn't pour a hundred cells
+  of sand). The deep soil has its own boulders (fbm /8 > 0.74), gravel, and a little copper and coal (thresholds 0.85
+  + ORE_T), so the first ore isn't a hundred cells down.
+- Wider biomes (defs.gd `_grown_planet`): about two thirds as many biomes round a grown planet (never fewer than its
+  must-haves and one), so each is half again as wide. The classic system's hand-made lists are unchanged. The
+  planet cache key carries the terrain (`make_planet_for`).
+- The cave layer per biome: under each biome's ground, in the stone, the rock takes its `ug`'s look (gen.comp
+  `caveLayerRock`): Glowroot Caverns (ug 0) moss-grown stone (MOSSBLOCK) and root-soil pockets; Prism Hollows (1)
+  banded sandstone; Frostvein Grottos (2) ice lenses and snow; Smoldering Vaults (3) magma rock and obsidian streaks.
+  So every cave wall in it shows it. Its plants (`caveFlora`, background, keyed by the floor or roof they grow from):
+  Glowroot: glowcap clusters, tall glowing stalks, moss and ferns on floors, roots and vines (some with a glowing
+  bud) hanging from roofs; Prism: crystal clusters up and down; Frostvein: frost blooms, snow, icicles; Smoldering:
+  ember vents, ash, glowing drips. Deeper than the stone, glowcaps now and then. Materials reused (no new world
+  materials: they stay under 64).
+- Creatures: see creatures.md (each cave layer's own, and more of them underground).
+- Test: `_test_terrain3` (the "worlds" section): fewer biomes a planet over 20 seeds; a new game's planet made on
+  terrain 3: the soil's depth at 12 columns, the cave layer's themed rock and plants (picture cave_layer.png); an
+  ocean world made: its deepest water, the share past 300, a shelf (picture abyss.png).

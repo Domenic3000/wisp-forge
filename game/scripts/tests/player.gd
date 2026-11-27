@@ -533,6 +533,28 @@ func _test_ui() -> void:
 	_ok("the pixel-art UI: its own font, whole pixels, everything on screen", bad.is_empty(),
 		("UI pixel %d screen pixels; %d satchel slots; satchel at %s, spells at %s%s" % [ui.U, slots, sr, hr, "; a shop too" if shop_shot else ""]) if bad.is_empty() else "; ".join(bad))
 	await _test_settings()
+	await _test_breath()
+
+## (27 Nov; user: "i don't see my breath level underwater. can we make a graphical meter that feels part of the
+## world") bubbles over the mage's head: as many as the eighths of breath left, one popping as it runs out, gone
+## a moment after it's full again
+func _test_breath() -> void:
+	var ov = g.overlay
+	var m = g.player
+	var b0: float = m.breath
+	m.breath = m.max_breath * 0.45        # (on dry ground it comes back 4 a tick: a few frames' worth is allowed for)
+	await _frames(4)
+	var n_a: int = ov._br_shown
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("breath.png"))
+	m.breath = m.max_breath * 0.2
+	await _frames(3)
+	var n_b: int = ov._br_shown
+	m.breath = m.max_breath
+	await _frames(80)
+	var n_c: int = ov._br_shown
+	m.breath = b0
+	_ok("breath: bubbles over the mage's head, one popping as each eighth runs out, gone once it's back", n_a >= 4 and n_a <= 5 and n_b >= 2 and n_b <= 3 and n_c == -1,
+		"at 45%%: %d bubbles; at 20%%: %d; full again: %s (picture breath.png)" % [n_a, n_b, "gone" if n_c == -1 else str(n_c)])
 
 ## (27 Nov; user: "ok do you want to create a real setting menu now"; chose rebindable keys, more sound sliders,
 ## display extras, comfort and gameplay, and a pause menu on Esc) Esc opens the pause page and pauses; every tab of

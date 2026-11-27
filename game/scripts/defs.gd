@@ -897,7 +897,9 @@ var legacy_biomes := {}
 const BIOME_SET := 2
 ## The terrain a journey's planets are grown with (26 Nov; user chose "only on new journeys"): 2 is the deeper ground,
 ## taller relief and new caves (surface.comp, gen.comp TV2); a journey saved before it keeps 1 ("tset" in its save)
-const TERRAIN_SET := 2
+## 3 (27 Nov; user chose "New journeys only"): abyssal oceans (surface.comp, flags 32), the biome's ground far deeper,
+## a cave layer per biome with its own rock and plants (gen.comp TV3), wider biomes (`_grown_planet`)
+const TERRAIN_SET := 3
 var terrain := TERRAIN_SET
 var _planet_cache := {}
 
@@ -1371,7 +1373,7 @@ func make_planet(i: int) -> Dictionary:
 
 ## planet i of the system grown from ws (0: the classic one); a fresh copy each time
 func make_planet_for(ws: int, i: int) -> Dictionary:
-	var key := "%d:%d:%s" % [ws, i, "v1" if legacy_biomes.has(i) else "v2"]
+	var key := "%d:%d:%s:%d" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", 3 if terrain >= 3 else 2]
 	if not _planet_cache.has(key):
 		_planet_cache[key] = _exotic_planet(ws, i) if i >= EXOTIC else (_classic_planet(i) if ws == 0 else _grown_planet(ws, i))
 	return (_planet_cache[key] as Dictionary).duplicate(true)
@@ -1548,6 +1550,10 @@ func _grown_planet(ws: int, i: int) -> Dictionary:
 	var cycle := i / 5
 	# biomes: the kind's must-haves, filled from its pool, then shuffled round the planet
 	var n := rng.randi_range(int(kd["n"][0]), int(kd["n"][1]))
+	if terrain >= 3:
+		# (terrain 3, 27 Nov; user: chose "Wider biomes": each stretches farther round before the next starts) about
+		# two thirds as many biomes round a planet, each half again as wide; never fewer than its must-haves and one
+		n = maxi((kd["must"] as Array).size() + 1, int(round(float(n) * 0.65)))
 	var bl: Array = (kd["must"] as Array).duplicate()
 	var pool: Dictionary = kd["pool_v1"] if legacy_biomes.has(i) and kd.has("pool_v1") else kd["pool"]
 	var tot := 0.0
@@ -3207,6 +3213,40 @@ const CREATURES := {
 	"stonetoad": {"name": "Stone Toad", "where": ["cave2"], "temper": "territorial", "w": 8.0, "h": 6.0, "hp": 50.0, "dmg": 9.0, "go": "hop", "speed": 0.8,
 		"body": {"plan": "toad", "len": 8, "tall": 6, "base": "#6a6a64", "belly": "#a8a49a", "accent": "#d8a03a", "dark": "#2a2a26", "eye": "#ffb03a", "skin": "warts"},
 		"moves": {"tongue": {}, "slam": {}, "spit": {"proj": "rock", "n": 1, "spread": 0.1}}, "drops": [[STONE, 4, 0.6], [DEEPSTONE, 2, 0.4], [COPPER, 1, 0.3]]},
+	# (27 Nov; user: "i also feel a lack of enemies digging underground, we need developed cave systems with underground
+	# foliage and creatures living there as well") each cave layer's own ("ug0" Glowroot Caverns, "ug1" Prism
+	# Hollows, "ug2" Frostvein Grottos, "ug3" Smoldering Vaults: the `ug` of the biome above), as well as the depths'
+	"rootcrawler": {"name": "Rootcrawler", "where": ["ug0"], "temper": "predator", "habitat": "ceiling", "idle": {"roost": 3, "wander": 2}, "w": 5.0, "h": 4.0, "hp": 28.0, "dmg": 8.0, "go": "slither", "speed": 1.6,
+		"body": {"plan": "serpent", "segs": 15, "rad": 1.5, "base": "#5a3e24", "belly": "#c8a070", "accent": "#7affc0", "dark": "#22160c", "eye": "#aaffd0", "teeth": true},
+		"moves": {"dive": {"v": 3.6}}, "drops": [[WOOD, 2, 0.5], [SHROOM, 1, 0.4]]},
+	"glowmoth": {"name": "Glowcap Moth", "where": ["ug0"], "temper": "neutral", "w": 6.0, "h": 4.0, "hp": 16.0, "dmg": 5.0, "go": "fly", "speed": 1.2,
+		"body": {"plan": "bird", "len": 5, "span": 9, "base": "#2a5a56", "belly": "#a0fff0", "accent": "#3fffe0", "dark": "#0e2422", "eye": "#c8ffff", "skin": "spots"},
+		"moves": {"dive": {"v": 2.8}}, "drops": [[SHROOM, 2, 0.7]]},
+	"mosslurker": {"name": "Moss Lurker", "where": ["ug0"], "temper": "territorial", "idle": {"rest": 3, "sniff": 2, "wander": 1}, "w": 12.0, "h": 8.0, "hp": 44.0, "dmg": 9.0, "go": "walk", "speed": 0.9,
+		"body": {"plan": "beast", "len": 11, "tall": 6, "leg": 3, "head": 4.5, "neck": 0, "base": "#3e4a2a", "belly": "#7a8a58", "accent": "#7ad84a",
+			"dark": "#1a2210", "eye": "#c8ff5a", "skin": "moss", "spikes": 3, "tail": "short"},
+		"moves": {"charge": {"v": 3.2}, "slam": {}}, "drops": [[DIRT, 4, 0.6], [LEAF, 3, 0.5], [COPPER, 1, 0.25]]},
+	"prismbeetle": {"name": "Prism Beetle", "where": ["ug1"], "temper": "territorial", "w": 10.0, "h": 6.0, "hp": 40.0, "dmg": 8.0, "go": "walk", "speed": 1.0,
+		"body": {"plan": "beast", "len": 9, "tall": 4, "leg": 2, "head": 3.5, "neck": 0, "base": "#5a3a6a", "belly": "#b88ad0", "accent": "#f2a6ff",
+			"dark": "#22142a", "eye": "#ffd6ff", "skin": "scales", "spikes": 5, "tail": "short"},
+		"moves": {"charge": {"v": 3.4}}, "drops": [[CRYSTAL, 1, 0.35], [SANDSTONE, 3, 0.6]]},
+	"shardbat": {"name": "Shard Bat", "where": ["ug1"], "temper": "predator", "habitat": "ceiling", "w": 7.0, "h": 5.0, "hp": 18.0, "dmg": 7.0, "go": "fly", "speed": 1.8,
+		"body": {"plan": "bird", "len": 5, "span": 10, "base": "#3a2a4a", "belly": "#8a6aa8", "accent": "#e070ff", "dark": "#140c1c", "eye": "#ff9aff", "skin": "fur"},
+		"moves": {"dive": {"v": 4.0}}, "drops": [[CRYSTAL, 1, 0.25], [SAND, 2, 0.5]]},
+	"icecrawler": {"name": "Rime Crawler", "where": ["ug2"], "temper": "predator", "w": 13.0, "h": 5.0, "hp": 34.0, "dmg": 9.0, "go": "walk", "speed": 1.3,
+		"body": {"plan": "beast", "len": 13, "tall": 4, "leg": 3, "head": 4, "neck": 0, "base": "#a8c8d8", "belly": "#e8f6ff", "accent": "#5ac8ff",
+			"dark": "#3a4a5a", "eye": "#5cf0ff", "skin": "scales", "spikes": 4, "tail": "long"},
+		"moves": {"charge": {"v": 3.6}}, "drops": [[ICE, 3, 0.6], [FROST, 1, 0.35]]},
+	"rimebat": {"name": "Rime Bat", "where": ["ug2"], "temper": "predator", "habitat": "ceiling", "w": 7.0, "h": 5.0, "hp": 18.0, "dmg": 7.0, "go": "fly", "speed": 1.8,
+		"body": {"plan": "bird", "len": 5, "span": 10, "base": "#7a8a9a", "belly": "#e0f0ff", "accent": "#8fe8ff", "dark": "#2a3440", "eye": "#c4f4ff", "skin": "fur"},
+		"moves": {"dive": {"v": 4.0}}, "drops": [[SNOW, 2, 0.5], [FROST, 1, 0.25]]},
+	"cinderslug": {"name": "Cinder Slug", "where": ["ug3"], "temper": "neutral", "fireproof": true, "w": 8.0, "h": 6.0, "hp": 46.0, "dmg": 9.0, "go": "slither", "speed": 0.8,
+		"body": {"plan": "serpent", "segs": 7, "rad": 2.8, "base": "#3a1a14", "belly": "#ff8a2a", "accent": "#ffd23a", "dark": "#140806", "eye": "#ffea5a"},
+		"moves": {"spit": {"proj": "efire", "n": 2, "spread": 0.25}}, "drops": [[EMBER, 2, 0.6], [ASH, 3, 0.6]]},
+	"ashbeetle": {"name": "Ash Beetle", "where": ["ug3"], "temper": "territorial", "fireproof": true, "w": 11.0, "h": 6.0, "hp": 48.0, "dmg": 10.0, "go": "walk", "speed": 1.0,
+		"body": {"plan": "beast", "len": 10, "tall": 4, "leg": 2, "head": 4, "neck": 0, "base": "#3a3430", "belly": "#7a6a5a", "accent": "#ff6a2a",
+			"dark": "#141210", "eye": "#ffb03a", "skin": "scales", "spikes": 5, "tail": "short"},
+		"moves": {"charge": {"v": 3.4}, "slam": {}}, "drops": [[ASH, 4, 0.7], [OBSIDIAN, 1, 0.3]]},
 	"magmahound": {"name": "Magma Hound", "where": ["cave3"], "temper": "predator", "fireproof": true, "w": 13.0, "h": 10.0, "hp": 60.0, "dmg": 12.0, "go": "walk", "speed": 1.4,
 		"body": {"plan": "beast", "len": 12, "tall": 6, "leg": 5, "head": 4.5, "neck": 2, "base": "#4a1a14", "belly": "#8a3a1a", "accent": "#ff8a2a",
 			"dark": "#1a0a08", "eye": "#ffd23a", "skin": "scales", "spikes": 5, "tail": "long", "ears": true},

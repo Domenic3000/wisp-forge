@@ -1263,15 +1263,20 @@ func _load_sector(s: Vector2i, key: String) -> void:
 	stats["sectors"] += 1
 	vl.sector_in(s, key)
 	var sg := Galaxy.sector_g(s)
-	if sect_state.has(key):
+	var saved: bool = sect_state.has(key)
+	if saved:
 		for d in sect_state[key]:
 			var dd: Dictionary = (d as Dictionary).duplicate()
 			var rp: Array = dd["rel"]
 			_sect_plan.append({"sect": key, "save": dd, "g": _g_add(sg, Vector2(float(rp[0]), float(rp[1]))),
 				"orbit": dd.get("orbit", {}), "at": Vector2(float(dd.get("at", [0, 0])[0]), float(dd.get("at", [0, 0])[1]))})
-		return
 	for c in Galaxy.sector_content(s):
 		for r in c.get("rocks", []):
+			# (a changed sector keeps its rocks as saved, but stations, outposts and monoliths are never in that save:
+			# they're grown again by seed. 27 Nov; user: "i went to the derelict meridian station that shows on the
+			# map but there was nothing there": a sector you'd changed brought back only what it saved)
+			if saved and r["kind"] != "station" and r["kind"] != "outpost" and r["kind"] != "monolith":
+				continue
 			_sect_plan.append({"sect": key, "seed": r["seed"], "r": r["r"], "kind": r["kind"], "vel": r["vel"], "first": r.get("first", false), "sys": r.get("sys", -1),
 				"g": _g_add(sg, (c["at"] as Vector2) + (r["off"] as Vector2)), "orbit": r.get("orbit", {}), "at": c["at"]})
 

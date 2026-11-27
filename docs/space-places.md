@@ -326,3 +326,9 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (`skiff_hit`, the Wisp Shield takes one as ever) unless it carries the Radiation Ward ("radward": its lining turns
   flares too), and on foot you're scorched (0.05 a tick). `flare_stats`. The HUD says "The star stirs" / "Solar
   flare!". Test: in `_test_voidlife`, out in deep space.
+
+## A station missing from a changed sector (27 Nov; user: "i went to the derelict meridian station that shows on the map but there was nothing there")
+- space.gd `_load_sector`: a sector with saved state (`sect_state`: any rock in it touched, scrap off a hull, a
+  pirate's wreck drifted in) loaded only its saved rocks, and stations, outposts and monoliths are never saved
+  (grown by seed), so the station never came back. Now a changed sector grows those three from its content as well.
+  Test: in `_test_stations`, a sector given saved state still plans its station.

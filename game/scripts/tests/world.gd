@@ -345,9 +345,137 @@ func _test_worlds() -> void:
 	_ok("a new game's planet is made from its own seed, with guardians only where it says", wd_made_ok,
 		"%s (%s, radius %.0f): %s; %d structures; guardians wanted %s, callable %s; made in %d ms (%s)" % [wd_pl["name"], wd_pl["kind"], float(wd_pl["radius"]),
 		wd_pl["desc"], g.builds.infos.size(), str(wd_want), str(wd_lb), wd_ms, str(g.gen_times)])
+	await _test_terrain3()
 	Defs.world_seed = 0
 	g._delete_worlds()
 	g.test_god = wd_god0
+
+## Terrain 3 (27 Nov; user: "the ocean isnt nearly deep enough on the water world ... how do we make it really feel
+## like a deep dark vast ocean. same thing with other worlds. they feel a bit shallow still i can dig away the
+## entire surface very easily ... i want the biomes to feel vast as well ... we need developed cave systems with
+## underground foliage and creatures living there"; chose new journeys only, abyssal seas, deeper biome ground,
+## wider biomes and a cave layer per biome): a new journey's planet's soil runs deep, its cave layer has the
+## biome's own rock and plants; an ocean world's seas fall off a shelf into 500-800 cells of water
+func _test_terrain3() -> void:
+	var t_keep: int = Defs.terrain
+	Defs.terrain = 3
+	var bad := []
+	# fewer, wider biomes round a grown planet
+	var nb := 0.0
+	for s3 in range(1, 21):
+		for i3 in 5:
+			nb += float((Defs.make_planet_for(s3 * 7919, i3)["biomes"] as Array).size())
+	nb /= 100.0
+	if nb > 5.6:
+		bad.append("%.1f biomes a planet (wider biomes want fewer)" % nb)
+	# the planet of a new game (seed 424242), made on terrain 3
+	Defs.world_seed = 424242
+	g._delete_worlds()
+	g._enter_planet(0)
+	await _frames(20)
+	var bs = g.builds
+	var pc: Vector2i = Build.cell_of(g.player.pos)
+	var soil := []
+	for k in 12:
+		var c: int = pc.x - 330 + k * 60
+		var gr: int = bs.ground_row(c)
+		if bs.wet(c):
+			continue
+		var rr: Dictionary = g.gpu.read_rect(c, gr, 1, 150)
+		var n := 0
+		for v in rr["fg"]:
+			var t: int = int(v) & 255
+			if t in [Defs.DIRT, Defs.GRASS, Defs.MUD, Defs.SAND, Defs.SANDSTONE, Defs.SNOW, Defs.ASH, Defs.MYCELIUM, Defs.DRYGRASS, Defs.GRAVEL, Defs.COPPER, Defs.COAL]:
+				n += 1
+		soil.append(n)
+	soil.sort()
+	var soil_mid: int = soil[soil.size() / 2] if not soil.is_empty() else 0
+	if soil_mid < 45:
+		bad.append("the soil runs only %d cells deep (middle of %s)" % [soil_mid, str(soil)])
+	# the cave layer: themed rock and its plants, 70-270 cells under the ground round you
+	var themed := 0
+	var solid := 0
+	var plants := 0
+	var cave_at := Vector2.ZERO
+	for q in 3:
+		var c0: int = pc.x - 300 + q * 200
+		var r0: int = bs.ground_row(c0) + 70
+		var rc: Dictionary = g.gpu.read_rect(c0, r0, 200, 200)
+		var fg: PackedInt32Array = rc["fg"]
+		var bg: PackedInt32Array = rc["bg"]
+		for j in fg.size():
+			var t2: int = fg[j] & 255
+			if t2 == 0:
+				var b2: int = bg[j] & 255
+				if b2 in [Defs.SHROOM, Defs.ROOT, Defs.LEAF, Defs.CRYSTAL, Defs.FROST, Defs.EMBER, Defs.ICE, Defs.STALK, Defs.SNOW, Defs.ASH]:
+					plants += 1
+					if cave_at == Vector2.ZERO:
+						cave_at = Build.cell_pos(c0 + j % 200, r0 + j / 200)
+			elif Defs.KIND[t2] == Defs.K_SOLID:
+				solid += 1
+				if t2 in [Defs.MOSSBLOCK, Defs.SANDSTONE, Defs.ICE, Defs.MAGMAROCK, Defs.OBSIDIAN]:
+					themed += 1
+	var th_f: float = float(themed) / maxf(1.0, float(solid))
+	if th_f < 0.05:
+		bad.append("the cave layer's rock is plain (%.1f%% themed)" % (th_f * 100.0))
+	if plants < 15:
+		bad.append("only %d cave plants" % plants)
+	if cave_at != Vector2.ZERO:
+		g.player.pos = cave_at
+		g.player.vx = 0.0
+		g.player.vy = 0.0
+		g.cam_c = cave_at
+		await _frames(40)
+		_shot("cave_layer.png")
+	# an ocean world: its abyss
+	var o_seed := -1
+	var o_i := -1
+	for s4 in range(1, 60):
+		for i4 in range(1, 5):
+			if o_seed < 0 and String(Defs.make_planet_for(s4 * 104729, i4)["kind"]) == "ocean":
+				o_seed = s4 * 104729
+				o_i = i4
+	var deepest := 0.0
+	var deep_f := 0.0
+	var shelf_ok := false
+	if o_seed < 0:
+		bad.append("no ocean world among 59 seeds")
+	else:
+		Defs.world_seed = o_seed
+		g._delete_worlds()
+		g._enter_planet(o_i)
+		await _frames(20)
+		var bs2 = g.builds
+		var wet_n := 0
+		var deep_n := 0
+		var deep_c := 0
+		var shallow_n := 0
+		for x in range(0, bs2.N0, 3):
+			var dep: float = float(bs2.surf[x * 8 + 5]) - float(bs2.surf[x * 8])
+			if dep > 0.5:
+				wet_n += 1
+				if dep > 300.0:
+					deep_n += 1
+				if dep > 20.0 and dep < 160.0:
+					shallow_n += 1
+				if dep > deepest:
+					deepest = dep
+					deep_c = x
+		deep_f = float(deep_n) / maxf(1.0, float(wet_n))
+		shelf_ok = shallow_n > 20
+		if deepest < 480.0 or deep_f < 0.3 or not shelf_ok:
+			bad.append("the sea: deepest %.0f cells, %.0f%% of it past 300, a shelf %s" % [deepest, deep_f * 100.0, shelf_ok])
+		# down there: dark, a few lights
+		var da: float = (float(deep_c) + 0.5) / float(bs2.N0) * TAU
+		g.player.pos = Vector2(cos(da), sin(da)) * (float(bs2.surf[deep_c * 8]) + 30.0)
+		g.player.vx = 0.0
+		g.player.vy = 0.0
+		g.cam_c = g.player.pos
+		await _frames(40)
+		_shot("abyss.png")
+	Defs.terrain = t_keep
+	_ok("terrain 3: wider biomes, deep soil, a cave layer of the biome's own rock and plants, abyssal seas", bad.is_empty(),
+		("%.1f biomes a planet; soil %d cells deep (middle); cave layer %.0f%% themed rock, %d plants; the sea %.0f deep at most, %.0f%% past 300 (pictures cave_layer.png, abyss.png)" % [nb, soil_mid, th_f * 100.0, plants, deepest, deep_f * 100.0]) if bad.is_empty() else "; ".join(bad))
 
 ## Stamps land where they're meant, whatever their anchor (a default one near you, one given, of any
 ## width): `wrapc` once took % of negative numbers, which only came out right on a planet a power of

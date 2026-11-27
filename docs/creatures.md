@@ -142,3 +142,13 @@ Notes for development sessions on this part of the game. The rules that apply ev
   past 150 frames, within 110 and on its level, a walking guardian with a charge does a breach (`Enemy.breach`): the
   charge blasts a hole of its own size (power 2: brick and stone, not obsidian or runestone) in one go, at most twice.
   Wardens don't breach (their halls are warded). Test: `_test_nav` ("nav").
+
+## The cave layers' own, and the caves lived in (27 Nov; user: "i also feel a lack of enemies digging underground, we need developed cave systel with underground foliage and creatures living there as well")
+- Nine new creatures, `where` "ug0".."ug3" (the cave layer of the biome above, its `ug`): Glowroot Caverns:
+  Rootcrawler (a centipede on the roofs), Glowcap Moth, Moss Lurker; Prism Hollows: Prism Beetle, Shard Bat; Frostvein
+  Grottos: Rime Crawler, Rime Bat; Smoldering Vaults: Cinder Slug (spits fire), Ash Beetle. All journeys (spawning
+  isn't generation).
+- main `_try_spawn` underground: the timer runs at 0.55 of the surface's, the cap is higher there (`spawn_cap`: 6
+  on the first planet, 8 elsewhere, day or night), and fewer tries come to nothing. Upper caves: 60% the cave
+  layer's own, then bats, then "cave1"; the middle: bats, imps, the layer's own, "cave2"; the deep: imps, "cave3".
+- Deep in an abyssal sea (terrain 3): "abyss" swimmers (see generation.md).

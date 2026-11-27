@@ -136,3 +136,9 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Test: `_test_settings` (in the ui section, after `_test_ui`): Esc opens the pause page and pauses, every tab
   fits (pictures `settings_display.png` and the rest), Esc steps back out, Use rebound to U through the capture
   (F no longer, saved), the arrows still move, Reset keys, the volumes, Interface: Smaller, brightness.
+
+## Breath over your head (27 Nov; user: "i don't see my breath level underwater. can we make a graphical meter that feels part of the world")
+- overlay `_draw_breath` (planet view): a row of `BREATH_N` (8) air bubbles over the mage's head, bobbing, one for
+  each eighth of breath left; spent ones a faint dotted ring. One running out pops (droplets, audio "bubble_pop").
+  The last two flicker red; with none left a red ring pulses. Shown while short of breath and fading out a moment
+  after it's full (`_br_full_t`). The HUD's breath bar stays. Test: `_test_breath` (ui section, breath.png).

@@ -201,6 +201,70 @@ func _draw_f_target() -> void:
 	draw_string(f, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.92, 0.65, 0.95))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+## Breath (27 Nov; user: "i don't see my breath level underwater. can we make a graphical meter that feels part of
+## the world"): a row of air bubbles over your head, one for each eighth of your breath, bobbing; each pops (a burst
+## and a blip) as it runs out, the last two flicker red, and with none left a red one pulses. They show while
+## you're short of breath and a moment after it's back.
+const BREATH_N := 8
+var _br_shown := -1                 # bubbles last drawn (to pop the one lost)
+var _br_full_t := 0                 # ticks since your breath came back full (the row fades out)
+
+func _draw_breath() -> void:
+	var m = game.player
+	if m == null or m.dead or m.aboard != null or game.state != "play":
+		_br_shown = -1
+		return
+	var f: float = clampf(m.breath / maxf(1.0, m.max_breath), 0.0, 1.0)
+	if f >= 0.999:
+		_br_full_t += 1
+		if _br_full_t > 50 or _br_shown < 0:
+			_br_shown = -1
+			return
+	else:
+		_br_full_t = 0
+	var n := int(ceil(f * float(BREATH_N) - 0.001))
+	var up: Vector2 = game.view_up()
+	var rt := Vector2(-up.y, up.x)
+	var head: Vector2 = m.pos + up * (float(m.h) * 0.5 + 9.0)
+	var t := float(game.frame)
+	var fade := 1.0 - clampf(float(_br_full_t - 20) / 30.0, 0.0, 1.0)
+	if _br_shown >= 0 and n < _br_shown:
+		# (one popped: a ring of droplets where it was)
+		for q in range(n, _br_shown):
+			var pp: Vector2 = head + rt * ((float(q) - float(BREATH_N - 1) * 0.5) * 5.0 * game.zoom)
+			for k in 6:
+				var d := Vector2.from_angle(float(k) * TAU / 6.0)
+				game.vfx.spawn(game.Vfx.DOT, pp + d, d * 0.35 + up * 0.15, 10 + randi() % 6, Color(0.8, 0.95, 1.0), Color(0.5, 0.8, 1.0, 0.0), 1.0, 1.0, true, 0.0, 0.9)
+		game.audio.play("bubble_pop", m.pos, 0.5, 0.9 + 0.05 * float(n))
+	_br_shown = n
+	var low: bool = n <= 2
+	for i in BREATH_N:
+		var bob := sin(t * 0.09 + float(i) * 0.9) * 0.6
+		var wp: Vector2 = head + rt * ((float(i) - float(BREATH_N - 1) * 0.5) * 5.0 * game.zoom) + up * bob * game.zoom
+		var c: Vector2 = game.world_to_screen(wp).round()
+		if i < n:
+			var rim := Color(0.72, 0.92, 1.0, 0.9 * fade)
+			var fill := Color(0.35, 0.65, 0.95, 0.35 * fade)
+			if low and int(t / 8.0) % 2 == 0:
+				rim = Color(1.0, 0.55, 0.5, 0.95 * fade)
+				fill = Color(0.9, 0.3, 0.3, 0.35 * fade)
+			# a 5-pixel round bubble: its rim, a glassy fill and a bright fleck
+			draw_rect(Rect2(c + Vector2(-1, -2), Vector2(3, 1)), rim)
+			draw_rect(Rect2(c + Vector2(-1, 2), Vector2(3, 1)), rim)
+			draw_rect(Rect2(c + Vector2(-2, -1), Vector2(1, 3)), rim)
+			draw_rect(Rect2(c + Vector2(2, -1), Vector2(1, 3)), rim)
+			draw_rect(Rect2(c + Vector2(-1, -1), Vector2(3, 3)), fill)
+			draw_rect(Rect2(c + Vector2(-1, -1), Vector2(1, 1)), Color(1, 1, 1, 0.9 * fade))
+		else:
+			# a spent one: a faint dotted ring where it was
+			var gone := Color(0.45, 0.6, 0.8, 0.28 * fade)
+			if n == 0:
+				gone = Color(1.0, 0.35, 0.3, (0.45 + 0.4 * sin(t * 0.3)) * fade)
+			draw_rect(Rect2(c + Vector2(0, -2), Vector2(1, 1)), gone)
+			draw_rect(Rect2(c + Vector2(0, 2), Vector2(1, 1)), gone)
+			draw_rect(Rect2(c + Vector2(-2, 0), Vector2(1, 1)), gone)
+			draw_rect(Rect2(c + Vector2(2, 0), Vector2(1, 1)), gone)
+
 const HAND_COL := Color(0.45, 0.85, 1.0)   # (vfx MANA_COL: the hand's ghost is drawn in the staff's light)
 
 func _draw_build_preview() -> void:
@@ -1262,6 +1326,7 @@ func _draw_all() -> void:
 	_draw_pages()
 	_draw_popups()
 	_draw_f_target()
+	_draw_breath()
 	# particles (the light read where each is in the picture: near enough, the light is soft)
 	var pxf: Transform2D = game.screen_xf()
 	var paff: bool = game.screen_xf_ok()

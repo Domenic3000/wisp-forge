@@ -11,6 +11,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 int SEED;
 bool TV2;        // terrain 2 (P.p[26].x: Defs.terrain, the journey's): new journeys from 26 Nov
+bool TV3;        // terrain 3 (27 Nov, new journeys: abyssal seas, ground far deeper, a cave layer per biome)
 
 bool onSite(float th, float margin) {
 	int n = int(sites.s[0].x);
@@ -195,6 +196,30 @@ float bogDepth(vec2 p, float r, float th, float rs, vec4 sb, float amp) {
 const float ORE_T = 0.025;          // how much rarer the common ores are than at first (25 Nov)
 float oreN(vec2 p, int k) { return fbm(p / 9.0 + vec2(float(k) * 17.3, float(k) * 9.1), SEED + 20 + k, 2); }
 
+// Terrain 3 (27 Nov; user: "we need developed cave systems with underground foliage and creatures living there",
+// chose "a cave layer per biome"): under each biome's ground its own underground, in its stone (`ug`, the biome's
+// "under": Glowroot Caverns, Prism Hollows, Frostvein Grottos, Smoldering Vaults). The rock itself takes the
+// layer's look, so every cave wall in it does: moss-grown stone and root-soil, banded sandstone, lenses of ice,
+// magma rock and obsidian streaks. Its plants (floors and ceilings) are in main.
+uint caveLayerRock(vec2 p, float r, float d, int ug) {
+	float n1 = fbm(p / 17.0, SEED + 34, 2);
+	float n2 = fbm(p / 6.0, SEED + 35, 2);
+	if (ug == 0) {
+		if (n1 > 0.6) return M_MOSSBLOCK;
+		if (n2 > 0.74 && d < 260.0) return M_DIRT;
+	} else if (ug == 1) {
+		float band = fract(r / 11.0 + n1 * 1.6);
+		if (band < 0.38) return M_SANDSTONE;
+	} else if (ug == 2) {
+		if (n1 > 0.64) return M_ICE;
+		if (n2 > 0.8) return M_SNOW;
+	} else if (ug == 3) {
+		if (n1 > 0.62) return M_MAGMAROCK;
+		if (n2 > 0.82) return M_OBSIDIAN;
+	}
+	return M_STONE;
+}
+
 uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 	float rs = sa.x, deepR = sa.z, magmaR = sa.w, coreR = sb.x;
 	vec4 A = biomeA(b), B = biomeB(b);
@@ -209,8 +234,10 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 		// terrain 2 (user, 26 Nov: "the top layer of a planet is a bit too thin. i want to really feel the ambiance of
 		// each biome"): the biome's own ground runs three times as deep, its loose tops (sand, snow, ash, mud) thicker,
 		// its lower part giving way to stone in lobes instead of a line; on a steep slope the soil thins to bare rock
-		if (topD >= 2.0) topD = topD * 1.6 + 1.0;
-		if (B.z > 0.5) subD = B.z * 2.6 + 6.0 + (fbm(vec2(th * RS0 / 40.0, 0.5), SEED + 31, 2) - 0.5) * 14.0;
+		if (topD >= 2.0) topD = TV3 ? topD * 3.0 + 2.0 : topD * 1.6 + 1.0;
+		// (terrain 3, 27 Nov; user: "they feel a bit shallow still i can dig away the entire surface very easily":
+		// the biome's own ground runs about six times its first depth, 70-110 cells under most biomes)
+		if (B.z > 0.5) subD = (TV3 ? B.z * 6.0 + 20.0 : B.z * 2.6 + 6.0) + (fbm(vec2(th * RS0 / 40.0, 0.5), SEED + 31, 2) - 0.5) * (TV3 ? 26.0 : 14.0);
 		float dl = 3.0 / RS0;
 		float slope = abs(surfA(mod(th + dl, TAU)).x - surfA(mod(th - dl + TAU, TAU)).x) / 6.0;
 		float steep = smoothstep(0.9, 1.9, slope);
@@ -227,6 +254,20 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 	else if (r > magmaR) m = M_DEEPSTONE;
 	else if (r > coreR) m = M_MAGMAROCK;
 	else return M_CORE;
+	// (terrain 3: deep under a sandy biome the sand has packed into sandstone, so a tunnel through it doesn't
+	// bring down a hundred cells of it; and the deep soil has its own stones, gravel and a little copper and coal,
+	// so the first ore isn't a hundred cells down)
+	if (TV3 && d < topD + subD && d > topD + 6.0 && m == uint(B.x)) {
+		if (m == M_SAND && d > topD + B.z * 2.6 + 6.0) m = M_SANDSTONE;
+		if (KIND[m] == K_SOLID || m == M_SANDSTONE) {
+			float rich3 = (P.p[7].w - 1.0) * 0.03;
+			if (oreN(p, 0) > 0.85 + ORE_T - rich3) return M_COPPER;
+			if (oreN(p, 1) > 0.85 + ORE_T - rich3) return M_COAL;
+			float bo = fbm(p / 8.0, SEED + 33, 2);
+			if (bo > 0.74) return M_STONE;                                // boulders in the soil
+			if (bo < 0.2 && d > topD + 14.0) return M_GRAVEL;
+		}
+	}
 	// mud: liquid in bogs, packed earth (grass on top) elsewhere
 	if (d < topD + subD) {
 		uint liq = KIND[uint(A.z)] == K_LIQUID ? uint(A.z) : (KIND[uint(B.x)] == K_LIQUID ? uint(B.x) : 0u);
@@ -258,6 +299,7 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 		if (ug == 3 && d < 160.0 && oreN(p, 4) > 0.785 + ORE_T - rich) return M_EMBER;
 		if (oreN(p, 6) > 0.82) return M_GRAVEL;
 		if (d < 100.0 && oreN(p, 7) > 0.82) return M_DIRT;
+		if (TV3) return caveLayerRock(p, r, d, ug);
 	} else if (m == M_DEEPSTONE) {
 		float dd = (deepR - r) / max(deepR - magmaR, 1.0);
 		if (dd > 0.4 && oreN(p, 4) > 0.835 + ORE_T - rich) return M_EMBER;
@@ -608,6 +650,64 @@ uint treeRoots(vec2 q, float tw, float hh, float h3, int bb, uint mat) {
 
 uint floraId = 0u;   // which tree the cell flora() returned belongs to (aux bits 16-31, see react.comp)
 // trees and other surface plants, evaluated per cell from hashed "buckets" along the surface arc
+// Terrain 3: what grows in a cave of each layer, in the background (no collisions), keyed by the floor or ceiling
+// it grows from so each plant stays whole. Glowroot: glowcap clusters and tall glowing stalks on the floor, roots
+// and vines hanging from the roof; Prism: crystal clusters up from the floor and down from the roof; Frostvein:
+// icicles and frost blooms; Smoldering: ember vents and ash tufts, glowing drips. Deeper (past the stone, `shallow`
+// false) the glowcaps carry on, fewer.
+uint caveFlora(vec2 p, float r, float th, int ug, bool shallow) {
+	vec2 up = p / max(r, 1.0);
+	float arc = th * RS0;
+	for (int k = 1; k <= 9; k++) {
+		if (solidAt(p - up * float(k))) {
+			// a floor k below
+			float fr = floor(r - float(k));
+			int col = int(floor(arc / 2.0));
+			float hv = h2(ivec2(col, int(fr)), SEED + 41);
+			float hw = h2(ivec2(col / 3, int(fr) + 7), SEED + 42);
+			if (ug == 0) {
+				if (hv < 0.16 && float(k) <= 2.0 + floor(hv * 30.0)) return M_SHROOM;
+				if (hw < 0.12 && float(k) <= 4.0 + floor(hw * 60.0) && (col % 3) == 1) return float(k) > 2.0 + floor(hw * 50.0) ? M_SHROOM : M_STALK;
+				if (hv > 0.7 && float(k) <= 1.0 + floor((hv - 0.7) * 10.0)) return M_LEAF;           // moss and ferns
+			} else if (ug == 1) {
+				if (hv < 0.07 && float(k) <= 2.0 + floor(hv * 110.0)) return M_CRYSTAL;
+			} else if (ug == 2) {
+				if (hv < 0.06 && float(k) <= 2.0 + floor(hv * 70.0)) return M_FROST;
+				if (hv > 0.85 && float(k) <= 1.0) return M_SNOW;
+			} else {
+				if (hv < 0.05 && float(k) <= 1.0 + floor(hv * 50.0)) return M_EMBER;
+				if (hv > 0.8 && float(k) <= 1.0) return M_ASH;
+			}
+			if (!shallow && hv > 0.97 && float(k) <= 2.0) return M_SHROOM;
+			return 0u;
+		}
+	}
+	for (int k2 = 1; k2 <= 14; k2++) {
+		if (solidAt(p + up * float(k2))) {
+			// a roof k2 above
+			float cr = floor(r + float(k2));
+			int col2 = int(floor(arc));
+			float hv2 = h2(ivec2(col2, int(cr)), SEED + 43);
+			float hl = h2(ivec2(col2 / 4, int(cr) + 3), SEED + 44);
+			if (ug == 0) {
+				// roots and vines hanging down, a glowing bud at the end of some
+				float L = 3.0 + floor(hl * 14.0);
+				if (hl < 0.45 && hv2 < 0.5 && float(k2) <= L) return float(k2) > L - 1.0 && hl < 0.12 ? M_SHROOM : (hl < 0.25 ? M_ROOT : M_LEAF);
+			} else if (ug == 1) {
+				if (hv2 < 0.06 && float(k2) <= 2.0 + floor(hv2 * 80.0)) return M_CRYSTAL;
+			} else if (ug == 2) {
+				// icicles
+				float L2 = 2.0 + floor(hl * 9.0);
+				if (hl < 0.35 && (col2 % 3) == 0 && float(k2) <= L2) return M_ICE;
+			} else {
+				if (hv2 < 0.04 && float(k2) <= 1.0 + floor(hv2 * 60.0)) return M_EMBER;
+			}
+			return 0u;
+		}
+	}
+	return 0u;
+}
+
 uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnly) {
 	float arc = th * RS0;
 	// One spacing grid for every kind of tree, and each tree takes its kind from the biome at its
@@ -894,11 +994,11 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 		float hr = h2(ivec2(col, 80), SEED);
 		if (hr < 0.3 && dy < 3.0 + floor(hr * 20.0)) return M_LEAF;
 	}
-	if (floraType == 6 && inWater) {
+	if (floraType == 6 && inWater && !TV3) {
 		float hr = h2(ivec2(col, 81), SEED);
 		if (hr < 0.2 && dy < 4.0 + floor(hr * 50.0)) return M_LEAF;
 	}
-	if (floraType == 10 && inWater) {
+	if ((floraType == 10 || (TV3 && floraType == 6)) && inWater) {
 		// a deep ocean world's sea floor: kelp forests on the upper slopes; in the dark below, glowing coral
 		// fans, tube worms with lit tips and pale glowcaps (the only light down there but yours)
 		float wcol = surfB(th).y - floor(sa.x);
@@ -945,6 +1045,7 @@ void main() {
 	}
 	SEED = int(P.p[0].w);
 	TV2 = P.p[26].x > 1.5;
+	TV3 = P.p[26].x > 2.5;
 	vec2 p = cellCenter(s, y, x);
 	float r = length(p);
 	float th = angleOf(p);
@@ -1009,8 +1110,13 @@ void main() {
 					else m = pn > 0.66 - 0.03 * lavaMul ? M_LAVA : 0u;
 				}
 			}
+			// (terrain 3) the cave layer's plants: on the floors and hanging from the ceilings
+			if (TV3 && m == 0u && r < rs - 10.0 && r > sa.w) {
+				uint cp = caveFlora(p, r, th, ug, r > sa.z);
+				if (cp != 0u) { bgm = cp; floraId = 0u; }
+			}
 			// cave plants and crystals growing from the floor (background layer)
-			if (m == 0u && r < rs - 10.0) {
+			if (!TV3 && m == 0u && r < rs - 10.0) {
 				vec2 dn = -normalize(p);
 				for (int k = 1; k <= 7; k++) {
 					if (solidAt(p + dn * float(k))) {

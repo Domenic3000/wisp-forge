@@ -52,6 +52,21 @@ void main() {
 		float n2 = fbm(dir * RS0 / 26.0, seed + 2, 2) - 0.5;
 		rs = RS0 - off - n1 * amp * 3.4 - n2 * amp * 0.7;
 	}
+	// Terrain 3 (27 Nov; user: "the ocean isnt nearly deep enough on the water world i went to. how do we make it
+	// really feel like a deep dark vast ocean"; chose abyssal): an ocean biome (flags 32, gpu_world on terrain 3)
+	// keeps its sandy shelf for SHELF cells out from each shore, then drops off a cliff into the abyss, 500-800
+	// cells of water, with narrow trenches cut deeper still
+	if (P.p[26].x > 2.5 && (int(P.p[8 + 2 * bi].w) & 32) != 0) {
+		float wcells = (bhi - blo) * TAU * RS0;
+		float ec = min(local, 1.0 - local) * wcells;
+		float shelf = 120.0 + (fbm(dir * RS0 / 90.0, seed + 40, 2) - 0.5) * 90.0;
+		float fall = smoothstep(shelf, shelf + 60.0 + 40.0 * fbm(dir * RS0 / 40.0, seed + 41, 1), ec);
+		float abyss = 500.0 + fbm(dir * RS0 / 330.0, seed + 42, 2) * 300.0;
+		float tr = 1.0 - abs(fbm(dir * RS0 / 150.0, seed + 43, 2) * 2.0 - 1.0);
+		abyss += pow(tr, 10.0) * 320.0;
+		// (the shelf's own slope as it nears the edge, so the drop-off has a lip)
+		rs -= fall * abyss + smoothstep(shelf * 0.4, shelf, ec) * 20.0;
+	}
 	float magmaR = P.p[7].x + (fbm(dir * RS0 / 50.0, seed + 4, 2) - 0.5) * 50.0;
 	float deepR = min(RS0 - 270.0 + (fbm(dir * RS0 / 60.0, seed + 3, 2) - 0.5) * 40.0, rs - 40.0);
 	deepR = max(deepR, magmaR + 30.0);

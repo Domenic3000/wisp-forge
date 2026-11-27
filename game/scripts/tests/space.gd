@@ -1618,6 +1618,35 @@ func _test_stations() -> void:
 	var ok1: bool = sd0 > 34000.0 and sd0 < 42000.0 and s_op > 15000.0 and s_fw > 13000.0 and s_in and not G._near_planet_r(sg0[0], sg0[1], G.NEAR_PLANET + 6000.0)
 	rows.append("%s%s: %.0fk from home, %.0fk from the outpost, %.0fk from the first wreck, in its sector's content %s" % ["" if ok1 else "(!) ", G.station_name(0), sd0 / 1000.0, s_op / 1000.0, s_fw / 1000.0, s_in])
 	ok = ok and ok1
+	# (27 Nov; user: "i went to the derelict meridian station that shows on the map but there was nothing there") a
+	# sector you've changed (a rock saved in it) still grows its station when it comes in again
+	var sp0 = g.space
+	var skey: String = G.key_of(G.sector_of(sg0[0], sg0[1]))
+	var had_state: bool = sp0.sect_state.has(skey)
+	var keep_state = sp0.sect_state.get(skey)
+	var was_loaded: bool = sp0._loaded.has(skey)
+	var plan0: int = sp0._sect_plan.size()
+	sp0.sect_state[skey] = []
+	if was_loaded:
+		sp0.vl.sector_out(skey)
+		sp0._loaded.erase(skey)
+	sp0._load_sector(G.sector_of(sg0[0], sg0[1]), skey)
+	var st_planned := false
+	for k in range(plan0, sp0._sect_plan.size()):
+		if String(sp0._sect_plan[k].get("kind", "")) == "station":
+			st_planned = true
+	sp0._sect_plan.resize(plan0)
+	sp0._loaded.erase(skey)
+	if not was_loaded:
+		sp0.vl.sector_out(skey)
+	if was_loaded:
+		sp0._loaded[skey] = G.sector_of(sg0[0], sg0[1])
+	if had_state:
+		sp0.sect_state[skey] = keep_state
+	else:
+		sp0.sect_state.erase(skey)
+	rows.append("%sa changed sector still grows its station: %s" % ["" if st_planned else "(!) ", st_planned])
+	ok = ok and st_planned
 	# ---- grown: every room reached from outside (drifting, with the hatches' one-way floors open), the vault
 	# only once its seal is broken; powered and dead rooms both; aliens and caches in it
 	var n_good := 0

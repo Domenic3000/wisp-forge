@@ -4572,9 +4572,12 @@ var quiet_at := Vector2.ZERO
 func spawn_cap(night: bool) -> int:
 	if sky_ev == "bloodmoon":
 		return 12
+	# (27 Nov; user: "i also feel a lack of enemies digging underground ... creatures living there as well"): the
+	# caves keep more of their own (night and day are the same down there)
+	var under: bool = player != null and gpu != null and player.pos.length() < gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - 14.0
 	if int(planet.get("index", 0)) == 0:
-		return 5 if night else 3
-	return 7 if night else 5
+		return 6 if under else (5 if night else 3)
+	return 8 if under else (7 if night else 5)
 
 ## every foe near you is gone (prey and sleepers aren't foes): the area falls quiet for a while
 func _check_cleared() -> void:
@@ -4600,6 +4603,9 @@ func _try_spawn() -> void:
 		return
 	var first_world := int(planet.get("index", 0)) == 0
 	spawn_timer = int(float(SPAWN_EVERY) * (FIRST_CALM if first_world else 1.0) / (maxf(float(clim.get("wild", 1.0)), 0.3) * spawn_mult()))
+	var below := player.pos.length() < gpu.surf_at(atan2(player.pos.y, player.pos.x)).x - 14.0
+	if below:
+		spawn_timer = int(float(spawn_timer) * 0.55)        # (the caves are lived in: more often down there)
 	if frame < quiet_until and player.pos.distance_to(quiet_at) < QUIET_R and sky_ev != "bloodmoon":
 		return
 	var night := _local_daylight(player.pos) < 0.3
@@ -4619,6 +4625,11 @@ func _try_spawn() -> void:
 					undead += 1
 			if undead < 2:
 				type = "skeleton" if randf() < 0.55 else "archer"
+		# (terrain 3's abyssal seas, 27 Nov: deep in the dark water, the deep's own lights: lantern eels, abyss
+		# jellies, gulpers)
+		var seal: float = gpu.surf_b(a).y
+		if type == "" and seal > 0.0 and seal - r > 150.0 and randf() < 0.6:
+			type = _wild_pick("abyss", 4)
 		if type == "":
 			# the biome's own creatures, by day and (more of them) by night
 			if randf() < (0.5 if night else 0.32):
@@ -4632,18 +4643,24 @@ func _try_spawn() -> void:
 				return
 			type = "slime"
 	elif r > sa.z:
-		if randf() > 0.45:
+		# (the upper caves: the cave layer of the biome above has its own, 27 Nov; then the depth's, and bats)
+		if randf() > 0.8:
 			return
-		type = "bat" if randf() < 0.55 else _wild_pick("cave1", 3)
+		var ugk := "ug%d" % int(Defs.BIOMES.get(_biome_name_at(a), {}).get("ug", 0))
+		var rk0 := randf()
+		type = _wild_pick(ugk, 5) if rk0 < 0.6 else ("bat" if rk0 < 0.8 else _wild_pick("cave1", 4))
+		if type == "":
+			type = "bat"
 	elif r > sa.w:
-		if randf() > 0.5:
+		if randf() > 0.7:
 			return
+		var ugk2 := "ug%d" % int(Defs.BIOMES.get(_biome_name_at(a), {}).get("ug", 0))
 		var rk := randf()
-		type = "bat" if rk < 0.3 else ("imp" if rk < 0.5 else _wild_pick("cave2", 3))
+		type = "bat" if rk < 0.2 else ("imp" if rk < 0.35 else (_wild_pick(ugk2, 5) if rk < 0.6 else _wild_pick("cave2", 4)))
 	else:
-		if randf() > 0.5:
+		if randf() > 0.6:
 			return
-		type = "imp" if randf() < 0.5 else _wild_pick("cave3", 3)
+		type = "imp" if randf() < 0.4 else _wild_pick("cave3", 4)
 	if type == "":
 		return
 	var d: Dictionary = Defs.enemy_def(type)
