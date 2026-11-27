@@ -30,6 +30,7 @@ const Wreck := preload("res://scripts/wreck.gd")
 const Pirate := preload("res://scripts/pirate.gd")
 const Outpost := preload("res://scripts/outpost.gd")
 const Station := preload("res://scripts/station.gd")
+const StationBack := preload("res://scripts/station_back.gd")
 const Alien := preload("res://scripts/alien.gd")
 const Spacer := preload("res://scripts/spacer.gd")
 const Monolith := preload("res://scripts/monolith.gd")
@@ -233,6 +234,7 @@ var sbolts := []                # your spells out here (in a station): {"type", 
 # where the shell stood; everything else out here waits in `_inst_stash` (rocks: asteroids, wrecks, pirates, the
 # shell...) and nothing streams, drifts or comes out of the dark until you undock. Your ship waits in its bay.
 var inst = null
+var _hall_back: ColorRect       # (behind its halls: station_back.gd)
 var _inst_shell = null
 var _inst_stash := []
 var _inst_back := {}
@@ -265,6 +267,14 @@ func _ready() -> void:
 		stars.append([Vector2(rng.randf() * 1024.0, rng.randf() * 1024.0), rng.randf(), rng.randf() * TAU])
 	visible = false
 	vl = VoidLife.new(self)
+	# (in a derelict station's halls: the station going on behind them, abandoned, station_back.gd; first of the
+	# children, so it draws over the starfield and under the station)
+	_hall_back = ColorRect.new()
+	_hall_back.material = StationBack.make_material()
+	_hall_back.visible = false
+	_hall_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hall_back)
+	move_child(_hall_back, 0)
 	_mid = Node2D.new()
 	add_child(_mid)
 	_mid.draw.connect(_draw_mid)
@@ -1448,6 +1458,12 @@ func _draw_space() -> void:
 	_lrects.clear()
 	draw_rect(Rect2(0, 0, w, h), Color(0.006, 0.006, 0.02))
 	var xf := _world_xf()
+	var in_st: bool = inst != null and inst.kind == "station"
+	_hall_back.visible = in_st
+	if in_st:
+		_hall_back.position = Vector2.ZERO
+		_hall_back.size = Vector2(w, h)
+		StationBack.apply(_hall_back.material as ShaderMaterial, inst, Vector2(w, h), xf, float(game.frame), true)
 	# stars: a fixed field turned with the view, drifting as you travel (two depths: the nearer half
 	# drifts faster, so you can feel your speed with the camera always on you)
 	var rot := xf.x.angle()

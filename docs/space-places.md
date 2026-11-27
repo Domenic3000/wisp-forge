@@ -138,6 +138,33 @@ Notes for development sessions on this part of the game. The rules that apply ev
   you're in it) and it's grown from that next time. (`halls` and `board_at` live in wreck.gd, so station.gd and
   outpost.gd, which extend it, share them.) Test: `_test_wrecks` (the boarded wrecks grown, shells empty, boards by
   F, alone with it, the bridge's Shield Emitter, every cache, the hull holds, salvage, back aboard, kept).
+- INTERIORS (27 Nov; user: "last time i went there is was a bunch of basic square rooms. it would be nice if they were
+  different types of rooms with different shapes and decorations. make it feel alive like its being lived in. along
+  side derelicts having their own background layer like an abandoned space station taking up the entire background
+  layer so it really feels like your inside the space station and outposts"). station_art.gd: a PAINT palette of
+  its own (a station's back layer holds world materials < 128 or paint codes 128 up, four shades each; station.gd
+  `_ensure_lut` packs them; GLOW codes light an outpost's halos, pocket.gd `_gather_op_lights`; WINDOW is
+  see-through), wall STYLES (plate, rib, tile, wood, hex, grate, lux, steel: cornice and light strip, panels, a trim
+  line, a wainscot, a kick plate) and PARTS (bunks, lockers, desks, screens, consoles, tables and stools, counters,
+  dispensers, medbeds, cabinets, plants, shelves of books, posters, pipes, cables, vents, crates, barrels, machines,
+  signboards, windows, rugs, grow racks, viewscreens), each with a derelict version (`Cv.dead`: dead screens,
+  knocked over, grime, rust, scorching, torn panels, cables hanging, papers and goo on the floor) and an outpost's
+  (`Cv.lived`: rugs, mugs, blankets thrown back). `furnish(cv, role, ...)` dresses a room by its ROLE: quarters,
+  mess, medbay, engineering, command, lounge, comms, hydro, lab, stores, hall, promenade, observatory (the
+  reactor, dock, nest and vault keep their own looks; an outpost's shops theirs over a wall of their own style).
+  Roles are dealt from a shuffled deck (`_deal`: every kind before any comes again). SHAPES (station.gd `_shape`):
+  the roof comes down as a dome (observatory, command), an arch (quarters, mess, lounge, cantina), stepped vaults
+  (hall, promenade), a duct run along one side (engineering, stores, comms, shipwright) or chamfered corners, in
+  plating, never into a way in or out (`_near_way`); lamps hang where the roof comes down to. Halls skip the
+  masts, dishes and solar wings (the station goes on all round them). BACKGROUND (station_back.gd): a shader behind
+  the halls, the station going on in three layers at their own depth (far walls of windows, decks with railings
+  and lamps under them, bulkheads with lit panels, trusses, pipes): an outpost's lit and busy (warm and cool
+  windows, a tram along a deck, glowing signs, planters; pocket.gd `_back_mat`), a derelict station's dark (a few
+  windows flickering, red emergency lamps pulsing, broken decks, hanging cables, dust and sparks; space.gd
+  `_hall_back`, the first child). Past the side its hangar or dock opens on, space. A wreck's insides keep space
+  behind (it's a ship adrift). Preview offline: /home/claude/tools/back_preview.py. Cost: about 0.2 s more to grow
+  an outpost's halls, 0.3 ms of GPU drawing a frame. (A derelict station visited before 27 Nov is laid out anew:
+  what you'd opened there may not match.)
 - DERELICT STATIONS AND ALIENS (scripts/station.gd, alien.gd; user, 23 Nov: "much bigger more complex outposts ...
   Derelict space stations and everything with aliens and such to fight"; inside, chosen "Both, by section"):
   `Station` extends wreck.gd, kind "station"; `make_station(seed)` lays out a grid (`cols` 4-6 x `rows` 2-3, a corner

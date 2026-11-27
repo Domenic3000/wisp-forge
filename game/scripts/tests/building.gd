@@ -1727,7 +1727,22 @@ func _test_fire() -> void:
 	var FW := 64
 	var FH := 44
 	var fi_a := fposmod(float(Build.cell_of(start_pos).x) / float(Defs.NS) * TAU + 0.7, TAU)     # (away from where you arrived)
-	var fi_st: Vector2i = _clear_stretch(int(fposmod(fi_a, TAU) / TAU * Defs.NS), FW + 10, FH + 20, 4, 4, false, 6)
+	# (and nothing built there: the other checks' furniture is in the back layer, which a clear stretch doesn't look at,
+	# and a table set down by the build-mode check was stamped over and cleared away with the house)
+	var fi_from: int = int(fposmod(fi_a, TAU) / TAU * Defs.NS)
+	var fi_st := Vector2i.ZERO
+	for fi_try in 8:
+		fi_st = _clear_stretch(fi_from, FW + 10, FH + 20, 4, 4, false, 6)
+		var fi_rr: Dictionary = g.gpu.read_rect(fi_st.x, fi_st.y - FH - 10, FW + 10, FH + 12)
+		var fi_used := false
+		for fi_bv in fi_rr["bg"]:
+			var fi_bm: int = int(fi_bv) & 255
+			if fi_bm == Defs.DECOR or fi_bm == Defs.PLANK or fi_bm == Defs.TORCH or fi_bm == Defs.WOODDOOR or fi_bm == Defs.MASONRY:
+				fi_used = true
+				break
+		if not fi_used:
+			break
+		fi_from = fi_st.x + FW + 200
 	var fi_x0: int = fi_st.x + 5
 	var fi_y0: int = fi_st.y - FH                  # (its floor's last row just over the highest ground under it)
 	var fi_c := Vector2i(fi_x0 + FW / 2, fi_st.y)

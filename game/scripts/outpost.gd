@@ -27,7 +27,8 @@ const SHOPS := ["market", "shipwright", "cantina", "charts"]
 const KEEP_ROLE := {"market": "outpost", "shipwright": "shipwright", "cantina": "cantina", "charts": "cartographer"}
 const OP_ROOMS := {"hangar": "Hangar", "market": "Market", "shipwright": "Shipwright", "cantina": "Cantina",
 	"charts": "Cartographer", "quarters": "Quarters", "hydro": "Gardens", "reactor": "Reactor", "stores": "Stores",
-	"promenade": "Promenade", "observatory": "Observatory", "hall": "Hall"}
+	"promenade": "Promenade", "observatory": "Observatory", "hall": "Hall", "mess": "Mess hall", "medbay": "Medbay",
+	"lounge": "Lounge", "engineering": "Engineering", "comms": "Comms"}
 ## each shop's colour (its counter's front, its sign)
 const SHOP_COL := {"market": Color(1.0, 0.82, 0.4), "shipwright": Color(0.6, 0.78, 0.95), "cantina": Color(0.95, 0.55, 0.35),
 	"charts": Color(0.7, 0.6, 1.0)}
@@ -153,8 +154,9 @@ func _build_outpost(sd: int) -> void:
 		rest_shops[k] = rest_shops[sw]
 		rest_shops[sw] = tmp
 	var shop_order: Array = ["market"] + rest_shops
+	var deck_bag := []
 	for d2 in deck.size():
-		mods[deck[d2]]["role"] = shop_order[d2] if d2 < shop_order.size() else "stores"
+		mods[deck[d2]]["role"] = shop_order[d2] if d2 < shop_order.size() else _deal(["stores", "mess", "lounge", "medbay"], deck_bag, rng)
 	var dist := _bfs(hangar)
 	reactor = -1
 	for i3 in range(1, mods.size()):
@@ -164,7 +166,8 @@ func _build_outpost(sd: int) -> void:
 			reactor = i3
 	if reactor >= 0:
 		mods[reactor]["role"] = "reactor"
-	var pool := ["quarters", "hydro", "stores", "promenade", "quarters", "hydro", "promenade", "hall"]
+	var pool := ["quarters", "hydro", "stores", "promenade", "quarters", "mess", "lounge", "medbay", "engineering", "comms", "hall"]
+	var bag := []
 	var obs := false
 	for i4 in range(1, mods.size()):
 		var md: Dictionary = mods[i4]
@@ -174,7 +177,7 @@ func _build_outpost(sd: int) -> void:
 			md["role"] = "observatory"
 			obs = true
 			continue
-		md["role"] = pool[rng.randi_range(0, pool.size() - 1)]
+		md["role"] = _deal(pool, bag, rng)
 	# ---- the shell: plating round every room, then each hollowed out (the hangar's inner walls with it)
 	for md2 in mods:
 		for j in range(int(md2["y0"]) - T, int(md2["y1"]) + T):
@@ -408,19 +411,6 @@ func _dress_op(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void
 						bg[j10 * w + i10] = Defs.COPPERBAR
 					elif dd < 2.5:
 						bg[j10 * w + i10] = Defs.SUNSTONE
-		"promenade":
-			# great windows onto the stars, planters under them, benches
-			for wx in range(x0 + 6, x1 - 14, 24):
-				for j11 in range(y0 + 6, y1 - 14):
-					for i11 in range(wx, wx + 18):
-						var frame := i11 == wx or i11 == wx + 17 or j11 == y0 + 6 or j11 == y1 - 15 or (i11 - wx) == 8
-						bg[j11 * w + i11] = Defs.COPPERBAR if frame else Defs.GLASS
-						bgv[j11 * w + i11] = 2 if frame else 0
-				for i12 in range(wx, wx + 18):
-					for j12 in range(y1 - 14, y1 - 10):
-						bg[j12 * w + i12] = Defs.LEAF if noise.get_noise_2d(i12 * 4.0, j12 * 4.0) > -0.2 else Defs.MOSSBLOCK
-						bgv[j12 * w + i12] = (i12 + j12) % 4
-					bg[(y1 - 10) * w + i12] = Defs.PLANK
 		"observatory":
 			# a telescope on its mount, aimed up through the roof's windows
 			for q in 30:
@@ -455,17 +445,18 @@ func _outside_op(rng: RandomNumberGenerator) -> void:
 			if rng.randf() < 0.55:
 				var mx := rng.randi_range(x0 + 10, x1 - 10)
 				var top := y0 - T - rng.randi_range(14, OY - 8)
-				for j in range(top, y0 - T):
+				# (in its halls the station goes on all round them, station_back.gd: no masts, dishes or wings out there)
+				for j in range(top, y0 - T if not halls else top):
 					put(mx, j, Defs.TIMBER, 0)
 					if (j - top) % 5 == 0:
 						put(mx - 1, j, Defs.COPPERBAR, 0)
 						put(mx + 1, j, Defs.COPPERBAR, 0)
-				for j2 in range(top - 3, top):
+				for j2 in range(top - 3, top if not halls else top - 3):
 					for i2 in range(mx - 1, mx + 2):
 						put(i2, j2, Defs.EMBER, 1)
 			elif String(md["role"]) != "observatory" and rng.randf() < 0.5:
 				# a comms dish on a short mast
-				var dx := rng.randi_range(x0 + 16, x1 - 16)
+				var dx := rng.randi_range(x0 + 16, x1 - 16) if not halls else -100
 				for jd in range(y0 - T - 8, y0 - T):
 					put(dx, jd, Defs.HULL, 2)
 				for q in range(-9, 10):
@@ -480,7 +471,7 @@ func _outside_op(rng: RandomNumberGenerator) -> void:
 					if dj == depth - 1 or (i3 + dj) % 12 == 0 or (i3 - dj) % 12 == 0:
 						put(i3, j3, Defs.COPPERBAR if dj == depth - 1 else Defs.HULL, 2)
 		for side in [-1, 1]:
-			if grid.has(v + Vector2i(side, 0)) or side == hangar_side and int(md["r"]) >= 1:
+			if grid.has(v + Vector2i(side, 0)) or side == hangar_side and int(md["r"]) >= 1 or halls:
 				continue
 			var a0: int = x0 - T - 1 if side < 0 else x1 + T
 			var my := (y0 + y1) / 2

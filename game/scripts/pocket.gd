@@ -31,6 +31,8 @@ const Build := preload("res://scripts/build.gd")
 const Vfx := preload("res://scripts/vfx.gd")
 const Outpost := preload("res://scripts/outpost.gd")
 const Spacer := preload("res://scripts/spacer.gd")
+const Art := preload("res://scripts/station_art.gd")
+const StationBack := preload("res://scripts/station_back.gd")
 const PROMPT_REACH := 16.0
 
 ## an outpost's sky, behind its halls: a starfield, a nebula's haze, the system's star glowing off to one side and a
@@ -145,6 +147,7 @@ var _dock_task := -1            # (docking: the halls being grown in a worker)
 var _dock_made := []
 var _dock_from = null           # the outpost out in space you're docking at
 var _sky_mat: ShaderMaterial
+var _back_mat: ShaderMaterial     # (an outpost's halls: the station going on behind them, station_back.gd)
 var _neb_mat: ShaderMaterial
 var _op_lights: Array = []      # [cell middle, radius, colour]
 
@@ -164,6 +167,7 @@ func _ready() -> void:
 	sh2.code = SKY
 	_sky_mat = ShaderMaterial.new()
 	_sky_mat.shader = sh2
+	_back_mat = StationBack.make_material()
 	add_child(bgrect)
 	glow = Node2D.new()
 	var add := CanvasItemMaterial.new()
@@ -539,6 +543,7 @@ func _draw() -> void:
 	mat.set_shader_parameter("t", float(game.frame))
 	mat.set_shader_parameter("size", Vector2(vw, vh))
 	if place == "outpost":
+		StationBack.apply(_back_mat, op, Vector2(vw, vh), game.screen_xf(), float(game.frame), false)
 		_draw_op()
 		glow.queue_redraw()
 		top.queue_redraw()
@@ -708,8 +713,7 @@ func _enter_outpost(m, o) -> void:
 	game.build_on = false
 	game.build_prev = {}
 	place = "outpost"
-	bgrect.material = _sky_mat
-	_sky_mat.set_shader_parameter("hue", fposmod(float(op.seed_ % 997) / 997.0, 1.0))
+	bgrect.material = _back_mat        # (27 Nov: the station's own interior behind its halls, space past the hangar)
 	active = true
 	visible = true
 	op_folk.clear()
@@ -851,6 +855,13 @@ func _gather_op_lights() -> Array:
 				for i in range(bx, mini(bx + 16, op.w)):
 					var mt: int = op.cells[j * op.w + i]
 					if mt == 0 or Defs.SELF[mt] == 0:
+						# (or a glowing paint on its walls: screens, lamps, lit signs; station_art.gd)
+						var bm: int = op.bg[j * op.w + i]
+						if bm >= 128 and Art.glows(bm):
+							n += 1
+							col += Art.GLOW[bm]
+							sx += float(i)
+							sy += float(j)
 						continue
 					var c := Color.hex((Defs.PAL[mt * 4] << 8) | 0xff)
 					n += 1

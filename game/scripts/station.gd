@@ -18,6 +18,8 @@
 ## `spawns` lists the aliens that live here (alien.gd), `caches` the crates (wreck.gd's), `mods` the rooms.
 extends "res://scripts/wreck.gd"
 
+const Art := preload("res://scripts/station_art.gd")
+
 const MW := 112           # a room's inside: width, height (cells; user, 23 Nov: "they didnt have very much room
 const MH := 64            # for the player or enemies to move around": 80 x 44 before)
 const T := 4              # walls
@@ -40,7 +42,8 @@ const ST_FATES := ["Something came aboard with the last supply run, and stayed."
 	"A storm belt's lightning broke its back; the dark halls belong to the swarm now.",
 	"Its log speaks of eggs found in an asteroid, and then of nothing at all."]
 const ROLE_NAMES := {"dock": "Docking bay", "reactor": "Reactor", "hydro": "Hydroponics", "quarters": "Quarters",
-	"lab": "Laboratory", "stores": "Stores", "hall": "Hall", "nest": "The nest", "vault": "The vault"}
+	"lab": "Laboratory", "stores": "Stores", "hall": "Hall", "nest": "The nest", "vault": "The vault", "mess": "Mess hall",
+	"medbay": "Medbay", "engineering": "Engineering", "command": "Command deck", "lounge": "Lounge", "comms": "Comms"}
 
 var cols := 0
 var rows := 0
@@ -203,7 +206,8 @@ func _build_station(sd: int) -> void:
 	mods[dock]["powered"] = true       # (the docking cradle still holds: you come aboard on your feet)
 	mods[nest]["powered"] = false
 	# ---- every other room's role
-	var pool := ["hydro", "quarters", "lab", "stores", "stores", "hall", "quarters", "hydro", "lab", "hall"]
+	var pool := ["hydro", "quarters", "lab", "stores", "hall", "quarters", "mess", "medbay", "engineering", "command", "lounge", "comms"]
+	var bag := []
 	for i8 in mods.size():
 		var role := "hall"
 		if i8 == dock:
@@ -215,7 +219,7 @@ func _build_station(sd: int) -> void:
 		elif i8 == vault:
 			role = "vault"
 		else:
-			role = pool[rng.randi_range(0, pool.size() - 1)]
+			role = _deal(pool, bag, rng)
 		mods[i8]["role"] = role
 	# ---- the shell: plating round every room, then the rooms hollowed out
 	for md2 in mods:
@@ -286,7 +290,9 @@ func _build_station(sd: int) -> void:
 				_crate_near(a1 - 20, fl, "stores", a0, a1)
 			"quarters", "lab":
 				_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, String(mk["role"]), a0, a1)
-			"hydro", "hall", "reactor":
+			"medbay":
+				_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, "lab", a0, a1)
+			"hydro", "hall", "reactor", "mess", "engineering", "command", "lounge", "comms":
 				if rng.randf() < 0.5:
 					_crate_near(rng.randi_range(a0, a1 - CRATE_W), fl, "stores", a0, a1)
 			"nest":
@@ -390,22 +396,20 @@ func _dress(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void:
 	var y1: int = md["y1"]
 	var pw: bool = md["powered"]
 	var role: String = md["role"]
-	# the back wall: clean panels with light strips where there's power; dark, ribbed and burnt where not
-	for j in range(y0, y1):
-		for i in range(x0, x1):
-			var c := j * w + i
-			if pw:
-				bg[c] = Defs.HULL
-				bgv[c] = 0 if (i - x0) % 20 == 0 else (1 if ((j - y0) / 11) % 2 == 0 else 3)
-				if (j - y0) == 6 and (i - x0) % 20 > 4 and (i - x0) % 20 < 16:
-					bg[c] = Defs.WISPBAR
-					bgv[c] = 1
-			else:
-				var rib := (i - x0) % 14 == 0 or (i - x0) % 14 == 1
-				bg[c] = Defs.HULL if rib else Defs.COAL
-				bgv[c] = 2 if rib else (0 if (j / 5) % 2 == 0 else 1)
-				if noise.get_noise_2d(i * 1.7, j * 1.7) > 0.45:
-					bg[c] = Defs.ASH
+	# (27 Nov, user: "different types of rooms with different shapes and decorations. make it feel alive like its
+	# being lived in": station_art.gd's walls and parts; a derelict's dark rooms abandoned, an outpost's kept up)
+	var cv := Art.Cv.new()
+	cv.bg = bg
+	cv.bgv = bgv
+	cv.w = w
+	cv.h = h
+	cv.rng = rng
+	cv.noise = noise
+	cv.dead = not pw
+	cv.lived = kind == "outpost"
+	var drop := _shape(k, rng)
+	if role != "nest" and role != "vault":
+		Art.wall(cv, x0, y0, x1, y1, Art.style_for(role, rng), drop)
 	# the floor: gravity runes glowing in it where there's power
 	for i2 in range(x0, x1):
 		if at(i2, y1) == Defs.HULL:
@@ -413,11 +417,12 @@ func _dress(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void:
 				put(i2, y1, Defs.WISP if (i2 - x0) % 8 == 4 else Defs.RUNESTONE, 0)
 			elif (i2 - x0) % 8 == 4:
 				put(i2, y1, Defs.RUNESTONE, 0)
-	# lamps under the roof: lit, or dead
+	# lamps under the roof (where it comes down to): lit, or dead
 	for i3 in range(x0 + 8, x1 - 6, 16):
-		if at(i3, y0) == 0 and at(i3, y0 - 1) != 0 and not _near_way(i3, y0, 2) and not _near_way(i3 + 1, y0, 2):
-			put(i3, y0, Defs.CRYSTAL if pw else Defs.COPPERBAR, 0)
-			put(i3 + 1, y0, Defs.CRYSTAL if pw else Defs.COPPERBAR, 0)
+		var lj: int = y0 + int(drop[i3 - x0])
+		if at(i3, lj) == 0 and at(i3 + 1, lj) == 0 and at(i3, lj - 1) != 0 and not _near_way(i3, lj, 2) and not _near_way(i3 + 1, lj, 2):
+			put(i3, lj, Defs.CRYSTAL if pw else Defs.COPPERBAR, 0)
+			put(i3 + 1, lj, Defs.CRYSTAL if pw else Defs.COPPERBAR, 0)
 	var mx := (x0 + x1) / 2
 	var my := (y0 + y1) / 2
 	match role:
@@ -442,69 +447,6 @@ func _dress(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void:
 				if not _near_way(i6, y1 - 2):
 					put(i6, y1 - 1, Defs.COPPERBAR, 2)
 					put(i6, y1 - 2, Defs.COPPERBAR, 0)
-		"hydro":
-			# planters on the back wall, troughs on the floor (low: you step over them)
-			for row in [y0 + 10, y0 + 24]:
-				for i7 in range(x0 + 4, x1 - 4):
-					bg[int(row) * w + i7] = Defs.TIMBER
-					bgv[int(row) * w + i7] = 0
-					for jj in range(int(row) - 6, int(row)):
-						if noise.get_noise_2d(i7 * 3.0, jj * 3.0) > (-0.1 if pw else 0.25):
-							bg[jj * w + i7] = Defs.LEAF if pw else (Defs.XENITE if noise.get_noise_2d(i7, jj) > 0.2 else Defs.ASH)
-							bgv[jj * w + i7] = (i7 + jj) % 4
-			for i8 in range(x0 + 10, x1 - 10):
-				if (i8 - x0) % 24 < 14 and not _near_way(i8, y1 - 2):
-					put(i8, y1 - 1, Defs.PLANK, 1)
-					put(i8, y1 - 2, Defs.MOSSBLOCK if pw else Defs.ASH, 0)
-		"quarters":
-			# bunks on the back wall, two high
-			for bx in range(x0 + 6, x1 - 20, 24):
-				for row2 in [y1 - 6, y1 - 20]:
-					for i9 in range(bx, bx + 18):
-						bg[int(row2) * w + i9] = Defs.TIMBER
-						bgv[int(row2) * w + i9] = 0
-						bg[(int(row2) - 1) * w + i9] = Defs.PLANK
-						bgv[(int(row2) - 1) * w + i9] = 2
-					for jb in range(int(row2) - 10, int(row2) + 1):
-						bg[jb * w + bx] = Defs.TIMBER
-						bg[jb * w + bx + 17] = Defs.TIMBER
-		"lab":
-			# glass tanks on the back wall with something kept in each
-			for tx in range(x0 + 6, x1 - 14, 18):
-				for jt in range(y1 - 26, y1 - 2):
-					for it in range(tx, tx + 12):
-						var edge := it == tx or it == tx + 11 or jt == y1 - 26
-						bg[jt * w + it] = Defs.GLASS if not edge else Defs.COPPERBAR
-						bgv[jt * w + it] = 0
-						var dd := Vector2(it - tx - 5.5, jt - (y1 - 14)).length()
-						if not edge and dd < 4.0 + noise.get_noise_2d(it * 4.0, jt * 4.0) * 2.0:
-							bg[jt * w + it] = Defs.XENITE
-							bgv[jt * w + it] = int(dd) % 4
-			for i10 in range(x0 + 4, x1 - 4):
-				if (i10 - x0) % 30 < 12 and not _near_way(i10, y1 - 2):
-					put(i10, y1 - 3, Defs.COPPERBAR, 2)
-					put(i10, y1 - 2, Defs.HULL, 2)
-					put(i10, y1 - 1, Defs.HULL, 2)
-		"stores":
-			# shelves of crates on the back wall
-			for row3 in [y0 + 12, y0 + 26]:
-				for i11 in range(x0 + 3, x1 - 3):
-					bg[int(row3) * w + i11] = Defs.TIMBER
-					bgv[int(row3) * w + i11] = 0
-				for cb in range(x0 + 4, x1 - 8, 7):
-					if rng.randf() < 0.7:
-						var cm: int = [Defs.PLANK, Defs.COPPERBAR, Defs.HULL, Defs.WISPBAR][rng.randi_range(0, 3)]
-						for j12 in range(int(row3) - 4, int(row3)):
-							for i12 in range(cb, cb + 5):
-								bg[j12 * w + i12] = cm
-								bgv[j12 * w + i12] = (i12 + j12) % 3
-		"hall":
-			# pillars on the back wall
-			for px in range(x0 + 12, x1 - 6, 20):
-				for jp in range(y0, y1):
-					for ip in range(px, px + 4):
-						bg[jp * w + ip] = Defs.HULL
-						bgv[jp * w + ip] = 2 if ip == px else 1
 		"dock":
 			# hazard stripes along the floor, clamps
 			for i13 in range(x0, x1):
@@ -539,6 +481,11 @@ func _dress(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void:
 					bgv[j16 * w + i16] = (i16 / 4 + j16 / 4) % 3
 					if (i16 - x0) % 10 == 5 and (j16 - y0) % 10 == 5:
 						bg[j16 * w + i16] = Defs.WISP
+		_:
+			Art.furnish(cv, role, x0, y0, x1, y1)
+			# (a derelict's rooms that kept their power are abandoned too: litter, and the odd alien stain)
+			if kind == "station" and pw and halls:
+				Art.debris(cv, x0, x1, y1)
 	if not pw and role != "vault":
 		# torn and burnt: scorching on the walls, a girder fallen across the roof, a breach to space
 		# through an outer wall
@@ -564,6 +511,79 @@ func _dress(k: int, rng: RandomNumberGenerator, noise: FastNoiseLite) -> void:
 			outer.append(Vector2(x1 + 1, rng.randi_range(y0 + 8, y1 - 16)))
 		if not outer.is_empty() and rng.randf() < 0.75:
 			_breach(outer[rng.randi_range(0, outer.size() - 1)], rng.randf_range(7.0, 10.0), noise)
+
+## the next room type from a shuffled deck of `pool` (dealt out before any comes again: 27 Nov, one outpost had six
+## hydroponics rooms)
+static func _deal(pool: Array, bag: Array, rng: RandomNumberGenerator) -> String:
+	if bag.is_empty():
+		bag.append_array(pool)
+		for k in range(bag.size() - 1, 0, -1):
+			var sw := rng.randi_range(0, k)
+			var tmp = bag[k]
+			bag[k] = bag[sw]
+			bag[sw] = tmp
+	return String(bag.pop_back())
+
+## a room's shape (27 Nov): its roof brought down as an arch, a dome, stepped vaults, chamfered corners or a duct run
+## along one side, in plating, never over a way in or out (doorways, hatches and their ledges stay as they were).
+## Returns how many rows the roof comes down at each column (0 where it doesn't).
+func _shape(k: int, rng: RandomNumberGenerator) -> PackedInt32Array:
+	var md: Dictionary = mods[k]
+	var x0: int = md["x0"]
+	var y0: int = md["y0"]
+	var x1: int = md["x1"]
+	var role: String = md["role"]
+	var rw := x1 - x0
+	var drop := PackedInt32Array()
+	drop.resize(rw)
+	var kind_s := "flat"
+	match role:
+		"dock", "hangar", "reactor", "nest", "vault":
+			return drop
+		"observatory", "command":
+			kind_s = "dome"
+		"lounge", "quarters", "mess", "cantina":
+			kind_s = "arch" if rng.randf() < 0.6 else "chamfer"
+		"engineering", "stores", "comms", "shipwright":
+			kind_s = "duct"
+		"hall", "promenade":
+			kind_s = "vault"
+		_:
+			kind_s = "chamfer"
+	var duct_l := rng.randf() < 0.5
+	for i in rw:
+		var u := (float(i) + 0.5) / float(rw) * 2.0 - 1.0        # (-1 at one wall, 1 at the other)
+		var d := 0.0
+		match kind_s:
+			"dome":
+				d = 18.0 * (1.0 - sqrt(maxf(0.0, 1.0 - u * u)))
+			"arch":
+				d = 11.0 * (1.0 - sqrt(maxf(0.0, 1.0 - u * u)))
+			"vault":
+				d = 12.0 if absf(u) > 0.82 else (6.0 if absf(u) > 0.55 else 0.0)
+			"duct":
+				var side := i < 34 if duct_l else i >= rw - 34
+				d = 7.0 if side else 0.0
+				d = maxf(d, 6.0 - float(mini(i, rw - 1 - i)))
+			_:
+				d = maxf(0.0, 7.0 - float(mini(i, rw - 1 - i)))
+		drop[i] = int(d)
+	for i2 in rw:
+		var ci := x0 + i2
+		for j in range(y0, y0 + int(drop[i2])):
+			if _near_way(ci, j, 3):
+				drop[i2] = j - y0
+				break
+			put(ci, j, Defs.HULL, 0 if j == y0 + int(drop[i2]) - 1 else (1 if (j / 4) % 2 == 0 else 2))
+	# a duct's run: a pipe along its underside
+	if kind_s == "duct":
+		for i3 in rw:
+			var ci3 := x0 + i3
+			var dj: int = y0 + int(drop[i3])
+			if int(drop[i3]) >= 6 and at(ci3, dj) == 0 and not _near_way(ci3, dj, 3):
+				bg[dj * w + ci3] = Art.PIPE
+				bgv[dj * w + ci3] = 3 if ci3 % 12 == 0 else 0
+	return drop
 
 ## near a room's ways in or out (a doorway, a hatch and the ledge under it, the dock's mouth): growth,
 ## girders, troughs and crates keep clear of them
@@ -597,12 +617,13 @@ func _outside(rng: RandomNumberGenerator) -> void:
 			if rng.randf() < 0.6:
 				var mx := rng.randi_range(x0 + 10, x1 - 10)
 				var top := y0 - T - rng.randi_range(14, OY - 8)
-				for j in range(top, y0 - T):
+				# (in its halls the station goes on all round them, station_back.gd: no masts or wings out there)
+				for j in range(top, y0 - T if not halls else top):
 					put(mx, j, Defs.TIMBER, 0)
 					if (j - top) % 5 == 0:
 						put(mx - 1, j, Defs.COPPERBAR, 0)
 						put(mx + 1, j, Defs.COPPERBAR, 0)
-				for j2 in range(top - 3, top):
+				for j2 in range(top - 3, top if not halls else top - 3):
 					for i2 in range(mx - 1, mx + 2):
 						put(i2, j2, Defs.EMBER if md["powered"] else Defs.COAL, 1)
 		if not grid.has(v + Vector2i(0, 1)):
@@ -616,7 +637,7 @@ func _outside(rng: RandomNumberGenerator) -> void:
 		for side in [-1, 1]:
 			if grid.has(v + Vector2i(side, 0)):
 				continue
-			if mi == dock:
+			if mi == dock or halls:
 				continue
 			# a solar wing: an arm out, wisp panels over and under it
 			var a0: int = x0 - T - 1 if side < 0 else x1 + T
@@ -720,10 +741,15 @@ static var _lut_fg := PackedInt32Array()
 static var _lut_bg := PackedInt32Array()
 
 static func _ensure_lut() -> void:
-	if _lut_fg.size() == Defs.NM * 4:
+	if _lut_fg.size() == 256 * 4:
 		return
-	_lut_fg.resize(Defs.NM * 4)
-	_lut_bg.resize(Defs.NM * 4)
+	_lut_fg.resize(256 * 4)
+	_lut_bg.resize(256 * 4)
+	for code in Art.PAINT:
+		for v2 in 4:
+			var pc := Art.color(int(code), v2)
+			_lut_fg[int(code) * 4 + v2] = _pack(pc)
+			_lut_bg[int(code) * 4 + v2] = _pack(pc)
 	for m in Defs.NM:
 		for v in 4:
 			var c := Color.hex((Defs.PAL[m * 4 + v] << 8) | 0xff)
