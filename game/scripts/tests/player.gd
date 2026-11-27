@@ -1221,6 +1221,33 @@ func _test_audio() -> void:
 		au.here["biome"], au.here["open"], au.here["village"], float(au.here["sea"]), wind_v, au._list])
 	_ok("the audio pass: every sound there, none clipping or too quiet, ambience loops, buses, where you are", ok, "; ".join(rows))
 
+## Not in the full run: "mixrec" records what the game sends out (the Master bus, after its limiter) to
+## saves/mix.wav, 20 s on the title (its music and wind) then 12 s in play with effects going off, to hunt
+## crackling in the mix itself (26 Nov, user: "it happens a few seconds after opening menu maybe its the wind").
+func _test_mixrec() -> void:
+	var rec := AudioEffectRecord.new()
+	AudioServer.add_bus_effect(0, rec)
+	var ri := AudioServer.get_bus_effect_count(0) - 1
+	var st0 := String(g.state)
+	g.state = "title"
+	g.ui.show_title(true)
+	await _frames(30)
+	rec.set_recording_active(true)
+	await _frames(1200)
+	g.ui.title.visible = false
+	g.state = st0
+	var names := ["boom", "zap", "hit", "step_stone", "dig", "spark", "fire", "land", "coin", "roar", "crack", "thunder"]
+	for k in 720:
+		if k % 20 == 0:
+			g.audio.play(String(names[(k / 20) % names.size()]))
+		await _frames(1)
+	rec.set_recording_active(false)
+	var w: AudioStreamWAV = rec.get_recording()
+	var path: String = g._real_save_dir().path_join("mix.wav")
+	var err := w.save_to_wav(path)
+	AudioServer.remove_bus_effect(0, ri)
+	_ok("mix recorded to saves/mix.wav", err == OK and w.data.size() > 0, "%d bytes at %d Hz, stereo %s, mix rate %d, latency %.1f ms" % [w.data.size(), w.mix_rate, w.stereo, int(AudioServer.get_mix_rate()), AudioServer.get_output_latency() * 1000.0])
+
 ## [the loudest sample (0..1), the share of samples at the limit, the last sample (0..1)] of a 16-bit wav
 func _au_peak(w: AudioStreamWAV) -> Array:
 	var d: PackedByteArray = w.data

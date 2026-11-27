@@ -97,6 +97,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_audio()
+		elif only == "mixrec":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_mixrec()
 		elif only == "inworld":
 			_go(g.player.pos)
 			await _frames(60)

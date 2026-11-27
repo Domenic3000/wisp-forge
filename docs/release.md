@@ -55,8 +55,15 @@ hover over options and during the game occasional snaps that sound like audio cr
   their ends. The hover blip lost its burst of white noise.
 - `play` takes a free player first (`VOICES` 16), and only cuts off the oldest when all are sounding.
 - A hard limiter on the Master bus (`_make_buses`) so everything stacked never clips the output.
-- project.godot `audio/driver/output_latency` 40 ms (Godot's default 15 ms underruns on some Windows PCs, heard
-  as crackle).
+- project.godot `audio/driver/output_latency` 40 ms. On Windows this does nothing: Godot's WASAPI driver takes
+  IAudioClient3 and clamps the period to the engine's own (10 ms here: min = max = 441 frames at 44100 Hz) with a
+  buffer of one period; the laptop reports 10.7 ms. Kept for other platforms.
+- What was left (26 Nov, on the user's desktop with a USB audio interface, 44100 Hz; the laptop doesn't crackle):
+  the mix itself is clean (test "mixrec" records the Master bus to saves/mix.wav: 20 s of title music and wind,
+  then effects; no clicks but the effects' own), so the crackle is delivery: Godot's one-period WASAPI buffer
+  on a normal-priority thread, a known Godot 4 trouble with USB interfaces (godotengine/godot #75109). No project
+  setting switches IAudioClient3 off; a real fix is a custom export template (WASAPI on plain IAudioClient).
+  `Audio check.bat` (beside the built game on that PC) runs it with `--verbose --log-file audio_log.txt`.
 - Test "audio": no sample at the limit, every one-shot ends in silence, the limiter and the 16 players there.
 
 ## Saves and window
