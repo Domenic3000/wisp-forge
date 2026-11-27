@@ -181,7 +181,12 @@ vec3 fgColor(uint t, uint c, ivec2 w, uint cu, uint cd, uint cl, uint cr) {
 	uint ut = cu & 255u;
 	bool openUp = ut == 0u || KIND[ut] == K_GAS;
 	if (t == M_WATER) {
-		if (openUp) return vec3(0.62, 0.84, 1.0);
+		if (openUp) {
+			// (27 Nov; user: "a more fleshed out water with proper vfx") the top: light running along it in glints
+			// and a little foam, drifting
+			float sf = vnoise(vec2(float(w.x) / 5.0 + TIME * 0.03, TIME * 0.013), 65);
+			return sf > 0.68 ? vec3(0.9, 0.97, 1.0) : (sf > 0.5 ? vec3(0.66, 0.87, 1.0) : vec3(0.5, 0.76, 0.97));
+		}
 		// (27 Nov; user: "in large bodies of water the water texture looks very tiled": it was two sine waves, one
 		// a diagonal stripe every few cells, so a sea was one little lattice over and over) now slow drifting
 		// noise at two sizes, never repeating, cut into the ramp's bands (pixel art, no smooth gradient) with a
@@ -682,6 +687,12 @@ void main() {
 		if (t == 0u) { col = bg; flag = bgf; }
 		else {
 			vec3 mc = fgColor(t, c, w, cu, cd, cl, cr);
+			// (27 Nov, water's look) shafts of light slanting down from the sea's top, swaying, gone by 90 down
+			if (t == M_WATER && sb.y > 0.0 && r < sb.y && r > sa.x && r > sb.y - 90.0) {
+				float dpt = sb.y - r;
+				float shf = vnoise(vec2((th * RS0 + dpt * 0.45) / 6.0 + TIME * 0.004, 3.5), 66);
+				mc += vec3(0.16, 0.24, 0.26) * smoothstep(0.6, 0.85, shf) * (1.0 - dpt / 90.0);
+			}
 			// each kind of world's own biome's touches, by the biome's flora (26 Nov): the salt flats' crust white
 			// with cracks, glowing fissures through the basalt, a blue glint in the crystal fields' snow
 			int fh2 = int(P.p[9 + 2 * int(sa.y)].w) >> 4;

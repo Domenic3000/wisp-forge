@@ -17,6 +17,13 @@ bool emptyish(uint c) { uint t = c & 255u; return t == 0u || KIND[t] == K_GAS; }
 bool disp(uint a, uint b) { return canDisp(a & 255u, b & 255u); }
 float slide(uint c) { uint t = c & 255u; if (t == M_SNOW || t == M_ASH) return 0.3; if (t == M_GRAVEL) return 0.65; return 1.0; }
 float flowP(uint c) { uint t = c & 255u; if (t == M_LAVA) return 0.3; if (t == M_MUD) return 0.15; return 0.95; }
+// (27 Nov; user: "the water is a bit too viscous"): water keeps the way it's flowing (bit 8 of the cell, the low bit of
+// its shade, which water doesn't use: render.comp shades it by noise), so a spill runs along instead of jostling
+// back and forth, and a pool levels several times as fast. Against something it turns round.
+bool isWater(uint c) { return (c & 255u) == M_WATER; }
+bool wayX2(uint c) { return (c & 0x100u) != 0u; }          // flowing toward the block's second column
+uint withWay(uint c, bool x2) { return isWater(c) ? (x2 ? (c | 0x100u) : (c & ~0x100u)) : c; }
+float flowTo(uint c, bool x2) { return isWater(c) ? (wayX2(c) == x2 ? 0.995 : 0.3) : flowP(c); }
 float moveP(uint a, uint b) { // slowdown when sinking through liquid / viscous liquids
 	uint ta = a & 255u, tb = b & 255u;
 	float p = 1.0;
@@ -62,11 +69,19 @@ void main() {
 		if (riser(a) && T_(b) == 0u && r7 < 0.3) sw(a, b);
 		else if (riser(b) && T_(a) == 0u && r7 < 0.3) sw(a, b);
 	}
-	// 4. liquids spread sideways
-	if (liquid(c) && emptyish(d) && r5 < flowP(c)) sw(c, d);
-	else if (liquid(d) && emptyish(c) && r5 < flowP(d)) sw(c, d);
-	if (liquid(a) && emptyish(b) && !disp(a, c) && r6 < flowP(a)) sw(a, b);
-	else if (liquid(b) && emptyish(a) && !disp(b, d) && r6 < flowP(b)) sw(a, b);
+	// 4. liquids spread sideways (water along the way it's flowing; blocked, it turns)
+	if (liquid(c) && emptyish(d) && r5 < flowTo(c, true)) { sw(c, d); d = withWay(d, true); }
+	else if (liquid(d) && emptyish(c) && r5 < flowTo(d, false)) { sw(c, d); c = withWay(c, false); }
+	else {
+		if (isWater(c) && wayX2(c) && !emptyish(d) && r7 < 0.5) c = withWay(c, false);
+		if (isWater(d) && !wayX2(d) && !emptyish(c) && r7 >= 0.5) d = withWay(d, true);
+	}
+	if (liquid(a) && emptyish(b) && !disp(a, c) && r6 < flowTo(a, true)) { sw(a, b); b = withWay(b, true); }
+	else if (liquid(b) && emptyish(a) && !disp(b, d) && r6 < flowTo(b, false)) { sw(a, b); a = withWay(a, false); }
+	else {
+		if (isWater(a) && wayX2(a) && !emptyish(b) && !disp(a, c) && r4 < 0.5) a = withWay(a, false);
+		if (isWater(b) && !wayX2(b) && !emptyish(a) && !disp(b, d) && r4 >= 0.5) b = withWay(b, true);
+	}
 
 	world.cells[ia] = a; world.cells[ib] = b; world.cells[ic] = c; world.cells[id] = d;
 }

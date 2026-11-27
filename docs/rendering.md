@@ -82,3 +82,19 @@ Notes for development sessions on this part of the game. The rules that apply ev
   sea. Now two sizes of slowly drifting value noise (`vnoise` seeds 63, 64; stretched sideways into streaks) cut into
   the ramp's bands, darkest to lightest 2, 0, 1, 3 (pixel art, no smooth gradient), a little per-cell dither where
   bands meet, and the odd cell glinting. The open top row is unchanged.
+
+## Water, fleshed out (27 Nov; user: "the water is a bit too viscous, and i would like a more fleshed out water with proper vfx")
+- Flow (move.comp): water keeps the way it's flowing in bit 8 of its cell (the low bit of its shade, unused for water:
+  render.comp shades it by noise): it steps that way at 0.995 and back at 0.3, and turns round against anything, so
+  a spill runs along instead of jostling to and fro and a pool levels several times as fast. Mud and lava keep their
+  slow `flowP`.
+- Swimming (main, the mage in liquid): about half again as fast (speed 1.05, drag 0.945 sideways and 0.93 up and
+  down), and the down key swims you down.
+- The look (render.comp): the top row glints and foams, drifting (vnoise); shafts of light slant down from a sea's
+  top, swaying, gone by 90 cells down (added before the lighting, so dark at night and in the deep).
+- Effects (vfx.gd `splash_in`, `splash_out`, `bubble`, `drip`, `wake`; main `_water_fx`, `_water_fx_e`): going in, a
+  crown of droplets thrown up and falling back, spray, a ring of foam, bubbles under it (by how fast, and by size for
+  creatures); coming out, a smaller one and drips off you for a while; under water, bubbles from your mouth every
+  second or so (more swimming hard), rising and wobbling (a BUBBLE particle) and popping in droplets at the top;
+  swimming along the top, foam behind you. Test: `_test_water` (ui section: a spill's spread, a splash, bubbles;
+  water.png).

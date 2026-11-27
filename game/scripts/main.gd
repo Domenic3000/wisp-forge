@@ -140,6 +140,7 @@ func new_villager() -> Villager:
 	return Villager.new()
 
 class Enemy extends Body:
+	var was_wet := false      # (in water last tick: a splash as it goes in or out, `_water_fx_e`)
 	var type := ""
 	var provoked := false        # it has been hurt (the Amber Totem keeps only unprovoked creatures calm)
 	var d: Dictionary
@@ -552,6 +553,9 @@ class PlayerInput:
 	var aim := Vector2.ZERO    # world position of the cursor
 
 class Mage extends Body:
+	var was_wet := false      # (water's effects, `_water_fx`: in water last tick, drips left, the next bubble)
+	var drip_t := 0
+	var bub_t := 0
 	var rig = null             # the simulated hat tip, beard, scarf and staff (overlay.gd, mage_rig.gd)
 	var fog := 0.0             # how deep in cloud the mage is (0-1, from the GPU)
 	var id := 0
@@ -2819,13 +2823,15 @@ func _update_player(m: Mage) -> void:
 	var mid_t := type_at(p.pos + basis_d(a) * (p.h * 0.1))
 	var head_t := type_at(p.pos - basis_d(a) * (p.h * 0.5 - 2.0))
 	p.in_liquid = Defs.KIND[mid_t] == Defs.K_LIQUID
+	if m.local:
+		_water_fx(m, p, a, Defs.KIND[head_t] == Defs.K_LIQUID)
 	var g := 0.17 * gravity_at(p.pos)
 	var move: int = m.input.move
 	var face := (aim - p.pos).dot(R)
 	if absf(face) > 1.0:
 		p.facing = 1 if face > 0 else -1
 	var fin: bool = m.items.has("tidefin")       # (Thalassor's relic: you swim as fast as you walk)
-	var speed := ((1.5 if fin else 0.9) * gear("swim", m) * (1.5 if m.items.has("tideheart") else 1.0)) if p.in_liquid else 1.5 * gear("speed", m)
+	var speed := ((1.6 if fin else 1.05) * gear("swim", m) * (1.5 if m.items.has("tideheart") else 1.0)) if p.in_liquid else 1.5 * gear("speed", m)
 	speed *= 1.2 if m.items.has("coil") else 1.0
 	p.vx += (move * speed - p.vx) * (0.35 if p.on_ground else 0.12)
 	# the wind, out in the open: it slows you walking into it and carries you in the air, but standing
@@ -2870,12 +2876,16 @@ func _update_player(m: Mage) -> void:
 		if randf() < 0.6:
 			_particle(p.pos - basis_d(a) * (-p.h * 0.5) + R * (randf() * 3.0 - 1.5), Vector2((randf() - 0.5) * 0.4, 0.4 + randf() * 0.4), 18, Color8(140, 220, 255), true, 0.0)
 	if p.in_liquid:
+		# (27 Nov; user: "the water is a bit too viscous": you swim freer, about half again as fast, and the down key
+		# swims you down)
 		if jump:
-			p.vy -= 0.4 if fin else 0.26
+			p.vy -= 0.4 if fin else 0.28
+		if m.input.down:
+			p.vy += 0.3 if fin else 0.2
 		p.vy += g * 0.3
 		var visc := mid_t == Defs.MUD
-		p.vx *= 0.7 if visc else (0.96 if fin else 0.9)
-		p.vy *= 0.75 if visc else (0.94 if fin else 0.9)
+		p.vx *= 0.7 if visc else (0.97 if fin else 0.945)
+		p.vy *= 0.75 if visc else (0.95 if fin else 0.93)
 	else:
 		p.vy += g
 	p.vy = minf(p.vy, 6.0)
@@ -4209,6 +4219,8 @@ func _update_enemies() -> void:
 		var dx := pl.x - lt.x
 		var dy := pl.y - lt.y
 		e.in_liquid = Defs.KIND[type_at(e.pos)] == Defs.K_LIQUID
+		if e.in_liquid != e.was_wet:
+			_water_fx_e(e)
 		var g := 0.17 * gravity_at(e.pos)
 		if e.act == "":
 			e.facing = -1 if dx < 0 else 1
@@ -5407,6 +5419,52 @@ func _hazard_level(hz: String, m: Mage, p: Body) -> float:
 			var under4: float = Defs.RS0 - p.pos.length()
 			return 0.0 if under4 < VOID_D else 1.0 + (under4 - VOID_D) / 50.0
 	return 0.0
+
+## Water's effects for a mage (27 Nov; user: "i would like a more fleshed out water with proper vfx"): a splash going
+## in or out (by how fast), drips off you for a while after, air bubbles from your mouth under water (more as you
+## swim hard), foam in your wake along the top
+func _water_fx(m: Mage, p: Body, a: float, head_wet: bool) -> void:
+	var up := -basis_d(a)
+	var spd := Vector2(p.vx, p.vy).length()
+	if p.in_liquid != m.was_wet:
+		var at := p.pos + up * (float(p.h) * 0.1)
+		if p.in_liquid:
+			vfx.splash_in(at, up, maxf(spd, 0.5))
+			audio.play("splash", p.pos, clampf(0.3 + spd * 0.25, 0.3, 1.0))
+		else:
+			vfx.splash_out(at, up, spd)
+			audio.play("splash", p.pos, 0.25, 1.3)
+			m.drip_t = 100
+		m.was_wet = p.in_liquid
+	if p.in_liquid:
+		m.drip_t = 0
+		if head_wet:
+			m.bub_t -= 1 + int(spd > 1.0)
+			if m.bub_t <= 0:
+				m.bub_t = 50 + randi() % 50
+				var mouth := p.pos + up * (float(p.h) * 0.3) + basis_r(a) * float(p.facing) * 3.0
+				for q in 1 + randi() % 3:
+					vfx.bubble(mouth + up * float(q) * 2.0, q == 0 and randf() < 0.4)
+		elif absf(p.vx) > 0.3 and frame % 4 == 0:
+			vfx.wake(p.pos + up * (float(p.h) * 0.25), up, -basis_r(a) * signf(p.vx))
+	elif m.drip_t > 0:
+		m.drip_t -= 1
+		if randf() < float(m.drip_t) / 100.0 * 0.35:
+			vfx.drip(p.pos + basis_r(a) * randf_range(-4.0, 4.0) + up * randf_range(-6.0, 8.0))
+
+## a foe or creature going into the water or out of it: its splash, by its size, where you'd see it
+func _water_fx_e(e: Enemy) -> void:
+	e.was_wet = e.in_liquid
+	if e.pos.distance_to(player.pos) > 260.0 or e.under or Vector2(e.vx, e.vy).length() < 0.5:
+		return
+	var up := e.pos.normalized()
+	var sz := clampf(float(e.w) / 14.0, 0.4, 2.0)
+	var spd := Vector2(e.vx, e.vy).length()
+	if e.in_liquid:
+		vfx.splash_in(e.pos, up, maxf(spd, 0.4), sz)
+		audio.play("splash", e.pos, clampf(0.2 + spd * 0.2 * sz, 0.2, 0.8))
+	else:
+		vfx.splash_out(e.pos, up, spd, sz)
 
 ## How much water is over you (27 Nov; user: "the deep condition doesnt depend on how much water im under. if i dig
 ## down and go under just a little bit of water i get hurt from it": it was how far under the sea's level you were):

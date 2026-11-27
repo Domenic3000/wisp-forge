@@ -10,7 +10,7 @@
 ## Big moments also light the world (`game.lights`, while they burn) and shake the view (`game.shake`).
 extends Node2D
 
-enum {DOT, STREAK, GLOW, SMOKE, RING, SHARD, FLARE, BOLT, BEAM, RUNE, CHUNK}
+enum {DOT, STREAK, GLOW, SMOKE, RING, SHARD, FLARE, BOLT, BEAM, RUNE, CHUNK, BUBBLE}
 const MAX := 2200
 
 var game
@@ -125,6 +125,47 @@ func _resize(n: int) -> void:
 	D.resize(n)
 	F.resize(n)
 
+# ------------------------------------------------------------------ water --
+## Water's effects (27 Nov; user: "the water is a bit too viscous, and i would like a more fleshed out water with
+## proper vfx"): a splash as something goes in (a crown of droplets thrown up and falling back, spray, a ring of
+## foam on the top, bubbles under it), a smaller one coming out (and drips off you after: main `_water_fx`), air
+## bubbles rising and popping at the top, foam in your wake swimming along the top. `size` scales by what it is
+## (a mage 1).
+const WATER_HI := Color(0.88, 0.96, 1.0)
+const WATER_LO := Color(0.45, 0.72, 1.0, 0.0)
+
+func splash_in(p: Vector2, up: Vector2, spd: float, size := 1.0) -> void:
+	var side := Vector2(-up.y, up.x)
+	var k := clampf(spd, 0.4, 4.0) * size
+	for q in int(8 + 7 * k):
+		var sv := up * randf_range(0.8, 2.2) * (0.5 + 0.5 * k) + side * randf_range(-1.2, 1.2) * (0.6 + 0.3 * k)
+		spawn(DOT, p + side * randf_range(-3.0, 3.0) * size, sv, 26 + randi() % 22, WATER_HI, WATER_LO, randf_range(1.0, 2.0), 1.0, false, 0.11, 0.985)
+	for q2 in int(3 + 3 * k):
+		spawn(STREAK, p, up * randf_range(1.6, 3.0) * (0.5 + 0.4 * k) + side * randf_range(-0.6, 0.6), 10 + randi() % 8, Color(0.95, 0.99, 1.0, 0.9), WATER_LO, 2.0, 1.0, false, 0.1, 0.96)
+	spawn(RING, p, Vector2.ZERO, 16, Color(0.9, 0.97, 1.0, 0.7), Color(0.6, 0.85, 1.0, 0.0), 2.0 * size, 9.0 * size + 3.0 * k, false)
+	for q3 in int(4 + 3 * k):
+		bubble(p - up * randf_range(3.0, 12.0) * size + side * randf_range(-5.0, 5.0) * size, randf() < 0.3)
+	stats["splashes"] = int(stats.get("splashes", 0)) + 1
+
+func splash_out(p: Vector2, up: Vector2, spd: float, size := 1.0) -> void:
+	var side := Vector2(-up.y, up.x)
+	for q in int(5 + 3 * clampf(spd, 0.0, 3.0) * size):
+		spawn(DOT, p + side * randf_range(-3.0, 3.0) * size, up * randf_range(0.4, 1.3) + side * randf_range(-0.7, 0.7), 20 + randi() % 14, WATER_HI, WATER_LO, 1.0, 1.0, false, 0.1, 0.985)
+	spawn(RING, p, Vector2.ZERO, 12, Color(0.9, 0.97, 1.0, 0.5), Color(0.6, 0.85, 1.0, 0.0), 2.0 * size, 7.0 * size, false)
+
+## one air bubble, rising (it pops at the top)
+func bubble(p: Vector2, big := false) -> void:
+	spawn(BUBBLE, p, Vector2(randf_range(-0.05, 0.05), 0.0), 120 + randi() % 120, Color(0.78, 0.92, 1.0, 0.85), Color(0.7, 0.9, 1.0, 0.5), 3.0 if big else 1.5, 3.0 if big else 1.5, false, -0.012, 0.95)
+
+## a drop running off something wet
+func drip(p: Vector2) -> void:
+	spawn(DOT, p, Vector2.ZERO, 30 + randi() % 20, Color(0.7, 0.88, 1.0, 0.9), Color(0.5, 0.75, 1.0, 0.0), 1.0, 1.0, false, 0.08, 0.99)
+
+## foam behind you swimming along the top
+func wake(p: Vector2, up: Vector2, back: Vector2) -> void:
+	for q in 2:
+		spawn(DOT, p + back * randf_range(0.0, 3.0), back * randf_range(0.2, 0.6) + up * randf_range(0.0, 0.25), 18 + randi() % 12, Color(0.92, 0.98, 1.0, 0.85), WATER_LO, 1.0, 1.0, false, 0.03, 0.93)
+
 ## a light in the world for a while (it fades), and a flash over the screen
 func light(p: Vector2, r: float, col: Color, ticks: int) -> void:
 	_flashes.append([p, r, col, ticks, ticks])
@@ -171,6 +212,14 @@ func tick() -> void:
 			continue
 		L[i] = l
 		var k := K[i]
+		if k == BUBBLE and (l + i) % 3 == 0 and Defs.KIND[game.type_at(P[i])] != Defs.K_LIQUID:
+			# (a bubble at the top: it pops in a few droplets)
+			var bp := P[i]
+			_kill(i)
+			for q in 3:
+				spawn(DOT, bp, Vector2.from_angle(randf() * TAU) * 0.35 - down * 0.2, 8 + randi() % 5, Color(0.85, 0.95, 1.0), Color(0.6, 0.85, 1.0, 0.0), 1.0, 1.0, false, 0.05, 0.95)
+			i -= 1
+			continue
 		if k != BOLT and k != BEAM and k != RUNE:
 			var v := V[i] + down * G[i]
 			v *= D[i]
@@ -739,6 +788,22 @@ func _draw_layer(ci: CanvasItem, add: int) -> void:
 			DOT:
 				var n := maxf(1.0, roundf(s))
 				ci.draw_rect(Rect2(sp - Vector2(floorf(n * 0.5), floorf(n * 0.5)), Vector2(n, n)), c)
+			BUBBLE:
+				# a little round bubble, wobbling as it rises: its rim, a glassy fill and a fleck of light
+				var wb := Vector2(roundf(sin(float(L[i]) * 0.35 + float(i)) * 0.8), 0.0)
+				var q0 := sp + wb
+				if s < 2.5:
+					ci.draw_rect(Rect2(q0 + Vector2(0, -1), Vector2(1, 1)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(0, 1), Vector2(1, 1)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(-1, 0), Vector2(1, 1)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(1, 0), Vector2(1, 1)), c)
+				else:
+					ci.draw_rect(Rect2(q0 + Vector2(-1, -2), Vector2(3, 1)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(-1, 2), Vector2(3, 1)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(-2, -1), Vector2(1, 3)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(2, -1), Vector2(1, 3)), c)
+					ci.draw_rect(Rect2(q0 + Vector2(-1, -1), Vector2(3, 3)), c * Color(1, 1, 1, 0.25))
+				ci.draw_rect(Rect2(q0 + Vector2(-1, -1), Vector2(1, 1)), Color(1, 1, 1, c.a))
 			CHUNK:
 				var n2 := maxf(1.0, roundf(s))
 				ci.draw_rect(Rect2(sp, Vector2(n2, n2)), c)

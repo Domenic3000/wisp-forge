@@ -534,6 +534,70 @@ func _test_ui() -> void:
 		("UI pixel %d screen pixels; %d satchel slots; satchel at %s, spells at %s%s" % [ui.U, slots, sr, hr, "; a shop too" if shop_shot else ""]) if bad.is_empty() else "; ".join(bad))
 	await _test_settings()
 	await _test_breath()
+	await _test_water()
+
+## (27 Nov; user: "the water is a bit too viscous, and i would like a more fleshed out water with proper vfx") a block
+## of water let go over level ground runs out along it (it keeps the way it's flowing: move.comp), and a mage
+## dropping into it splashes and breathes out bubbles
+func _test_water() -> void:
+	var pc: Vector2i = Build.cell_of(g.player.pos)
+	var st := _clear_stretch(pc.x + 120, 200, 40, 2)
+	var bad := []
+	var width := 0
+	var splashes0: int = int(g.vfx.stats.get("splashes", 0))
+	var bub := 0
+	if not _cs_found:
+		bad.append("no level ground near")
+	else:
+		var gr: int = g.builds.ground_row(st.x + 100)
+		var blk := PackedInt32Array()
+		blk.resize(10 * 24)
+		blk.fill(Defs.WATER | 0xFF00)
+		g.stamps.append({"x0": posmod(st.x + 95, Defs.NS), "y0": gr - 32, "w": 10, "h": 24, "data": blk})
+		await _frames(150)
+		var rr: Dictionary = g.gpu.read_rect(st.x, gr - 14, 200, 14)
+		var fg: PackedInt32Array = rr["fg"]
+		for x in 200:
+			for y in 14:
+				if (fg[y * 200 + x] & 255) == Defs.WATER:
+					width += 1
+					break
+		if width < 70:
+			bad.append("the water spread only %d cells wide in 2.5 s" % width)
+		# a mage dropping in: a splash, and bubbles under water
+		var back: Vector2 = g.player.pos
+		var god0: bool = g.test_god
+		g.test_god = true
+		var blk2 := PackedInt32Array()
+		blk2.resize(16 * 30)
+		blk2.fill(Defs.WATER | 0xFF00)
+		g.stamps.append({"x0": posmod(st.x + 92, Defs.NS), "y0": gr - 75, "w": 16, "h": 30, "data": blk2})
+		await _frames(2)
+		var wa: Vector2 = Build.cell_pos(st.x + 100, gr - 58)
+		g.player.pos = wa
+		g.player.vx = 0.0
+		g.player.vy = 1.5
+		g.cam_c = wa
+		for q in 40:
+			await _frames(1)
+			for k in g.vfx.K.size():
+				if g.vfx.K[k] == g.Vfx.BUBBLE:
+					bub += 1
+					break
+		_shot("water.png")
+		g.player.pos = back
+		g.cam_c = back
+		g.test_god = god0
+		var clr := PackedInt32Array()
+		clr.resize(200 * 80)
+		clr.fill(0xFF00 | 0x10000)
+		g.stamps.append({"x0": posmod(st.x, Defs.NS), "y0": gr - 80, "w": 200, "h": 80, "data": clr})
+		await _frames(10)
+	var spl: int = int(g.vfx.stats.get("splashes", 0)) - splashes0
+	if spl < 1:
+		bad.append("no splash going in")
+	_ok("water: a spill runs out along the ground; going in splashes, bubbles rise", bad.is_empty(),
+		("spread %d cells wide in 2.5 s; %d splash(es); bubbles about for %d ticks (picture water.png)" % [width, spl, bub]) if bad.is_empty() else "; ".join(bad))
 
 ## (27 Nov; user: "i don't see my breath level underwater. can we make a graphical meter that feels part of the
 ## world") bubbles over the mage's head: as many as the eighths of breath left, one popping as it runs out, gone
