@@ -778,9 +778,9 @@ func _say(v, text: String, ticks := 300) -> void:
 
 ## F near someone: a keeper takes a letter that's for them, or opens their shop; the asker offers their
 ## request (a second F takes it) or takes it back done; anyone else stops for a word
-func talk(m) -> bool:
-	var best = null
-	var bd := TALK
+func talk(m, pick = null) -> bool:
+	var best = pick                      # (pick: the one Z chose, main.gd `f_pick`)
+	var bd := TALK if pick == null else -1.0
 	for v in folk:
 		var d: float = v.pos.distance_to(m.pos)
 		if d < bd and v.fade == 0:

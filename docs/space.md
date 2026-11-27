@@ -53,7 +53,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   middle out (it took scattered cells at random), at the same pace (`_dig_carry`: each cell's old chance summed and
   carried over); mana by each cell's hardness (main `dig_mana`; under `MANA_FLOOR` the staff fizzles; the Prospector's
   Beam, `beam`, is the ship's and costs none); the tether and runes (`vfx.dig`); "+n Hull Plating" popping up (main
-  `_pick_acc`/`_pick_at`, flushed with `view_up()` out here; a popup's fifth element is its up). The same for a
+  `_pick_acc`/`_pick_at`, flushed with `view_up()` out here; a popup's fifth element is its up; overlay
+  `_draw_in_space` draws them, which it never did before: they were made but not shown). The same for a
   boarded wreck's hull. Test: `_test_wrecks`' salvage row (the middle first, the popup, mana spent with free magic
   off) and its Wisp Forge row (C opens it and forges out here)), `_update_rocks` (drift, spin, rebuild a few frames after digging, `_split` once you stop:
   pieces drift apart, scraps under `ROCK_SCRAP` crumble), `_rock_push` (the mage moved in 2-cell steps near

@@ -247,6 +247,15 @@ Notes for development sessions on this part of the game. The rules that apply ev
   away they give the torch back). Doors still don't hang in here (the wisp says so). Overlay `_draw_in_pocket` draws
   the pocket's workshops; `_sprite`'s turn and the tray are upright there. Test: `_test_pocket_build` (inside
   `_test_pocket`, section "pocket"; picture pocket_workshop.png).
+- (27 Nov, user: "building in the pocket dimension still works weird. i could only draw by pixels shapes didnt work.
+  also i removed some of the starting island and placed some dirt there and when i expanded the island the dirt
+  stayed there") The hand brush (no shape chosen) lays a small disc, not one cell (main `_cabin_edit` "block"/"wall":
+  `offs`, 21 cells); Unmake takes its shapes in the pocket too (main `_pocket_unshape`: press, drag, let go, front,
+  back and furniture, furniture refunded as planks; `vfx.shape_burst`); what's taken away pops up named (`_pick_acc`,
+  and overlay `_draw_in_pocket` now draws the popups). Ground you placed heals when the isle grows: pocket_isle
+  `_grow_ground` lays the isle's own ground (`ground_at`) over cells you made of plain ground (`GROUND`: dirt, grass,
+  stone, gravel, deepstone, sand, mud); what you built of anything else stays. Test: in `_test_pocket_build` (the
+  disc, an Unmake rectangle, the popups, the heal on expand).
 - The isle's art: trees, bushes, the arch's pillars and the obelisk's plinth stand on the ground really there
   (`_ground_row`; the edge curves away under its smooth top); an isle saved before is mended on load
   (`_ground_features`: only empty cells straight under them, down to ground).
@@ -267,3 +276,21 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Test: `_test_lights` (tests/building.gd, section "lights"; in the full run after `_test_remove`): a floor and a
   ceiling up in open air, a lantern hung (its flame cells, its wider light), a torch stood, Wisplight hung, put out,
   ten kept of twelve; the lantern taken up a torch; and the workshop mixes (below). Picture `lights_night.png`.
+
+## Letting go of what you carry (27 Nov, user: "no way to destroy unwanted inventory items", "or just drop them")
+- Shift + right-click a slot in the open satchel (materials, and torches, doors, furniture and workshops under "To set
+  down"): ui `_ask_discard` sets `_discard`, and `_discard_bar` at the satchel's top offers 1 / 10 / 100 / half / all
+  or keep. main `discard(what, m, fname, sk, n)` takes them away (they unravel into wisp-light, "fizzle"), clears the
+  hand if it was holding the last one, counts `stats_discarded`. Closing the satchel drops the question. Test: in
+  `_test_inworld` ("discard").
+
+## What F will use (27 Nov, user: "something that highlights whatever you are going to select when you press f and
+maybe a way to cycle through nearby objects")
+- main `f_list` (`_f_gather`, refreshed every 4 ticks by `_f_refresh`): what's in reach in the order F tries things,
+  so its first is what F does by itself: the skiff, a chest, a mystery's stone/pillar/lens (mystery `near_pos`,
+  `near_name`), the folk (nearest first), workshops, doors; in the pocket the arch, the Isle Heart and its workshops.
+  Not in space. overlay `_draw_f_target` brackets `f_target()` in pulsing gold and names it ("F  Open the chest"),
+  with "Z: next 2/3" when there's more than one. Z (`f_cycle`) sets `f_pick` (its key, `_f_key`); F then uses that one
+  (`_f_use`: towns `talk(m, pick)`, workshops `interact(m, pick)`, `_try_open_chest(pick)`, `_set_door`) until you walk
+  out of its reach. A bed (home) isn't listed: it's read from the GPU only when F is pressed. Test: in
+  `_test_inworld` ("F highlight", picture `f_highlight.png`).

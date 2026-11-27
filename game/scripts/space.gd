@@ -3940,7 +3940,7 @@ func _space_cast(m, st) -> void:
 	m.cast_latch = bool(s.get("single", false))
 	m.mana -= cost
 	game.spell_used(m, id, int(s["cd"]))
-	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
+	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "starcall"}
 	game.audio.play(String(s.get("snd", snd.get(id, "spark"))), m.pos, 0.8)
 	var hand: Vector2 = m.pos + st.axis_x() * (float(m.facing) * 6.0) - st.axis_y() * 0.5
 	var dir: Vector2 = (m.input.aim - hand).normalized()
@@ -4074,6 +4074,7 @@ func _sbolt_impact(pr: Dictionary, hit: bool, al) -> void:
 		"starfall":
 			_alien_blast(p, 17.0, 80.0)
 			game.vfx.blast(p, 17.0, 1)
+			game.audio.play("star_ring", p, 0.9)
 	game.vfx.impact(type, p, hit)
 
 ## a blast out here: every alien within r of p takes it (less toward the edge)

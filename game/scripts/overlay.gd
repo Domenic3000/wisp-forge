@@ -156,6 +156,51 @@ func _draw_popups() -> void:
 		draw_string(f, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+## What F will use (27 Nov; user: "something that highlights whatever you are going to select when you press f and
+## maybe a way to cycle through nearby objects"): gold corner brackets round it, pulsing, with what F does over it,
+## and "Z: next 1/3" when there's more than one thing in reach (main.gd `f_list`, `f_target`, `f_cycle`)
+func _draw_f_target() -> void:
+	if game.state != "play" or game.f_list.is_empty():
+		return
+	var t: Dictionary = game.f_target()
+	if t.is_empty():
+		return
+	var c: Vector2 = game.world_to_screen(t["pos"]).round()
+	var hz: Vector2 = ((t["half"] as Vector2) / game.zoom + Vector2(2, 2)).round()
+	var pl := 0.5 + 0.5 * sin(float(game.frame) * 0.12)
+	var gold := Color(1.0, 0.85, 0.4, 0.65 + 0.35 * pl)
+	var dark := Color(0.06, 0.04, 0.08, 0.6)
+	var arm := clampf(minf(hz.x, hz.y) * 0.5, 2.0, 5.0)
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var k := c + Vector2(sx * hz.x, sy * hz.y)
+			var hx: float = k.x - arm + 1.0 if sx > 0.0 else k.x       # (the arms reach in toward the middle)
+			var vy: float = k.y - arm + 1.0 if sy > 0.0 else k.y
+			for o in [Vector2(1, 1), Vector2.ZERO]:
+				var col: Color = dark if o != Vector2.ZERO else gold
+				draw_rect(Rect2(Vector2(hx, k.y) + o, Vector2(arm, 1)), col)
+				draw_rect(Rect2(Vector2(k.x, vy) + o, Vector2(1, arm)), col)
+	var txt := "F  %s" % String(t["name"])
+	var nf: int = game.f_list.size()
+	if nf > 1:
+		var at_k := 0
+		for q in nf:
+			if game._f_key(game.f_list[q]) == game._f_key(t):
+				at_k = q
+		txt += "    Z: next %d/%d" % [at_k + 1, nf]
+	var f: Font = PixelFont.make()
+	var px: float = float(game.scale_px)
+	var u: int = game.ui.U
+	var fs := PixelFont.SIZE * u
+	var sz := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	var sp := c - Vector2(0.0, hz.y + 3.0)
+	draw_set_transform(sp.round(), 0.0, Vector2.ONE / px)
+	var at := Vector2(-roundf(sz.x * 0.5 / u) * u, 0.0)
+	for o2 in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
+		draw_string(f, at + o2 * u, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.06, 0.04, 0.08, 0.85))
+	draw_string(f, at, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.92, 0.65, 0.95))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 const HAND_COL := Color(0.45, 0.85, 1.0)   # (vfx MANA_COL: the hand's ghost is drawn in the staff's light)
 
 func _draw_build_preview() -> void:
@@ -911,6 +956,7 @@ func _draw_in_space() -> void:
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], true)
 	_draw_skiff()
 	_draw_build_preview()                 # (building in the skiff's cabin out here)
+	_draw_popups()                        # (what you mined: user, 27 Nov, "i dont see the little indicators of what i harvested")
 	if game.ui.mouse_over_ui():
 		return
 	var m: Vector2 = (get_viewport().get_mouse_position() / game.scale_px).floor()
@@ -933,6 +979,8 @@ func _draw_in_pocket() -> void:
 	_draw_build_preview()
 	_draw_forge()
 	_draw_hand()
+	_draw_popups()               # (what you took away: user, 27 Nov, "the indicators of what was picked up also dont show up")
+	_draw_f_target()
 	if game.wisp_say_t > 0 and game.wisp_say != "":
 		_bubble(game.player.pos - game.basis_d(game.view_angle()) * 16.0, game.wisp_say, clampf(float(game.wisp_say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
 	if game.ui.mouse_over_ui():
@@ -1213,6 +1261,7 @@ func _draw_all() -> void:
 	_draw_hand()
 	_draw_pages()
 	_draw_popups()
+	_draw_f_target()
 	# particles (the light read where each is in the picture: near enough, the light is soft)
 	var pxf: Transform2D = game.screen_xf()
 	var paff: bool = game.screen_xf_ok()

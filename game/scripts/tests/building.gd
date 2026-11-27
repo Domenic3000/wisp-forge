@@ -1040,6 +1040,61 @@ func _test_inworld() -> void:
 	g.stamps.append({"x0": posmod(cx, Defs.NS), "y0": top - 90, "w": SW, "h": SH + 90, "data": clr})
 	_go(iw_back)
 	await _frames(30)
+	# ---- (27 Nov; user: "no way to destroy unwanted inventory items ... or just drop them") Shift + right-click in the
+	# open satchel asks, the bar lets go of some or all; furniture and workshops too
+	var ds_m := Defs.GRAVEL
+	m.inv[ds_m] += 25
+	var ds0: int = m.inv[ds_m]
+	if not g.ui.satchel_open:
+		g.ui.toggle_satchel()
+	g.ui._ask_discard({"what": "mat", "m": ds_m})
+	g.ui._update_satchel(g)
+	await _frames(2)
+	var ds_bar := false
+	for ch in g.ui.satchel.get_children():
+		if ch is BoxContainer:
+			for c2 in ch.get_children():
+				if c2 is Label and String((c2 as Label).text).begins_with("Discard %s" % Defs.NAMES[ds_m]):
+					ds_bar = true
+	var ds_ten: int = g.discard("mat", ds_m, "", "", 10)
+	var ds_all: int = g.discard("mat", ds_m, "", "", 999999)
+	m.furn.append({"name": "Test Stool", "rows": []})
+	var ds_f: int = g.discard("furn", -1, "Test Stool", "", 1)
+	g.items["st_kiln"] = int(g.items.get("st_kiln", 0)) + 2
+	var ds_k0 := int(g.items["st_kiln"])
+	var ds_s: int = g.discard("station", -1, "", "kiln", 1)
+	g.ui._discard = {}
+	g.ui.toggle_satchel()
+	ok["discard"] = ds_bar and ds_ten == 10 and ds_all == ds0 - 10 and m.inv[ds_m] == 0 and ds_f == 1 and ds_s == 1 and int(g.items["st_kiln"]) == ds_k0 - 1
+	txt.append("discard: the bar shown %s; 10 of %d %s let go %s, the rest %d; a carried piece %d, a workshop %d" % [ds_bar, ds0, Defs.NAMES[ds_m], ds_ten == 10, ds_all, ds_f, ds_s])
+	g.items["st_kiln"] = ds_k0 - 2
+	# ---- (27 Nov; user: "something that highlights whatever you are going to select when you press f and maybe a
+	# way to cycle through nearby objects") two workshops in reach: F's choice is bracketed, Z steps to the other,
+	# F then opens that one's panel
+	var fr: Vector2 = g.basis_r(atan2(m.pos.y, m.pos.x))
+	var fa = g.workshops.add("kiln", m.pos + fr * 8.0)
+	var fb = g.workshops.add("smelter", m.pos - fr * 14.0)
+	g._f_refresh()
+	var f_n: int = g.f_list.size()
+	var f_first: Dictionary = g.f_target()
+	var f_was_a: bool = not f_first.is_empty() and f_first["ref"] == fa
+	g.f_cycle()
+	var f_next: Dictionary = g.f_target()
+	var f_now_b: bool = not f_next.is_empty() and f_next["ref"] == fb
+	await _frames(3)
+	_shot("f_highlight.png")
+	fa.out.clear()
+	fb.out.clear()
+	g._interact()
+	var f_opened: bool = (g.state == "station" and g.workshops.open_st == fb) or not fb.store.is_empty()
+	if g.state == "station":
+		g.workshops.close()
+	g.workshops.list.erase(fa)
+	g.workshops.list.erase(fb)
+	g.f_pick = ""
+	g._f_refresh()
+	ok["F highlight"] = f_n >= 2 and f_was_a and f_now_b and f_opened
+	txt.append("F's choice: %d in reach, the nearer first %s, Z to the other %s, F opened it %s" % [f_n, f_was_a, f_now_b, f_opened])
 	var all_ok := true
 	var bad := []
 	for k in ok:

@@ -3786,6 +3786,75 @@ func _test_pocket_build() -> void:
 		if isle.at(li3, lj) == Defs.PLANK:
 			isle.remove(li3, lj)
 	g.hand_shape = 0
+	# ---- (27 Nov; user: "building in the pocket dimension still works weird. i could only draw by pixels shapes didnt
+	# work. also i removed some of the starting island and placed some dirt there and when i expanded the island the
+	# dirt stayed there") the brush lays a disc; Unmake takes a rectangle away, "+n" popping up; dirt put back into the
+	# isle heals into its ground as it grows
+	g.select_material(Defs.DIRT)
+	m.inv[Defs.DIRT] += 200
+	var bj: int = int(floor(isle.top_at(lx, isle.level))) - 40
+	var bc0 := 0
+	for bjj in range(bj - 4, bj + 5):
+		for bii in range(lx - 4, lx + 5):
+			if isle.at(bii, bjj) == Defs.DIRT:
+				bc0 += 1
+	g.test_aim = isle.cell_world(lx, bj)
+	await _frames(2)
+	g.test_cast = true
+	await _frames(4)
+	g.test_cast = false
+	await _frames(3)
+	var bc1 := 0
+	for bjj2 in range(bj - 4, bj + 5):
+		for bii2 in range(lx - 4, lx + 5):
+			if isle.at(bii2, bjj2) == Defs.DIRT:
+				bc1 += 1
+	var brush_ok: bool = bc1 - bc0 >= 15
+	pb_rows.append("%sthe brush laid a disc: %d dirt cells at once" % ["" if brush_ok else "(!) ", bc1 - bc0])
+	pb_ok = pb_ok and brush_ok
+	# Unmake, a rectangle over that disc (as the tick would: press there, drag, let go)
+	g._pick_acc = {}
+	var um0: int = m.inv[Defs.DIRT]
+	g.unmake_shape = 2
+	g.unmake_thick = 1
+	g.cabin_cast = true
+	g._pocket_unshape(m, isle, "front", lx - 4, bj - 4)
+	g._pocket_unshape(m, isle, "front", lx + 4, bj + 4)
+	g.cabin_cast = false
+	g._pocket_unshape(m, isle, "front", lx + 4, bj + 4)
+	var left := 0
+	for bjj3 in range(bj - 4, bj + 5):
+		for bii3 in range(lx - 4, lx + 5):
+			if isle.at(bii3, bjj3) == Defs.DIRT:
+				left += 1
+	var popped: bool = int(g._pick_acc.get(Defs.DIRT, 0)) > 0
+	await _frames(30)
+	popped = popped or not g.popups.is_empty()
+	var um_ok: bool = left == 0 and m.inv[Defs.DIRT] - um0 == bc1 - bc0 and popped
+	pb_rows.append("%sUnmake took a rectangle away: %d left, %d dirt back, \"+n Dirt\" %s" % ["" if um_ok else "(!) ", left, m.inv[Defs.DIRT] - um0, popped])
+	pb_ok = pb_ok and um_ok
+	# the isle's own ground dug out and filled again with dirt: as it grows, the dirt becomes its ground (grass on
+	# top, its layers under), not a block of dirt left as it was
+	var gx: int = lx + 20
+	var gtop: int = int(floor(isle.top_at(gx, isle.level)))
+	for hj in range(gtop, gtop + 8):
+		for hi in range(gx, gx + 6):
+			isle.remove(hi, hj)
+			isle.place(hi, hj, Defs.DIRT)
+	var lvl0: int = isle.level
+	var grew: bool = isle.expand()
+	var healed := 0
+	var still_made := 0
+	for hj2 in range(gtop, gtop + 8):
+		for hi2 in range(gx, gx + 6):
+			if isle.made[hj2 * isle.w + hi2] == 1:
+				still_made += 1
+			elif isle.at(hi2, hj2) != 0:
+				healed += 1
+	var top_grass: bool = isle.at(gx + 2, gtop) == Defs.GRASS or isle.at(gx + 2, int(floor(isle.top_at(gx + 2, isle.level)))) == Defs.GRASS
+	var heal_ok: bool = not grew or (still_made == 0 and healed >= 40 and top_grass)
+	pb_rows.append("%sdirt put back in the isle, then it grew (level %d -> %d): %d cells became its ground, %d left as placed, grass on top %s" % ["" if heal_ok else "(!) ", lvl0, isle.level, healed, still_made, top_grass])
+	pb_ok = pb_ok and heal_ok
 	g.test_aim = Vector2.ZERO
 	print("[pocketbuild] " + "\n[pocketbuild] ".join(pb_rows))
 	_ok("building in the pocket as outside: a workshop set down, worked, saved and taken up; a torch; shapes", pb_ok, "; ".join(pb_rows))

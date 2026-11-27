@@ -65,6 +65,7 @@ var satchel_open := false          # (I or Tab) the whole satchel; closed, a pou
 var pouch: HBoxContainer
 var pouch_hint: Label
 var _satchel_full := []            # the open satchel's parts (hidden while it's a pouch)
+var _discard := {}                 # (Shift + right-click on a slot: what the discard bar at the satchel's top offers to let go of)
 var mp_glow: Control
 var _satchel_scroll: ScrollContainer
 var death_txt: Label
@@ -1340,7 +1341,7 @@ func _build_settings() -> void:
 	grid.add_theme_constant_override("v_separation", 1)
 	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold to levitate (once forged)"],
 			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate: mana by how hard"],
-			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home; a workshop: load it"],
+			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home; a workshop: load it"], ["Z", "The next thing in reach for F"], ["Shift + right (satchel)", "Discard"],
 			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
 			["C", "The Wisp Forge"], ["J", "Recipe book"], ["I / Tab", "Open or close the satchel"], ["M", "Map (Tab: the galaxy)"],
 			["H", "Drink a Healing Draught"], ["B", "Build mode (G: shapes)"],
@@ -2090,6 +2091,7 @@ func open_plans() -> void:
 
 func toggle_satchel() -> void:
 	satchel_open = not satchel_open
+	_discard = {}
 	_inv_key = ""
 	_sfx("ui_click")
 
@@ -2101,6 +2103,7 @@ func _update_satchel(g) -> void:
 	for it in g.player.furn:
 		ik += String(it["name"]) + ";"
 	ik += "p%d" % int(g.items.get("potion", 0))
+	ik += "d" + str(_discard)
 	ik += "s%s%s" % [str(g.ships().keys()), g.ship_class()]
 	for did0 in Defs.DRAUGHTS:
 		ik += "%s%d%s" % [did0, int(g.items.get(did0, 0)), "*" if g.player.buffs.has(did0) else ""]
@@ -2144,6 +2147,8 @@ func _update_satchel(g) -> void:
 	# open: sections, each sorted by name (user, 23 Nov: "its a little convoluted with everything"): what
 	# Conjure lays, what grows, ores and ingots, what you set down whole (click: in your hand, build mode on
 	# it), draughts and sigils. The name of what the pointer's over shows under it.
+	if not _discard.is_empty():
+		_discard_bar(g)
 	var groups := [[], [], [], [], []]
 	for m in Defs.NM:
 		if g.player.inv[m] <= 0 or Defs.KIND[m] == Defs.K_EMPTY or m == Defs.TORCH or m == Defs.WOODDOOR:
@@ -2158,10 +2163,15 @@ func _update_satchel(g) -> void:
 		var gr := _sat_section(["Blocks", "Nature", "Ores & ingots"][gi2])
 		for m2 in groups[gi2]:
 			var can: bool = Defs.PLACE[m2] != 0
-			var tip := "%s  ×%d\n%s" % [Defs.NAMES[m2], g.player.inv[m2], "Click: Conjure places it\nRight-click: pin it to the belt" if can else "Kept for forging and trade"]
+			var tip := "%s  ×%d\n%s\nShift + right-click: discard" % [Defs.NAMES[m2], g.player.inv[m2], "Click: Conjure places it\nRight-click: pin it to the belt" if can else "Kept for forging and trade"]
 			var sl := _sat_slot(gr, Icons.mat(m2), _count(g.player.inv[m2]), m2 == g.mat, tip, String(Defs.NAMES[m2]))
 			if can:
 				sl.gui_input.connect(_on_mat_input.bind(m2))
+			else:
+				var m3: int = m2
+				sl.gui_input.connect(func(ev: InputEvent):
+					if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT and ev.shift_pressed:
+						_ask_discard({"what": "mat", "m": m3}))
 			n += 1
 	# plans you know (Build.plans): never used up, raised by Conjure from your materials
 	var gpl: GridContainer = null
@@ -2224,10 +2234,16 @@ func _update_satchel(g) -> void:
 	if not placing.is_empty():
 		var gp := _sat_section("To set down")
 		for pl in placing:
-			var psl := _sat_slot(gp, pl[3], str(pl[4]), false, "%s  ×%d\nClick: in your hand, to set down\nRight-click: pin it to the belt" % [pl[5], pl[4]], String(pl[5]))
+			var psl := _sat_slot(gp, pl[3], str(pl[4]), false, "%s  ×%d\nClick: in your hand, to set down\nRight-click: pin it to the belt\nShift + right-click: discard" % [pl[5], pl[4]], String(pl[5]))
 			psl.gui_input.connect(func(ev: InputEvent):
 				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 					game.hold_carried(String(pl[0]), int(pl[1]), String(pl[2]))
+				elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT and ev.shift_pressed:
+					match String(pl[0]):
+						"torch": _ask_discard({"what": "mat", "m": Defs.TORCH})
+						"door": _ask_discard({"what": "mat", "m": Defs.WOODDOOR})
+						"furn": _ask_discard({"what": "furn", "name": String(pl[5])})
+						"station": _ask_discard({"what": "station", "sk": String(pl[2])})
 				elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
 					game.belt_pin(_place_id(pl)))
 			n += 1
@@ -2717,7 +2733,70 @@ func _on_mat_input(ev: InputEvent, m: int) -> void:
 	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 		game.select_material(m)
 	elif ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
-		game.belt_pin("m%d" % m)             # (pinned to the item belt)
+		if ev.shift_pressed:
+			_ask_discard({"what": "mat", "m": m})
+		else:
+			game.belt_pin("m%d" % m)             # (pinned to the item belt)
+
+## Shift + right-click on a slot: the bar at the top of the satchel asks how many to let go of
+func _ask_discard(d: Dictionary) -> void:
+	_discard = d
+	_inv_key = ""
+	_sfx("ui_click")
+
+## what the discard bar is about: [name, how many you have, icon]
+func _discard_info(g) -> Array:
+	match String(_discard.get("what", "")):
+		"mat":
+			var m: int = _discard["m"]
+			return [String(Defs.NAMES[m]), g.player.inv[m], Icons.mat(m)]
+		"furn":
+			var fname := String(_discard["name"])
+			var nf := 0
+			for it in g.player.furn:
+				if String(it["name"]) == fname:
+					nf += 1
+			return [fname, nf, Icons.item("chair")]
+		"station":
+			var sk := String(_discard["sk"])
+			return [String(Defs.STATIONS[sk]["name"]) if Defs.STATIONS.has(sk) else sk, int(g.items.get("st_" + sk, 0)), Icons.station(sk)]
+	return ["", 0, null]
+
+## the discard bar (27 Nov; user: "no way to destroy unwanted inventory items ... or just drop them"): what, how
+## many you have, and how many to let go of (1, 10, 100, half, all), or keep them
+func _discard_bar(g) -> void:
+	var info := _discard_info(g)
+	var have: int = info[1]
+	if have <= 0:
+		_discard = {}
+		return
+	var bar := _box(false, 3)
+	if info[2] != null:
+		bar.add_child(_tex(info[2]))
+	bar.add_child(_label("Discard %s (%s):" % [info[0], _count(have)], 11, Color(1.0, 0.72, 0.6)))
+	var opts := []
+	for q in [1, 10, 100]:
+		if q < have:
+			opts.append([str(q), q])
+	if have >= 4:
+		opts.append(["half", have / 2])
+	opts.append(["all", have])
+	for o in opts:
+		var b := _button(String(o[0]))
+		var cnt: int = o[1]
+		b.pressed.connect(func():
+			var d := _discard
+			game.discard(String(d.get("what", "")), int(d.get("m", -1)), String(d.get("name", "")), String(d.get("sk", "")), cnt)
+			if String(o[0]) == "all":
+				_discard = {}
+			_inv_key = "")
+		bar.add_child(b)
+	var keep := _button("keep")
+	keep.pressed.connect(func():
+		_discard = {}
+		_inv_key = "")
+	bar.add_child(keep)
+	satchel.add_child(bar)
 
 func _on_reshape(shk: String) -> void:
 	game.reshape_ship(shk)

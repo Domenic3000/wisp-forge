@@ -117,8 +117,8 @@ func nearest(m, reach := REACH):
 	return best
 
 ## F: open the nearest station's panel (true if there was one)
-func interact(m) -> bool:
-	var st = nearest(m)
+func interact(m, pick = null) -> bool:
+	var st = nearest(m) if pick == null else pick     # (pick: the one Z chose, main.gd `f_pick`)
 	if st == null:
 		return false
 	if st.kind == "altar":

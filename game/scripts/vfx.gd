@@ -221,6 +221,15 @@ func cast(id: String, at: Vector2, dir: Vector2, m = null) -> void:
 				var o := _rand_dir() * randf_range(14.0, 20.0)
 				spawn(DOT, c + o, -o * 0.06, 14 + randi() % 8, cc, gc * Color(1, 1, 1, 0), 1.0, 1.0)
 			light(c, 40.0, gc * 1.2, 20)
+		"starcall":
+			# (Starfall: the staff calls up to the sky) a thread of light leaps up off the staff's tip
+			var su := _up(at)
+			spawn(FLARE, at, Vector2.ZERO, 16, Color(1, 1, 0.95), gc * Color(1, 1, 1, 0), 6.0, 0.0)
+			for k4 in 14:
+				spawn(STREAK, at + su * float(k4) * 1.5, su * randf_range(2.0, 3.6) + _rand_dir() * 0.15, 8 + randi() % 8, cc, Color(0.75, 0.6, 1.0, 0.0), 2.0, 1.0, true, 0.0, 0.94)
+			for k5 in 10:
+				spawn(DOT, at + _rand_dir() * 3.0, su * randf_range(0.4, 1.2) + _rand_dir() * 0.3, 16 + randi() % 12, Color(1, 1, 0.9), Color(0.7, 0.6, 1.0, 0.0), 1.0, 1.0, true, -0.01, 0.95)
+			light(at, 24.0, gc, 10)
 		"burst":
 			for k3 in 6:
 				spawn(DOT, at, d.rotated(randf_range(-0.9, 0.9)) * randf_range(0.4, 1.4), 10 + randi() % 8, cc, gc * Color(1, 1, 1, 0), 2.0, 1.0, true, -0.02, 0.9)
@@ -274,6 +283,16 @@ func trail(pr: Dictionary) -> void:
 			spawn(STREAK, p, -v * 0.5 + _rand_dir() * 0.4, 10, cc, clear, 2.0, 1.0, true, 0.0, 0.9)
 			if randf() < 0.3:
 				spawn(FLARE, p + _rand_dir() * 4.0, Vector2.ZERO, 12, Color(1, 1, 0.9), clear, 3.0, 0.0)
+		"falling":
+			# (Starfall, 27 Nov) a falling star sheds stardust: twinkles that hang in its wake and drift down
+			# slowly, gold near it, cooling to rose and violet, so its path stays drawn in the sky a moment
+			for k in 3:
+				var dc: Color = [Color(1, 1, 0.9), Color(1.0, 0.85, 0.5), Color(1.0, 0.7, 0.75)][k]
+				spawn(DOT, p - v * randf() * 1.2 + _rand_dir() * 1.2, _rand_dir() * 0.12, 30 + randi() % 30, dc, Color(0.6, 0.45, 1.0, 0.0), 1.0, 1.0, true, 0.004, 0.96)
+			if randf() < 0.45:
+				spawn(FLARE, p - v * randf() * 2.0 + _rand_dir() * 2.5, _rand_dir() * 0.05, 24 + randi() % 20, Color(1, 1, 0.95), Color(0.75, 0.6, 1.0, 0.0), randf_range(2.0, 3.5), 0.0)
+			if randf() < 0.5:
+				spawn(STREAK, p, -v * 0.35 + _rand_dir() * 0.5, 12, Color(1.0, 0.8, 0.45), clear, 2.0, 1.0, true, 0.0, 0.9)
 		"ember":
 			if randf() < 0.6:
 				spawn(DOT, p, _rand_dir() * 0.25 - v * 0.1, 10 + randi() % 8, cc, clear, 1.0, 1.0, true, 0.0, 0.92)
@@ -347,6 +366,29 @@ func impact(type: String, p: Vector2, hit: bool) -> void:
 				spawn(FLARE, p + _rand_dir() * randf_range(4.0, 34.0), Vector2.ZERO, 16 + randi() % 20, Color(1, 1, 0.9), clear, 5.0, 0.0)
 			light(p, 90.0, Color(1.6, 1.3, 0.9), 30)
 			screen_flash(Color(1.0, 0.85, 0.6), 0.55)
+		"starburst":
+			# (Starfall, 27 Nov; user: "the beam of light thing is kind of cool, but maybe it has a flat box at the
+			# bottom which doesnt look very cohesive with the world. maybe we could make it look more like its name")
+			# the star breaks where it lands: an eight-pointed glint, a white flash, rings of light running out
+			# along the ground, and its shards thrown up glittering, to fall back slowly as stardust
+			var sb_up := _up(p)
+			spawn(FLARE, p, Vector2.ZERO, 26, Color(1, 1, 1), Color(1.0, 0.75, 0.45, 0.0), 26.0, 8.0)
+			spawn(GLOW, p, Vector2.ZERO, 24, Color(1, 1, 0.95), Color(0.8, 0.55, 1.0, 0.0), 30.0, 8.0)
+			spawn(GLOW, p, Vector2.ZERO, 40, Color(1.0, 0.7, 0.35, 0.8), Color(0.55, 0.4, 1.0, 0.0), 14.0, 44.0)
+			spawn(RING, p, Vector2.ZERO, 20, Color(1, 1, 0.9), clear, 4.0, 52.0)
+			spawn(RING, p, Vector2.ZERO, 30, Color(0.85, 0.7, 1.0), Color(0.6, 0.45, 1.0, 0.0), 2.0, 36.0)
+			for k in 30:
+				var sv := (sb_up * randf_range(0.6, 1.6) + _rand_dir() * 0.9).normalized() * randf_range(1.2, 3.6)
+				var shc: Color = [Color(1, 1, 0.95), Color(1.0, 0.85, 0.5), Color(0.8, 0.85, 1.0), Color(1.0, 0.7, 0.8)][k % 4]
+				spawn(STREAK, p, sv, 14 + randi() % 14, shc, Color(0.65, 0.5, 1.0, 0.0), 2.0, 1.0, true, 0.06, 0.94)
+			for k2 in 46:
+				var dv := (sb_up * randf_range(0.2, 1.4) + _rand_dir()).normalized() * randf_range(0.3, 2.2)
+				var dc2: Color = [Color(1, 1, 0.9), Color(1.0, 0.82, 0.45), Color(0.9, 0.8, 1.0)][k2 % 3]
+				spawn(DOT, p + _rand_dir() * 2.0, dv, 50 + randi() % 50, dc2, Color(0.55, 0.4, 1.0, 0.0), randf_range(1.0, 2.0), 1.0, true, 0.02, 0.95)
+			for k3 in 12:
+				spawn(FLARE, p + (sb_up * randf_range(0.0, 1.2) + _rand_dir()).normalized() * randf_range(5.0, 30.0), sb_up * 0.08, 22 + randi() % 26, Color(1, 1, 0.95), Color(0.7, 0.55, 1.0, 0.0), randf_range(3.0, 6.0), 0.0)
+			light(p, 95.0, Color(1.5, 1.3, 1.1), 34)
+			screen_flash(Color(0.95, 0.85, 1.0), 0.5)
 	stats["impacts"] = int(stats.get("impacts", 0)) + 1
 	stats["last_impact"] = type
 
@@ -652,6 +694,16 @@ func _draw_projectiles() -> void:
 				for k in 3:
 					var o := Vector2.from_angle(float(_t) * 0.25 + k * TAU / 3.0) * (5.0 / z)
 					glow.draw_rect(Rect2((sp + o).floor(), Vector2.ONE * 2.0), Color(0.6, 0.45, 0.7))
+			"falling":
+				# (Starfall) a star: a long tail, white, then gold, then rose fading out, and an eight-pointed glint
+				var ft: Vector2 = game.world_to_screen(p - v * 12.0) - sp
+				_line(glow, sp, sp + ft, Color(0.8, 0.5, 0.9) * Color(1, 1, 1, 0.45))
+				_line(glow, sp, sp + ft * 0.6, Color(1.0, 0.75, 0.45) * Color(1, 1, 1, 0.8))
+				_line(glow, sp + Vector2(1, 0), sp + Vector2(1, 0) + ft * 0.3, Color(1.0, 0.9, 0.6) * Color(1, 1, 1, 0.6))
+				_line(glow, sp, sp + ft * 0.3, Color(1, 1, 0.95))
+				_disc(glow, sp, 2.0 / z, Color(1, 1, 0.95))
+				_flare(glow, sp, 7.0 / z * pulse, Color(1, 1, 0.95))
+				_xflare(glow, sp, 4.0 / z * pulse, Color(1.0, 0.85, 0.55))
 			"star":
 				# a long tapering tail of light behind it, and a four-pointed glint
 				var tl: Vector2 = game.world_to_screen(p - v * 7.0) - sp
@@ -785,18 +837,44 @@ func _bolt(ci: CanvasItem, a: Vector2, b: Vector2, c: Color, sd: float) -> void:
 		var fe := mid + (d * 0.4).rotated(r.randf_range(-0.9, 0.9))
 		_line(ci, mid, fe, c * Color(1, 1, 1, 0.55))
 
-## a pillar of light rising from p (world) along `up`, w wide and h tall (pixels), brightest at its foot
+## a pillar of light rising from p (world) along `up`, w wide and h tall (pixels), brightest near its foot
+## (27 Nov: it stood on a flat base, "a flat box at the bottom", the user said; now it narrows to a point at the
+## foot too, a long thin shard of light)
 func _beam(ci: CanvasItem, p: Vector2, up: Vector2, w: float, h: float, c: Color) -> void:
 	var a: Vector2 = game.world_to_screen(p)
 	var b: Vector2 = game.world_to_screen(p + up * h * game.zoom)
 	var d := b - a
 	var nrm := d.orthogonal().normalized()
-	# three bands, the outer ones faint, each narrowing to nothing at the top
+	# three bands, the outer ones faint, each widest a little way up and narrowing to nothing at both ends
 	for band in 3:
 		var ww: float = w * float([1.0, 0.55, 0.22][band])
 		var cc: Color = c * Color(1, 1, 1, float([0.16, 0.32, 0.85][band]))
-		var pts := PackedVector2Array([(a - nrm * ww).floor(), (a + nrm * ww).floor(), b.floor()])
+		var mid := a + d * 0.08
+		var pts := PackedVector2Array([a.floor(), (mid + nrm * ww).floor(), b.floor(), (mid - nrm * ww).floor()])
 		ci.draw_colored_polygon(pts, cc)
+
+## a glint's diagonal points (with `_flare`'s four, an eight-pointed star), shorter
+func _xflare(ci: CanvasItem, sp: Vector2, r: float, c: Color) -> void:
+	var n := int(roundf(r))
+	for k in range(1, n + 1):
+		var cc := c * Color(1, 1, 1, 1.0 - float(k) / float(n + 1))
+		for dd in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
+			ci.draw_rect(Rect2((sp + dd * float(k)).floor(), Vector2.ONE), cc)
+
+## (Starfall, 27 Nov) where the star comes from: a tear of light opening in the sky over where you aimed, a
+## ring and a glint, a scatter of motes drawn in to it
+func star_gate(p: Vector2, fall: Vector2) -> void:
+	var gc := Color(1.0, 0.8, 0.45)
+	var clear := Color(0.7, 0.55, 1.0, 0.0)
+	spawn(RUNE, p, Vector2.ZERO, 30, Color(1.0, 0.82, 0.5, 0.55), clear, 7.0, 11.0, true, 0.0, 1.0, 0.12)
+	spawn(RING, p, Vector2.ZERO, 18, Color(1, 1, 0.95), clear, 2.0, 16.0)
+	spawn(FLARE, p, Vector2.ZERO, 22, Color(1, 1, 1), clear, 12.0, 2.0)
+	spawn(GLOW, p, Vector2.ZERO, 26, gc, clear, 10.0, 4.0)
+	for k in 16:
+		var o := _rand_dir() * randf_range(8.0, 16.0)
+		spawn(DOT, p + o, -o * 0.07 + fall * 0.2, 14 + randi() % 10, Color(1, 1, 0.9), clear, 1.0, 1.0)
+	light(p, 36.0, gc, 18)
+	stats["star_gates"] = int(stats.get("star_gates", 0)) + 1
 
 ## a magic circle: two rings and runes between them, turning
 func _rune(ci: CanvasItem, sp: Vector2, r: float, c: Color, ang: float) -> void:

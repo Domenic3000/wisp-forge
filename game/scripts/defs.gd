@@ -1672,7 +1672,7 @@ const SPELLS := {
 	"frost": {"name": "Frostbite", "mana": 12.0, "cd": 18, "color": Color(0.6667, 0.9412, 1.0000), "desc": "Freezes water and lava. Slows foes."},
 	"quake": {"name": "Quake Orb", "mana": 40.0, "cd": 60, "color": Color(0.7843, 0.5490, 1.0000), "desc": "A heavy orb that shatters a huge cavity."},
 	"blink": {"name": "Blink", "mana": 22.0, "cd": 30, "color": Color(0.55, 0.95, 1.0), "desc": "Step through space to the cursor."},
-	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "A falling star: a huge fiery blast."},
+	"starfall": {"name": "Starfall", "mana": 45.0, "cd": 70, "color": Color(1.0, 0.82, 0.45), "desc": "Calls a star down from the sky onto where you aim: a huge blast of starlight."},
 	"mend": {"name": "Mending", "mana": 60.0, "cd": 600, "color": Color(0.55, 1.0, 0.62), "desc": "Knit your wounds: 30 health over a second. Ten seconds to recover."},
 	# (26 Nov, "more kinds of light (... a light spell)"): main `_wisplight`
 	"wisplight": {"name": "Wisplight", "mana": 10.0, "cd": 20, "single": true, "color": Color(0.7, 0.92, 1.0), "desc": "Hangs a light of wisp-fire where you point, and it stays (up to ten; the oldest goes out). Cast it on one again and it goes out."},
@@ -1698,7 +1698,7 @@ const SPELL_FX := {
 	"frost": {"core": Color(0.92, 1.0, 1.0), "glow": Color(0.45, 0.8, 1.0), "glow_r": 8.0, "trail": "frost", "impact": "shatter", "cast": "flick"},
 	"tide": {"core": Color(0.75, 0.9, 1.0), "glow": Color(0.2, 0.5, 1.0), "glow_r": 8.0, "trail": "water", "impact": "splash", "cast": "flick"},
 	"quake": {"core": Color(0.95, 0.85, 1.0), "glow": Color(0.6, 0.3, 1.0), "glow_r": 12.0, "trail": "rocks", "impact": "quake", "cast": "rune"},
-	"starfall": {"core": Color(1.0, 1.0, 0.95), "glow": Color(1.0, 0.75, 0.35), "glow_r": 16.0, "trail": "star", "impact": "nova", "cast": "rune"},
+	"starfall": {"core": Color(1.0, 1.0, 0.95), "glow": Color(1.0, 0.75, 0.35), "glow_r": 12.0, "trail": "falling", "impact": "starburst", "cast": "starcall"},
 	"blink": {"core": Color(0.9, 1.0, 1.0), "glow": Color(0.45, 0.9, 1.0)},
 	"mend": {"core": Color(0.9, 1.0, 0.9), "glow": Color(0.45, 1.0, 0.55)},
 	"wisplight": {"core": Color(0.95, 1.0, 1.0), "glow": Color(0.55, 0.85, 1.0)},

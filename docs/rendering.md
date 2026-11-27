@@ -76,3 +76,9 @@ Notes for development sessions on this part of the game. The rules that apply ev
   layer above the mountains; `cloudDensity` is both): render.comp draws them over everything
   at their height (fog when you fly in), react.comp spawns rain/snow/ash only under the high layer's undersides, and
   grid.comp writes each mage's cloud depth to counts[58] (`Mage.fog`: misted sprite, wisps in overlay).
+
+## Water's look (27 Nov, user: "in large bodies of water the water texture looks very tiled")
+- render.comp `fgColor`, M_WATER: was two sine waves (one a diagonal stripe every few cells), a lattice over a whole
+  sea. Now two sizes of slowly drifting value noise (`vnoise` seeds 63, 64; stretched sideways into streaks) cut into
+  the ramp's bands, darkest to lightest 2, 0, 1, 3 (pixel art, no smooth gradient), a little per-cell dither where
+  bands meet, and the odd cell glinting. The open top row is unchanged.

@@ -164,14 +164,25 @@ func ground_at(i: int, j: int, lv: int) -> int:
 		return Defs.GRAVEL
 	return Defs.STONE
 
+## what counts as ground when the isle grows round it (`_grow_ground`): put back by you, it becomes the isle's own
+const GROUND := [Defs.DIRT, Defs.GRASS, Defs.STONE, Defs.GRAVEL, Defs.DEEPSTONE, Defs.SAND, Defs.MUD]
+
 func _grow_ground(lv: int) -> void:
 	var hw: int = LEVELS[lv]
 	for i in range(maxi(0, W / 2 - hw - 2), mini(W, W / 2 + hw + 3)):
 		for j in range(maxi(0, SURF - 30), H):
 			var k := j * W + i
-			if guard[k] == 1 or natural[k] == 2 or (cells[k] != 0 and natural[k] == 0):
+			# (ground you put back, dirt or stone or the like, heals into the isle's own layers as it grows: 27 Nov,
+			# user: "i removed some of the starting island and placed some dirt there and when i expanded the island
+			# the dirt stayed there"; what you built of anything else is never touched)
+			var healed: bool = made[k] == 1 and GROUND.has(int(cells[k]))
+			if guard[k] == 1 or natural[k] == 2 or (cells[k] != 0 and natural[k] == 0 and not healed):
 				continue                    # (never over what you built, the heart or the arch)
 			var m := ground_at(i, j, lv)
+			if healed and m != 0 and m == cells[k]:
+				made[k] = 0                 # (already what the isle's ground is there: it's the isle's own now)
+				natural[k] = 1
+				continue
 			if m == 0 or m == cells[k]:
 				continue                    # (the isle's own ground is laid again as it is at this level: old grass
 											#  edges buried by the growth turn to earth)

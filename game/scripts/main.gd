@@ -1619,6 +1619,8 @@ func _door_bump(m: Body) -> void:
 ## F: open a chest in reach, otherwise open or close the nearest door
 func _interact() -> void:
 	if pocket.active:
+		if f_pick != "" and _f_use(player):
+			return
 		pocket.interact(player)
 		return
 	if _door_interact(player):
@@ -1634,6 +1636,8 @@ func _interact() -> void:
 		else:
 			pocket.dock(player, dt)
 		return
+	if f_pick != "" and not space.active and player.aboard == null and _f_use(player):
+		return                             # (Z chose something else nearby: F uses that)
 	if _skiff_interact(player):
 		return
 	if space.wreck_interact(player):      # (out in space: a wreck's cache within reach)
@@ -1654,6 +1658,137 @@ func _interact() -> void:
 		return
 	if not d.is_empty():
 		_set_door(d, not d["open"], player.pos)
+
+## ---- What F will use (27 Nov; user: "something that highlights whatever you are going to select when you press f
+## and maybe a way to cycle through nearby objects"). `f_list` is what's in reach, in the order F tries things (so
+## its first is what F does by itself); overlay.gd brackets the one F will use and names it; Z steps to the next
+## and F then uses that one (`f_pick`, its key) until you walk away from it.
+var f_list := []            # [{kind, pos, half (its half size), name, ref}]
+var f_pick := ""            # the one Z chose ("": F's own first choice)
+const F_DOOR := 26.0
+
+func _f_key(t: Dictionary) -> String:
+	var r = t.get("ref")
+	if r is Object:
+		return "%s%d" % [t["kind"], (r as Object).get_instance_id()]
+	return "%s%s" % [t["kind"], str((t["pos"] as Vector2).round())]
+
+## what F will use now ({} for nothing)
+func f_target() -> Dictionary:
+	if f_list.is_empty():
+		return {}
+	if f_pick != "":
+		for t in f_list:
+			if _f_key(t) == f_pick:
+				return t
+	return f_list[0]
+
+## Z: on to the next thing in reach
+func f_cycle() -> void:
+	_f_refresh()
+	if f_list.size() < 2:
+		if f_list.size() == 1:
+			ui.toast("Only one thing in reach", Color(0.8, 0.85, 1.0), 1.2)
+		return
+	var cur := f_target()
+	var k := 0
+	for q in f_list.size():
+		if _f_key(f_list[q]) == _f_key(cur):
+			k = q
+	f_pick = _f_key(f_list[(k + 1) % f_list.size()])
+	audio.play("ui_click", player.pos, 0.4)
+
+func _f_refresh() -> void:
+	f_list = _f_gather(player) if player != null and not player.dead and state == "play" else []
+	if f_pick != "":
+		var still := false
+		for t in f_list:
+			if _f_key(t) == f_pick:
+				still = true
+		if not still:
+			f_pick = ""
+
+func _f_gather(m: Mage) -> Array:
+	var out := []
+	if pocket.active:
+		if pocket.place != "isle":
+			return out
+		var cx: int = pocket.Isle.W / 2
+		for pk in [["arch", pocket.Isle.ARCH_DX, 12.0, Vector2(9, 12), "Leave by the arch"], ["heart", pocket.Isle.HEART_DX, 10.0, Vector2(6, 8), "The Isle Heart"]]:
+			var bp := Vector2(float(cx + int(pk[1])) + 0.5, pocket.isle.top_at(cx + int(pk[1]), 0) - float(pk[2]))
+			if String(pocket.near) == String(pk[0]):
+				out.append({"kind": pk[0], "pos": pocket.isle.to_world(bp), "half": pk[3], "name": pk[4], "ref": null})
+		_f_stations(m, out)
+		return out
+	if space.active or m.aboard != null:
+		return out
+	if skiff != null and m.pos.distance_to(skiff.pos) < skiff.w * 0.5 + 10.0:
+		out.append({"kind": "skiff", "pos": skiff.pos, "half": Vector2(skiff.w, skiff.h) * 0.5, "name": "Board the skiff", "ref": null})
+	var nc := _chest_in_reach()
+	if not nc.is_empty():
+		var c: Chest = nc[0]
+		out.append({"kind": "chest", "pos": c.pos, "half": Vector2(c.w, c.h) * 0.5, "name": "Open the chest", "ref": c})
+	if not mystery.near.is_empty():
+		var mp = mystery.near_pos()
+		if mp != null:
+			out.append({"kind": "mystery", "pos": mp, "half": Vector2(6, 8), "name": mystery.near_name(), "ref": null})
+	var fl := []
+	for v in towns.folk:
+		var dv: float = v.pos.distance_to(m.pos)
+		if dv < towns.TALK and v.fade == 0:
+			fl.append([dv, v])
+	fl.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	for e in fl:
+		var v2 = e[1]
+		var who := "Trade with" if v2.keeper else "Talk to"
+		out.append({"kind": "folk", "pos": v2.pos, "half": Vector2(v2.w, v2.h) * 0.5, "name": "%s %s" % [who, v2.name if towns.knows(v2) or v2.keeper else "them"], "ref": v2})
+	_f_stations(m, out)
+	var dl := []
+	for d in doors:
+		var dd: float = (d["pos"] as Vector2).distance_to(m.pos)
+		if dd < F_DOOR:
+			dl.append([dd, d])
+	dl.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	for e2 in dl:
+		var d2: Dictionary = e2[1]
+		out.append({"kind": "door", "pos": d2["pos"], "half": Vector2(float(d2["w"]), float(d2["h"])) * 0.5, "name": "Close the door" if bool(d2["open"]) else "Open the door", "ref": d2})
+	return out
+
+func _f_stations(m: Mage, out: Array) -> void:
+	var sl := []
+	for st in workshops.here_list():
+		var ds: float = st.pos.distance_to(m.pos)
+		if ds < workshops.REACH:
+			sl.append([ds, st])
+	sl.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	for e in sl:
+		var st2 = e[1]
+		var sd: Dictionary = Defs.STATIONS.get(st2.kind, {})
+		out.append({"kind": "station", "pos": st2.pos, "half": Vector2(float(sd.get("w", 12)), float(sd.get("h", 12))) * 0.5,
+			"name": "Use the %s" % String(sd.get("name", st2.kind)), "ref": st2})
+
+## F with something Z chose: use that one (false if it's gone)
+func _f_use(m: Mage) -> bool:
+	_f_refresh()
+	if f_pick == "":
+		return false
+	var t := f_target()
+	match String(t["kind"]):
+		"arch", "heart":
+			pocket.near = String(t["kind"])
+			return pocket.interact(m)
+		"skiff": return _skiff_interact(m)
+		"chest":
+			_try_open_chest(t["ref"])
+			return true
+		"mystery": return mystery.interact(m)
+		"folk": return towns.talk(m, t["ref"])
+		"station": return workshops.interact(m, t["ref"])
+		"door":
+			var d: Dictionary = t["ref"]
+			_set_door(d, not bool(d["open"]), m.pos)
+			return true
+	return false
 
 ## Chests near a mage obey gravity: one rigid object, so it falls and lands whole. A chest
 ## resting on something stays exactly where it is: the collision grid is built around the mage and
@@ -1727,8 +1862,8 @@ func _chest_in_reach() -> Array:
 			return []
 	return nc
 
-func _try_open_chest() -> void:
-	var nc := _chest_in_reach()
+func _try_open_chest(pick: Chest = null) -> void:
+	var nc := _chest_in_reach() if pick == null else [pick, 0.0]
 	if nc.is_empty():
 		return
 	var c: Chest = nc[0]
@@ -2449,6 +2584,8 @@ func _tick() -> void:
 		pu[3] = int(pu[3]) - 1
 	while not popups.is_empty() and int(popups[0][3]) <= 0:
 		popups.pop_front()
+	if frame % 4 == 1:
+		_f_refresh()
 	_pick_t += 1
 	if _pick_t >= 24:
 		_pick_t = 0
@@ -2860,10 +2997,18 @@ func _cast(m: Mage, id: String, aim: Vector2) -> void:
 		return
 	m.mana -= cost
 	spell_used(m, id, int(s["cd"]))
-	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "rare"}
+	var snd := {"mote": "spark", "spark": "spark", "fireball": "fire", "tide": "water", "frost": "frost", "quake": "boom", "starfall": "starcall"}
 	audio.play(String(s.get("snd", snd.get(id, "spark"))), m.pos, 0.8)
 	var st := _staff(m, aim)
 	var pd: Dictionary = Defs.PROJ[id]
+	if id == "starfall" and not space.active:
+		# (27 Nov; user: "maybe we could make it look more like its name") the star comes down out of the sky
+		var sf := _star_from(m, aim)
+		_spawn_proj(id, sf[0], (sf[1] as Vector2) * float(pd["speed"]) * 1.15, "player")
+		vfx.cast(id, st[0], st[1], m)
+		vfx.star_gate(sf[0], sf[1])
+		audio.play("star_fall", sf[0], 0.9)
+		return
 	# (a core spell may fly as a fan of several: "multi", "spread" radians apart)
 	var nmul := int(pd.get("multi", 1))
 	for mk in nmul:
@@ -2890,6 +3035,44 @@ func _blink(m: Mage, aim: Vector2) -> bool:
 			m.vy = 0
 			return true
 	return false
+
+## Starfall (27 Nov; user: "starfall could us a rework for its graphics and sounds ... the beam of light thing is
+## kind of cool, but maybe it has a flat box at the bottom ... maybe we could make it look more like its name?"):
+## where the star opens and which way it falls. Over where you aim (no further than STAR_REACH from you), aslant
+## from your side, as high as the open air goes (up to STAR_H cells: under a cave's roof it opens just below it).
+## Returns [where it opens, which way it falls (unit)].
+const STAR_H := 110.0
+const STAR_REACH := 240.0
+func _star_from(m: Mage, aim: Vector2) -> Array:
+	var t := aim
+	if t.distance_to(m.pos) > STAR_REACH:
+		t = m.pos + (t - m.pos).normalized() * STAR_REACH
+	var ta := atan2(t.y, t.x)
+	var rt := basis_r(ta)
+	var side := -1.0 if (t - m.pos).dot(rt) >= 0.0 else 1.0        # (it comes in from your side of the target)
+	var dir := (-basis_d(ta) + rt * side * 0.4).normalized()
+	_use_grid(m)
+	var h := 0.0
+	var open_from := -1.0
+	while h < STAR_H + 40.0:
+		var q := t + dir * h
+		if not in_grid(q, 2.0):
+			break
+		var gq := to_grid(q)
+		var solid := gsolid(int(floor(gq.x)), int(floor(gq.y)))
+		if open_from < 0.0:
+			if not solid:
+				open_from = h                 # (aimed into the ground: out of it first)
+			elif h > 40.0:
+				break
+		elif solid or h - open_from >= STAR_H:
+			h -= 3.0
+			break
+		h += 2.0
+	if open_from < 0.0:
+		return [t + dir * 12.0, -dir]
+	h = maxf(h, open_from + 8.0)
+	return [t + dir * h, -dir]
 
 func _spawn_proj(type: String, p: Vector2, v: Vector2, owner: String) -> void:
 	var pd: Dictionary = Defs.PROJ[type]
@@ -3441,6 +3624,7 @@ func _impact(pr: Dictionary, hit: bool, e, hit_m) -> void:
 			_explode(p, 22.0, mini(3, tier + 1), 2, 70.0)
 		"starfall":
 			_explode(p, 17.0, maxi(2, tier), 1, 80.0)
+			audio.play("star_ring", p, 0.9)
 		"tide":
 			brushes.append([p, 8.0, 3, Defs.WATER, 0, 0, 0])
 			if e != null:
@@ -5842,6 +6026,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_drink(player)
 		elif k == KEY_F:
 			_interact()
+		elif k == KEY_Z:
+			f_cycle()
 		elif k == KEY_X and player.aboard != null:
 			ui.toast("You're inside the ship: F to step out, G (landed) to go below", Color(0.75, 0.85, 1.0), 2.0)
 		elif k == KEY_K and pocket.active:
@@ -5988,6 +6174,48 @@ func hold_plan(id: String) -> void:
 ## couldn't be set down from it; 25 Nov: one way to place what you carry): it goes in your hand and the cast
 ## button becomes Conjure, which sets it down where you point (see "the hand" below).
 ## what: "furn" (Mage.furn index `idx`), "station" (a kind taken up), "torch", "door".
+## Lets go of n of something in the satchel (27 Nov; user: "no way to destroy unwanted inventory items ... or just drop
+## them"): it unravels into wisp-light and is gone. what: "mat" (a material, `m`), "furn" (furniture carried whole, by
+## its name), "station" (a workshop, `sk`). Returns how many went.
+func discard(what: String, m := -1, fname := "", sk := "", n := 1) -> int:
+	var gone := 0
+	var col := Color(0.75, 0.85, 1.0)
+	match what:
+		"mat":
+			if m <= 0 or m >= Defs.NM:
+				return 0
+			gone = mini(n, player.inv[m])
+			player.inv[m] -= gone
+			col = Defs.COLOR[m]
+			if player.inv[m] <= 0 and mat == m and hand_item.is_empty():
+				mat = 0
+		"furn":
+			for k in range(player.furn.size() - 1, -1, -1):
+				if gone >= n:
+					break
+				if String(player.furn[k]["name"]) == fname:
+					player.furn.remove_at(k)
+					gone += 1
+			carried_pick.erase(fname)
+			if not hand_item.is_empty() and String(hand_item.get("name", "")) == fname and gone > 0:
+				hand_item = {}
+		"station":
+			var have := int(items.get("st_" + sk, 0))
+			gone = mini(n, have)
+			items["st_" + sk] = have - gone
+			if not hand_item.is_empty() and String(hand_item.get("sk", "")) == sk and have - gone <= 0:
+				hand_item = {}
+	if gone > 0:
+		var up := view_up()
+		for q in mini(14, 4 + gone):
+			var d := Vector2.from_angle(randf() * TAU)
+			vfx.spawn(Vfx.DOT, player.pos + d * randf_range(2.0, 7.0), up * randf_range(0.3, 0.9) + d * 0.2, 24 + randi() % 20, col, Color(0.45, 0.85, 1.0, 0.0), 1.0, 1.0, true, 0.0, 0.97)
+		audio.play("fizzle", player.pos, 0.5)
+		stats_discarded += gone
+	return gone
+
+var stats_discarded := 0
+
 func hold_carried(what: String, idx := -1, sk := "") -> void:
 	if player.aboard != null and not pocket.active:
 		ui.toast("Step off the ship to set that down", Color(1, 0.8, 0.6), 2.0)
@@ -6214,13 +6442,69 @@ func pocket_unmake(m: Mage, body) -> bool:
 	if cabin_cast and not _cabin_latch and String(L[0]) in ["furn", "all"] and workshops.take_at(m, m.input.aim):
 		_cabin_latch = true           # (a workshop under it: taken up whole, into the satchel)
 		return true
-	_hand_over = {"cat": Build.CAT_REMOVE, "name": "Unmake", "kind": "remove", "layer": String(L[0]), "cost": {}}
-	var t0 := build_thick
-	build_thick = maxi(unmake_thick, 2)
-	_cabin_edit(m, body)
-	build_thick = t0
-	_hand_over = {}
+	# (27 Nov; user: "building in the pocket dimension still works weird. i could only draw by pixels shapes didnt work":
+	# taking away there followed a little square brush whatever shape was chosen; now press, drag, let go, as outside)
+	var bb: Vector2 = body.to_body(m.input.aim) + body.com
+	_pocket_unshape(m, body, String(L[0]), int(floor(bb.x)), int(floor(bb.y)))
 	return true
+
+## Unmake in the pocket as outside: press, drag, let go, and the line, rectangle or frame (G) is taken away, of what V
+## says (blocks, back walls, furniture, everything), into the satchel ("+n Dirt" rising from it); the heart and the
+## arch are never taken
+func _pocket_unshape(m: Mage, sk, layer: String, ci: int, cj: int) -> void:
+	build_prev = {}
+	if cabin_cast and not _pk_drag:
+		_pk_drag = true
+		_pk_from = Vector2i(ci, cj)
+	var from := _pk_from if _pk_drag else Vector2i(ci, cj)
+	var cells: Array = Build.shape_cells(from, Vector2i(ci, cj), clampi(unmake_shape, 1, 3), maxi(unmake_thick, 1))
+	var too_big := cells.size() > Build.SHAPE_MAX_CELLS
+	var good := []
+	var prev := []
+	if not too_big:
+		for c in cells:
+			var cv: Vector2i = c
+			if not sk.in_room(cv.x, cv.y):
+				continue
+			var k: int = cv.y * sk.w + cv.x
+			var has_front: bool = sk.can_take(k)
+			var has_back: bool = sk.bg[k] != 0 and sk.bg[k] != sk.design_bg[k]
+			var has_furn: bool = sk.deco[k] != 0
+			if (layer in ["front", "all"] and has_front) or (layer in ["back", "all"] and has_back) or (layer in ["furn", "all"] and has_furn):
+				good.append(cv)
+				prev.append([sk.cell_world(cv.x, cv.y), Color(1.0, 0.5, 0.4)])
+	build_prev = {"cells": prev, "ok": not too_big and not good.is_empty()}
+	build_prev["text"] = ("Too big to take in one go (at most %d cells)" % Build.SHAPE_MAX_CELLS) if too_big else "Unmake %s: %d cells" % [UNMAKE_SHAPES[clampi(unmake_shape, 1, 3)], good.size()]
+	if _pk_drag and not cabin_cast:
+		_pk_drag = false
+		if too_big or good.is_empty():
+			return
+		var furn := 0
+		for c2 in good:
+			var cw: Vector2i = c2
+			var k2: int = cw.y * sk.w + cw.x
+			if layer in ["front", "all"] and sk.can_take(k2):
+				var got: int = sk.remove(cw.x, cw.y, false)
+				if got != 0:
+					m.inv[got] += 1
+					_pick_acc[got] = int(_pick_acc.get(got, 0)) + 1
+			if layer in ["back", "all"] and sk.bg[k2] != 0 and sk.bg[k2] != sk.design_bg[k2]:
+				var gb: int = sk.bg[k2]
+				sk.bg[k2] = sk.design_bg[k2]
+				m.inv[gb] += 1
+				_pick_acc[gb] = int(_pick_acc.get(gb, 0)) + 1
+				sk.touch(cw.x, cw.y)
+			if layer in ["furn", "all"] and sk.deco[k2] != 0:
+				furn += 1
+				sk.deco[k2] = 0
+				sk.touch(cw.x, cw.y)
+			cabin_stats["removed"] += 1
+		if furn > 0:
+			m.inv[Defs.PLANK] += maxi(1, furn / 10)
+		_pick_at = sk.cell_world(ci, cj)
+		sk.dirty = true
+		vfx.shape_burst(prev.map(func(e): return e[0]), false)
+		audio.play("dig", m.pos, 0.6)
 
 ## Plans in the pocket (user, 25 Nov: "the pocket dimension should use the same system for building as outside
 ## the pocket dimension"): a room, house, roof, stairs or platform planned in the isle's own cells (as on the
@@ -6689,8 +6973,8 @@ func _pick_flush() -> void:
 	var ks := _pick_acc.keys()
 	ks.sort_custom(func(a, b): return int(_pick_acc[a]) > int(_pick_acc[b]))
 	var up: Vector2 = _pick_at.normalized()
-	if space != null and space.active:
-		up = view_up()                  # (out in space, up on the screen: 27 Nov, digging there pops these up too)
+	if (space != null and space.active) or (pocket != null and pocket.active):
+		up = view_up()                  # (out in space and in the pocket, up on the screen: 27 Nov, these pop up there too)
 	var k := 0
 	for t in ks:
 		if k >= 3:
@@ -8904,21 +9188,33 @@ func _cabin_edit(m: Mage, sk) -> void:
 		return
 	if kind != "remove":
 		_pk_drag = false
+	# (27 Nov; user: in the pocket "i could only draw by pixels": the hand's brush there lays a disc as Conjure's own
+	# does on the planet, about five across, not a cell at a time)
+	var offs := []
+	if pocket.active and not build_on and (kind == "block" or kind == "wall"):
+		for oj in range(-3, 4):
+			for oi in range(-3, 4):
+				if oi * oi + oj * oj <= 7:
+					offs.append(Vector2i(oi, oj))
+	else:
+		for dj0 in t:
+			for di0 in t:
+				offs.append(Vector2i(di0 - t / 2, dj0 - t / 2))
 	match kind:
 		"block", "wall":
 			var mat: int = piece["mat"]
-			for dj in t:
-				for di in t:
-					var i := ci - t / 2 + di
-					var j := cj - t / 2 + dj
-					if not sk.in_room(i, j):
-						continue
-					if kind == "block" and (sk.at(i, j) != 0 or sk.in_seat(i, j)):
-						continue
-					if kind == "wall" and int(sk.bg[j * sk.w + i]) == mat:
-						continue
-					cells.append(Vector2i(i, j))
-					prev.append([sk.cell_world(i, j), Defs.COLOR[mat]])
+			for off in offs:
+				var ov: Vector2i = off
+				var i := ci + ov.x
+				var j := cj + ov.y
+				if not sk.in_room(i, j):
+					continue
+				if kind == "block" and (sk.at(i, j) != 0 or sk.in_seat(i, j)):
+					continue
+				if kind == "wall" and int(sk.bg[j * sk.w + i]) == mat:
+					continue
+				cells.append(Vector2i(i, j))
+				prev.append([sk.cell_world(i, j), Defs.COLOR[mat]])
 			ok = not cells.is_empty() and m.inv[mat] >= cells.size()
 			build_prev = {"cells": prev, "ok": ok}
 			if cabin_cast and ok and frame % 3 == 0:
@@ -9012,6 +9308,8 @@ func _cabin_edit(m: Mage, sk) -> void:
 						var got: int = sk.remove(cv.x, cv.y, false)
 						if got != 0:
 							m.inv[got] += 1
+							_pick_acc[got] = int(_pick_acc.get(got, 0)) + 1
+							_pick_at = sk.cell_world(cv.x, cv.y)
 					if layer in ["back", "all"] and sk.bg[k4] != 0 and sk.bg[k4] != sk.design_bg[k4]:
 						var gb: int = sk.bg[k4]
 						sk.bg[k4] = sk.design_bg[k4]          # (what was there as forged comes back: the glass pane)

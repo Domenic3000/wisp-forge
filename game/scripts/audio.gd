@@ -1127,6 +1127,11 @@ func _build_sfx() -> void:
 	sfx["chest_vanish"] = _wav(_chime([1567.98, 2093.0, 2637.0, 3136.0, 2637.0], 0.05, 0.35, 0.1))
 	# a coin: two bright metal pings
 	sfx["coin"] = _wav(_mix(_fm(0.25, 1975.5, 1.41, 2.0, 14.0, 0.09, 18.0), _late(_fm(0.25, 2637.0, 1.41, 1.6, 16.0, 0.07, 18.0), 0.05)))
+	# Starfall (27 Nov; user: "starfall could us a rework for its graphics and sounds. its sounds th same as getting an
+	# item"): a call rising up to the sky, the star's falling whistle, and a ringing of glassy starlight over the blast
+	sfx["starcall"] = _wav(_echo(_mixn([_sweep(0.5, 260.0, 1300.0, "sine", 3.0, 0.13), _fm(0.6, 880.0, 2.01, 2.0, 4.0, 0.05, 3.0), _grains(0.55, 22, 0.006, 0.95, 0.1, 3.5)]), 0.11, 0.35, 3))
+	sfx["star_fall"] = _wav(_mixn([_sweep(0.75, 2300.0, 420.0, "sine", 1.6, 0.07), _band(0.75, 0.45, 0.95, 2.2, 0.06, 15.0)]))
+	sfx["star_ring"] = _wav(_mixn([_echo(_chime([1568.0, 1975.5, 2349.3, 3136.0], 0.035, 1.4, 0.06), 0.13, 0.4, 3), _grains(1.3, 44, 0.006, 0.9, 0.14, 2.4), _band(0.6, 0.3, 0.9, 5.0, 0.12, 60.0)]))
 	sfx["rare"] = _wav(_chime([523.25, 659.25, 783.99, 1046.5, 1318.5, 1568.0], 0.09, 0.9, 0.2))
 	sfx["forge"] = _wav(_mixn([_fm(0.7, 392.0, 3.5, 4.0, 5.0, 0.12, 8.0), _chime([523.25, 659.25, 783.99], 0.07, 0.7, 0.14), _band(0.2, 0.1, 0.8, 20.0, 0.25)]))
 	# a wooden door: a creak and a soft knock as it opens, a firmer thud as it shuts

@@ -193,6 +193,33 @@ func tick() -> void:
 		if (d["vault"] as Vector2).distance_to(p) < REACH:
 			near = {"kind": "vault", "i": 0}
 
+## where what's in reach stands (main.gd's F highlight), or null
+func near_pos() -> Variant:
+	if near.is_empty():
+		return null
+	var d := data()
+	var lists := {"stone": "stones", "pillar": "pillars", "beacon": "beacons", "lens": "lenses", "shrine": "shrines"}
+	var kd := String(near["kind"])
+	if lists.has(kd):
+		var arr: Array = d.get(lists[kd], [])
+		var i := int(near["i"])
+		return arr[i]["pos"] if i >= 0 and i < arr.size() else null
+	if d.has(kd):
+		return d[kd]
+	return null
+
+## what F does to it, in a few words
+func near_name() -> String:
+	match String(near.get("kind", "")):
+		"stone": return "Read the stone"
+		"pillar": return "Ring the pillar"
+		"beacon": return "Light the beacon"
+		"lens": return "Turn the lens"
+		"shrine": return "Wake the shrine"
+		"plaque": return "Read the plaque"
+		"vault": return "Claim the vault"
+	return "Look"
+
 ## F: read a stone, ring a pillar, or claim the vault (true if it did)
 func interact(_m) -> bool:
 	if near.is_empty():
