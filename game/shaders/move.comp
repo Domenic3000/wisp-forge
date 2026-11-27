@@ -11,7 +11,8 @@ uint T_(uint c) { return c & 255u; }
 void sw(inout uint x, inout uint y) { uint t = x; x = y; y = t; }
 bool faller(uint c) { uint k = KIND[c & 255u]; return k == K_POWDER || k == K_LIQUID; }
 bool liquid(uint c) { return KIND[c & 255u] == K_LIQUID; }
-bool riser(uint c) { uint t = c & 255u; return KIND[t] == K_GAS || (t == M_FIRE && ((c >> 16) & 255u) < 24u); }
+// (a flame breaks loose and rises only in its last 12 ticks: 27 Nov, it had climbed ~40 cells lighting all it passed)
+bool riser(uint c) { uint t = c & 255u; return KIND[t] == K_GAS || (t == M_FIRE && ((c >> 16) & 255u) < 12u); }
 bool emptyish(uint c) { uint t = c & 255u; return t == 0u || KIND[t] == K_GAS; }
 bool disp(uint a, uint b) { return canDisp(a & 255u, b & 255u); }
 float slide(uint c) { uint t = c & 255u; if (t == M_SNOW || t == M_ASH) return 0.3; if (t == M_GRAVEL) return 0.65; return 1.0; }

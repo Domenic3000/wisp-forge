@@ -187,12 +187,16 @@ func _init() -> void:
 	_def(AIR, "Air", K_EMPTY, ["#000000"], {})
 	_def(STONE, "Stone", K_SOLID, ["#6b6f7a", "#626672", "#737786", "#5b5f6a"], {"hard": 1})
 	_def(DIRT, "Dirt", K_SOLID, ["#7a5234", "#6e4a2f", "#845a39", "#704c30"], {})
-	_def(GRASS, "Grass", K_SOLID, ["#4f9a3a", "#5aa842", "#478f34", "#62b04a"], {"fuel": 18, "ign": 0.25})
+	# (fire, 27 Nov; user: "fire is a little crazy. it will burn whole houses and forest down from one fireball"):
+	# "fuel" is how many ticks a cell burns and "ign" its chance a tick to catch from fire beside it; together they
+	# say how often fire passes on. Kept low enough that a fire burns what it hits and some way round it, then dies
+	# down: one fireball takes a tree, or about a third of a wooden house (measured: /home/claude/tools/fire_sim.py)
+	_def(GRASS, "Grass", K_SOLID, ["#4f9a3a", "#5aa842", "#478f34", "#62b04a"], {"fuel": 12, "ign": 0.15})
 	_def(SAND, "Sand", K_POWDER, ["#e0c27a", "#d6b66c", "#e8cc88", "#d0ad62"], {"dens": 5})
 	_def(WATER, "Water", K_LIQUID, ["#2d6fd1", "#3478dc", "#2a68c6", "#3a80e0"], {"dens": 2, "alpha": 0.72})
 	_def(LAVA, "Lava", K_LIQUID, ["#ff6a1a", "#ff8c22", "#f2501a", "#ffa531"], {"dens": 3, "hard": 2, "self": 1, "glow": Vector3(1.0, 0.42, 0.1)})
-	_def(WOOD, "Wood", K_SOLID, ["#6b4423", "#5f3c1f", "#774b27", "#633f20"], {"fuel": 130, "ign": 0.035})
-	_def(LEAF, "Leaves", K_SOLID, ["#2f7a32", "#37883a", "#29702c", "#3f9442"], {"fuel": 28, "ign": 0.22})
+	_def(WOOD, "Wood", K_SOLID, ["#6b4423", "#5f3c1f", "#774b27", "#633f20"], {"fuel": 70, "ign": 0.02})
+	_def(LEAF, "Leaves", K_SOLID, ["#2f7a32", "#37883a", "#29702c", "#3f9442"], {"fuel": 14, "ign": 0.09})
 	_def(FIRE, "Fire", K_FIRE, ["#ffd23a", "#ff9a1f", "#ff6a12", "#fff07a"], {"self": 1, "glow": Vector3(1.0, 0.55, 0.18)})
 	_def(SMOKE, "Smoke", K_GAS, ["#555555", "#4a4a4a", "#606060", "#525252"], {"alpha": 0.55})
 	_def(STEAM, "Steam", K_GAS, ["#d8e4ee", "#c8d6e2", "#e6eef4", "#bfcfdc"], {"alpha": 0.45})
@@ -207,18 +211,18 @@ func _init() -> void:
 	_def(ICE, "Ice", K_SOLID, ["#a8d8f0", "#bfe4f6", "#96cce8", "#cfeefa"], {"hard": 1, "alpha": 0.85})
 	_def(MAGMAROCK, "Magma Rock", K_SOLID, ["#3a1e1a", "#44211a", "#331a16", "#55261a"], {"hard": 3, "glow": Vector3(0.07, 0.015, 0.005)})
 	_def(CORE, "Planet Core", K_SOLID, ["#fff2b0", "#ffe066", "#ffd23a", "#ffffff"], {"hard": 4, "self": 1, "glow": Vector3(1.0, 0.85, 0.45)})
-	_def(SHROOM, "Glowshroom", K_SOLID, ["#3fe0c8", "#6ff5dc", "#2bb8a6", "#a0fff0"], {"self": 1, "fuel": 40, "ign": 0.08, "glow": Vector3(0.15, 0.85, 0.75)})
+	_def(SHROOM, "Glowshroom", K_SOLID, ["#3fe0c8", "#6ff5dc", "#2bb8a6", "#a0fff0"], {"self": 1, "fuel": 30, "ign": 0.05, "glow": Vector3(0.15, 0.85, 0.75)})
 	_def(GRAVEL, "Gravel", K_POWDER, ["#7d7a78", "#6a6866", "#8a8784", "#5e5c5a"], {"dens": 6})
 	_def(BRICK, "Brick", K_SOLID, ["#9c4a3a", "#a85440", "#8e4234", "#6d625a"], {"hard": 2})
 	_def(GLASS, "Glass", K_SOLID, ["#bfe6f0", "#d2f0f8", "#aee0ec", "#e4f8ff"], {"alpha": 0.4})
 	_def(SNOW, "Snow", K_POWDER, ["#f0f6ff", "#e4eefa", "#ffffff", "#dae6f4"], {"dens": 3})
 	_def(CRYSTAL, "Prism Crystal", K_SOLID, ["#e070ff", "#f2a6ff", "#b84cf0", "#ffd6ff"], {"hard": 1, "self": 1, "glow": Vector3(0.75, 0.3, 0.95)})
 	_def(ASH, "Ash", K_POWDER, ["#5a5552", "#4e4a48", "#686260", "#454240"], {"dens": 3})
-	_def(PLANK, "Planks", K_SOLID, ["#b07a44", "#a06c3a", "#bc864e", "#966434"], {"fuel": 110, "ign": 0.05})
-	_def(CACTUS, "Cactus", K_SOLID, ["#4e8a3a", "#5a9a44", "#447c32", "#66a64e"], {"fuel": 40, "ign": 0.05})
+	_def(PLANK, "Planks", K_SOLID, ["#b07a44", "#a06c3a", "#bc864e", "#966434"], {"fuel": 50, "ign": 0.012})
+	_def(CACTUS, "Cactus", K_SOLID, ["#4e8a3a", "#5a9a44", "#447c32", "#66a64e"], {"fuel": 30, "ign": 0.03})
 	# debris from collapsing background plants (collected as Wood / Leaves)
-	_def(TIMBER, "Timber", K_POWDER, ["#8a5a2e", "#6b4423", "#9c6a38", "#5f3c1f"], {"dens": 4, "fuel": 100, "ign": 0.04})
-	_def(LITTER, "Leaf Litter", K_POWDER, ["#3f8a38", "#2f7a32", "#58a048", "#6a5a2a"], {"dens": 1, "fuel": 30, "ign": 0.25})
+	_def(TIMBER, "Timber", K_POWDER, ["#8a5a2e", "#6b4423", "#9c6a38", "#5f3c1f"], {"dens": 4, "fuel": 60, "ign": 0.015})
+	_def(LITTER, "Leaf Litter", K_POWDER, ["#3f8a38", "#2f7a32", "#58a048", "#6a5a2a"], {"dens": 1, "fuel": 16, "ign": 0.12})
 	# building materials (found in ruins, castles and towns; some can be forged)
 	_def(MASONRY, "Stone Block", K_SOLID, ["#8a8c96", "#7c7e88", "#989aa4", "#6e707a"], {"hard": 1})
 	_def(SANDSTONE, "Sandstone", K_SOLID, ["#d8b878", "#c8a868", "#e4c88a", "#b8985c"], {"hard": 1})
@@ -231,24 +235,24 @@ func _init() -> void:
 	PLACE[OPENCHEST] = 0
 	# a one-way platform (landings, walkways): solid to sand and water, but you and the foes
 	# jump up through it and can drop down through it (down + jump)
-	_def(SCAFFOLD, "Scaffold", K_SOLID, ["#a87442", "#8a5c32", "#bc864e", "#4a2e18"], {"fuel": 90, "ign": 0.05})
+	_def(SCAFFOLD, "Scaffold", K_SOLID, ["#a87442", "#8a5c32", "#bc864e", "#4a2e18"], {"fuel": 45, "ign": 0.012})
 	SPAN[SCAFFOLD] = 20
 	# props: furniture and town details stamped into the background (props.gd); each cell keeps its
 	# palette colour. Harvesting one gives planks.
-	_def(DECOR, "Furnishings", K_SOLID, ["#6b4423", "#3a2412", "#8f5f33", "#b07a44"], {"fuel": 80, "ign": 0.05})
+	_def(DECOR, "Furnishings", K_SOLID, ["#6b4423", "#3a2412", "#8f5f33", "#b07a44"], {"fuel": 50, "ign": 0.015})
 	PLACE[DECOR] = 0
 	BGDEBRIS[DECOR] = TIMBER
 	# doors: walk into one (or press F) to open it, F again to close it; the open door is drawn by the
 	# overlay, the closed one is cells that block like a wall
-	_def(WOODDOOR, "Door", K_SOLID, ["#5a3a1e", "#7a4e28", "#9a6634", "#b98048"], {"hard": 1, "fuel": 120, "ign": 0.03})
+	_def(WOODDOOR, "Door", K_SOLID, ["#5a3a1e", "#7a4e28", "#9a6634", "#b98048"], {"hard": 1, "fuel": 60, "ign": 0.01})
 	PLACE[WOODDOOR] = 0
 	SPAN[WOODDOOR] = 40
 	# the new biomes' plants and ground: giant mushrooms (caps glow faintly), fungal ground, dry grass
-	_def(CAP, "Mushroom Cap", K_SOLID, ["#8a2a3a", "#b83a4a", "#d8586a", "#5a1a2a"], {"fuel": 30, "ign": 0.03, "glow": Vector3(0.012, 0.006, 0.016)})
-	_def(STALK, "Mushroom Stalk", K_SOLID, ["#cfc4a8", "#b8ab8c", "#e4dcc4", "#9a8e72"], {"fuel": 40, "ign": 0.03})
+	_def(CAP, "Mushroom Cap", K_SOLID, ["#8a2a3a", "#b83a4a", "#d8586a", "#5a1a2a"], {"fuel": 25, "ign": 0.02, "glow": Vector3(0.012, 0.006, 0.016)})
+	_def(STALK, "Mushroom Stalk", K_SOLID, ["#cfc4a8", "#b8ab8c", "#e4dcc4", "#9a8e72"], {"fuel": 30, "ign": 0.02})
 	_def(MYCELIUM, "Mycelium", K_SOLID, ["#4a3a58", "#5e4a70", "#7a6290", "#3a2c46"], {"glow": Vector3(0.004, 0.002, 0.008)})
-	_def(DRYGRASS, "Dry Grass", K_SOLID, ["#9a7a2a", "#c8a040", "#e0c060", "#7a5a1e"], {"fuel": 30, "ign": 0.06})
-	_def(ROOT, "Roots", K_SOLID, ["#4a2e18", "#5a3820", "#6a4428", "#3e2614"], {"fuel": 110, "ign": 0.03})
+	_def(DRYGRASS, "Dry Grass", K_SOLID, ["#9a7a2a", "#c8a040", "#e0c060", "#7a5a1e"], {"fuel": 20, "ign": 0.05})
+	_def(ROOT, "Roots", K_SOLID, ["#4a2e18", "#5a3820", "#6a4428", "#3e2614"], {"fuel": 60, "ign": 0.015})
 	# star iron: no planet has it; it comes from the hearts of metallic asteroids
 	_def(STARIRON, "Star Iron", K_SOLID, ["#8fa4c8", "#c4d4ee", "#64789e", "#eef4ff"], {"hard": 2, "self": 1, "glow": Vector3(0.25, 0.32, 0.5)})
 	# each kind of planet's own ore (KIND_ORES says where it lies)

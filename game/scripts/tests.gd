@@ -171,6 +171,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_lights()
+		elif only == "fire":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_fire()
 		elif only == "guards":
 			_go(g.player.pos)
 			await _frames(60)
@@ -1490,6 +1494,7 @@ func run() -> void:
 	await _test_indoors()
 	await _test_remove()
 	await _test_lights()
+	await _test_fire()
 	await _test_harvest()
 	await _test_hand()
 	await _test_audio()

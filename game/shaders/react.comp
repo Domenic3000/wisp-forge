@@ -63,7 +63,7 @@ void main() {
 			uint a0 = tAt(nu0), a1 = tAt(nd0), a2 = tAt(nl0), a3 = tAt(nr0);
 			bool hot = a0 == M_FIRE || a1 == M_FIRE || a2 == M_FIRE || a3 == M_FIRE;
 			bool lava = a0 == M_LAVA || a1 == M_LAVA || a2 == M_LAVA || a3 == M_LAVA;
-			if ((hot && R < IGN[bgm] * 1.5) || (lava && R < IGN[bgm] * 3.0)) {
+			if ((hot && R < IGN[bgm] * 0.6) || (lava && R < IGN[bgm] * 1.2)) {   // (slower than in front: a room's back wall is one sheet of fuel; 27 Nov, fire tamed)
 				// (burnt furniture leaves the wall it stood in front of)
 				if (bgm != M_TORCH) { world.cells[i] = M_FIRE | (c & 0xff00u) | (FUEL[bgm] << 16); aux.a[i] = decorGone(ab); }
 			}

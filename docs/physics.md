@@ -39,3 +39,20 @@ Notes for development sessions on this part of the game. The rules that apply ev
   rows): never `get_image()` on a texture while drawing, it stalls the renderer.
 - `SCAFFOLD` is a one-way platform: `gsolid` ignores it, `move_body` lands on it from above
   (`platform_below`), and down + jump drops through (`drop_t`).
+
+## Fire (react.comp, move.comp; tamed 27 Nov)
+- How it works: a burning cell is FIRE with its life in bits 16-23 (the material's `fuel`, in ticks). Each tick a
+  burnable cell beside fire catches with its material's `ign` chance (defs.gd); a background plant or wall behind
+  open air catches at 0.6x that (a room's back wall is one sheet of fuel), from lava at 2x / 1.2x. A flame rises
+  (and drifts sideways) like a gas only in its last 12 ticks (move.comp `riser`); it was 24, and climbing ~40 cells
+  it lit every crown and back wall it passed.
+- Why (user, 27 Nov: "fire is a little crazy. it will burn whole houses and forest down from one fireball"; then
+  "i like the forests dont take away from the fullness"): with the old numbers each burnable cell passed fire on
+  99%+ of the time, so any fire crossed every connected house and forest. Now `fuel` x `ign` is kept low enough
+  that fire burns what it hits and some way round it, then dies down: wood 70 / 0.02, planks 50 / 0.012, leaves
+  14 / 0.09, grass 12 / 0.15 (the others in defs.gd's material list, with a note). Forests keep their density;
+  only fire changed.
+- Measured offline with /home/claude/tools/fire_sim.py (a model of these rules on a forest and a house), then in
+  the game by `_test_fire` (tests/building.gd, section "fire"): one fire blast in a 64x44 plank house on level
+  ground and one at a forest tree. With the old fire: the whole house in 8 s and 77% of the forest round the tree;
+  now about a fifth of the house (its roof and a patch of back wall) and about 5% of the forest.

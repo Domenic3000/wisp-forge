@@ -1710,3 +1710,131 @@ func _test_lights() -> void:
 	await _frames(30)
 	print("[lights] " + "\n[lights] ".join(lt_rows))
 	_ok("more kinds of light (a lantern hung from a ceiling, Wisplight) and more workshop secrets", lt_ok, "; ".join(lt_rows))
+
+## Fire burns what it hits and dies down (27 Nov; user: "fire is a little crazy. it will burn whole houses and forest
+## down from one fireball"): one fire blast inside a plank house (set up on level ground) and one at a
+## forest tree; each burns something, and most of the house and the forest round it is left standing.
+func _test_fire() -> void:
+	var fi_back: Vector2 = g.player.pos
+	var fi_god0: bool = g.test_god
+	var fi_w0 := [g.rain, g.rain_target, g.weather_timer]
+	g.test_god = true
+	g.rain = 0.0
+	g.rain_target = 0.0
+	g.weather_timer = 999999
+	# the house, on level open ground: plank walls, floor and roof in front, a plank back wall inside, a doorway on
+	# the left (up in the air, a building that fire weakens falls as a whole: that's the physics, not the fire)
+	var FW := 64
+	var FH := 44
+	var fi_a := fposmod(float(Build.cell_of(start_pos).x) / float(Defs.NS) * TAU + 0.7, TAU)     # (away from where you arrived)
+	var fi_st: Vector2i = _clear_stretch(int(fposmod(fi_a, TAU) / TAU * Defs.NS), FW + 10, FH + 20, 4, 4, false, 6)
+	var fi_x0: int = fi_st.x + 5
+	var fi_y0: int = fi_st.y - FH                  # (its floor's last row just over the highest ground under it)
+	var fi_c := Vector2i(fi_x0 + FW / 2, fi_st.y)
+	var fi_d := PackedInt32Array()
+	fi_d.resize(FW * FH)
+	for fj in FH:
+		for fi in FW:
+			var fv := 0
+			if fj < 3 or fj >= FH - 3 or ((fi < 3 or fi >= FW - 3) and not (fi < 3 and fj >= FH - 27 and fj < FH - 3)):
+				fv = Defs.PLANK | 0xFF00 | 0x20000                         # roof, floor, walls
+			else:
+				fv = 0 | (Defs.PLANK << 8) | 0x20000                       # open room, a plank back wall
+			fi_d[fj * FW + fi] = fv
+	g.stamps.append({"x0": posmod(fi_x0, Defs.NS), "y0": fi_y0, "w": FW, "h": FH, "data": fi_d, "ax": fi_x0, "aw": FW})
+	await _frames(4)
+	var fi_count := func() -> Array:
+		var rr: Dictionary = g.gpu.read_rect(fi_x0 - 10, fi_y0 - 60, FW + 20, FH + 60, fi_x0 - 10, FW + 20)
+		var planks := 0
+		var fire := 0
+		for k in (rr["fg"] as PackedInt32Array).size():
+			var ft: int = int(rr["fg"][k]) & 255
+			if ft == Defs.PLANK or (ft == 0 and (int(rr["bg"][k]) & 255) == Defs.PLANK):
+				planks += 1
+			if ft == Defs.FIRE:
+				fire += 1
+		return [planks, fire]
+	var fi_before: int = int(fi_count.call()[0])
+	_go(_cell_pos(fi_c.x + 18, fi_y0 + FH - 13, fi_x0, FW))                       # (on its floor, by the far wall)
+	await _frames(20)
+	g._explode(_cell_pos(fi_c.x + 8, fi_y0 + FH - 12), 7.0, 1, 1, 0.0)        # (a fireball's blast)
+	var fi_lit := 0
+	var fi_t := 0
+	for fk in 40:
+		await _frames(60)
+		fi_t += 60
+		var fc: Array = fi_count.call()
+		fi_lit = maxi(fi_lit, int(fc[1]))
+		if int(fc[1]) == 0 and fk > 3:
+			break
+	var fi_after: int = int(fi_count.call()[0])
+	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("fire_house.png"))
+	var fi_burnt: int = fi_before - fi_after
+	var fi_house_ok: bool = fi_before > 1500 and fi_burnt >= 20 and fi_after * 100 >= fi_before * 45
+	# (taken away again)
+	var fi_clear := PackedInt32Array()
+	fi_clear.resize(FW * FH)
+	fi_clear.fill(0)
+	g.stamps.append({"x0": posmod(fi_x0, Defs.NS), "y0": fi_y0, "w": FW, "h": FH, "data": fi_clear, "ax": fi_x0, "aw": FW})
+	# the forest: a blast at the foot of a tree, then what's left of the trees round it
+	var b = g.builds
+	var N0: int = Defs.NS
+	var toff: int = Defs.total_cells() * 4
+	var raw: PackedByteArray = g.gpu.read_world()
+	var fo_col := -1
+	var fo_best := 0
+	# (well away from where you arrived: the other checks set up there, and a fire would burn what they left)
+	var fo_home: int = Build.cell_of(start_pos).x
+	for k in N0 / 16:
+		var c0 := k * 16
+		var fo_far: int = absi(posmod(c0 + 60 - fo_home + N0 / 2, N0) - N0 / 2)
+		if fo_far < 480 or b.biome(c0 - 120) != "forest" or b.biome(c0 + 240) != "forest" or _near_lair(c0) \
+				or b.label_at(_cell_pos(c0 + 60, b.ground_row(c0 + 60) - 8)) != "":
+			continue
+		var n_t := _plants(raw, toff, c0, b.ground_row(c0 + 60))
+		if n_t > fo_best:
+			fo_best = n_t
+			fo_col = c0
+	var fo_txt := "no forest found"
+	var fo_ok := true
+	if fo_col >= 0:
+		# the trunk nearest the window's middle, a little over the ground
+		var fo_gr: int = b.ground_row(fo_col + 60)
+		var fo_tc := -1
+		for dq in 60:
+			for sg in [1, -1]:
+				var cq: int = fo_col + 60 + dq * sg
+				if fo_tc < 0 and (raw.decode_u32(toff + Defs.raw_idx(b.ground_row(cq) - 10, posmod(cq, N0)) * 4) & 255) == Defs.WOOD:
+					fo_tc = cq
+		if fo_tc < 0:
+			fo_tc = fo_col + 60
+		var fo_plants := func(r2: PackedByteArray) -> int:
+			return _plants(r2, toff, fo_col - 120, fo_gr) + _plants(r2, toff, fo_col, fo_gr) + _plants(r2, toff, fo_col + 120, fo_gr)
+		var fo_before: int = fo_plants.call(raw)
+		_go(_cell_pos(fo_tc + 40, b.ground_row(fo_tc + 40) - 30))
+		await _frames(40)
+		fo_before = fo_plants.call(g.gpu.read_world())
+		g._explode(_cell_pos(fo_tc, b.ground_row(fo_tc) - 10), 7.0, 1, 1, 0.0)
+		for fk2 in 40:
+			await _frames(60)
+			var fo_rr: Dictionary = g.gpu.read_rect(fo_col - 120, fo_gr - 120, 360, 130)
+			var fo_fire := 0
+			for fv2 in fo_rr["fg"]:
+				if (int(fv2) & 255) == Defs.FIRE:
+					fo_fire += 1
+			if fk2 > 3 and fo_fire == 0:
+				break
+		await _frames(120)
+		g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("fire_forest.png"))
+		var fo_after: int = fo_plants.call(g.gpu.read_world())
+		fo_ok = fo_before > 2000 and fo_before - fo_after >= 30 and fo_after * 100 >= fo_before * 70
+		fo_txt = "a forest round column %d: %d plant cells before, %d after (%.0f%% left)" % [fo_tc, fo_before, fo_after, 100.0 * float(fo_after) / maxf(1.0, float(fo_before))]
+	g.test_god = fi_god0
+	g.rain = float(fi_w0[0])
+	g.rain_target = float(fi_w0[1])
+	g.weather_timer = int(fi_w0[2])
+	_go(fi_back)
+	await _frames(30)
+	_ok("one fireball burns what it hits, then dies down (not the whole house or forest)", fi_house_ok and fo_ok,
+		"a plank house: %d plank cells, %d burnt (%.0f%% left), fire at most %d cells, out after %.0f s; %s" % [
+		fi_before, fi_burnt, 100.0 * float(fi_after) / maxf(1.0, float(fi_before)), fi_lit, fi_t / 60.0, fo_txt])
