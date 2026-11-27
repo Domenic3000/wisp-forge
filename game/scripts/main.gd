@@ -6,6 +6,7 @@ extends Node2D
 
 const GpuWorld := preload("res://scripts/gpu_world.gd")
 const UI := preload("res://scripts/ui.gd")
+const Keys := preload("res://scripts/keys.gd")
 const Overlay := preload("res://scripts/overlay.gd")
 const MapView := preload("res://scripts/map_view.gd")
 const Space := preload("res://scripts/space.gd")
@@ -342,9 +343,14 @@ const POST_SHADER := "shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
 uniform float amp = 1.0;
 uniform float px = 4.0;
+uniform float bright = 1.0;
+uniform float dith = 1.0;
 const float B[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 void fragment() {
 	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
+	// (brightness, settings: a gamma, so black stays black and white white)
+	c = pow(max(c, vec3(0.0)), vec3(1.0 / bright));
+	if (dith < 0.5) { COLOR = vec4(c, 1.0); return; }
 	vec3 v = c * 31.0;
 	vec3 k = round(v);
 	ivec2 g = ivec2(floor(FRAGCOORD.xy / px));
@@ -382,7 +388,67 @@ var sky_rain := 0.0        # rain as seen in the sky, eased between biomes
 var cam_unwrap := 0.0      # camera angle without the jump at a full turn (for parallax)
 var _cam_prev := 0.0
 # player settings (saves/settings.json): quality, dithering, pixel size (0 = automatic)
-var settings := {"settings_v": 2, "quality": "auto", "auto_q": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed", "view": "world"}
+var settings := {"settings_v": 2, "quality": "auto", "auto_q": "high", "dither": "off", "pixel": 0, "music": 60, "sound": 80, "window": "windowed", "view": "world",
+	# (27 Nov, the settings menu: user chose "Rebindable keys", "More sound sliders", "Display extras", "Comfort and
+	# gameplay") volumes 0-100; vsync; a frame cap (0: none); brightness 70-130; the corner frame counter; the UI's
+	# size (-1 smaller, 0 auto, 1 larger); shake and flash 0-100; the wisp's reminders, pickup popups and F's
+	# brackets; the world's autosave every n minutes; the minimap; the keys (keys.gd)
+	"master": 100, "ambience": 80, "ui_vol": 80, "vsync": true, "fps_cap": 60, "bright": 100, "show_fps": false, "ui_scale": 0,
+	"shake": 100, "flash": 100, "wisp_notes": true, "popups": true, "f_hint": true, "autosave": 2, "minimap": true, "keys": {}}
+var keymap := Keys.defaults()   # action -> [keycodes] (keys.gd; settings "keys")
+
+## a key pressed is the action's (one of its keys, or its arrow while the arrow isn't bound elsewhere)
+func key_is(k: int, id: String) -> bool:
+	if (keymap.get(id, []) as Array).has(k):
+		return true
+	return Keys.ARROWS.get(id, -1) == k and not _arrow_taken(k)
+
+## the action's key is held down
+func key_held(id: String) -> bool:
+	for kc in keymap.get(id, []):
+		if Input.is_key_pressed(int(kc)):
+			return true
+	var ar: int = Keys.ARROWS.get(id, -1)
+	return ar > 0 and Input.is_key_pressed(ar) and not _arrow_taken(ar)
+
+func _arrow_taken(k: int) -> bool:
+	for id in keymap:
+		if (keymap[id] as Array).has(k) and Keys.ARROWS.get(id, -1) != k:
+			return true
+	return false
+
+## binds slot 0 or 1 of an action (kc 0 clears it); saved at once
+func set_key(id: String, slot: int, kc: int) -> void:
+	var ks: Array = (keymap.get(id, []) as Array).duplicate()
+	while ks.size() <= slot:
+		ks.append(0)
+	ks[slot] = kc
+	var out := []
+	for x in ks:
+		if int(x) > 0 and not out.has(int(x)):
+			out.append(int(x))
+	keymap[id] = out
+	settings["keys"] = keymap
+	_save_settings()
+
+func reset_keys() -> void:
+	keymap = Keys.defaults()
+	settings["keys"] = keymap
+	_save_settings()
+
+## the keys named in prompts and notes ("[F] Dock", "[G] Go below", "Your skiff [K]") as they're bound now
+func keys_in(t: String) -> String:
+	if t.find("[") < 0:
+		return t
+	for pr in [["[F]", "interact"], ["[G]", "below"], ["[K]", "call_ship"]]:
+		if t.find(String(pr[0])) >= 0:
+			t = t.replace(String(pr[0]), "[%s]" % key_label(String(pr[1])))
+	return t
+
+## the first key of an action, by name, for hints ("F", "Tab")
+func key_label(id: String) -> String:
+	var ks: Array = keymap.get(id, [])
+	return Keys.key_name(int(ks[0])) if not ks.is_empty() else "(unbound)"
 var boss_info := Vector4.ZERO
 var boss_clouds := []          # the Mycelord's spore clouds (boss_ai.gd update_clouds)
 var eco_carcasses := []        # creatures killed by others, lying a while (ecology.gd): {pos, type, facing, t, h}
@@ -728,6 +794,7 @@ func _ready() -> void:
 	_fxb = fx_budget()
 	_apply_volumes()
 	_apply_window()
+	ui._relayout()                     # (the interface's size from settings, now they're loaded)
 	_layout()
 	get_viewport().size_changed.connect(_layout)
 	if not gpu.init():
@@ -1103,7 +1170,7 @@ func screen_to_pic(sp: Vector2) -> Vector2:
 func _write_frame_params() -> void:
 	var sun_a := spawn_angle - 1.1 + time / DAY_LEN * TAU
 	gpu.setp(0, Vector4(time, gpu.frame, sun_a, planet.get("seed", 1)))
-	var sh := Vector2(randf() - 0.5, randf() - 0.5) * shake
+	var sh := Vector2(randf() - 0.5, randf() - 0.5) * shake * float(settings["shake"]) / 100.0
 	var c := cam_c + sh
 	ustep_next = unroll_step(c.length())
 	if unrolled():
@@ -1158,16 +1225,18 @@ func _write_frame_params() -> void:
 	# (.x: a frozen world's icing; a gas giant's cloud deck is a negative .x: clouds.comp `cloudDeck`)
 	gpu.setp(125, Vector4(-1.0 if String(planet.get("exotic", "")) == "giant" else 0.0008 * float(clim.get("freeze", 0.0)), sky_level("aurora"), sky_level("bloodmoon"), float(clim.get("fog", 0.0))))
 	_p122 = Vector4({"off": 0, "subtle": 1, "retro": 2}.get(settings["dither"], 0), gpu.sun_step, ustep_next, float(vflags))
-	var pk := "%s|%d|%d|%d" % [settings["dither"], scale_px, VW, VH]
+	var pk := "%s|%d|%d|%d|%d" % [settings["dither"], scale_px, VW, VH, int(settings["bright"])]
 	if pk != _post_key:
 		_post_key = pk
-		post_rect.visible = settings["dither"] != "off"
+		post_rect.visible = settings["dither"] != "off" or int(settings["bright"]) != 100
+		(post_rect.material as ShaderMaterial).set_shader_parameter("bright", float(settings["bright"]) / 100.0)
+		(post_rect.material as ShaderMaterial).set_shader_parameter("dith", 0.0 if settings["dither"] == "off" else 1.0)
 		post_rect.position = Vector2.ZERO
 		post_rect.size = Vector2(VW, VH)
 		(post_rect.material as ShaderMaterial).set_shader_parameter("amp", 1.0 if settings["dither"] == "retro" else 0.35)
 		(post_rect.material as ShaderMaterial).set_shader_parameter("px", float(scale_px))
 	gpu.setp(122, _p122)
-	gpu.setp(6, Vector4(brushes.size(), hurt_flash, player.pos.x, player.pos.y))
+	gpu.setp(6, Vector4(brushes.size(), hurt_flash * float(settings["flash"]) / 100.0, player.pos.x, player.pos.y))
 	var cr := c.length()
 	# the camera's angle, unwrapped (it keeps counting past a full turn) so parallax never jumps
 	var ca := atan2(c.y, c.x)
@@ -2523,14 +2592,14 @@ func _read_local_input(m: Mage) -> void:
 	if test_aim != Vector2.ZERO:
 		inp.aim = test_aim      # the test mode points the mage
 	inp.move = 0
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+	if key_held("left"):
 		inp.move -= 1
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+	if key_held("right"):
 		inp.move += 1
 	if test_move != 0:
 		inp.move = test_move    # the test mode walks the mage
-	inp.jump = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
-	inp.down = Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)
+	inp.jump = key_held("jump")
+	inp.down = key_held("down")
 	if test_jump:
 		inp.jump = true
 	if test_down:
@@ -2545,11 +2614,11 @@ func _read_local_input(m: Mage) -> void:
 	if m.dig_tap > 0:
 		m.dig_tap -= 1
 	inp.decon = can_act and rmb and shift
-	inp.sail = (shift and state == "play") or test_sail
-	inp.mend = (can_act and Input.is_key_pressed(KEY_R) and not build_on and (hand_item.is_empty() or not conjuring(m))) or test_mend
+	inp.sail = (key_held("starsail") and state == "play") or test_sail
+	inp.mend = (can_act and key_held("mend") and not build_on and (hand_item.is_empty() or not conjuring(m))) or test_mend
 	inp.turn = 0.0
 	if space.active and state == "play" and not build_on:
-		inp.turn = (1.0 if Input.is_key_pressed(KEY_Q) else 0.0) - (1.0 if Input.is_key_pressed(KEY_E) else 0.0)
+		inp.turn = (1.0 if key_held("belt_prev") else 0.0) - (1.0 if key_held("belt_next") else 0.0)
 	if test_turn != 0.0:
 		inp.turn = test_turn
 	# (building inside the skiff: the cast button builds, it doesn't steer or fire)
@@ -2716,7 +2785,7 @@ func _tick() -> void:
 		_learn_from_finds()
 	if frame % 3600 == 0:
 		save_game()
-	if frame % 7200 == 0:
+	if frame % (3600 * clampi(int(settings["autosave"]), 1, 30)) == 0:
 		_autosave_begin()
 
 func _update_camera(aim: Vector2) -> void:
@@ -5946,15 +6015,20 @@ func craft(r: Dictionary) -> bool:
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		var k: int = ev.keycode
+		if k == KEY_ESCAPE and ui.settings_panel.visible:
+			ui.settings_menu.escape()            # (the pause menu or the settings open: a step back)
+			return
 		if k == KEY_F11 or (k == KEY_ENTER and ev.alt_pressed):
 			set_setting("window", "windowed" if str(settings.get("window", "windowed")) != "windowed" else "fullscreen")
 			ui._refresh_settings()
 			return
+		if ui.settings_panel.visible:
+			return                               # (nothing else while the pause menu or the settings are open)
 		if state == "play" or state == "forge":
-			if k == KEY_C or (k == KEY_ESCAPE and state == "forge"):
+			if key_is(k, "forge") or (k == KEY_ESCAPE and state == "forge"):
 				toggle_forge()
 				return
-			if k == KEY_J:
+			if key_is(k, "book"):
 				# the recipe book: the forge, opened at its unlearned pages
 				toggle_forge(state == "play")
 				return
@@ -5962,21 +6036,21 @@ func _unhandled_input(ev: InputEvent) -> void:
 			_map_key(k)
 			return
 		if state == "shop":
-			if k == KEY_ESCAPE or k == KEY_F:
+			if k == KEY_ESCAPE or key_is(k, "interact"):
 				towns.close_shop()
 			return
 		if state == "station":
-			if k == KEY_ESCAPE or k == KEY_F:
+			if k == KEY_ESCAPE or key_is(k, "interact"):
 				workshops.close()
 			return
 		if state == "shipyard":
 			shipyard.key(k, ev.ctrl_pressed)
 			return
 		if state == "play" and ui.journal_open():
-			if k == KEY_ESCAPE or k == KEY_L:
+			if k == KEY_ESCAPE or key_is(k, "journal"):
 				ui.toggle_journal(self)
 			return
-		if k == KEY_L and state == "play" and not menu_paused():
+		if key_is(k, "journal") and state == "play" and not menu_paused():
 			ui.toggle_journal(self)
 			return
 		if k == KEY_ESCAPE and state == "play":
@@ -5984,9 +6058,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if state != "play" or menu_paused():
 			return
-		if k == KEY_SPACE or k == KEY_W or k == KEY_UP:
+		if key_is(k, "jump"):
 			jump_buf = 8   # catch even the quickest tap
-		if k == KEY_B:
+		if key_is(k, "plans"):
 			if player.aboard != null and not pocket.active:
 				# (user, 25 Nov: no building on the ship: ships come whole, from the forge)
 				ui.toast("Ships come whole now: forge another class at the Wisp Forge (Travel), switch in the satchel (I)", Color(0.75, 0.85, 1.0), 3.5)
@@ -5996,10 +6070,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 				# (user, 25 Nov: build mode folded into the hand: on the planet B opens the satchel at its Plans)
 				ui.open_plans()
 			return
-		if k == KEY_G and pocket.active and not build_on:
+		if key_is(k, "below") and pocket.active and not build_on:
 			if pocket.leave_by_ship(player):
 				return
-		if k == KEY_G and not pocket.active and player.aboard != null and player.aboard == skiff:
+		if key_is(k, "below") and not pocket.active and player.aboard != null and player.aboard == skiff:
 			go_below(player)                 # (aboard: down into the ship's pocket)
 			return
 		if build_on and _build_key(k):
@@ -6008,40 +6082,40 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if _hand_key(k):
 			return
-		if space.active and (k == KEY_MINUS or k == KEY_KP_SUBTRACT or k == KEY_EQUAL or k == KEY_KP_ADD):
-			space.zoom_by(1 if k == KEY_MINUS or k == KEY_KP_SUBTRACT else -1)     # (- out, + in)
+		if space.active and (key_is(k, "zoom_out") or key_is(k, "zoom_in")):
+			space.zoom_by(1 if key_is(k, "zoom_out") else -1)     # (- out, + in)
 			return
 		if k >= KEY_1 and k <= KEY_9:
 			var n := k - KEY_1
 			if n < known.size():
 				sel = n
-		elif (k == KEY_Q or k == KEY_E) and not space.active:
+		elif (key_is(k, "belt_prev") or key_is(k, "belt_next")) and not space.active:
 			# (out in space Q / E turn the view) along the item belt; with nothing on it, through what you own
-			if not belt_step(1 if k == KEY_E else -1):
-				_cycle_material(1 if k == KEY_E else -1)
-		elif k == KEY_N:
+			if not belt_step(1 if key_is(k, "belt_next") else -1):
+				_cycle_material(1 if key_is(k, "belt_next") else -1)
+		elif key_is(k, "minimap"):
 			settings["minimap"] = not bool(settings.get("minimap", true))
 			_save_settings()
-		elif k == KEY_H:
+		elif key_is(k, "drink"):
 			_drink(player)
-		elif k == KEY_F:
+		elif key_is(k, "interact"):
 			_interact()
-		elif k == KEY_Z:
+		elif key_is(k, "f_next"):
 			f_cycle()
 		elif k == KEY_X and player.aboard != null:
 			ui.toast("You're inside the ship: F to step out, G (landed) to go below", Color(0.75, 0.85, 1.0), 2.0)
-		elif k == KEY_K and pocket.active:
+		elif key_is(k, "call_ship") and pocket.active:
 			ui.toast("Your ship is outside: step out by the arch (F), or by your ship (G)", Color(0.85, 0.75, 1.0), 2.0)
-		elif k == KEY_K and space.active and space.inst != null:
+		elif key_is(k, "call_ship") and space.active and space.inst != null:
 			ui.toast("Your ship waits in the bay: F beside it undocks", Color(0.8, 0.7, 1.0), 2.0)
-		elif k == KEY_K:
+		elif key_is(k, "call_ship"):
 			if space.active:
 				recall_skiff()
 			else:
 				call_skiff()
-		elif k == KEY_I or k == KEY_TAB:
+		elif key_is(k, "satchel"):
 			ui.toggle_satchel()
-		elif k == KEY_M:
+		elif key_is(k, "map"):
 			if pocket.active:
 				ui.toast("The pocket lies outside every map", Color(0.85, 0.75, 1.0), 1.5)
 			else:
@@ -6376,20 +6450,20 @@ func _unmake_update(m: Mage) -> bool:
 func _unmake_key(k: int) -> bool:
 	if build_on or not unmaking(player):
 		return false
-	if k == KEY_G:
+	if key_is(k, "shape"):
 		unmake_shape = unmake_shape % 4 + 1
 		build_drag = false
 		ui.toast("Unmake: %s" % UNMAKE_SHAPES[unmake_shape], Color(1.0, 0.7, 0.6), 1.0)
 		return true
-	if k == KEY_V and unmake_shape != 4:
+	if key_is(k, "layer") and unmake_shape != 4:
 		unmake_layer = (unmake_layer + 1) % UNMAKE_LAYERS.size()
 		ui.toast("Unmake takes: %s" % UNMAKE_LAYERS[unmake_layer][1], Color(1.0, 0.7, 0.6), 1.0)
 		return true
-	if (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT) and unmake_shape != 4:
-		unmake_thick = clampi(unmake_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
+	if (key_is(k, "thinner") or key_is(k, "thicker")) and unmake_shape != 4:
+		unmake_thick = clampi(unmake_thick + (1 if key_is(k, "thicker") else -1), 1, Build.THICK_MAX)
 		ui.toast("%d thick" % unmake_thick, Color(1.0, 0.7, 0.6), 0.8)
 		return true
-	if k == KEY_R and unmake_shape == 4:
+	if key_is(k, "next_design") and unmake_shape == 4:
 		var fills := [Defs.DIRT, Defs.STONE, Defs.SAND]
 		hand_fill = fills[(fills.find(hand_fill) + 1) % fills.size()]
 		ui.toast("Fill dips with %s" % Defs.NAMES[hand_fill], Color(0.95, 0.85, 0.55), 1.0)
@@ -6907,28 +6981,28 @@ func _hand_key(k: int) -> bool:
 	if not hand_item.is_empty() and String(hand_item["what"]) == "plan":
 		# (a plan: build mode's keys for its piece; R cycles Level the Ground's fill)
 		var hp0 := hand_piece()
-		if k == KEY_R and String(hp0.get("kind", "")) == "flatten":
+		if key_is(k, "next_design") and String(hp0.get("kind", "")) == "flatten":
 			var fills := [Defs.DIRT, Defs.STONE, Defs.SAND]
 			hand_fill = fills[(fills.find(hand_fill) + 1) % fills.size()]
 			ui.toast("Fill dips with %s" % Defs.NAMES[hand_fill], Color(0.95, 0.85, 0.55), 1.0)
 			return true
-		if k == KEY_Q or k == KEY_E or (k >= KEY_1 and k <= KEY_9):
+		if key_is(k, "belt_prev") or key_is(k, "belt_next") or (k >= KEY_1 and k <= KEY_9):
 			return false
 		_hand_over = hp0
 		var used := _build_key(k)
 		_hand_over = {}
 		return used
 	var solid: bool = hand_item.is_empty() and mat > 0 and Defs.KIND[mat] == Defs.K_SOLID and mat != Defs.TORCH and mat != Defs.WOODDOOR
-	if k == KEY_G and solid:
+	if key_is(k, "shape") and solid:
 		hand_shape = (hand_shape + 1) % Build.SHAPES.size()
 		build_drag = false
 		ui.toast("Laid as: %s" % ("brush" if hand_shape == 0 else String(Build.SHAPES[hand_shape]).to_lower()), Color(0.95, 0.85, 0.55), 1.0)
 		return true
-	if (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT) and solid:
-		hand_thick = clampi(hand_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
+	if (key_is(k, "thinner") or key_is(k, "thicker")) and solid:
+		hand_thick = clampi(hand_thick + (1 if key_is(k, "thicker") else -1), 1, Build.THICK_MAX)
 		ui.toast("%d thick" % hand_thick, Color(0.95, 0.85, 0.55), 0.8)
 		return true
-	if k == KEY_V and solid:
+	if key_is(k, "layer") and solid:
 		if not hand_back and not hand_walls.has(mat):
 			wisp_note("%s can't be raised as a back wall; planks, logs, stone and brick, sandstone or glass can." % Defs.NAMES[mat])
 			return true
@@ -6936,14 +7010,14 @@ func _hand_key(k: int) -> bool:
 		build_drag = false
 		ui.toast("%s: %s" % [Defs.NAMES[mat], "back wall" if hand_back else "in front"], Color(0.95, 0.85, 0.55), 1.0)
 		return true
-	if k == KEY_R and not hand_item.is_empty() and String(hand_item["what"]) == "furn":
+	if key_is(k, "next_design") and not hand_item.is_empty() and String(hand_item["what"]) == "furn":
 		var hp := hand_piece()
 		var ks: Array = hp.get("items", [])
 		if ks.size() > 1:
 			carried_pick[String(hp["name"])] = int(ks[(ks.find(int(hp["item"])) + 1) % ks.size()])
 			build_prev = {}
 			return true
-	if k == KEY_T and not hand_item.is_empty():
+	if key_is(k, "mirror") and not hand_item.is_empty():
 		build_flip = not build_flip
 		return true
 	return false
@@ -6955,6 +7029,8 @@ var wisp_say_t := 0
 var _wisp_said := {}
 
 func wisp_note(text: String) -> void:
+	if not bool(settings.get("wisp_notes", true)) and not testing:
+		return
 	if frame - int(_wisp_said.get(text, -99999)) < 300:
 		return
 	_wisp_said[text] = frame
@@ -6970,6 +7046,9 @@ var _pick_t := 0
 const POPUP_TICKS := 70
 
 func _pick_flush() -> void:
+	if not bool(settings.get("popups", true)) and not testing:
+		_pick_acc = {}                  # (settings: pickup popups off)
+		return
 	var ks := _pick_acc.keys()
 	ks.sort_custom(func(a, b): return int(_pick_acc[a]) > int(_pick_acc[b]))
 	var up: Vector2 = _pick_at.normalized()
@@ -6991,31 +7070,31 @@ func _build_step(dir: int) -> void:
 
 ## keys in build mode; true if the key was used
 func _build_key(k: int) -> bool:
-	if k == KEY_Q or k == KEY_E:
+	if key_is(k, "belt_prev") or key_is(k, "belt_next"):
 		var oi: int = Build.CAT_ORDER.find(build_cat)
-		build_cat = Build.CAT_ORDER[posmod(oi + (1 if k == KEY_E else -1), Build.CAT_ORDER.size())]
+		build_cat = Build.CAT_ORDER[posmod(oi + (1 if key_is(k, "belt_next") else -1), Build.CAT_ORDER.size())]
 		build_drag = false
 		return true
 	var shaped: bool = build_piece().get("kind", "") in ["wall", "block", "remove"]
-	if shaped and k == KEY_G:
+	if shaped and key_is(k, "shape"):
 		build_shape = (build_shape + 1) % Build.SHAPES.size()
 		if build_piece()["kind"] != "wall" and build_shape == 0:
 			build_shape = 1                   # blocks aren't painted
 		build_drag = false
 		ui.toast("Lay: " + Build.SHAPES[build_shape], Color(0.95, 0.85, 0.55), 1.0)
 		return true
-	if shaped and (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT):
-		build_thick = clampi(build_thick + (1 if k == KEY_BRACKETRIGHT else -1), 1, Build.THICK_MAX)
+	if shaped and (key_is(k, "thinner") or key_is(k, "thicker")):
+		build_thick = clampi(build_thick + (1 if key_is(k, "thicker") else -1), 1, Build.THICK_MAX)
 		return true
 	var structure: bool = build_piece().get("kind", "") == "structure"
 	var stairs: bool = build_piece().get("kind", "") == "stairs"
-	if stairs and (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT):
-		build_rise = clampi(build_rise + (Build.STAIR_STEP if k == KEY_BRACKETRIGHT else -Build.STAIR_STEP), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
+	if stairs and (key_is(k, "thinner") or key_is(k, "thicker")):
+		build_rise = clampi(build_rise + (Build.STAIR_STEP if key_is(k, "thicker") else -Build.STAIR_STEP), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
 		return true
-	if stairs and (k == KEY_MINUS or k == KEY_EQUAL):
-		build_rise = clampi(build_rise + (40 if k == KEY_EQUAL else -40), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
+	if stairs and (key_is(k, "zoom_out") or key_is(k, "zoom_in")):
+		build_rise = clampi(build_rise + (40 if key_is(k, "zoom_in") else -40), Build.STAIR_RISE_MIN, Build.STAIR_RISE_MAX)
 		return true
-	if k == KEY_R:
+	if key_is(k, "next_design"):
 		var rp := build_piece()
 		if String(rp.get("kind", "")) == "carried" and (rp["items"] as Array).size() > 1:
 			# the next design in a stack of carried pieces of one name
@@ -7025,18 +7104,18 @@ func _build_key(k: int) -> bool:
 			return true
 		build_seed = randi()
 		return true
-	if k == KEY_T:
+	if key_is(k, "mirror"):
 		if structure:
 			build_style = (build_style + 1) % Build.STYLES.size()
 			ui.toast("Style: " + Build.STYLES[build_style][0], Color(0.95, 0.85, 0.55), 1.0)
 		else:
 			build_flip = not build_flip
 		return true
-	if structure and (k == KEY_BRACKETLEFT or k == KEY_BRACKETRIGHT):
-		build_w = clampi(build_w + (4 if k == KEY_BRACKETRIGHT else -4), Build.STRUCT_W_MIN, Build.STRUCT_W_MAX)
+	if structure and (key_is(k, "thinner") or key_is(k, "thicker")):
+		build_w = clampi(build_w + (4 if key_is(k, "thicker") else -4), Build.STRUCT_W_MIN, Build.STRUCT_W_MAX)
 		return true
-	if structure and (k == KEY_MINUS or k == KEY_EQUAL):
-		build_floors = clampi(build_floors + (1 if k == KEY_EQUAL else -1), 1, Build.STRUCT_FLOORS_MAX)
+	if structure and (key_is(k, "zoom_out") or key_is(k, "zoom_in")):
+		build_floors = clampi(build_floors + (1 if key_is(k, "zoom_in") else -1), 1, Build.STRUCT_FLOORS_MAX)
 		return true
 	if k >= KEY_1 and k <= KEY_9:
 		var n := k - KEY_1
@@ -8524,28 +8603,28 @@ func _map_tick(_delta: float) -> void:
 	if map_tab == "space":
 		# the galaxy chart: WASD or the arrows pan
 		var pv := Vector2.ZERO
-		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		if key_held("left"):
 			pv.x -= 1.0
-		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		if key_held("right"):
 			pv.x += 1.0
-		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		if key_held("jump"):
 			pv.y -= 1.0
-		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		if key_held("down"):
 			pv.y += 1.0
 		if pv != Vector2.ZERO:
 			map_view.pan(pv * 6.0)
 		return
 	var turn := 0.0
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+	if key_held("left"):
 		turn += 1.0
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+	if key_held("right"):
 		turn -= 1.0
 	if turn != 0.0:
 		map_ang += turn * 4.0 * zoom / maxf(player.pos.length(), 200.0)
 	_map_camera()
 
 func _map_key(k: int) -> void:
-	if k == KEY_M or k == KEY_ESCAPE:
+	if key_is(k, "map") or k == KEY_ESCAPE:
 		close_map()
 	elif k == KEY_TAB:
 		map_tab = "space" if map_tab == "planet" else "planet"
@@ -8554,9 +8633,9 @@ func _map_key(k: int) -> void:
 		_map_camera()
 		ui.show_map(self)
 	elif map_tab == "space":
-		if k == KEY_EQUAL or k == KEY_KP_ADD:
+		if key_is(k, "zoom_in"):
 			map_view.zoom_by(1.0 / 1.6)
-		elif k == KEY_MINUS or k == KEY_KP_SUBTRACT:
+		elif key_is(k, "zoom_out"):
 			map_view.zoom_by(1.6)
 		elif k == KEY_H:
 			map_view.centre_on_you()
@@ -8564,10 +8643,10 @@ func _map_key(k: int) -> void:
 			space.waypoint = null
 	elif k == KEY_BACKSPACE or k == KEY_DELETE:
 		planet_state.erase("waypoint")
-	elif k == KEY_W or k == KEY_UP or k == KEY_EQUAL or k == KEY_KP_ADD:
+	elif key_is(k, "jump") or key_is(k, "zoom_in"):
 		map_zoom_i -= 1
 		_map_camera()
-	elif k == KEY_S or k == KEY_DOWN or k == KEY_MINUS or k == KEY_KP_SUBTRACT:
+	elif key_is(k, "down") or key_is(k, "zoom_out"):
 		map_zoom_i += 1
 		_map_camera()
 
@@ -8727,7 +8806,7 @@ func quit_to_title() -> void:
 	ui.hide_forge()
 	ui.hud.visible = false
 	if ui.settings_panel.visible:
-		ui.toggle_settings()
+		ui.settings_menu.close()
 	if ui.journal_open():
 		ui.toggle_journal(self)
 	ui.show_title(true)
@@ -9771,15 +9850,15 @@ func _load_settings() -> void:
 			if int(d.get("settings_v", 0)) < 2 and String(d.get("quality", "")) == "high":
 				settings["quality"] = "auto"   # (high was only the old default: Auto is the new one)
 	settings["settings_v"] = 2
-	settings["pixel"] = int(settings["pixel"])   # JSON numbers come back as floats
-	settings["music"] = int(settings["music"])
-	settings["sound"] = int(settings["sound"])
+	for nk in ["pixel", "music", "sound", "master", "ambience", "ui_vol", "fps_cap", "bright", "ui_scale", "shake", "flash", "autosave"]:
+		settings[nk] = int(settings[nk])        # (JSON numbers come back as floats)
+	keymap = Keys.from_saved(settings.get("keys"))
+	settings["keys"] = keymap
 
-func set_setting(key: String, value) -> void:
+func set_setting(key: String, value, save := true) -> void:
 	settings[key] = value
-	var f := FileAccess.open(_real_save_dir().path_join("settings.json"), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(settings))
+	if save:
+		_save_settings()
 	if key == "quality":
 		if value == "auto":
 			settings["auto_q"] = "high"        # (Auto starts again from the top, and steps down if it must)
@@ -9790,8 +9869,12 @@ func set_setting(key: String, value) -> void:
 		_fxb = fx_budget()
 	if key == "quality" or key == "pixel":
 		_layout()
-	if key == "window":
+	if key == "window" or key == "vsync" or key == "fps_cap":
 		_apply_window()
+	if key == "ui_scale":
+		ui._relayout()
+	if key == "bright":
+		_post_key = ""
 	_apply_volumes()
 
 ## Windowed, fullscreen (a borderless window covering the screen) or exclusive fullscreen (the game
@@ -9807,11 +9890,16 @@ func _apply_window() -> void:
 			want = DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 	if DisplayServer.window_get_mode() != want:
 		DisplayServer.window_set_mode(want)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if bool(settings.get("vsync", true)) else DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = int(settings.get("fps_cap", 0))
 
 func _apply_volumes() -> void:
 	if audio:
 		audio.music_volume = float(settings["music"]) / 100.0
 		audio.sfx_volume = float(settings["sound"]) / 100.0
+		audio.amb_volume = float(settings["ambience"]) / 100.0
+		audio.ui_volume = float(settings["ui_vol"]) / 100.0
+		AudioServer.set_bus_volume_db(0, linear_to_db(maxf(0.0001, float(settings["master"]) / 100.0)))
 
 ## Saves live in "Wisp Forge/saves" so the whole game stays in one portable folder.
 ## The test mode uses its own folder inside it, so your real saves are never touched.

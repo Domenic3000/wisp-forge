@@ -152,6 +152,10 @@ func _ready() -> void:
 func _relayout() -> void:
 	var vs := get_viewport().get_visible_rect().size
 	U = maxi(1, int(floor(vs.y / 540.0)))
+	# (27 Nov, settings: the interface a size smaller or larger; larger only while the screen keeps 400 UI pixels)
+	var off: int = int(game.settings.get("ui_scale", 0)) if game != null else 0
+	if off != 0:
+		U = clampi(U + off, 1, maxi(U, int(floor(vs.y / 400.0))))
 	root.scale = Vector2(U, U)
 	root.position = Vector2.ZERO
 	root.size = (vs / float(U)).ceil()
@@ -771,7 +775,7 @@ func _build_shop() -> void:
 	shop_coins = _label("", 12, GOLD)
 	coin_row.add_child(shop_coins)
 	head.add_child(coin_row)
-	var close := _button("Leave  [F]")
+	var close := _button(game.keys_in("Leave  [F]"))
 	close.pressed.connect(func(): game.towns.close_shop())
 	head.add_child(close)
 	var r := _rule(400)
@@ -945,7 +949,7 @@ func _build_station() -> void:
 	_st_title = _head("Workshop", 12, CREAM)
 	_st_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_st_title)
-	var close := _button("Leave  [F]")
+	var close := _button(game.keys_in("Leave  [F]"))
 	close.pressed.connect(func(): game.workshops.close())
 	head.add_child(close)
 	var r := _rule(450)
@@ -1282,97 +1286,20 @@ func _build_screens() -> void:
 
 ## Quality, dithering, pixel size, sound; the controls beside them. Opened from the title screen, or
 ## with Esc while playing.
+## The pause menu and the settings (27 Nov): settings_menu.gd draws them into this panel
+const SettingsMenu := preload("res://scripts/settings_menu.gd")
+var settings_menu = null
+
 func _build_settings() -> void:
 	settings_panel = _screen()
 	settings_panel.visible = false
-	var sv: VBoxContainer = settings_panel.get_meta("box")
-	sv.add_theme_constant_override("separation", 4)
-	var head := _head("Settings", 24, CREAM)
-	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sv.add_child(head)
-	sv.add_child(_center(_rule(300)))
-	var cols := _box(false, 14)
-	cols.mouse_filter = Control.MOUSE_FILTER_PASS
-	sv.add_child(cols)
-	var left := _box(true, 4)
-	left.mouse_filter = Control.MOUSE_FILTER_PASS
-	cols.add_child(left)
-	var rows := [
-		["Quality", "quality", [["Auto", "auto"], ["High", "high"], ["Medium", "medium"], ["Low", "low"]],
-			"Auto starts high and steps down if the game runs under 50 frames a second. Low simulates and lights the world in fewer passes, with bigger pixels."],
-		["Dithering", "dither", [["Off", "off"], ["Subtle", "subtle"], ["Retro", "retro"]],
-			"Off draws clean colour bands like a SNES; Retro the old checkerboard."],
-		["View", "view", [["World", "world"], ["Unrolled", "unrolled"]],
-			"World shows the planet as it is; Unrolled lays the ground out flat."],
-		["Window", "window", [["Windowed", "windowed"], ["Fullscreen", "fullscreen"], ["Exclusive", "exclusive"]],
-			"F11 or Alt + Enter switches. Exclusive can run smoother."],
-		["Pixel size", "pixel", [["Auto", 0], ["3", 3], ["4", 4], ["5", 5], ["6", 6]],
-			"How big each world pixel is on screen."],
-		["Music", "music", [["Off", 0], ["25%", 25], ["50%", 50], ["75%", 75], ["100%", 100]],
-			"Music volume (tracks go in game/audio/music)."],
-		["Sound", "sound", [["Off", 0], ["25%", 25], ["50%", 50], ["75%", 75], ["100%", 100]],
-			"Sound effects volume."],
-	]
-	for row in rows:
-		var box := _box(true, 1)
-		box.mouse_filter = Control.MOUSE_FILTER_PASS
-		var h := _box(false, 2)
-		h.mouse_filter = Control.MOUSE_FILTER_PASS
-		var name_lbl := _head(row[0], 12, CREAM)
-		name_lbl.custom_minimum_size = Vector2(56, 0)
-		h.add_child(name_lbl)
-		for opt in row[2]:
-			var b := _button(opt[0])
-			b.custom_minimum_size = Vector2(30, 0)
-			b.pressed.connect(_on_option.bind(row[1], opt[1]))
-			h.add_child(b)
-			_opt_btns.append([b, row[1], opt[1]])
-		box.add_child(h)
-		var hint := _label(row[3], 11, DIM)
-		box.add_child(hint)
-		left.add_child(box)
-	# the controls
-	var right := _box(true, 2)
-	cols.add_child(right)
-	right.add_child(_head("Controls", 12, CREAM))
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 8)
-	grid.add_theme_constant_override("v_separation", 1)
-	for pair in [["A / D", "Walk"], ["W / Space", "Jump; hold to levitate (once forged)"],
-			["Left mouse", "Cast the chosen spell"], ["Right mouse", "Excavate: mana by how hard"],
-			["Shift + right", "Take back walls, furniture"], ["F", "Talk, open, board; a bed: home; a workshop: load it"], ["Z", "The next thing in reach for F"], ["Shift + right (satchel)", "Discard"],
-			["1-9 / wheel", "Choose a spell"], ["Q / E", "Choose what Conjure places"],
-			["C", "The Wisp Forge"], ["J", "Recipe book"], ["I / Tab", "Open or close the satchel"], ["M", "Map (Tab: the galaxy)"],
-			["H", "Drink a Healing Draught"], ["B", "Build mode (G: shapes)"],
-			["K", "Call the skiff"], ["Shift", "Starsail (skiff, in space)"], ["Esc", "Settings"], ["F11", "Fullscreen"], ["F9", "Creative stock (developer)"]]:
-		grid.add_child(_label(pair[0], 12, GOLD))
-		grid.add_child(_label(pair[1], 12, TEXT))
-	right.add_child(grid)
-	var close := _button("Close", true)
-	close.custom_minimum_size = Vector2(100, 0)
-	close.pressed.connect(toggle_settings)
-	# while playing: save everything and go back to the title, to pick another save slot
-	_to_title_btn = _button("Save and return to title", true)
-	_to_title_btn.custom_minimum_size = Vector2(100, 0)
-	_to_title_btn.pressed.connect(func(): game.quit_to_title())
-	var brow := _box(false, 6)
-	brow.mouse_filter = Control.MOUSE_FILTER_PASS
-	brow.alignment = BoxContainer.ALIGNMENT_CENTER
-	brow.add_child(_to_title_btn)
-	brow.add_child(close)
-	sv.add_child(brow)
-	_refresh_settings()
-
-func _on_option(key: String, value) -> void:
-	game.set_setting(key, value)
-	_refresh_settings()
+	settings_menu = SettingsMenu.new()
+	settings_menu.setup(self, game)
+	add_child(settings_menu)
 
 func _refresh_settings() -> void:
-	for it in _opt_btns:
-		var b: Button = it[0]
-		var on: bool = str(game.settings.get(it[1], "")) == str(it[2])
-		_set_chosen(b, on)
+	if settings_panel != null and settings_panel.visible:
+		settings_menu.build()
 
 ## The journal (L): the main quest's chapter, every step (done, now with how to do it, still to come), and the
 ## wisp's gifts. The world waits while it's open (main `menu_paused`).
@@ -1451,11 +1378,14 @@ func toggle_journal(g) -> void:
 	v.add_child(ft)
 	_sfx("ui_click")
 
+## Esc in play (the pause page, or a step back out of it), the title screen's Settings (straight to the settings)
 func toggle_settings() -> void:
-	settings_panel.visible = not settings_panel.visible
-	if settings_panel.visible:
-		_refresh_settings()
-		_to_title_btn.visible = game.state == "play" or game.state == "forge" or game.state == "dead"
+	if settings_menu.is_open():
+		settings_menu.escape()
+	elif game.state == "play" or game.state == "forge" or game.state == "dead":
+		settings_menu.open_pause()
+	else:
+		settings_menu.open_settings(false)
 
 # --------------------------------------------------------------- screens --
 func show_title(_has_save := true) -> void:
@@ -1805,6 +1735,8 @@ func _update_build_bar(g) -> void:
 		build_box.add_child(hl)
 
 func toast(txt: String, col: Color = Color.WHITE, secs: float = 2.2) -> void:
+	if game != null:
+		txt = game.keys_in(txt)
 	# (the same note again only freshens the one showing)
 	for it in _toast_items:
 		if is_instance_valid(it[0]) and String(it[2]) == txt:
@@ -1898,7 +1830,7 @@ func update_hud(g) -> void:
 				po.append("[F] talk")
 		if g.cargo_count() > 0 or g.items.has("skiff"):
 			po[1] += " · hold %d/%d crates" % [g.cargo_count(), g.hold_cap()]
-		info.text = "\n".join(po)
+		info.text = g.keys_in("\n".join(po))
 	elif g.frame % 6 == 0 and g.pocket.active:
 		# (inside the ship: its pocket, how far the isle has grown, what F does here)
 		var pl := PackedStringArray(["Your ship's pocket", "An isle in a nebula · level %d of %d" % [g.pocket.isle.level, g.pocket.Isle.LEVELS.size() - 1]])
@@ -1907,7 +1839,7 @@ func update_hud(g) -> void:
 				pl.append("[F] step out where you came in · [G] out by your ship")
 			"heart":
 				pl.append("[F] the Isle Heart: grow the isle")
-		info.text = "\n".join(pl)
+		info.text = g.keys_in("\n".join(pl))
 		var qp: String = g.quest.hud_line() if g.quest != null else ""
 		quest_lbl.visible = qp != ""
 		if qp != "" and quest_lbl.text != "✦ " + qp:
@@ -1977,6 +1909,8 @@ func update_hud(g) -> void:
 		if g.show_perf:
 			# F3: where the time goes (game logic on the CPU, waiting for the GPU, ticks per frame)
 			info.text += "\n%d FPS · game %.1f ms · GPU wait %.1f ms · %.1f ticks/frame · %s quality\n%s" % [Engine.get_frames_per_second(), g.perf_cpu_ms, g.perf_wait_ms, g.perf_steps, g.quality() + (" (auto)" if g.settings["quality"] == "auto" else ""), g.prof_text(6, "\n")]
+		elif bool(g.settings.get("show_fps", false)):
+			info.text += "\n%d FPS" % Engine.get_frames_per_second()      # (settings: the frame counter)
 		# the villagers' requests you've taken (towns.gd)
 		var rqs: Array = g.towns.requests() if g.towns != null else []
 		for rq in rqs:

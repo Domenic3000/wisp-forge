@@ -279,7 +279,7 @@ func _draw_planet() -> void:
 	if home != null:
 		_place(_pp(me, s, Vector2(float(home["pos"][0]), float(home["pos"][1]))), "Home", Color(1.0, 0.82, 0.35), "home")
 	if g.skiff != null and g.skiff.pos.length() < Defs.R_SPACE and g.player.aboard != g.skiff:
-		_place(_pp(me, s, g.skiff.pos), "Your skiff [K]", Color(0.55, 0.9, 1.0), "skiff")
+		_place(_pp(me, s, g.skiff.pos), g.keys_in("Your skiff [K]"), Color(0.55, 0.9, 1.0), "skiff")
 	var seen: Array = g.planet_state.get("towns_seen", [])
 	for t in g.builds.towns:
 		if bool(t["living"]) and seen.has(int(t["seed"])):

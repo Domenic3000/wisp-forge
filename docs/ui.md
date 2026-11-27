@@ -108,3 +108,31 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - The forge panel is on the right of the screen now (crafting.md, "The forge, the book and the workshops in the
   world"); the item belt sits over the spell bar (building.md).
 
+
+## The pause menu and the settings (27 Nov; user: "ok do you want to create a real setting menu now"; chose
+"Rebindable keys", "More sound sliders", "Display extras", "Comfort and gameplay", and "Pause menu first")
+- settings_menu.gd draws both into ui `settings_panel` (so main `menu_paused` and `mouse_over_ui` hold as before).
+  Esc in play: the pause page (Resume, Settings, Journal, Save and return to title, Save and quit); Esc again steps
+  back (settings -> pause -> closed; a key being bound: cancelled). The title's Settings opens the settings page
+  straight away. ui `toggle_settings` picks which; main `_unhandled_input` hands Esc to `settings_menu.escape()`
+  while it's open and ignores every other key but F11.
+- Tabs: **Display** (window, VSync, frame cap, quality, pixel size, interface size -1/0/+1 (ui `_relayout`: larger
+  only while the screen keeps 400 UI pixels), brightness 70-130% (a gamma in main POST_SHADER, which now runs when
+  brightness isn't 100 even with dithering off), dithering, view, frame counter); **Sound** (master on the master bus,
+  music, effects, ambience (audio `amb_volume`), interface (audio `ui_volume`: sounds named "ui_..."));
+  **Controls** (every action of keys.gd, two keys each: click one, press a key; Esc cancels, Backspace clears;
+  Esc, F11, 1-9 and the developer keys are fixed; a key used by two actions shows "also ..."; Reset keys);
+  **Gameplay** (screen shake and flash strength (main `shake`, `hurt_flash`, vfx `flash_k`), the wisp's reminders
+  (`wisp_note`), pickup popups (`_pick_flush`), F's highlight, the minimap, the world's autosave every 2/5/10 min).
+  Sliders are drawn in UI pixels (`_slider`): drag, click or wheel; saved when you let go (main `set_setting(key,
+  value, save)`).
+- Keys: keys.gd `ACTIONS` ([id, label, group, default keys]); main `keymap` (saved as settings "keys"), `key_is(k,
+  id)` for a key pressed, `key_held(id)` for one held, `set_key`, `reset_keys`, `key_label(id)`. The arrow keys move
+  as well unless bound elsewhere (`Keys.ARROWS`, `_arrow_taken`). Prompts and notes that name keys ("[F] Dock",
+  "[G] Go below", "Your skiff [K]") go through main `keys_in`, so they show the key as bound (speech.gd `draw`, ui
+  `toast`, the HUD's prompt lines).
+- settings.json: new keys master, ambience, ui_vol, vsync, fps_cap, bright, show_fps, ui_scale, shake, flash,
+  wisp_notes, popups, f_hint, autosave, minimap (it was never kept before: N's choice was lost on restart), keys.
+- Test: `_test_settings` (in the ui section, after `_test_ui`): Esc opens the pause page and pauses, every tab
+  fits (pictures `settings_display.png` and the rest), Esc steps back out, Use rebound to U through the capture
+  (F no longer, saved), the arrows still move, Reset keys, the volumes, Interface: Smaller, brightness.

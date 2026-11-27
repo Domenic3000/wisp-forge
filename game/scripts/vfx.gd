@@ -626,8 +626,9 @@ func _draw_glow() -> void:
 	var t0 := Time.get_ticks_usec()
 	_draw_layer(glow, 1)
 	_draw_projectiles()
-	if flash_k > 0.01:
-		var fc := flash_col * flash_k
+	var fk: float = flash_k * float(game.settings.get("flash", 100)) / 100.0      # (settings: flash strength)
+	if fk > 0.01:
+		var fc := flash_col * fk
 		fc.a = 1.0
 		glow.draw_rect(Rect2(0, 0, game.VW, game.VH), fc)
 	game.prof_add("spell effects", Time.get_ticks_usec() - t0)

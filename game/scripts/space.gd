@@ -1613,7 +1613,7 @@ func _draw_space() -> void:
 	# your own ship, while you're off it (it waits where you left it)
 	var own = game.skiff
 	if own != null and game.player.aboard != own and own.pos.length() > Defs.R_SPACE - 9.5:
-		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, "Your skiff [K]", Color(0.55, 0.9, 1.0), 1, "skiff")
+		_marker(xf, own.pos, float(maxi(own.w, own.h)) * 0.5, game.keys_in("Your skiff [K]"), Color(0.55, 0.9, 1.0), 1, "skiff")
 	if inst == null:
 		vl.draw_markers(xf)
 	_flush_marks()

@@ -160,7 +160,7 @@ func _draw_popups() -> void:
 ## maybe a way to cycle through nearby objects"): gold corner brackets round it, pulsing, with what F does over it,
 ## and "Z: next 1/3" when there's more than one thing in reach (main.gd `f_list`, `f_target`, `f_cycle`)
 func _draw_f_target() -> void:
-	if game.state != "play" or game.f_list.is_empty():
+	if game.state != "play" or game.f_list.is_empty() or not bool(game.settings.get("f_hint", true)):
 		return
 	var t: Dictionary = game.f_target()
 	if t.is_empty():
@@ -180,14 +180,14 @@ func _draw_f_target() -> void:
 				var col: Color = dark if o != Vector2.ZERO else gold
 				draw_rect(Rect2(Vector2(hx, k.y) + o, Vector2(arm, 1)), col)
 				draw_rect(Rect2(Vector2(k.x, vy) + o, Vector2(1, arm)), col)
-	var txt := "F  %s" % String(t["name"])
+	var txt := "%s  %s" % [game.key_label("interact"), String(t["name"])]
 	var nf: int = game.f_list.size()
 	if nf > 1:
 		var at_k := 0
 		for q in nf:
 			if game._f_key(game.f_list[q]) == game._f_key(t):
 				at_k = q
-		txt += "    Z: next %d/%d" % [at_k + 1, nf]
+		txt += "    %s: next %d/%d" % [game.key_label("f_next"), at_k + 1, nf]
 	var f: Font = PixelFont.make()
 	var px: float = float(game.scale_px)
 	var u: int = game.ui.U

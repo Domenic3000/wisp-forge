@@ -63,6 +63,8 @@ why things are the way they are (quoted, with the date), the names in the code, 
   `read_rect`, which waits for the frame in flight. Never call `get_image()` on a texture while drawing.
 - Hot per-cell loops in buildings.gd work on a local copy of the cells and plain tables and write back once:
   in the editor-build engine every call on an object goes through a shared lock.
+- Keys are rebindable (keys.gd): test a key with `key_is(k, "action")` / `key_held("action")`, never `KEY_F` and the
+  like (only Esc, F11, 1-9 and the developer keys are fixed). A prompt naming a key goes through `keys_in`.
 - Read mana regen through `mana_regen_of(m)`, never `m.mana_regen` directly; read gear stats through
   `gear(stat, m)`.
 - A test that sets something up in the air takes it away again; one that sets up near where you arrive looks

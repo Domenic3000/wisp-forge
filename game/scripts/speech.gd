@@ -80,6 +80,7 @@ func typing(key: String) -> bool:
 func draw(ci: CanvasItem, head: Vector2, text: String, alpha: float, key: String, style: int = SPEECH, wpos = null, pitch := 1.0) -> void:
 	if text == "" or alpha <= 0.01:
 		return
+	text = game.keys_in(text)              # (the keys as you've bound them: settings, 27 Nov)
 	if key == "":
 		key = "t:" + text
 	var s := _tick(key, text, style, wpos, pitch, alpha)

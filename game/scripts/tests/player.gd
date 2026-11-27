@@ -366,14 +366,13 @@ func _test_ui() -> void:
 	if not Rect2(Vector2.ZERO, vs).encloses(fr):
 		bad.append("the forge doesn't fit the screen (%s)" % fr)
 	g.ui.hide_forge()
-	ui.settings_panel.visible = true
-	ui._refresh_settings()
+	ui.settings_menu.open_pause()
 	var t_menu: float = g.time
 	await _frames(10)
 	g.get_viewport().get_texture().get_image().save_png(dir.path_join("ui_settings.png"))
 	if g.state == "play" and absf(g.time - t_menu) > 0.0001:
 		bad.append("the Esc menu doesn't pause the game (time went on %.3f)" % (g.time - t_menu))
-	ui.settings_panel.visible = false
+	ui.settings_menu.close()
 	# a shop, if a keeper is about
 	var shop_shot := false
 	for v in g.towns.folk:
@@ -533,6 +532,103 @@ func _test_ui() -> void:
 	g.ui._hot_key = ""
 	_ok("the pixel-art UI: its own font, whole pixels, everything on screen", bad.is_empty(),
 		("UI pixel %d screen pixels; %d satchel slots; satchel at %s, spells at %s%s" % [ui.U, slots, sr, hr, "; a shop too" if shop_shot else ""]) if bad.is_empty() else "; ".join(bad))
+	await _test_settings()
+
+## (27 Nov; user: "ok do you want to create a real setting menu now"; chose rebindable keys, more sound sliders,
+## display extras, comfort and gameplay, and a pause menu on Esc) Esc opens the pause page and pauses; every tab of
+## the settings builds and fits the screen; a key rebound works and the old one doesn't; the arrows still move;
+## the volumes, the interface size and the comfort settings take effect; Esc steps back out
+func _test_settings() -> void:
+	var ui = g.ui
+	var sm = ui.settings_menu
+	var dir: String = g._real_save_dir().path_join("shots")
+	var vs: Vector2 = g.get_viewport().get_visible_rect().size
+	var bad := []
+	var keep: Dictionary = g.settings.duplicate(true)
+	var keys0: Dictionary = g.keymap.duplicate(true)
+	# Esc: the pause page
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	g._unhandled_input(esc)
+	await _frames(3)
+	if not (sm.is_open() and sm.page == "pause"):
+		bad.append("Esc didn't open the pause page")
+	if not g.menu_paused():
+		bad.append("the pause page doesn't pause")
+	# every tab
+	sm.open_settings(true)
+	for t in sm.TABS:
+		sm.tab = t
+		sm.build()
+		await _frames(3)
+		var pr: Rect2 = ui._on_screen(ui.settings_panel.get_child(0).get_child(0))
+		if not Rect2(Vector2.ZERO, vs).encloses(pr):
+			bad.append("the %s tab doesn't fit the screen (%s)" % [t, pr])
+		g.get_viewport().get_texture().get_image().save_png(dir.path_join("settings_%s.png" % t.to_lower()))
+	# Esc steps back: settings -> pause -> closed
+	g._unhandled_input(esc)
+	var back_pause: bool = sm.is_open() and sm.page == "pause"
+	g._unhandled_input(esc)
+	if not back_pause or sm.is_open():
+		bad.append("Esc didn't step back out (to the pause page %s, closed %s)" % [back_pause, not sm.is_open()])
+	# a key rebound: F to U for Use, through the capture as a player would
+	sm.open_settings(false)
+	sm.tab = "Controls"
+	sm.capture = ["interact", 0]
+	sm.build()
+	var ku := InputEventKey.new()
+	ku.keycode = KEY_U
+	ku.pressed = true
+	sm._input(ku)
+	var rebound: bool = g.key_is(KEY_U, "interact") and not g.key_is(KEY_F, "interact")
+	if not rebound:
+		bad.append("rebinding Use to U didn't take (%s)" % str(g.keymap.get("interact")))
+	var arrows: bool = g.key_is(KEY_LEFT, "left") and g.key_is(KEY_UP, "jump")
+	if not arrows:
+		bad.append("the arrow keys don't move")
+	var saved_ok := false
+	var sf := FileAccess.get_file_as_string(g._real_save_dir().path_join("settings.json"))
+	var sd = JSON.parse_string(sf)
+	if typeof(sd) == TYPE_DICTIONARY and typeof(sd.get("keys")) == TYPE_DICTIONARY:
+		saved_ok = (sd["keys"]["interact"] as Array).has(float(KEY_U)) or (sd["keys"]["interact"] as Array).has(KEY_U)
+	if not saved_ok:
+		bad.append("the new key wasn't saved")
+	g.reset_keys()
+	if not g.key_is(KEY_F, "interact"):
+		bad.append("Reset keys didn't bring F back")
+	sm.close()
+	# volumes, the interface's size, comfort
+	g.set_setting("ambience", 40)
+	g.set_setting("ui_vol", 30)
+	g.set_setting("master", 50)
+	var vol_ok: bool = absf(g.audio.amb_volume - 0.4) < 0.01 and absf(g.audio.ui_volume - 0.3) < 0.01 and absf(db_to_linear(AudioServer.get_bus_volume_db(0)) - 0.5) < 0.02
+	if not vol_ok:
+		bad.append("the volumes didn't take (ambience %.2f, interface %.2f, master %.2f)" % [g.audio.amb_volume, g.audio.ui_volume, db_to_linear(AudioServer.get_bus_volume_db(0))])
+	var u0: int = ui.U
+	g.set_setting("ui_scale", -1)
+	var u_small: int = ui.U
+	g.set_setting("ui_scale", 0)
+	if u0 > 1 and u_small != u0 - 1:
+		bad.append("Interface: Smaller didn't shrink it (%d to %d)" % [u0, u_small])
+	g.set_setting("bright", 120)
+	await _frames(3)
+	var post_on: bool = g.post_rect.visible
+	g.set_setting("bright", 100)
+	if not post_on:
+		bad.append("brightness didn't turn the last pass on")
+	# restore
+	for k in keep:
+		g.settings[k] = keep[k]
+	g.keymap = keys0
+	g.settings["keys"] = g.keymap
+	g._save_settings()
+	g._apply_volumes()
+	g._apply_window()
+	ui._relayout()
+	g._post_key = ""
+	_ok("the settings: a pause page on Esc, four tabs that fit, keys rebound and saved, volumes, size and brightness", bad.is_empty(),
+		("tabs %s; a key rebound, the arrows still move, Esc steps back (pictures settings_*.png)" % ", ".join(sm.TABS)) if bad.is_empty() else "; ".join(bad))
 
 ## (user, 25 Nov: "make the text boxes for speech look a little nicer with an animation and talking sound
 ## effects"): the wisp's words pop in and type out with blips, a villager's in their own voice

@@ -28,6 +28,8 @@ var _cool := {}               # name -> frames until it may play again
 var _players := []
 var _next := 0
 var sfx_volume := 0.8         # 0..1, from settings
+var amb_volume := 0.8         # (27 Nov, the settings menu: the ambience and the interface on sliders of their own)
+var ui_volume := 0.8
 var music_volume := 0.6
 
 var tracks := {}              # mood, "kind:mood" or "biome:<biome>:mood" -> Array of streams
@@ -78,12 +80,13 @@ func _ready() -> void:
 
 # ------------------------------------------------------------------ playing ---
 func play(sname: String, wpos = null, vol := 1.0, pitch := 1.0) -> void:
-	if not sfx.has(sname) or sfx_volume <= 0.001:
+	var gain := ui_volume if sname.begins_with("ui_") else sfx_volume
+	if not sfx.has(sname) or gain <= 0.001:
 		return
 	if int(_cool.get(sname, 0)) > 0:
 		return
 	_cool[sname] = int(COOLDOWN.get(sname, 2))
-	var v := vol * sfx_volume
+	var v := vol * gain
 	if wpos != null and game != null:
 		# fade with distance from the middle of the screen (in world cells)
 		var d: float = (wpos as Vector2).distance_to(game.cam_c)
@@ -527,7 +530,7 @@ func _update_ambience() -> void:
 	for nm in _amb:
 		var e: Array = _amb[nm]
 		var p: AudioStreamPlayer = e[0]
-		var want: float = float(t.get(nm, 0.0)) * sfx_volume * AMB_GAIN
+		var want: float = float(t.get(nm, 0.0)) * amb_volume * AMB_GAIN
 		var v: float = e[1]
 		v += (want - v) * (0.02 if want > v else 0.03)
 		e[1] = v
