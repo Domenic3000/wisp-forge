@@ -891,6 +891,10 @@ var world_seed := 0
 ## the old pools (`pool_v1`), as their saved ground was (index -> true; main sets it from the save, `bset`)
 var legacy_biomes := {}
 const BIOME_SET := 2
+## The terrain a journey's planets are grown with (26 Nov; user chose "only on new journeys"): 2 is the deeper ground,
+## taller relief and new caves (surface.comp, gen.comp TV2); a journey saved before it keeps 1 ("tset" in its save)
+const TERRAIN_SET := 2
+var terrain := TERRAIN_SET
 var _planet_cache := {}
 
 ## Each planet has its own size: "radius" is its mean surface radius in cells (classic Verdance

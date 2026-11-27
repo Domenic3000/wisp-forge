@@ -10,6 +10,7 @@ layout(std430, set = 0, binding = 9) restrict readonly buffer Sites { vec4 s[]; 
 layout(local_size_x = 16, local_size_y = 16) in;
 
 int SEED;
+bool TV2;        // terrain 2 (P.p[26].x: Defs.terrain, the journey's): new journeys from 26 Nov
 
 bool onSite(float th, float margin) {
 	int n = int(sites.s[0].x);
@@ -46,6 +47,31 @@ float siteDist(float th) {
 // How much cave there is fades smoothly, never stopping at a hard line: toward the surface
 // (except at cave mouths) and toward building sites (so foundations don't hang over a hole),
 // the tunnels narrow to rounded tips and the caverns shrink, instead of ending in flat walls.
+// Terrain 2's caves (user, 26 Nov: "i think we should make the cave shapes more realistic"): tunnels whose course
+// is bent by a second noise (no straight runs), widening into halls and pinching into squeezes; a sparser second set
+// crossing them (junctions and loops); and caverns wider than they are tall (the radial axis stretched), their size
+// growing with depth. `k` fades them toward the surface and building sites as before.
+bool caves2(vec2 p, float r, float d, float k, float df) {
+	vec2 w = vec2(fbm(p / 70.0, SEED + 40, 2), fbm(p / 70.0 + vec2(31.7, 11.3), SEED + 41, 2)) - 0.5;
+	vec2 pw = p + w * 46.0;
+	float width = 0.65 + 0.95 * fbm(p / 130.0, SEED + 42, 2);
+	float n1 = fbm(pw / 95.0, SEED + 10, 2);
+	if (abs(n1 - 0.5) < (0.02 + 0.016 * df) * k * width) return true;
+	if (d > 40.0) {
+		float n1c = fbm(pw / 150.0 + vec2(17.0, 5.0), SEED + 14, 2);
+		if (abs(n1c - 0.5) < 0.008 * k * width) return true;
+	}
+	// (caverns are measured from the mean surface, not the peak over them: a mountain stays solid rock)
+	float dc = min(d, RS0 + 30.0 + (fbm(p / 60.0, SEED + 43, 2) - 0.5) * 60.0 - r);
+	if (dc > 24.0) {
+		vec2 up = p / max(r, 1.0);
+		vec2 q = up * (RS0 + (r - RS0) * 1.8) + w * 30.0;        // (squashed up and down: wide, low caverns)
+		float n2 = fbm(q / 165.0, SEED + 12, 3);
+		if (n2 > 0.685 - 0.06 * df + (1.0 - k) * 0.3 + (1.0 - smoothstep(24.0, 44.0, dc)) * 0.1) return true;
+	}
+	return false;
+}
+
 bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float d = rs - r;
 	if (d < 2.0 || r <= coreR + 3.0) return false;
@@ -57,6 +83,7 @@ bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float k = ks * kt;
 	if (k < 0.02) return false;
 	float df = clamp(d / max(rs - coreR, 1.0), 0.0, 1.0);
+	if (TV2) return caves2(p, r, d, k, df);
 	// tunnels and caverns sized for the 24-cell-tall mage: roomy enough to jump and fight in
 	float n1 = fbm(p / 90.0, SEED + 10, 2);
 	if (abs(n1 - 0.5) < (0.022 + 0.016 * df) * k) return true;
@@ -75,6 +102,38 @@ bool solidAt(vec2 p) {
 	vec4 sa = surfA(th), sb = surfB(th);
 	if (r >= sa.x) return false;
 	return !carvedAt(p, r, sa.x, sb.x);
+}
+
+// Terrain 2: stalactites hanging from cave ceilings and stalagmites rising from the floors, cones tapering to points
+// (a few columns in every eleven, each its own length, keyed by the ceiling or floor it grows from so it stays
+// whole; never one that would reach the floor or ceiling across from it: no pillars)
+bool caveSpike(vec2 p, float r, float th, float rs) {
+	if (rs - r < 30.0) return false;
+	float arcC = th * RS0;
+	float ci = floor(arcC / 11.0);
+	float cx = (ci + 0.3 + 0.4 * h2(ivec2(int(ci), 71), SEED)) * 11.0;
+	float da = abs(arcC - cx);
+	if (da > 4.5) return false;
+	vec2 up = p / max(r, 1.0);
+	for (int k = 1; k <= 12; k++) {
+		if (solidAt(p + up * float(k))) {
+			float hv = h2(ivec2(int(ci), int((r + float(k)) / 12.0)), SEED + 70);
+			if (hv > 0.3) return false;
+			float L = 4.0 + hv * 30.0;
+			if (float(k) > L || solidAt(p - up * 10.0)) return false;
+			return da < (1.5 + L * 0.2) * (1.0 - float(k) / L);          // hanging from the ceiling
+		}
+	}
+	for (int k2 = 1; k2 <= 7; k2++) {
+		if (solidAt(p - up * float(k2))) {
+			float hv2 = h2(ivec2(int(ci), int((r - float(k2)) / 12.0)), SEED + 72);
+			if (hv2 > 0.25) return false;
+			float Lf = 3.0 + hv2 * 16.0;
+			if (float(k2) > Lf || solidAt(p + up * 14.0)) return false;
+			return da < (1.5 + Lf * 0.25) * (1.0 - float(k2) / Lf);       // rising from the floor
+		}
+	}
+	return false;
 }
 
 // Loose powders (sand, gravel, snow, ash) are only generated where they can rest. Where one
@@ -109,7 +168,7 @@ uint settleSafe(uint m, vec2 p, float r, float th, float rs) {
 // solid ground under and beside it. Returns how deep the bog is at this column (0 = no bog), with
 // a wobbling edge so bogs are lenses, not boxes. Everywhere else the layer is packed earth you can
 // walk on, so a slope of "ground" is never a hidden pool you sink into.
-float bogDepth(vec2 p, float r, float th, float rs, vec4 sb) {
+float bogDepth(vec2 p, float r, float th, float rs, vec4 sb, float amp) {
 	if (onSite(th, 10.0)) return 0.0;
 	float stp = 3.0 / RS0;
 	float rimL = rs, rimR = rs;
@@ -118,6 +177,9 @@ float bogDepth(vec2 p, float r, float th, float rs, vec4 sb) {
 		rimR = max(rimR, surfA(mod(th + stp * float(k), TAU)).x);
 	}
 	float lvl = min(rimL, rimR) - 1.0;
+	// (terrain 2's rougher ground has many small dips: only a deeper hollow is a bog, more so on hilly ground,
+	// so the jungle stays about as firm as before while the flat marsh keeps its bogs)
+	if (TV2) lvl -= 1.0 * clamp((amp - 3.0) / 13.0, 0.0, 1.0);
 	if (sb.y > 0.0) lvl = max(lvl, sb.y);   // under a pond or lake
 	float wob = fbm(p / 9.0, SEED + 95, 2);
 	float bog = clamp((lvl - rs) * 0.7 + (wob - 0.5) * 3.0, 0.0, 6.0);
@@ -140,20 +202,36 @@ uint strata(vec2 p, float r, float th, vec4 sa, vec4 sb, int b) {
 	int ug = int(B.w) & 15;
 	float d = rs - r;
 	float subD = B.z + floor(h2(ivec2(int(th * RS0), 3), SEED) * 6.0);
+	float topD = B.y;
 	bool snowy = (flags & 1) != 0 && rs > RS0 + 48.0;
+	bool intoStone = false;
+	if (TV2) {
+		// terrain 2 (user, 26 Nov: "the top layer of a planet is a bit too thin. i want to really feel the ambiance of
+		// each biome"): the biome's own ground runs three times as deep, its loose tops (sand, snow, ash, mud) thicker,
+		// its lower part giving way to stone in lobes instead of a line; on a steep slope the soil thins to bare rock
+		if (topD >= 2.0) topD = topD * 1.6 + 1.0;
+		if (B.z > 0.5) subD = B.z * 2.6 + 6.0 + (fbm(vec2(th * RS0 / 40.0, 0.5), SEED + 31, 2) - 0.5) * 14.0;
+		float dl = 3.0 / RS0;
+		float slope = abs(surfA(mod(th + dl, TAU)).x - surfA(mod(th - dl + TAU, TAU)).x) / 6.0;
+		float steep = smoothstep(0.9, 1.9, slope);
+		topD *= 1.0 - steep;
+		subD *= 1.0 - 0.85 * steep;
+		float lob = fbm(p / 13.0, SEED + 32, 2);
+		intoStone = d > topD + subD * 0.6 && lob > 0.5 + 0.5 * (1.0 - (d - topD - subD * 0.6) / max(subD * 0.4, 1.0));
+	}
 	uint m;
 	if (snowy && d < 3.0) m = M_SNOW;
-	else if (d < B.y) m = uint(A.z);
-	else if (d < B.y + subD) m = uint(B.x);
+	else if (d < topD) m = uint(A.z);
+	else if (d < topD + subD && !intoStone) m = uint(B.x);
 	else if (r > deepR) m = M_STONE;
 	else if (r > magmaR) m = M_DEEPSTONE;
 	else if (r > coreR) m = M_MAGMAROCK;
 	else return M_CORE;
 	// mud: liquid in bogs, packed earth (grass on top) elsewhere
-	if (d < B.y + subD) {
+	if (d < topD + subD) {
 		uint liq = KIND[uint(A.z)] == K_LIQUID ? uint(A.z) : (KIND[uint(B.x)] == K_LIQUID ? uint(B.x) : 0u);
 		if (liq != 0u) {
-			if (d < bogDepth(p, r, th, rs, sb)) return liq;
+			if (d < bogDepth(p, r, th, rs, sb, A.y)) return liq;
 			if (KIND[m] == K_LIQUID) m = d < 1.0 ? M_GRASS : M_DIRT;
 		}
 	}
@@ -203,6 +281,26 @@ float segDist(vec2 q, vec2 a, vec2 b) {
 	return length(pa - ba * t);
 }
 
+// (user, 26 Nov: on a big tree "the trunk and branches end too abruptly for how thick they are"): a trunk from the
+// ground up to `top`, half as wide as hw at its foot narrowing to hw * k, its top rounded off; a limb from a to b
+// thick r0 at a narrowing to r1 at b (its end round); a bough's tip splitting into two twigs
+bool trunkIn(vec2 q, float top, float hw, float k) {
+	if (q.y < 0.0 || q.y > top) return false;
+	float w = hw * mix(1.0, k, smoothstep(0.35, 1.0, q.y / top));
+	if (q.y > top - w) return length(vec2(q.x, q.y - (top - w))) < w;
+	return abs(q.x) < w;
+}
+bool limbIn(vec2 q, vec2 a, vec2 b, float r0, float r1) {
+	vec2 pa = q - a, ba = b - a;
+	float t = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+	return length(pa - ba * t) < mix(r0, r1, t);
+}
+vec2 turned(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(v.x * c - v.y * s, v.x * s + v.y * c); }
+bool twigsIn(vec2 q, vec2 a, vec2 b, float L, float r0) {
+	vec2 d = normalize(b - a) * L;
+	return limbIn(q, b, b + turned(d, 0.55), r0, 0.45) || limbIn(q, b, b + turned(d, -0.45) * 0.8, r0 * 0.9, 0.45);
+}
+
 // broad oak: a flared trunk, two branches and a lumpy crown of overlapping blobs; some are giants
 uint oakTree(vec2 q, float hh, float h3, float h4, float nz) {
 	bool giant = h3 < 0.12;
@@ -210,11 +308,13 @@ uint oakTree(vec2 q, float hh, float h3, float h4, float nz) {
 	float tw = giant ? 5.0 : (h > 42.0 ? 4.0 : 3.0);
 	float R = 9.0 + h * 0.16;
 	float da = q.x, dy = q.y;
-	float hw = tw * 0.5 + max(0.0, 3.0 - dy) * 0.7;
-	if (dy >= 0.0 && dy < h - R * 0.3 && abs(da) < hw) return M_WOOD;
+	if (dy >= 0.0 && dy < 3.0 && abs(da) < tw * 0.5 + (3.0 - dy) * 0.7) return M_WOOD;      // (its foot, flared)
+	if (trunkIn(q, h - R * 0.3, tw * 0.5, 0.6)) return M_WOOD;
 	float side = h4 < 0.5 ? 1.0 : -1.0;
-	if (segDist(q, vec2(0.0, h * 0.5), vec2(side * R * 0.55, h - R * 0.35)) < (giant ? 1.4 : 1.0)) return M_WOOD;
-	if (segDist(q, vec2(0.0, h * 0.62), vec2(-side * R * 0.5, h - R * 0.2)) < 0.9) return M_WOOD;
+	vec2 b1a = vec2(0.0, h * 0.5), b1b = vec2(side * R * 0.55, h - R * 0.35);
+	if (limbIn(q, b1a, b1b, giant ? 1.7 : 1.1, 0.6)) return M_WOOD;
+	if (giant && twigsIn(q, b1a, b1b, 4.0, 0.7)) return M_WOOD;
+	if (limbIn(q, vec2(0.0, h * 0.62), vec2(-side * R * 0.5, h - R * 0.2), giant ? 1.3 : 0.95, 0.55)) return M_WOOD;
 	float rag = 1.0 - nz * 0.28;
 	vec2 c0 = vec2(0.0, h), c1 = vec2(-R * 0.55, h - R * 0.3), c2 = vec2(R * 0.55, h - R * 0.25), c3 = vec2(R * 0.2 * side, h + R * 0.35);
 	float e = min(min(length((q - c0) / vec2(R, R * 0.8)), length((q - c1) / vec2(R * 0.62, R * 0.5))),
@@ -362,8 +462,9 @@ uint elderTree(vec2 q, float hh, float h3, float h4, int bb, float nz) {
 	float tw = 3.2 + h3 * 1.6;
 	float da = q.x, dy = q.y;
 	if (dy < 0.0) return 0u;
-	// the trunk, flaring into buttress roots at its foot
-	if (dy < h - 10.0 && abs(da) < tw + max(0.0, 9.0 - dy) * 0.7) return M_WOOD;
+	// the trunk, flaring into buttress roots at its foot, narrowing and rounding off up in the crown
+	if (dy < 9.0 && abs(da) < tw + (9.0 - dy) * 0.7) return M_WOOD;
+	if (trunkIn(q, h - 10.0, tw, 0.5)) return M_WOOD;
 	// the crown: one great mass over the top and five more round it, low and wide, overlapping
 	vec2 top = vec2((h4 - 0.5) * 6.0, h - 2.0);
 	float e0 = length((q - top) / vec2(18.0 + h3 * 6.0, 11.0 + hh * 3.0));
@@ -375,8 +476,10 @@ uint elderTree(vec2 q, float hh, float h3, float h4, int bb, float nz) {
 		float rr = 10.0 + h2(ivec2(bb, 160 + k), SEED) * 5.0;
 		vec2 c = vec2(sd * (8.0 + hk * 14.0), h * (0.58 + 0.07 * float(k)) + hk * 5.0);
 		if (abs(c.x) + rr > 34.0) c.x = sign(c.x) * (34.0 - rr);
-		// the bough out to it, heavy
-		if (segDist(q, vec2(0.0, c.y - 10.0), c - vec2(sd * 3.0, 2.0)) < 1.4 + hk * 0.6) return M_WOOD;
+		// the bough out to it, heavy at the trunk and tapering, its end splitting into twigs
+		vec2 ba0 = vec2(0.0, c.y - 10.0), bb0 = c - vec2(sd * 3.0, 2.0);
+		if (limbIn(q, ba0, bb0, 1.8 + hk * 0.7, 0.8)) return M_WOOD;
+		if (twigsIn(q, ba0, bb0, 4.0 + hk * 3.0, 0.8)) return M_WOOD;
 		float e = length((q - c) / vec2(rr, rr * 0.7));
 		if (e < 1.0 - nz * 0.22) return M_LEAF;
 	}
@@ -412,12 +515,13 @@ uint jungleTree(vec2 q, float hh, float h3, float h4, int bb, float nz) {
 	float da = q.x, dy = q.y;
 	if (dy < 0.0) return 0u;
 	if (dy < 8.0 && abs(da) < tw * 0.5 + pow(8.0 - dy, 1.6) * 0.32) return M_WOOD;
-	if (dy < h - 4.0 && abs(da) < tw * 0.5) return M_WOOD;
+	if (trunkIn(q, h - 4.0, tw * 0.5, 0.55)) return M_WOOD;
 	float side = h4 < 0.5 ? 1.0 : -1.0;
 	float by = h * 0.55, bx = side * R * 0.75;
-	if (segDist(q, vec2(0.0, by), vec2(bx, by + R * 0.25)) < 1.3) return M_WOOD;
-	if (segDist(q, vec2(0.0, h - 6.0), vec2(-side * R * 0.5, h - 1.0)) < 1.1) return M_WOOD;
-	if (segDist(q, vec2(0.0, h - 5.0), vec2(side * R * 0.45, h)) < 1.0) return M_WOOD;
+	vec2 jb = vec2(bx, by + R * 0.25);
+	if (limbIn(q, vec2(0.0, by), jb, 1.7, 0.7) || twigsIn(q, vec2(0.0, by), jb, 4.0, 0.7)) return M_WOOD;
+	if (limbIn(q, vec2(0.0, h - 6.0), vec2(-side * R * 0.5, h - 1.0), 1.4, 0.6)) return M_WOOD;
+	if (limbIn(q, vec2(0.0, h - 5.0), vec2(side * R * 0.45, h), 1.3, 0.55)) return M_WOOD;
 	float rag = 1.0 - nz * 0.25;
 	float e = min(min(length((q - vec2(0.0, h + 2.0)) / vec2(R, R * 0.38)), length((q - vec2(-R * 0.62, h - 1.0)) / vec2(R * 0.58, R * 0.3))),
 	              min(length((q - vec2(R * 0.62, h)) / vec2(R * 0.6, R * 0.32)), length((q - vec2(R * 0.15 * side, h + R * 0.3)) / vec2(R * 0.55, R * 0.28))));
@@ -840,6 +944,7 @@ void main() {
 		return;
 	}
 	SEED = int(P.p[0].w);
+	TV2 = P.p[26].x > 1.5;
 	vec2 p = cellCenter(s, y, x);
 	float r = length(p);
 	float th = angleOf(p);
@@ -888,7 +993,7 @@ void main() {
 			if (rt != 0u) bgm = rt;
 		}
 		m = settleSafe(strata(p, r, th, sa, sb, b), p, r, th, rs);
-		if (m != M_CORE && carvedAt(p, r, rs, sb.x)) {
+		if (m != M_CORE && carvedAt(p, r, rs, sb.x) && !(TV2 && caveSpike(p, r, th, rs))) {
 			m = 0u;
 			// liquid pools resting on cave floors
 			float pn = fbm(p / 58.0, SEED + 30, 1);

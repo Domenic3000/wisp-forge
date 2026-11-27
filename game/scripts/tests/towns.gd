@@ -166,7 +166,8 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 					in_bed += 1
 		if home == watch.size() and lying == watch.size():
 			break
-	var with_bed := watch.filter(func(wb): return not wb.bed.is_empty()).size()
+	# (the one whose bed the test blocks with a chest sleeps on the floor, so isn't counted)
+	var with_bed := watch.filter(func(wb): return not wb.bed.is_empty() and wb != tc_v).size()
 	# no two asleep in one spot, none lying over a chest
 	var piled := 0
 	var over_chest := 0
@@ -199,13 +200,38 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 			if sfr < 0 or absf(over - 4.5) > 0.75:
 				floating += 1
 	print("[towns] asleep: %d settled on the world, %d floating, %d with no room over them" % [settled, floating, boxed])
+	# (26 Nov, user: "a villager house got burned down while he was in it and he just stayed floating in the air
+	# sleeping"): a sleeper with nothing under them any more wakes where they are and falls
+	var woke_ok := true
+	var wk_txt := "nobody asleep in sight"
+	for vw in watch:
+		if not vw.lying or not vw.lie_ok or not g.in_grid(vw.pos, 24.0):
+			continue
+		var wk_pos: Vector2 = vw.pos
+		vw.pos = wk_pos + wk_pos.normalized() * 200.0          # (as if the house were gone from under them)
+		var wk_up: float = vw.pos.length()
+		for wf in 45:
+			await _frames(1)
+			if not vw.lying:
+				break
+		var woke: bool = not vw.lying
+		for wf2 in 20:
+			await _frames(1)
+		var fell: bool = vw.pos.length() < wk_up - 2.0
+		woke_ok = woke and fell
+		wk_txt = "%s woke %s and fell %s" % [vw.name, woke, fell]
+		vw.pos = wk_pos
+		vw.vx = 0.0
+		vw.vy = 0.0
+		tw._lie_down(vw, true)
+		break
 	var tc_ok: bool = tc_v == null or (tc_v.lying and tc_v.bedroll)
 	if tc_chest != null:
 		g.chests.erase(tc_chest)
 	g.get_viewport().get_texture().get_image().save_png(g._real_save_dir().path_join("shots").path_join("town_night.png"))
 	# (they walk there: "stuck", stepping in after pushing on a wall for 90 ticks, is the exception)
 	var night_ok: bool = not watch.is_empty() and home == watch.size() and slept > 0 and int(tw.stats.get("stuck", 0)) * 2 <= int(tw.stats.get("went_in", 0)) \
-		and lying == watch.size() and (with_bed == 0 or in_bed > 0) and piled == 0 and over_chest == 0 and tc_ok and floating == 0 and boxed == 0
+		and lying == watch.size() and (with_bed == 0 or in_bed > 0) and piled == 0 and over_chest == 0 and tc_ok and floating == 0 and boxed == 0 and woke_ok
 	var late := []
 	for v6 in watch:
 		if v6.inside != v6.house:
@@ -255,18 +281,19 @@ func _test_town_days(t: Dictionary, mid: int) -> void:
 		# then for four seconds: how long are they both standing still in one spot? (passing is fine)
 		for k3 in 240:
 			await _frames(1)
+			apart = maxf(apart, absf(tw._dc(float(tw._col(ap_a.pos)), ap_b.pos)))      # (on a slope it takes a moment more)
 			if absf(ap_a.vx) < 0.05 and absf(ap_b.vx) < 0.05 and absf(ap_a.pos.length() - ap_b.pos.length()) < 10.0 \
 					and absf(tw._dc(float(tw._col(ap_a.pos)), ap_b.pos)) < 5.0:
 				ap_stacked += 1
 	var apart_ok: bool = ap_a == null or ap_b == null or (apart >= 6.0 and ap_stacked < 20)
 	morn_ok = morn_ok and apart_ok
-	late.append("two put on one spot were %.0f cells apart 1.5 s later, then stood in one spot %d frames of 240" % [apart, ap_stacked])
+	late.append("two put on one spot were %.0f cells apart within 5.5 s, then stood in one spot %d frames of 240" % [apart, ap_stacked])
 	for v7 in watch:
 		if tw.want_place(v7, tw.hour_at(v7.pos)).is_empty() and not v7.inside.is_empty():
 			late.append("%s still in at %.1f h (%s, fade %d, talk %d)" % [v7.name, tw.hour_at(v7.pos), "in grid" if g.in_grid(v7.pos, 12.0) else "far", v7.fade, v7.talk_t])
 	_ok("living towns: folk keep the hours (home asleep at night, out in the morning)", sched_ok and night_ok and morn_ok,
-		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds; %d in one spot, %d over a chest; with a chest before %s's bed: %s; %d settled on the world, %d floating, %d with no room over them); in the morning %d of the %d who'd be out came out; %s%s" % [
-		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed, piled / 2, over_chest, tc_v.name if tc_v != null else "nobody", ("on the floor" if tc_v.bedroll else "in it") if tc_v != null else "-", settled, floating, boxed,
+		"schedule %s%s; at dusk %s; at night %d of %d went home within %.1f s (%d asleep, %d lying down, %d of them in their beds; %d have beds; %d in one spot, %d over a chest; with a chest before %s's bed: %s; %d settled on the world, %d floating, %d with no room over them; with nothing under them: %s); in the morning %d of the %d who'd be out came out; %s%s" % [
+		sched_ok, "" if sched_ok else " (" + sched_bad + ")", ", ".join(at_dusk), home, watch.size(), waited / 60.0, slept, lying, in_bed, with_bed, piled / 2, over_chest, tc_v.name if tc_v != null else "nobody", ("on the floor" if tc_v.bedroll else "in it") if tc_v != null else "-", settled, floating, boxed, wk_txt,
 		out, want_out, JSON.stringify(tw.stats), "" if late.is_empty() else "; " + ", ".join(late)])
 	g.time = tw.time_for_hour(mid_p, 12.0)
 

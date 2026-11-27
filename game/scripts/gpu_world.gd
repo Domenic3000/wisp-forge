@@ -310,6 +310,7 @@ func build_surface(planet: Dictionary) -> void:
 	var sky: Color = planet["sky"]
 	setp(4, Vector4(sky.r, sky.g, sky.b, bl.size()))
 	setp(7, Vector4(planet["magmaR"], planet["sea"], planet["lava"], planet["rich"]))
+	setp(26, Vector4(float(Defs.terrain), 0.0, 0.0, 0.0))          # (the journey's terrain: surface.comp, gen.comp)
 	for b in bl.size():
 		var bd: Dictionary = Defs.BIOMES[bl[b]]
 		setp(8 + 2 * b, Vector4(bd["off"], bd["amp"], bd["top"], bd["flags"]))

@@ -31,7 +31,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   first wreck always, else 70%: `items["part_shield"]` then `["part_cannon"]`; half the time a star chart,
   `_star_chart`, the nearest uncharted system; a recipe scroll 40%; the captain's log, its fate). Markers:
   `nearest_wreck` ("Wreck of the ..."); `nearest_rock` leaves wrecks and scrap out. The map draws a wreck in
-  explored sectors with its name.
+  explored sectors with its name, where it really is (user, 26 Nov: "there was a space derelict ship that i went to
+  on the map that wasnt actually there"): map_view `_wrecks_of` takes a loaded sector's live wrecks (`rocks` and
+  `_inst_stash`), else the saved ones in `sect_state` (their "rel"), and only for a sector never loaded the place
+  it was generated at. `_test_wrecks` pushes a wreck 650 cells and checks the map marks it there.
 - PIRATES (scripts/pirate.gd; user, 23 Nov: pirates with skiff hull damage and repair): `Pirate` extends wreck.gd,
   so it lives in space.gd's `rocks` (kind "pirate", sect "pirate": never saved, dropped by `_drop_pirates` on
   landing or falling) and is drawn, collided with and blasted like a wreck. `make_pirate(seed, cls)` grows it

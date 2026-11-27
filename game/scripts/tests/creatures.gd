@@ -60,7 +60,19 @@ func _test_creatures() -> void:
 					if cr_soft:
 						cr_off = cr_try
 						break
-			var cr_at: Vector2 = cr_home + cr_side * cr_off + cr_up * (20.0 if cr_d["fly"] and cr_d["def"]["go"] != "burrow" else 4.0)
+			# (not by a building: a climber goes up its walls, which is right, but not what's checked here)
+			var cr_built := func(cr_o: float) -> bool:
+				var cr_bc: int = Build.cell_of(cr_home + cr_side * cr_o).x
+				for cr_bq in range(-24, 25, 6):
+					if g.builds.label_at(_cell_pos(cr_bc + cr_bq, g.builds.ground_row(cr_bc + cr_bq) - 6)) != "":
+						return true
+				return false
+			if cr_d["def"]["go"] != "burrow" and cr_built.call(cr_off) and not cr_built.call(-cr_off):
+				cr_off = -cr_off
+			# (over the ground at its own column: on hilly ground a spot level with you may be inside the hill)
+			var cr_col_at: Vector2 = cr_home + cr_side * cr_off
+			var cr_ca: float = atan2(cr_col_at.y, cr_col_at.x)
+			var cr_at: Vector2 = Vector2(cos(cr_ca), sin(cr_ca)) * (g.gpu.surf_at(cr_ca).x + (20.0 if cr_d["fly"] and cr_d["def"]["go"] != "burrow" else 4.0))
 			cr_at = g.free_spot(cr_at, float(cr_d["w"]), float(cr_d["h"]), 20)
 			var cr_e = g.spawn_enemy("c_" + cr_id, cr_at)
 			cr_e.alert_t = 240             # (it has heard you: a wall between mustn't fail the test)
@@ -1035,6 +1047,8 @@ func _test_hearts() -> void:
 			continue
 		# set down as in its chamber (main `_spawn_heart_boss`): on the floor, kept to 88 either way and 76 up
 		var hb_row: int = g.builds.ground_row(hb_mid)
+		for hb_q in range(-int(hd["w"]) / 2 - 2, int(hd["w"]) / 2 + 3):
+			hb_row = mini(hb_row, g.builds.ground_row(hb_mid + hb_q))     # (the highest ground under all of it)
 		var hb_floor: Vector2 = _cell_pos(hb_mid, hb_row - 1)
 		var hb_up: Vector2 = hb_floor.normalized()
 		var hb_e = g.spawn_enemy("heart_" + hk, hb_floor + hb_up * (float(hd["h"]) * 0.5 + 2.0))
@@ -1303,9 +1317,15 @@ func _test_wardens() -> void:
 		g._hurt_enemy(wn_e, 99999.0, 0.0, 0.0)
 		await _frames(4)
 		var wn_after := 0
+		var wn_left := {}
 		for v2 in g.gpu.read_rect(int(wr["x0"]), int(wr["y0"]), int(wr["w"]), int(wr["h"]), int(wr["ax"]), int(wr["aw"]))["fg"]:
-			if (v2 & 255) != Defs.AIR:
+			# (what still bars the way: loose sand or water drifting into the opening doesn't)
+			if Defs.KIND[v2 & 255] == Defs.K_SOLID:
 				wn_after += 1
+			if (v2 & 255) != Defs.AIR:
+				wn_left[Defs.NAMES[v2 & 255]] = int(wn_left.get(Defs.NAMES[v2 & 255], 0)) + 1
+		if not wn_left.is_empty():
+			print("[wardens] %s's ward: left %s" % [wn_l["name"], str(wn_left)])
 		var wn_dead: bool = (g.planet_state.get("bosses_dead", []) as Array).has(wn_key)
 		var wn_n: int = int(wr["w"]) * int(wr["h"])
 		var wn_fine: bool = wn_slept and wn_awake and wn_moves >= 1 and wn_dead and wn_before == wn_n and wn_after == 0 and wn_out < 14.0

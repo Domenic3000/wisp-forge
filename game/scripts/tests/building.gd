@@ -50,6 +50,14 @@ func _test_indoors() -> void:
 						# floor found on a house's floor is the old bug)
 						if not (wy.contains("furniture") or wy.contains("door") or wy.contains("workshop")):
 							in_bad += 1
+							# (what the floor is like there: # solid, ~ liquid, : powder, . open, rows hf-3..hf+2)
+							var in_rr: Dictionary = g.gpu.read_rect(posmod(cc - 12, Defs.NS), hf - 3, 25, 6)
+							for in_j in 6:
+								var in_ln := ""
+								for in_i in 25:
+									var in_kd: int = Defs.KIND[int(in_rr["fg"][in_j * 25 + in_i]) & 255]
+									in_ln += "#" if in_kd == Defs.K_SOLID else ("~" if in_kd == Defs.K_LIQUID else (":" if in_kd == Defs.K_POWDER else "."))
+								print("[indoors] %s at %d, row %d: %s" % [wy, cc, hf - 3 + in_j, in_ln])
 					cc += 7
 				in_rows.append("house %s %d..%d floor %d, %s: %s" % [String(in_h.get("role", "?")), hx0, hx0 + hw, hf, in_kind, str(in_whys)])
 			g.test_aim = Vector2.ZERO
@@ -1138,10 +1146,22 @@ func _test_workshops() -> void:
 		g.player.inv[wk_m] += 60
 	# the slab
 	# (well away from where you arrived: the wild-life checks are set up there, and the burning cage's ash falls)
+	# (and with nothing built under it: the fire's embers and ash fall, and once burnt a village house's floor)
+	var WKW := 150
 	var wk_a := atan2(g.player.pos.y, g.player.pos.x) + 0.45
+	for wk_try in 40:
+		var wk_ta: float = atan2(g.player.pos.y, g.player.pos.x) + 0.45 + 0.03 * float(wk_try)
+		var wk_tc: int = int(fposmod(wk_ta, TAU) / TAU * Defs.NS)
+		var wk_free := true
+		for wk_q in range(-60, WKW + 61, 6):
+			if g.builds.label_at(_cell_pos(wk_tc + wk_q, g.builds.ground_row(wk_tc + wk_q) - 5)) != "":
+				wk_free = false
+				break
+		if wk_free:
+			wk_a = wk_ta
+			break
 	var wk_up := Vector2(cos(wk_a), sin(wk_a))
 	var wk_c: Vector2i = Build.cell_of(wk_up * (g.gpu.surf_at(wk_a).x + 150.0))
-	var WKW := 150
 	var wk_d := PackedInt32Array()
 	wk_d.resize(WKW * 4)
 	wk_d.fill(Defs.STONE | 0xFF00 | 0x20000 | 0x80000)
@@ -1606,6 +1626,7 @@ func _test_lights() -> void:
 				ln[ln.length() - 1] = "#" if Defs.KIND[fq] == Defs.K_SOLID else "*"
 		print("[lights] %s" % ln)
 	g.lights.clear()
+	g.cam_c = _cell_pos(cx + 45, top - 12)
 	g._torch_lights()
 	var wide := 0
 	var narrow := 0
@@ -1628,6 +1649,7 @@ func _test_lights() -> void:
 	g._wisplight(m, wp, 10.0)
 	var n1: int = (g.planet_state["wisplights"] as Array).size()
 	g.lights.clear()
+	g.cam_c = wp                              # (lights are taken near the view: the camera may still be on its way)
 	g._wisp_lights()
 	var wl_light := 0
 	for L2 in g.lights:

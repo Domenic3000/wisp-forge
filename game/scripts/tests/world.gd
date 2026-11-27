@@ -146,7 +146,10 @@ func _test_fog() -> void:
 	g.gpu.rd.buffer_clear(g.gpu.seen_buf, 0, g.gpu.seen_bytes())
 	_go(fg_top)
 	await _frames(30)
-	var fg_far: Vector2 = fg_up * (fg_surf - 90.0) + fg_side * 70.0
+	# (90 under the lower of the ground here and the ground over it: on a slope the far side may lie well below)
+	var fg_fa: float = atan2((fg_up * fg_surf + fg_side * 70.0).y, (fg_up * fg_surf + fg_side * 70.0).x)
+	var fg_low: float = minf(fg_surf, g.gpu.surf_at(fg_fa).x)
+	var fg_far: Vector2 = fg_up * (fg_low - 90.0) + fg_side * 70.0
 	var fg_clear := func(p: Vector2) -> float:
 		return g.gpu.light_at(g.world_to_pic(p)).a
 	var fg_a0: float = fg_clear.call(fg_far)
@@ -484,7 +487,7 @@ func _test_far_biomes() -> void:
 				dp_d = mini(dp_d, g.builds.ground_row(dp_c + dp_q) - g.builds.water_row(dp_c + dp_q))
 			if dp_d > dp_best:
 				dp_best = dp_d
-				dp_col = dp_c
+				dp_col = posmod(dp_c, Defs.NS)      # (columns wrap: a negative one is a real place, not "none")
 	if dp_best < 46:
 		dp_col = -1
 	var dp_bare := -1.0

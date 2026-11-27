@@ -59,6 +59,34 @@ Notes for development sessions on this part of the game. The rules that apply ev
   render.comp draws mud dark and glossy with a wet top sheen and bubbles. react.comp: loose (unanchored) dirt
   touching water turns to mud; unanchored mud in the open with no water near dries back to dirt.
 
+## Terrain 2 (user, 26 Nov: "the top layer of a planet is a bit too thin. i want to really feel the ambiance of each biome, and i think we should make the cave shapes more realistic ... more height variation to the planets and just more detailed surfaces in general with more natural land shapes going deeper and higher"; chose "Only on new journeys")
+- Per save: `Defs.TERRAIN_SET` (2) is the set a new journey gets; `Defs.terrain` is the one in play, saved as "tset"
+  (old saves have none and keep 1, so their unvisited planets generate as before). gpu_world `build_surface` sends
+  it as P.p[26].x; gen.comp's `TV2` and surface.comp branch on it. Set 1 stays exactly as it was.
+- Height (surface.comp): a broad swell (fbm /420), the hills (fbm /120, x3.8 of the biome's relief, more for
+  mountain biomes), ridged crests (1-|2n-1| at /70, centred on its mean 0.77 so ridges don't sink the ground),
+  knolls (/24) and fine roughness (/7). Meadows and plateaus (`flt`, fbm /260) fade the knolls and roughness and
+  soften the hills between rougher stretches, so level ground to build on is about as common as in terrain 1
+  (/home/claude/tools/level_measure.py: without them a 40-wide spot within 3 rows was a fifth as common, and the
+  tests' `_clear_stretch` found none). A bog's pond level and a lava lake's (surface.comp `swell`) rise and fall
+  with the broad swell, so only the hills' own hollows fill: about as much of the marsh and jungle under water as
+  terrain 1 (measured offline: marsh 19%, jungle 40%; a flat level drowned half of them). Seas stay flat.
+- Bogs: on terrain 2 a hollow must be up to a cell deeper to be a bog (more on hilly ground: gen.comp
+  `bogDepth`'s `amp`), so the jungle stays about as firm as before and the marsh keeps its bogs.
+- Layers (gen.comp strata): the top layer is about 1.6x deeper, the subsoil 2.6x plus 6 with a wandering lower edge
+  (fbm along the arc, +-7) and lobes of stone reaching into its lower part; on steep slopes both thin out
+  (`steep` from the surface's slope), so cliffs show rock.
+- Caves (`caves2`): tunnels on a domain-warped noise, varying in width, looping and branching, a second, finer set
+  below 40 cells deep; caverns are wide and low (the radial axis stretched x1.8), kept below a lid that wobbles
+  ~30 cells under the mean surface (so mountains stay solid, not hollow). `caveSpike`: stalactites hang from cavern
+  ceilings and stalagmites rise from floors as tapering cones, one chance per 11 columns. Overall about as much
+  rock is hollow as in terrain 1 (~25%, /home/claude/tools/cave_measure.py), in fewer, bigger shapes.
+- Trees (all sets, gen.comp `trunkIn`, `limbIn`, `twigsIn`): oak, elder and jungle trunks taper toward the top,
+  limbs taper toward their ends and end in twig forks, so big trees no longer end in square stubs (user, 26 Nov:
+  "very large trees that look very square at the end of the branches ... the trunk and branches end too abruptly
+  for how thick they are"). Trees already generated on a visited planet stay as they were saved.
+- Previews: /home/claude/tools/terrain_preview.py (v1 against v2 per biome) and tree_preview.py, if present.
+
 ## Each kind of world's own biome (user, 26 Nov: "do other worlds have unique biomes and unique enemies?"; chose a set of seven, each with its own ground, plants, 2-3 creatures and a guardian, showing up mostly on its kind of world)
 - `Defs.BIOMES`: basalt (Basalt Columns, volcanic), kelp (Kelp Isles, ocean), saltflats (Saltglass Flats, desert),
   mangrove (Sunken Mangroves, marsh), crystalfields (Crystal Fields, frozen), elder (Elder Canopy, wild), meadow

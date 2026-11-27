@@ -114,6 +114,25 @@ func _settle_sleeper(v) -> void:
 	v.pos = _at(cf, float(fr), 4.0)
 	v.lie_head = _at(hc, float(fr), 4.0)
 
+## is a sleeper still lying on something (a bed's furniture or solid floor a few rows under them), with no fire
+## right beside them?
+func _sleeper_safe(v) -> bool:
+	var col := _col(v.pos)
+	var row := int(floor(float(Defs.R_TOP) - v.pos.length()))
+	var held := false
+	for k in range(1, 8):
+		if game._solid_at(col, row + k) or game._bg_at(col, row + k) == 1:
+			held = true
+			break
+	if not held:
+		return false
+	var a := atan2(v.pos.y, v.pos.x)
+	for off in [Vector2(-8, 0), Vector2(8, 0), Vector2(0, -6), Vector2(-4, -3), Vector2(4, -3), Vector2(0, 3)]:
+		var p: Vector2 = v.pos + game.basis_r(a) * off.x + game.basis_d(a) * off.y
+		if game.type_at(p) == Defs.FIRE:
+			return false
+	return true
+
 ## open rows from `row` up (count of them): room to lie or stand there
 func _headroom(col: int, row: int, n: int) -> bool:
 	for k in n:
@@ -386,6 +405,15 @@ func _walk(v) -> void:
 		return
 	# lying down asleep: still till morning (or till something sends them out)
 	if v.lying:
+		# (user, 26 Nov: "a villager house got burned down while he was in it and he just stayed floating in the air
+		# sleeping"): the bed or floor gone from under them, or fire beside them, wakes them where they are, to fall
+		if v.lie_ok and (game.frame + v.fseed) % 20 == 0 and game.in_grid(v.pos, 24.0) and not _sleeper_safe(v):
+			v.wake_at = Vector2.ZERO
+			_get_up(v)
+			stats["woke_unsafe"] = int(stats.get("woke_unsafe", 0)) + 1
+			if v.say_t <= 0:
+				_say(v, ["Fire! Fire!", "My house!", "Wha-! Where's the floor?"][randi() % 3], 90)
+			return
 		var hl := hour_at(v.pos)
 		if is_night(hl) and want_place(v, hl) == v.house and v.inside == v.house and _foe_near(v.pos, 50.0) == null:
 			v.asleep = true

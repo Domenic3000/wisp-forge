@@ -53,6 +53,11 @@ Notes for development sessions on this part of the game. The rules that apply ev
   puts someone in bed on the top of the furniture over the bed's middle (3.5 over it) and a bedroll on the floor
   `_floor_below` finds (4.5 over the floor's top; overlay `_lying` draws the roll's underside there), each only
   where `_headroom` has open rows over it, else the floor further down. Checked in `_test_town_days`.
+- Waking when the floor goes (user, 26 Nov: "a villager house got burned down while he was in it and he just stayed
+  floating in the air sleeping"): every 20 ticks a settled sleeper in the collision grid checks `_sleeper_safe`
+  (solid ground or a bed's back wall within 1-7 rows under them, no FIRE around them); if not, they wake where they
+  are (`_get_up`, `stats.woke_unsafe`) and fall with ordinary physics. `_test_town_days` lifts a sleeper 200 cells,
+  checks they wake and fall, then lays them back down.
 - Keeping apart (user, 21 Nov: "villagers standing on top of each other"): `_spot_in`, the street placement and
   `_new_goal` pick spots clear of others (`_taken` / `_clearance`, which counts where someone stepping through a
   door is about to come out, `_spot_of`, and chests); someone standing still on top of another steps aside

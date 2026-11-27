@@ -44,6 +44,14 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (2668 -> 2616 plant cells). It runs early, before the building checks; not yet looked into.
 - (25 Nov) The pirates check failed once in a full run on the scrap count round a beaten ship (1, wanting 2: how
   it breaks up is physics); it passed run alone.
+- (27 Nov, after terrain 2 reshaped the test planet) In two full runs a group of fliers (skyray, stormkite,
+  stormgull, flarewisp) and the glow worm rose 70-120 cells in "every biome and depth has creatures" (it wants under
+  70) while still reaching you (nearest 1); run alone ("creatures") they rise about 10 and it passes. Something an
+  earlier check leaves behind; not yet found. In one full run two villagers put on one spot moved 17 apart and then
+  stood together 78 frames of 240 (wanting under 20); "towns" alone passes.
+- (27 Nov) Terrain 2 made several checks trust the layout less: the build-mode wall, the furniture wall, the fog,
+  the heart bosses, the workshops' slab (now never over a building: its embers burnt a village house's floor) and the
+  wild-life creatures (set down over the ground at their own column, away from buildings) look for their spot first.
 
 - (26 Nov) Village guards stand by in the test mode (towns.gd `test_guards` false: `_guard_target` finds nothing),
   so they don't spear the foes other checks set up near a village; `_test_guards` turns them on. A done request

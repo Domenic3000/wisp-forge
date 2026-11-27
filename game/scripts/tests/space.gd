@@ -397,6 +397,19 @@ func _test_wrecks() -> void:
 	if wk == null:
 		_ok("derelict wrecks in deep space: found, drifted into, looted, salvaged; the skiff's shield and cannon", false, "; ".join(wr_rows))
 		return
+	# (26 Nov, user: "a space derelict ship that i went to on the map that wasnt actually there"): the map shows a
+	# wreck where it really is, pushed off from where it was made
+	var wk_p0: Vector2 = wk.pos
+	wk.pos = wk_p0 + Vector2(600.0, -250.0)
+	var wsct: Vector2i = g.space._loaded[wk.sect]
+	var wmarks: Array = g.map_view._wrecks_of(wsct, G.sector_g(wsct), Vector2.ZERO, "?")
+	var wm_ok := false
+	for wm in wmarks:
+		if Defs.g_rel(wm[0], g.space.galaxy_of(wk.pos)).length() < 2.0:
+			wm_ok = true
+	wk.pos = wk_p0
+	wr_rows.append("%sthe map shows it where it is (pushed 650 off: %d marked, at it %s)" % ["" if wm_ok else "(!) ", wmarks.size(), wm_ok])
+	wr_ok = wr_ok and wm_ok
 	# beside it in the skiff, a picture
 	var side_dir: Vector2 = (sk.pos - wk.pos).normalized()
 	sk.pos = wk.pos + side_dir * (wk.reach() + 40.0)

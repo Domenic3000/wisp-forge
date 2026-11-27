@@ -239,14 +239,17 @@ func _draw_space() -> void:
 						if gz < 140.0:
 							_label(dsp + Vector2(0, -7), String(c["name"]), Color(0.8, 0.65, 1.0))
 					elif c["type"] == "wreck":
-						# (a little broken hull)
-						var wsp := sp.floor()
-						draw_rect(Rect2(wsp + Vector2(-3, -1), Vector2(6, 2)), Color(0.62, 0.68, 0.74))
-						draw_rect(Rect2(wsp + Vector2(0, -2), Vector2(2, 1)), Color(0.62, 0.68, 0.74))
-						draw_rect(Rect2(wsp + Vector2(1, -1), Vector2(1, 1)), Color(0.05, 0.06, 0.1))
-						draw_rect(Rect2(wsp + Vector2(-4, 0), Vector2(1, 1)), Color(0.5, 0.85, 1.0))
-						if gz < 140.0:
-							_label(wsp + Vector2(0, -6), String(c["name"]), Color(0.75, 0.9, 0.85))
+						# (a little broken hull) where it really is (user, 26 Nov: "a space derelict ship that i went to on
+						# the map that wasnt actually there"): out here now, or as its sector was saved; only a sector
+						# never changed shows it where it was made
+						for wk in _wrecks_of(sct, sg, at, String(c["name"])):
+							var wsp: Vector2 = to_screen(wk[0]).floor()
+							draw_rect(Rect2(wsp + Vector2(-3, -1), Vector2(6, 2)), Color(0.62, 0.68, 0.74))
+							draw_rect(Rect2(wsp + Vector2(0, -2), Vector2(2, 1)), Color(0.62, 0.68, 0.74))
+							draw_rect(Rect2(wsp + Vector2(1, -1), Vector2(1, 1)), Color(0.05, 0.06, 0.1))
+							draw_rect(Rect2(wsp + Vector2(-4, 0), Vector2(1, 1)), Color(0.5, 0.85, 1.0))
+							if gz < 140.0:
+								_label(wsp + Vector2(0, -6), String(wk[1]), Color(0.75, 0.9, 0.85))
 					elif c["type"] == "well":
 						# (a gravity well: a dark heart in a ring of fire)
 						var gsp := sp.floor()
@@ -399,3 +402,22 @@ static func _dist(d: float) -> String:
 	if d >= 1000.0:
 		return "%.0fk" % (d / 1000.0)
 	return "%.0f" % d
+
+## a sector's derelict wrecks as they are: [galaxy point, name] each. Live out here if the sector is streamed in, as
+## saved if it was changed, else where the galaxy made it (`at`, `name`)
+func _wrecks_of(sct: Vector2i, sg: PackedFloat64Array, at: Vector2, name: String) -> Array:
+	var sp = game.space
+	var key := Galaxy.key_of(sct)
+	var out := []
+	if sp._loaded.has(key):
+		for a in (sp.rocks + sp._inst_stash):
+			if a.sect == key and a.kind == "wreck" and a != sp.inst:
+				out.append([sp.galaxy_of(a.pos), "Wreck of " + String(a.wname)])
+		return out
+	if sp.sect_state.has(key):
+		for d in sp.sect_state[key]:
+			if (d as Dictionary).has("wreck") and (d as Dictionary).has("rel"):
+				var rp: Array = d["rel"]
+				out.append([PackedFloat64Array([sg[0] + float(rp[0]), sg[1] + float(rp[1])]), "Wreck of " + String(d["wreck"].get("name", ""))])
+		return out
+	return [[PackedFloat64Array([sg[0] + at.x, sg[1] + at.y]), name]]

@@ -1290,6 +1290,9 @@ func run() -> void:
 
 	# ---- build mode: a back wall, a table and a door go up where the mage points ----
 	var bg_ang: float = g.spawn_angle - 0.06      # away from where the platform test builds
+	# (on level open ground near there: the ground's roughness changes with the planet's terrain set)
+	var bg_st: Vector2i = _clear_stretch(int(fposmod(bg_ang, TAU) / TAU * Defs.NS) - 30, 60, 40, 2, 4, false, 6)
+	bg_ang = (float(bg_st.x) + 30.5) / float(Defs.NS) * TAU
 	var bsurf: float = g.gpu.surf_at(bg_ang).x
 	_go(Vector2(cos(bg_ang), sin(bg_ang)) * (bsurf + 12.0))
 	await _frames(40)
@@ -1685,10 +1688,15 @@ func run() -> void:
 	_ok("build mode lays straight walls and back walls by dragging", shape_ok, "; ".join(shape_res))
 
 	# ---- furniture is a layer in front of the wall: burnt or taken, the wall behind it stays ----
-	var fw_at: Vector2 = spot.call(-95.0, 0.0)
-	var fw_c: Vector2i = Build.cell_of(fw_at)
 	var FWW := 44
 	var FWH := 22
+	# (on level, open ground with no trees about: the planet's surface is rough and changes with its terrain set)
+	var fw_st: Vector2i = _clear_stretch(Build.cell_of(spot.call(-95.0, 0.0)).x - FWW / 2, FWW + 6, FWH + 6, 2, 6, false, 6)
+	var fw_gmax: int = fw_st.y
+	for fw_q in FWW + 6:
+		fw_gmax = maxi(fw_gmax, b.ground_row(fw_st.x + fw_q))
+	var fw_c := Vector2i(fw_st.x + (FWW + 6) / 2, fw_gmax + 2)     # (the wall's foot on the lowest ground under it)
+	var fw_at: Vector2 = _cell_pos(fw_c.x, fw_c.y)
 	var fwd := PackedInt32Array()
 	fwd.resize(FWW * FWH)
 	fwd.fill(0xff | (Defs.MASONRY << 8) | 0x40000 | 0x20000)     # an anchored stone back wall, standing on the ground
@@ -1721,7 +1729,7 @@ func run() -> void:
 				out["empty"] += 1
 		return out
 	var before_a: Dictionary = box_bg.call(t_boxes[0])
-	_go(spot.call(-95.0, 14.0))
+	_go(_cell_pos(fw_c.x, fw_st.y - 14))
 	await _frames(20)
 	# the first is taken whole
 	var tmid0: Dictionary = t_boxes[0]
@@ -2040,8 +2048,8 @@ func run() -> void:
 	var sm_h := 64
 	# a spot in solid rock (a cave would let the sand pour out of the pocket)
 	var sm_a: float = fposmod(g.spawn_angle + 0.35, TAU)
-	for sm_try in 60:
-		var sm_ta: float = fposmod(g.spawn_angle + 0.35 + 0.05 * sm_try, TAU)
+	for sm_try in 160:
+		var sm_ta: float = fposmod(g.spawn_angle + 0.35 + 0.035 * sm_try, TAU)
 		var sm_tc: int = int(sm_ta / TAU * Defs.NS)
 		var sm_probe: Dictionary = g.gpu.read_rect(sm_tc - 6, sm_y0 - 6, sm_w + 12, sm_h + 12, sm_tc - 6, sm_w + 12)
 		var sm_solid := true

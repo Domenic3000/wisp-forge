@@ -8416,6 +8416,7 @@ func start_game(use_save: bool) -> void:
 		# a new journey: a system of planets of its own (the test mode keeps the classic one)
 		Defs.world_seed = test_seed if testing else 1 + randi() % 0xFFFFFE
 		Defs.legacy_biomes = {}                  # (a new journey: every planet grows today's biomes)
+		Defs.terrain = Defs.TERRAIN_SET          # (and today's terrain)
 		Defs._planet_cache.clear()
 		space.load_state({})
 		player.inv.fill(0)
@@ -9478,7 +9479,7 @@ func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1, "learned": learned.keys(),
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played, "space": space.save_state(),
-		"bset": Defs.BIOME_SET, "legacy_biomes": Defs.legacy_biomes.keys()}
+		"bset": Defs.BIOME_SET, "legacy_biomes": Defs.legacy_biomes.keys(), "tset": Defs.terrain}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
@@ -9499,6 +9500,7 @@ func _apply_save(s: Dictionary) -> void:
 	Defs.world_seed = int(s.get("world_seed", 0))      # (journeys from before every game had its own: the classic system)
 	# (planets made before each kind of world got its own biome keep the biomes their saved ground was grown with:
 	# a journey saved before then counts every planet it has a world file for; Defs.legacy_biomes)
+	Defs.terrain = int(s.get("tset", 1))          # (a journey from before terrain 2 keeps its planets' ground)
 	Defs.legacy_biomes = {}
 	if int(s.get("bset", 1)) >= Defs.BIOME_SET:
 		for li in s.get("legacy_biomes", []):
