@@ -1494,7 +1494,6 @@ func run() -> void:
 	await _test_indoors()
 	await _test_remove()
 	await _test_lights()
-	await _test_fire()
 	await _test_harvest()
 	await _test_hand()
 	await _test_audio()
@@ -1570,6 +1569,8 @@ func run() -> void:
 					t_back += 1
 	_ok("furniture is picked up whole and set down again", picked and t_item.get("name", "") == "Table" and t_left == 0 and t_px == table_now and back_ok and t_back >= table_now - 2 and g.player.furn.size() == furn0,
 		"picked %s as %s (%d pixels, %d were placed), left behind %d; set down again: %sfits %s, %d cells; carried %d -> %d" % [picked, t_item.get("name", "-"), t_px, table_now, t_left, t_why, back_ok, t_back, furn0, g.player.furn.size()])
+	# (after the table's check: its fire once took the table the build-mode check set down; 27 Nov)
+	await _test_fire()
 	# a bed from the Wisp Forge
 	var bed_r: Dictionary = {}
 	for r in g.recipes:

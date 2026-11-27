@@ -32,8 +32,22 @@ Notes for development sessions on this part of the game. The rules that apply ev
   Edge (`Defs.WORK_GEAR`, "once", read by `gear()`, `own_work_gear`); still draughts (`Defs.DRAUGHTS`: Ember,
   Swiftfoot, Mana, Moonlit at night), drunk from the satchel (`drink_draught`), working through `gear()` while in
   `Mage.buffs` (new stat "fire_dmg" in the hazards).
-- Masterwork: ore gear forged within `ANVIL_REACH` of an anvil station (`anvil_near`) keeps `items["q_<id>"]`
-  (`MASTERWORK` 1.25): `gear()` scales its mods ((mod - 1) x q + 1, an added stat x q), the once-applied ones too.
+- Upgrading at the anvil (27 Nov; user: "instead of giving gear created near it powers, maybe we can do an
+  upgrading of already forged gear at the anvil how it works. since if i forge a piece of gear not near the anvil
+  there is no way to forge a new masterworked piece of gear. maybe we can have multiple levels of upgrading as you
+  progress through the game?"): gear is forged plain anywhere; F at an anvil opens its panel (ui.gd
+  `_render_station`, `burn` 0) with every piece of `Defs.GEAR` you own, its level and the next: `Defs.UPGRADES`,
+  five levels (Tempered x1.12: copper ingots and coal; Masterwork x1.25: wisp ingots and obsidian; Starforged x1.4:
+  star iron and crystal; Heartbound x1.6: a world's core and star iron; Voidwrought x1.8: void essence, xenite and
+  star iron), each paid from the satchel by main `upgrade_gear` (within `ANVIL_REACH`, `upgrade_block` says why
+  not). It sets `items["lv_<id>"]` and `items["q_<id>"]`, which `gear()` reads as before ((mod - 1) x q + 1, an
+  added stat x q), and raises the once-applied numbers (max health, max mana, regen) by the difference. A piece made
+  masterwork at the forge before this (`MASTERWORK` 1.25, no "lv_") counts as level 2 (`gear_level`).
+- Recipe amounts (27 Nov; user: "make the materials created with the workshops take more raw materials to make"):
+  glass 6 sand for 3, tiles 5 dirt for 3, bricks 5 mud for 3, charcoal 5 wood for 2, an ingot 4 ore, wisp cells 3
+  wisp ore and a coal for 2, obsidian 4 ash and 3 sand for 2, a prism 4 glass and 2 glowcaps, kindled stone 4 stone
+  and an ember for 2, star iron 5 plating and 2 coal; the still's draughts and the smelter's gear as they were. The
+  workshop test reads the amounts from `Defs.PROCESS`.
 - Test: `_test_workshops` ("workshops": on a natural slab in the air; pictures `workshops.png`,
   `workshop_panel.png`).
 

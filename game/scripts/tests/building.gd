@@ -796,7 +796,7 @@ func _test_inworld() -> void:
 	m.inv[Defs.COAL] += 10
 	var kiln = ws.add("kiln", _cell_pos(cx + 40, top - 9))
 	await _frames(60)
-	ws.load_mat(kiln, Defs.SAND, 4)
+	ws.load_mat(kiln, Defs.SAND, int(Defs.process_by_id("k_glass")["in"][Defs.SAND]))
 	ws.add_fuel(kiln, Defs.COAL, 2)
 	for wt in 900:
 		ws.work_all()
@@ -822,7 +822,7 @@ func _test_inworld() -> void:
 	# ---- sent to the kiln from the book
 	ws.unload(kiln, Defs.SAND)
 	var sent: int = ws.send(Defs.process_by_id("k_glass"), 2)
-	ok["send"] = sent == 2 and int(kiln.store.get(Defs.SAND, 0)) == 8
+	ok["send"] = sent == 2 and int(kiln.store.get(Defs.SAND, 0)) == 2 * int(Defs.process_by_id("k_glass")["in"][Defs.SAND])
 	txt.append("sent to the kiln: %d batches (%s)" % [sent, str(kiln.store)])
 	ws.unload(kiln, Defs.SAND)
 	# ---- (25 Nov, "forging large amounts in the wisp forge like 10 or more the game gets very sluggish"): how long
@@ -1129,7 +1129,7 @@ func _test_stairs() -> void:
 ## found by experimenting): on a slab of rock up in open air, a Kiln set down from build mode; it fires
 ## sand into glass batch after batch (fuel burns), a mix it doesn't know does nothing, a secret mix is a
 ## discovery; a Smelter makes copper ingots; a Still's secret draught works through gear(); ore gear
-## forged at an anvil is masterwork; sparks set planks beside a lit kiln alight; saved and loaded, taken
+## forged anywhere is upgraded at an anvil; sparks set planks beside a lit kiln alight; saved and loaded, taken
 ## up again; a picture of the four lit (`workshops.png`) and of a panel (`workshop_panel.png`).
 func _test_workshops() -> void:
 	var ws = g.workshops
@@ -1211,18 +1211,22 @@ func _test_workshops() -> void:
 	wk_rows.append("%sa bed where the kiln stands: fits %s (%s)" % ["" if wk_ok0 else "(!) ", wk_pf["ok"], wk_pf["why"]])
 	wk_ok = wk_ok and wk_ok0
 	# glass, batch after batch
-	ws.load_mat(kiln, Defs.SAND, 8)
+	# (two batches, by the recipe's own amounts: they change)
+	var wk_pg: Dictionary = Defs.process_by_id("k_glass")
+	var wk_gin: int = int(wk_pg["in"][Defs.SAND])
+	var wk_gout: int = int(wk_pg["give"][Defs.GLASS])
+	ws.load_mat(kiln, Defs.SAND, wk_gin * 2)
 	ws.add_fuel(kiln, Defs.COAL, 2)
 	var wk_f0: float = kiln.fuel
 	for wk_t in 1200:
 		ws.work_all()
 	var wk_glass := int(kiln.out.get("m%d" % Defs.GLASS, 0))
-	var wk_ok2: bool = wk_glass == 8 and kiln.store.is_empty() and kiln.fuel < wk_f0 and kiln.fuel > 0.0
+	var wk_ok2: bool = wk_glass == wk_gout * 2 and kiln.store.is_empty() and kiln.fuel < wk_f0 and kiln.fuel > 0.0
 	wk_rows.append("%ssand fired into glass: %d glass, %s left in, fuel %.0f -> %.0f" % ["" if wk_ok2 else "(!) ", wk_glass, str(kiln.store), wk_f0, kiln.fuel])
 	wk_ok = wk_ok and wk_ok2
 	var wk_g0: int = g.player.inv[Defs.GLASS]
 	ws.take_out(kiln)
-	var wk_ok3: bool = g.player.inv[Defs.GLASS] == wk_g0 + 8 and kiln.out.is_empty()
+	var wk_ok3: bool = g.player.inv[Defs.GLASS] == wk_g0 + wk_gout * 2 and kiln.out.is_empty()
 	# a mix it doesn't know: nothing
 	ws.load_mat(kiln, Defs.SAND, 4)
 	ws.load_mat(kiln, Defs.DIRT, 3)
@@ -1235,16 +1239,17 @@ func _test_workshops() -> void:
 	wk_ok = wk_ok and wk_ok3
 	# a secret: ash and sand
 	g.items.erase("secret_k_obsidian")
-	ws.load_mat(kiln, Defs.ASH, 3)
-	ws.load_mat(kiln, Defs.SAND, 2)
+	var wk_po: Dictionary = Defs.process_by_id("k_obsidian")
+	ws.load_mat(kiln, Defs.ASH, int(wk_po["in"][Defs.ASH]))
+	ws.load_mat(kiln, Defs.SAND, int(wk_po["in"][Defs.SAND]))
 	for wk_t3 in 800:
 		ws.work_all()
-	var wk_ok4: bool = g.items.has("secret_k_obsidian") and int(kiln.out.get("m%d" % Defs.OBSIDIAN, 0)) == 2
+	var wk_ok4: bool = g.items.has("secret_k_obsidian") and int(kiln.out.get("m%d" % Defs.OBSIDIAN, 0)) == int(wk_po["give"][Defs.OBSIDIAN])
 	wk_rows.append("%sa secret mix (ash + sand) found: %s, %s" % ["" if wk_ok4 else "(!) ", g.items.has("secret_k_obsidian"), str(kiln.out)])
 	wk_ok = wk_ok and wk_ok4
 	ws.take_out(kiln)
 	# copper ingots
-	ws.load_mat(smelter, Defs.COPPER, 6)
+	ws.load_mat(smelter, Defs.COPPER, int(Defs.process_by_id("s_copper")["in"][Defs.COPPER]) * 2)
 	ws.add_fuel(smelter, Defs.COAL, 2)
 	for wk_t4 in 900:
 		ws.work_all()
@@ -1281,7 +1286,8 @@ func _test_workshops() -> void:
 	wk_ok = wk_ok and wk_ok7
 	ws.unload(still, Defs.CRYSTAL)
 	ws.unload(still, Defs.SNOW)
-	# masterwork at the anvil
+	# gear forged anywhere, then upgraded at the anvil a level at a time (27 Nov: the anvil upgrades what you've
+	# forged; it used to make gear forged beside it masterwork)
 	var wk_gear_ok := true
 	var wk_dr0: float = g.gear("dig_rate")
 	var wk_had_opal: bool = g.items.has("opal")
@@ -1292,13 +1298,27 @@ func _test_workshops() -> void:
 		g.items["found_%d" % Defs.FIREOPAL] = true
 		for wk_gc in wk_rec["cost"]:
 			g.player.inv[int(wk_gc)] += int(wk_rec["cost"][wk_gc])
-		var wk_near: bool = g.anvil_near()
 		var wk_made: bool = g.craft(wk_rec)
 		var wk_dr1: float = g.gear("dig_rate")
-		wk_gear_ok = wk_near and wk_made and absf(float(g.items.get("q_opal", 0.0)) - Defs.MASTERWORK) < 0.001 and absf(wk_dr1 - wk_dr0 * (1.0 + 0.5 * Defs.MASTERWORK)) < 0.01
-		wk_rows.append("%sthe Fire Opal Focus forged at the anvil (near %s, made %s): dig rate x%.3f -> x%.3f" % ["" if wk_gear_ok else "(!) ", wk_near, wk_made, wk_dr0, wk_dr1])
+		var wk_plain: bool = wk_made and not g.items.has("q_opal") and absf(wk_dr1 - wk_dr0 * 1.5) < 0.01
+		var wk_near: bool = g.anvil_near()
+		for wk_lv in 2:
+			var wk_uc: Dictionary = Defs.UPGRADES[wk_lv]["cost"]
+			for wk_um in wk_uc:
+				g.player.inv[int(wk_um)] += int(wk_uc[wk_um])
+		var wk_cu0: int = g.player.inv[Defs.COPPERBAR]
+		var wk_up1: bool = g.upgrade_gear("opal")
+		var wk_paid: bool = g.player.inv[Defs.COPPERBAR] == wk_cu0 - int(Defs.UPGRADES[0]["cost"][Defs.COPPERBAR])
+		var wk_up2: bool = g.upgrade_gear("opal")
+		var wk_q: float = float(Defs.UPGRADES[1]["q"])
+		var wk_dr2: float = g.gear("dig_rate")
+		wk_gear_ok = wk_plain and wk_near and wk_up1 and wk_paid and wk_up2 and g.gear_level("opal") == 2 \
+			and absf(float(g.items.get("q_opal", 0.0)) - wk_q) < 0.001 and absf(wk_dr2 - wk_dr0 * (1.0 + 0.5 * wk_q)) < 0.01
+		wk_rows.append("%sthe Fire Opal Focus forged (dig rate x%.3f -> x%.3f), upgraded at the anvil (near %s) twice %s %s (paid %s): level %d, x%.3f" % [
+			"" if wk_gear_ok else "(!) ", wk_dr0, wk_dr1, wk_near, wk_up1, wk_up2, wk_paid, g.gear_level("opal"), wk_dr2])
 		g.items.erase("opal")
 		g.items.erase("q_opal")
+		g.items.erase("lv_opal")
 	wk_ok = wk_ok and wk_gear_ok
 	# a lit kiln's sparks catch the planks beside it
 	_go(_cell_pos(wk_mid + 30, wk_gr - 12, wk_c.x, WKW))
@@ -1541,7 +1561,9 @@ func _test_crafting() -> void:
 	ok = ok and ok3
 	# ---- a workshop: click a known recipe and it loads itself (Amount batches; anything else goes back)
 	var st = g.workshops.add("kiln", g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 30.0)
-	g.player.inv[Defs.SAND] = 25
+	# (the amounts from the recipe: 27 Nov, workshop goods take more raw matter)
+	var gl_in: int = int(Defs.process_by_id("k_glass")["in"][Defs.SAND])
+	g.player.inv[Defs.SAND] = 6 * gl_in + 1
 	g.player.inv[Defs.DIRT] += 5
 	g.workshops.load_mat(st, Defs.DIRT, 5)
 	var pr_glass: Dictionary = {}
@@ -1549,11 +1571,11 @@ func _test_crafting() -> void:
 		if String(pr["id"]) == "k_glass":
 			pr_glass = pr
 	var nb: int = g.workshops.load_recipe(st, pr_glass, 10)
-	var loaded_ok: bool = nb == 6 and int(st.store.get(Defs.SAND, 0)) == 24 and not st.store.has(Defs.DIRT) and g.player.inv[Defs.SAND] == 1
+	var loaded_ok: bool = nb == 6 and int(st.store.get(Defs.SAND, 0)) == 6 * gl_in and not st.store.has(Defs.DIRT) and g.player.inv[Defs.SAND] == 1
 	# (26 Nov, user: loading "does not add to whatever is in there"): two more on top makes eight, not two
-	g.player.inv[Defs.SAND] += 8
+	g.player.inv[Defs.SAND] += 2 * gl_in
 	var nb2: int = g.workshops.load_recipe(st, pr_glass, 2)
-	var added_ok: bool = nb2 == 2 and int(st.store.get(Defs.SAND, 0)) == 32 and g.player.inv[Defs.SAND] == 1
+	var added_ok: bool = nb2 == 2 and int(st.store.get(Defs.SAND, 0)) == 8 * gl_in and g.player.inv[Defs.SAND] == 1
 	var mp: Dictionary = g.workshops.match_process(st)
 	g.state = "station"
 	g.ui.show_station(st)
@@ -1562,7 +1584,7 @@ func _test_crafting() -> void:
 	g.workshops.close()
 	g.workshops.list.erase(st)
 	var ok4: bool = loaded_ok and added_ok and String(mp.get("id", "")) == "k_glass"
-	rows.append("%sglass ×10 asked, %d batches loaded (24 sand), the dirt given back %s, then ×2 more: %d added (%d sand in), the kiln knows the mix %s" % ["" if ok4 else "(!) ", nb, not st.store.has(Defs.DIRT), nb2, int(st.store.get(Defs.SAND, 0)), String(mp.get("id", ""))])
+	rows.append("%sglass ×10 asked, %d batches loaded (6 batches of sand), the dirt given back %s, then ×2 more: %d added (%d sand in), the kiln knows the mix %s" % ["" if ok4 else "(!) ", nb, not st.store.has(Defs.DIRT), nb2, int(st.store.get(Defs.SAND, 0)), String(mp.get("id", ""))])
 	ok = ok and ok4
 	g.ui.amounts = {}
 	print("[crafting] " + "\n[crafting] ".join(rows))

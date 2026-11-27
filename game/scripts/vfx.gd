@@ -571,7 +571,7 @@ func _draw() -> void:
 	var t0 := Time.get_ticks_usec()
 	_draw_layer(self, 0)
 	# the dark heart of a quake orb (normal blending: it's dark)
-	for pr in game.projs:
+	for pr in _flying():
 		var f := fx(String(pr["type"]))
 		if not f.is_empty() and String(f.get("trail", "")) == "rocks":
 			var sp: Vector2 = game.world_to_screen(pr["pos"]).floor()
@@ -590,10 +590,17 @@ func _draw_glow() -> void:
 		glow.draw_rect(Rect2(0, 0, game.VW, game.VH), fc)
 	game.prof_add("spell effects", Time.get_ticks_usec() - t0)
 
+## the spells in flight: on a planet, and out in space (a derelict station's halls: space.gd `sbolts`; user, 27 Nov:
+## "inside derelict space station when i shot spells i couldnt really see the projectiles": only their trails showed)
+func _flying() -> Array:
+	if game.space != null and game.space.active and not game.space.sbolts.is_empty():
+		return game.projs + game.space.sbolts
+	return game.projs
+
 ## the flying spells themselves (each by its style), on the glow layer
 func _draw_projectiles() -> void:
 	var z: float = game.zoom
-	for pr in game.projs:
+	for pr in _flying():
 		var f := fx(String(pr["type"]))
 		if f.is_empty():
 			continue

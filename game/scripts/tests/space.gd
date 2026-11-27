@@ -2388,6 +2388,19 @@ func _test_pocket() -> void:
 	var reach: bool = g.shipyard.parked()
 	if g.player.aboard == null and sk.board(g.player):
 		g.player.aboard = sk
+	# (seated aboard on a planet, a draught heals you and its cooldown runs: user, 27 Nov, "i used a healing draught
+	# while inside the whisp skiff seat and i dont think it healed me and then it stayed on 10 seconds for cooldown")
+	var dr_hp0: float = g.player.max_hp - 30.0
+	g.player.hp = dr_hp0
+	g.player.heal_left = 30.0
+	g.player.potion_cd = 600
+	await _frames(30)
+	var dr_ok: bool = g.player.aboard != null and g.player.hp > dr_hp0 + 5.0 and g.player.potion_cd < 600 - 20
+	rows.append("%sa draught seated aboard heals you (health %.0f -> %.0f) and its wait runs (600 -> %d)" % ["" if dr_ok else "(!) ", dr_hp0, g.player.hp, g.player.potion_cd])
+	ok = ok and dr_ok
+	g.player.hp = g.player.max_hp
+	g.player.heal_left = 0.0
+	g.player.potion_cd = 0
 	var door: Vector2 = sk.pos
 	var went: bool = g.go_below(g.player) and pk.active
 	if not pk.active:

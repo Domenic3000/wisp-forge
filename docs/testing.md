@@ -52,6 +52,12 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - (27 Nov) Terrain 2 made several checks trust the layout less: the build-mode wall, the furniture wall, the fog,
   the heart bosses, the workshops' slab (now never over a building: its embers burnt a village house's floor) and the
   wild-life creatures (set down over the ground at their own column, away from buildings) look for their spot first.
+- (27 Nov, later) The furniture pick-up check failed in full runs (the table gone before it was picked up): the
+  fire check, which ran just before it, burnt the table the build-mode check had set down. `_test_fire` now runs
+  after the pick-up check, and it passed. The same full run failed four checks that passed run alone: the deer chased
+  into a wall ("ecology": it rose 0, alone 4), Vulkhar through the slot ("pursuit": came 0, 208 from you), the
+  skiff ramming rock ("pirates": 0 cells holed, alone 4), and, in the run before, open water icing over on a
+  frozen world. Run them alone before chasing them.
 
 - (26 Nov) Village guards stand by in the test mode (towns.gd `test_guards` false: `_guard_target` finds nothing),
   so they don't spear the foes other checks set up near a village; `_test_guards` turns them on. A done request

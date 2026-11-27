@@ -5401,7 +5401,7 @@ func gear(stat: String, m: Mage = null) -> float:
 	for id in Defs.GEAR:
 		var mods: Dictionary = Defs.GEAR[id]["mods"]
 		if mods.has(stat) and who.items.has(id):
-			# (forged at an anvil: masterwork, its effect a quarter bigger)
+			# (upgraded at an anvil: each level every effect of it bigger; Defs.UPGRADES, `upgrade_gear`)
 			var q := float(who.items.get("q_" + id, 1.0))
 			v = v + float(mods[stat]) * q if add else v * (1.0 + (float(mods[stat]) - 1.0) * q)
 	for id2 in Defs.WORK_GEAR:
@@ -5420,6 +5420,68 @@ func gear(stat: String, m: Mage = null) -> float:
 		if mods3.has(stat):
 			v = v + float(mods3[stat]) if add else v * float(mods3[stat])
 	return v
+
+## how far a piece of forged gear has been upgraded at the anvil (0: as forged; Defs.UPGRADES). A piece made
+## masterwork at the forge before upgrading came in counts as level 2 (its 1.25).
+func gear_level(id: String, m: Mage = null) -> int:
+	var who: Mage = m if m != null else player
+	if who.items.has("lv_" + id):
+		return int(who.items["lv_" + id])
+	return 2 if float(who.items.get("q_" + id, 1.0)) >= Defs.MASTERWORK - 0.001 else 0
+
+## can that piece go up a level here and now? "" if so, else why not
+func upgrade_block(id: String, m: Mage = null) -> String:
+	var who: Mage = m if m != null else player
+	if not Defs.GEAR.has(id) or not who.items.has(id):
+		return "not yours"
+	var lv := gear_level(id, who)
+	if lv >= Defs.UPGRADES.size():
+		return "as good as it gets"
+	if not anvil_near(who):
+		return "at an anvil"
+	var cost: Dictionary = Defs.UPGRADES[lv]["cost"]
+	for cm in cost:
+		if who.inv[int(cm)] < int(cost[cm]):
+			return "needs %d %s" % [int(cost[cm]), Defs.NAMES[int(cm)]]
+	return ""
+
+## upgrade a piece of forged gear one level at the anvil: paid from the satchel, every effect of it bigger from now
+## on (its items["q_<id>"], read by `gear()`); the numbers it raised once (health, mana, regen) raised by the difference
+func upgrade_gear(id: String, m: Mage = null) -> bool:
+	var who: Mage = m if m != null else player
+	if upgrade_block(id, who) != "":
+		return false
+	var lv := gear_level(id, who)
+	var up: Dictionary = Defs.UPGRADES[lv]
+	var cost: Dictionary = up["cost"]
+	for cm in cost:
+		who.inv[int(cm)] -= int(cost[cm])
+	var q0 := float(who.items.get("q_" + id, 1.0))
+	var q1 := maxf(q0, float(up["q"]))
+	who.items["lv_" + id] = lv + 1
+	who.items["q_" + id] = q1
+	var mods: Dictionary = Defs.GEAR[id]["mods"]
+	max_hp += float(mods.get("max_hp", 0.0)) * (q1 - q0)
+	hp += float(mods.get("max_hp", 0.0)) * (q1 - q0)
+	max_mana += float(mods.get("max_mana", 0.0)) * (q1 - q0)
+	mana_regen += float(mods.get("mana_regen", 0.0)) * (q1 - q0)
+	_apply_gear()
+	var an = _anvil_at(who)
+	if an != null:
+		for k in 16:
+			var dv := Vector2.from_angle(randf() * TAU)
+			_particle(an.pos + dv * randf() * 4.0, dv * randf_range(0.6, 2.0), 14 + randi() % 14, Color(1.0, 0.8, 0.35), true, 0.04)
+	audio.play("rare", who.pos, 0.7)
+	ui.toast("%s: %s (every effect %d%% stronger)" % [String(Defs.GEAR[id]["name"]), String(up["name"]), int(round((q1 - 1.0) * 100.0))], Color(1, 0.88, 0.5), 3.5)
+	save_game()
+	return true
+
+## the anvil within reach of m, or null
+func _anvil_at(m: Mage) -> Variant:
+	for st in workshops.here_list():
+		if st.kind == "anvil" and st.pos.distance_to(m.pos) < Defs.ANVIL_REACH:
+			return st
+	return null
 
 ## gear a workshop made (Defs.WORK_GEAR): owned from now on, its saved numbers raised once
 func own_work_gear(id: String) -> void:
@@ -5452,7 +5514,7 @@ func drink_draught(m: Mage, id: String) -> bool:
 		ui.toast("%s: %s" % [dd["name"], dd["desc"]], col.lightened(0.3), 3.5)
 	return true
 
-## is there an anvil (a workshop station) within reach of the mage? (masterwork ore gear)
+## is there an anvil (a workshop station) within reach of the mage? (where gear is upgraded)
 func anvil_near(m: Mage = null) -> bool:
 	var who: Mage = m if m != null else player
 	for st in workshops.here_list():
@@ -5678,15 +5740,10 @@ func craft(r: Dictionary) -> bool:
 			save_game()
 			return true
 	if r.has("gear"):
-		# ore gear: owned from now on; the saved numbers it raises are raised once, here. Forged within
-		# reach of an anvil it's masterwork (items["q_<id>"]): every effect a quarter bigger.
+		# ore gear: owned from now on; the saved numbers it raises are raised once, here.
 		items[String(r["id"])] = true
-		var qm := 1.0
-		if anvil_near():
-			qm = Defs.MASTERWORK
-			items["q_" + String(r["id"])] = qm
-			ui.toast("Masterwork! Hammered out at the anvil: %s works a quarter better" % r["name"], Color(1, 0.9, 0.5), 4.0)
-			audio.play("rare", player.pos, 0.6)
+		# (upgraded at an anvil afterwards, level by level: `upgrade_gear`)
+		var qm := float(items.get("q_" + String(r["id"]), 1.0))
 		var mods: Dictionary = Defs.GEAR[r["id"]]["mods"]
 		max_hp += float(mods.get("max_hp", 0.0)) * qm
 		hp += float(mods.get("max_hp", 0.0)) * qm
@@ -8039,7 +8096,7 @@ func toggle_forge(to_book := false) -> void:
 		_summon_forge()
 		ui.show_forge(to_book)
 		if anvil_near():
-			ui.toast("An anvil is at hand: ore gear forged here comes out masterwork", Color(1, 0.9, 0.55), 3.0)
+			ui.toast("An anvil is at hand: F at it upgrades the gear you've forged", Color(1, 0.9, 0.55), 3.0)
 	elif state == "forge":
 		state = "play"
 		ui.hide_forge()
@@ -9222,6 +9279,11 @@ func _door_interact(m: Mage) -> bool:
 
 ## a rider sits in their seat: they go where the skiff goes, breathe its air, and don't fall
 func _ride(m: Mage) -> void:
+	# (a draught or Mending heals you seated too, and its cooldown runs: user, 27 Nov, "i used a healing draught
+	# while inside the whisp skiff seat and i dont think it healed me and then it stayed on 10 seconds for cooldown";
+	# out in space, space.gd's tick does this)
+	if not space.active:
+		heal_tick(m)
 	if m.deck:
 		_deck_move(m)
 		return

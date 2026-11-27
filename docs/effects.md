@@ -14,3 +14,6 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `impact` (`_impact`, then returns), `blast` (every `_explode`: fireball, quake, starfall, meteors, lava bombs),
   `blink`, `mend`. Test: `_test_vfx` ("vfx": each spell cast on fresh ground, pictures `vfx_<spell>_fly/_hit.png`,
   particles die away, the effects' worst frame under 4 ms).
+- The bolt itself (`_draw_projectiles`) is drawn for `_flying()`: the game's `projs`, and in a derelict station or an
+  outpost's halls space.gd's `sbolts` too (27 Nov; user: "inside derelict space station when i shot spells i couldnt
+  really see the projectiles": they had only their trail there).

@@ -345,7 +345,7 @@ func _world_chapter(ch: int) -> Array:
 				"how": "At the Wisp Forge, Travel: the Starsail (star iron, wisp ingots, crystal and planks). Hold Shift in the skiff out in open space and it runs up to eight times as fast."},
 			{"id": "sailcells", "title": "Carry 15 Wisp Cells for the Starsail", "need": [["held", Defs.WISPCELL, 15], ["landed_sys", sys]],
 				"say": "The Starsail burns a Wisp Cell every few seconds under sail: carry plenty. A Smelter makes them, outposts sell them.",
-				"how": "A Smelter makes 2 Wisp Cells from 2 wisp ore and a coal; outposts sell 10 for 28 coins. Crossing to the next star system burns about a dozen."},
+				"how": "A Smelter makes 2 Wisp Cells from 3 wisp ore and a coal; outposts sell 10 for 28 coins. Crossing to the next star system burns about a dozen."},
 			{"id": "stars", "title": "Reach another star system", "need": [["landed_sys", sys]], "reward": {"coins": 80},
 				"say": "Out between the stars, then. The galaxy chart (M, then Tab) shows the systems you've charted.",
 				"how": "Fly out into open space, hold Shift to sail, and steer for another system's star; set a waypoint on the galaxy chart (M, Tab). Its worlds are made as you come near one."},

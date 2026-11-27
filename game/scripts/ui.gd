@@ -1069,11 +1069,51 @@ func _render_station() -> void:
 	_st_title.text = String(sd["name"])
 	var burn := float(sd["burn"])
 	if burn <= 0.0:
-		_st_section("At the anvil")
-		var al := _label("Forge ore gear or alloys (C) while you stand within reach of this anvil and the piece comes out masterwork: each of its effects a quarter bigger.", 12, CREAM)
-		al.autowrap_mode = TextServer.AUTOWRAP_WORD
-		al.custom_minimum_size.x = 440
-		_st_body.add_child(al)
+		# the anvil: the gear you've forged, upgraded a level at a time (27 Nov; main `upgrade_gear`, Defs.UPGRADES)
+		_st_section("Upgrade your gear: each level makes every effect of it stronger")
+		var any := false
+		for gid in Defs.GEAR:
+			if not game.player.items.has(gid):
+				continue
+			any = true
+			var glv: int = game.gear_level(String(gid))
+			var grow := _box(false, 4)
+			var gic: Texture2D = Icons.thing(String(gid))
+			grow.add_child(_tex(gic if gic != null else Icons.thing("recipe")))
+			var gnm := _label("%s · %s" % [String(Defs.GEAR[gid]["name"]), "as forged" if glv == 0 else String(Defs.UPGRADES[glv - 1]["name"])], 12, CREAM)
+			gnm.tooltip_text = String(Defs.GEAR[gid].get("desc", ""))
+			gnm.mouse_filter = Control.MOUSE_FILTER_PASS
+			grow.add_child(gnm)
+			_st_body.add_child(grow)
+			# (a second line: what the next level costs, and the button)
+			var gline := _box(false, 4)
+			var gpad := Control.new()
+			gpad.custom_minimum_size.x = 20
+			gline.add_child(gpad)
+			if glv < Defs.UPGRADES.size():
+				var gup: Dictionary = Defs.UPGRADES[glv]
+				gline.add_child(_label("-> %s, +%d%%" % [String(gup["name"]), int(round((float(gup["q"]) - 1.0) * 100.0))], 12, GOLD))
+				var gcost: Dictionary = gup["cost"]
+				for gcm in gcost:
+					gline.add_child(_cost_chip(int(gcm), int(gcost[gcm])))
+				var gub := _button("Upgrade")
+				var gwhy: String = game.upgrade_block(String(gid))
+				gub.disabled = gwhy != ""
+				if gwhy != "":
+					gub.tooltip_text = gwhy
+				var gid_s := String(gid)
+				gub.pressed.connect(func():
+					game.upgrade_gear(gid_s)
+					_st_key = "")
+				gline.add_child(gub)
+			else:
+				gline.add_child(_label("fully upgraded", 12, DIM))
+			_st_body.add_child(gline)
+		if not any:
+			var al := _label("Forge ore gear, an alloy or a core's gear (C), then bring it here: each piece can be upgraded five times as the journey goes on (ingots and coal, then wisp ingots and obsidian, star iron and crystal, a world's core, the void's essence).", 12, CREAM)
+			al.autowrap_mode = TextServer.AUTOWRAP_WORD
+			al.custom_minimum_size.x = 440
+			_st_body.add_child(al)
 		return
 	# what it made
 	if not st.out.is_empty():

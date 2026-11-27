@@ -106,7 +106,7 @@ Notes for development sessions on this part of the game. The rules that apply ev
   layers now (`load_cells` takes five or six). `cabin_stats`. Test: `_test_cabin` ("cabin"; `_pick_piece(name)`;
   picture `cabin_built.png`). The cabin is small (about 30 x 25 cells): bigger hulls later.
 - WISP FUEL (user, 23 Nov: "Only the long hauls"): WISPCELL (material 62, NM 63, "Wisp Cell"): smelter `s_cell`
-  (2 wisp ore + 1 coal -> 2), outposts sell 10 for 28. space.gd: the Starsail burns one every `SAIL_BURN` (150) ticks
+  (3 wisp ore + 1 coal -> 2 since 27 Nov), outposts sell 10 for 28. space.gd: the Starsail burns one every `SAIL_BURN` (150) ticks
   under sail with a heading (`_burn`; none left, it won't unfurl, `_fuel_note` says why). A landfall costs nothing
   (user, 24 Nov: fuel only for the fast crossing between star systems; the journey cost and its hold at the planet's
   edge are gone). HUD in space: "N wisp cells". main `free_fuel` (the test mode; tests.gd sets it). Test: `_test_fuel` ("fuel").

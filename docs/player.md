@@ -36,6 +36,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   asteroid mining (space `_mine_at`), not the Remove tool. Test: in `_test_start`.
 - Health doesn't regenerate. Healing Draughts (`items["potion"]`, H to drink, `_drink`; forged or found in chests,
   two at the start) and the Mending spell (its scroll is a rare find) heal over a moment (`Mage.heal_left`).
+  `heal_tick` runs the healing and the draught's wait (`potion_cd`) every tick: on foot in `_update_player`, seated
+  in the skiff in `_ride` (27 Nov; user: "i used a healing draught while inside the whisp skiff seat and i dont
+  think it healed me and then it stayed on 10 seconds for cooldown until i got out"), in space in space.gd's tick.
+  Tested in the pocket section (a draught seated aboard heals, its wait runs).
 - Falling rock hurts only after falling `ROCK_HURT_FALL` cells and only through your upper half (grid.comp), so
   digging a pit under yourself doesn't.
 - The wind (`_update_player`) no longer pushes you while you stand still on the ground; it still slows you

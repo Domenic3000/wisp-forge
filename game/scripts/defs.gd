@@ -1843,7 +1843,7 @@ const STATIONS := {
 	"still": {"name": "Still", "w": 15, "h": 15, "burn": 0.6, "spark": 0.1, "cost": {GLASS: 6, COPPER: 8, PLANK: 6},
 		"desc": "Steeps herbs and crystals in water over a low flame: draughts."},
 	"anvil": {"name": "Anvil", "w": 13, "h": 8, "burn": 0.0, "spark": 0.0, "cost": {COPPERBAR: 6, STONE: 10},
-		"desc": "Forge ore gear within reach of an anvil and it comes out masterwork: a quarter better."},
+		"desc": "Upgrade the gear you've forged here (F), level by level, each one making every effect of it stronger."},
 	"altar": {"name": "Summoning Altar", "w": 22, "h": 15, "burn": 0.0, "spark": 0.0, "cost": {MASONRY: 24, STONE: 20, CRYSTAL: 2},
 		"desc": "Lay a guardian's sigil on it (F) to call the guardian of the land it stands in. Build it where there's room to fight."},
 }
@@ -1887,31 +1887,33 @@ func sigil_recipes() -> Array:
 	return out
 ## fuel for a station's fire: ticks of burning per unit
 const FUEL_TICKS := {COAL: 900, WOOD: 300, PLANK: 300, TIMBER: 200, LEAF: 60, ROOT: 300}
-const ANVIL_REACH := 48.0     # (cells from you to an anvil, for masterwork)
+const ANVIL_REACH := 48.0     # (cells from you to an anvil, to upgrade gear at it)
 ## What the stations make. A batch starts when what's loaded is EXACTLY the kinds of "in" (enough of each):
 ## a mix it doesn't know does nothing, so trying a mix out is how a secret is found. "give": materials, or
 ## "item": an items key (draughts, "potion") or "gear:<id>" (WORK_GEAR); "ticks" at full heat (a cold
 ## station warms up first); "night": only after dark; "secret": hidden until made once (its "hint" is
 ## heard from villagers or read in notes found in chests, `game.secret_hints`); "once": made only once.
+## (27 Nov, user: "i think we should make the materials created with the workshops take more raw materials to make":
+## glass, tiles and bricks two of the raw for one, ingots four ore, charcoal five wood for two; draughts and gear as before)
 const PROCESS := [
-	{"id": "k_glass", "at": "kiln", "in": {SAND: 4}, "give": {GLASS: 4}, "ticks": 240},
-	{"id": "k_tile", "at": "kiln", "in": {DIRT: 3}, "give": {TILE: 4}, "ticks": 240},
-	{"id": "k_brick", "at": "kiln", "in": {MUD: 3}, "give": {BRICK: 4}, "ticks": 240},
-	{"id": "k_charcoal", "at": "kiln", "in": {WOOD: 3}, "give": {COAL: 2}, "ticks": 300},
-	{"id": "k_obsidian", "at": "kiln", "in": {ASH: 3, SAND: 2}, "give": {OBSIDIAN: 2}, "ticks": 360, "secret": true,
+	{"id": "k_glass", "at": "kiln", "in": {SAND: 6}, "give": {GLASS: 3}, "ticks": 240},
+	{"id": "k_tile", "at": "kiln", "in": {DIRT: 5}, "give": {TILE: 3}, "ticks": 240},
+	{"id": "k_brick", "at": "kiln", "in": {MUD: 5}, "give": {BRICK: 3}, "ticks": 240},
+	{"id": "k_charcoal", "at": "kiln", "in": {WOOD: 5}, "give": {COAL: 2}, "ticks": 300},
+	{"id": "k_obsidian", "at": "kiln", "in": {ASH: 4, SAND: 3}, "give": {OBSIDIAN: 2}, "ticks": 360, "secret": true,
 		"name": "Kiln Obsidian", "hint": "Ash of a hearth fired with the stuff of glass sets black and hard as a vault's walls."},
-	{"id": "k_prism", "at": "kiln", "in": {GLASS: 3, SHROOM: 2}, "give": {CRYSTAL: 1}, "ticks": 420, "secret": true,
+	{"id": "k_prism", "at": "kiln", "in": {GLASS: 4, SHROOM: 2}, "give": {CRYSTAL: 1}, "ticks": 420, "secret": true,
 		"name": "Grown Prism", "hint": "Glass fired round a glowing cap grows a prism of its own."},
 	# (26 Nov, "more secrets per station")
-	{"id": "k_kindled", "at": "kiln", "in": {STONE: 3, EMBER: 1}, "give": {MAGMAROCK: 3}, "ticks": 360, "secret": true,
+	{"id": "k_kindled", "at": "kiln", "in": {STONE: 4, EMBER: 1}, "give": {MAGMAROCK: 2}, "ticks": 360, "secret": true,
 		"name": "Kindled Stone", "hint": "Plain stone fired round an ember crystal wakes with the glow of the deep rock."},
-	{"id": "s_copper", "at": "smelter", "in": {COPPER: 3}, "give": {COPPERBAR: 1}, "ticks": 200},
-	{"id": "s_reclaim", "at": "smelter", "in": {HULL: 3, COAL: 1}, "give": {STARIRON: 1}, "ticks": 480, "secret": true,
+	{"id": "s_copper", "at": "smelter", "in": {COPPER: 4}, "give": {COPPERBAR: 1}, "ticks": 200},
+	{"id": "s_reclaim", "at": "smelter", "in": {HULL: 5, COAL: 2}, "give": {STARIRON: 1}, "ticks": 480, "secret": true,
 		"name": "Reclaimed Star Iron", "hint": "A dead ship's plating, melted down hot enough, gives back the star iron it was made with."},
 	{"id": "s_seal", "at": "smelter", "in": {OBSIDIAN: 3, EMBER: 2, COPPERBAR: 1}, "item": "gear:emberseal", "ticks": 540,
 		"secret": true, "once": true, "name": "Ember Seal", "hint": "Obsidian and embers bound in a copper ring keep fire and lava off whoever wears it."},
-	{"id": "s_wisp", "at": "smelter", "in": {WISP: 3}, "give": {WISPBAR: 1}, "ticks": 260},
-	{"id": "s_cell", "at": "smelter", "in": {WISP: 2, COAL: 1}, "give": {WISPCELL: 2}, "ticks": 240},
+	{"id": "s_wisp", "at": "smelter", "in": {WISP: 4}, "give": {WISPBAR: 1}, "ticks": 260},
+	{"id": "s_cell", "at": "smelter", "in": {WISP: 3, COAL: 1}, "give": {WISPCELL: 2}, "ticks": 240},
 	{"id": "s_band", "at": "smelter", "in": {COPPERBAR: 2, WISPBAR: 2, CRYSTAL: 1}, "item": "gear:wispband", "ticks": 480,
 		"secret": true, "once": true, "name": "Wispsteel Band", "hint": "Copper and wisp melted into one ring with a prism set between them: spells come cheaper."},
 	{"id": "s_edge", "at": "smelter", "in": {STARIRON: 2, COAL: 2, MAGMAROCK: 2}, "item": "gear:staredge", "ticks": 600,
@@ -1945,7 +1947,19 @@ const DRAUGHTS := {
 	"d_delve": {"name": "Delver's Brew", "col": Color(0.35, 0.28, 0.22), "dur": 3600, "mods": {"dig_rate": 1.5}, "desc": "Your staff digs half again as fast, for a minute."},
 	"d_moon": {"name": "Moonlit Draught", "col": Color(0.8, 0.85, 1.0), "dur": 7200, "mods": {"light": 60.0, "dig_rate": 1.2}, "desc": "A soft light goes with you and you dig faster, for two minutes."},
 }
-const MASTERWORK := 1.25      # ore gear forged within ANVIL_REACH of an anvil (items["q_<id>"])
+const MASTERWORK := 1.25      # (gear forged at an anvil before 27 Nov: its items["q_<id>"], counted as level 2)
+## Upgrading forged gear at the anvil (27 Nov; user: "instead of giving gear created near it powers, maybe we can do an
+## upgrading of already forged gear at the anvil ... multiple levels of upgrading as you progress through the game"):
+## each level makes every effect of the piece bigger ("q", as `gear()` reads items["q_<id>"]), one level after
+## another, each paid in what that stage of the journey brings (ingots, then obsidian, star iron, a world's core,
+## the void's essence)
+const UPGRADES := [
+	{"name": "Tempered", "q": 1.12, "cost": {COPPERBAR: 2, COAL: 4}},
+	{"name": "Masterwork", "q": 1.25, "cost": {WISPBAR: 2, OBSIDIAN: 3}},
+	{"name": "Starforged", "q": 1.4, "cost": {STARIRON: 3, CRYSTAL: 2}},
+	{"name": "Heartbound", "q": 1.6, "cost": {CORE: 4, STARIRON: 3}},
+	{"name": "Voidwrought", "q": 1.8, "cost": {VOIDESS: 3, XENITE: 4, STARIRON: 4}},
+]
 
 func process_by_id(id: String) -> Dictionary:
 	for pr in PROCESS:
