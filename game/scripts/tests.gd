@@ -2517,7 +2517,8 @@ func run() -> void:
 	hang0.resize(3)
 	# it came down in pieces that stayed stone, not in a shower of gravel
 	var gr_h: int = b.ground_row(hang_c.x + HW / 2)
-	var hang_wide: Dictionary = g.gpu.read_rect(hang_c.x - 90, hang_c.y, HW + 180, gr_h - hang_c.y + 8)
+	# (wide and deep: on sloping ground a piece can roll on a way and come to rest lower)
+	var hang_wide: Dictionary = g.gpu.read_rect(hang_c.x - 160, hang_c.y, HW + 320, gr_h - hang_c.y + 40)
 	var n_mas := 0
 	var n_grav := 0
 	for v in hang_wide["fg"]:

@@ -49,9 +49,18 @@ func _test_indoors() -> void:
 						# (a house's rooms are furnished: furniture or a door in the way is a fair "no"; no
 						# floor found on a house's floor is the old bug)
 						if not (wy.contains("furniture") or wy.contains("door") or wy.contains("workshop")):
-							in_bad += 1
 							# (what the floor is like there: # solid, ~ liquid, : powder, . open, rows hf-3..hf+2)
 							var in_rr: Dictionary = g.gpu.read_rect(posmod(cc - 12, Defs.NS), hf - 3, 25, 6)
+							# (a floor broken by an earlier check in the full run, a felled tree or a fire, is rightly no
+							# level ground: only an intact floor refused is the old bug)
+							var in_floor := 0
+							for in_fi in 25:
+								for in_fj in [3, 4]:
+									if Defs.KIND[int(in_rr["fg"][in_fj * 25 + in_fi]) & 255] == Defs.K_SOLID:
+										in_floor += 1
+										break
+							if in_floor >= 22 or not wy.contains("level"):
+								in_bad += 1
 							for in_j in 6:
 								var in_ln := ""
 								for in_i in 25:
