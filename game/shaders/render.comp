@@ -457,6 +457,28 @@ vec3 skyColor(vec2 pos, float r, float rs, vec2 px, float th) {
 	float bm = P.p[125].z * night;
 	if (bm > 0.01) col = mix(col, col * vec3(1.9, 0.45, 0.42) + vec3(0.06, 0.0, 0.0), bm * 0.8);
 
+	// the Hush (story.gd, 28 Nov; P.p[124].z: how much it has taken, more each chapter): a patch of the night where
+	// the stars have gone out, ringed with a faint violet and reaching out in slow tendrils. It keeps its place in the
+	// sky as the moon does, a way round from the sun, so it rises and sets through the night.
+	float hu = P.p[124].z;
+	if (hu > 0.01 && night > 0.01) {
+		float ca = cos(2.75), sa2 = sin(2.75);       // (a little way round from the moon: up when the moon is)
+		vec2 hd = vec2(sd.x * ca - sd.y * sa2, sd.x * sa2 + sd.y * ca);
+		vec2 hc = P.p[2].xy * 0.5 + P.p[123].zw + vec2(dot(hd, camR()), dot(hd, camD())) * P.p[2].y * 0.42;
+		float hr = P.p[2].y * (0.06 + 0.14 * hu);
+		vec2 dv = px - hc;
+		float ang = atan(dv.y, dv.x);
+		float wob = 1.0 + 0.16 * sin(ang * 5.0 + TIME * 0.004) + 0.08 * sin(ang * 13.0 - TIME * 0.007)
+			+ 0.35 * pow(max(0.0, sin(ang * 3.0 + TIME * 0.002)), 8.0);
+		float hdist = length(dv) / (hr * wob);
+		if (hdist < 1.4) {
+			float inside = 1.0 - smoothstep(0.82, 1.0, hdist);
+			col = mix(col, vec3(0.004, 0.0, 0.012), inside * night);
+			float rim = exp(-pow((hdist - 1.0) * 6.5, 2.0));
+			col += vec3(0.15, 0.045, 0.24) * floor(rim * 4.0) / 4.0 * night * (0.35 + 0.5 * hu);
+		}
+	}
+
 	// sun and moon next, also behind hills and clouds
 	{
 		float camDay = dot(normalize(P.p[1].xy), sd);

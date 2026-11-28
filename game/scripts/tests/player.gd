@@ -1790,3 +1790,96 @@ func _test_loop() -> void:
 	g.learn_all()
 	_go(lp_pos0)
 	await _frames(20)
+
+## The story (story.gd, cutscene.gd; 28 Nov; user: "some kind of story and build up with a big bad to drive the
+## player through the game ... cutscenes"): a new journey's opening plays as panels (each picture drawn) and goes on
+## by itself or a click, the keeper's tombs give verses of the wisp's memory in the world, Vulkhar speaks as he wakes
+## and as he falls, Esc skips a whole scene, the world waits while one plays, it's all kept with the journey, and
+## the Hush shows in the night sky
+func _test_story() -> void:
+	var sy_rows := []
+	var sy_ok := true
+	var sy_items0: Dictionary = g.items.duplicate(true)
+	var sy_back: Vector2 = g.player.pos
+	g.story.enabled = true
+	g.items.erase("story")
+	# the opening: four panels, each drawn; it goes on with a click once the words are out, and by itself
+	var sy_after := [false]
+	g.story.opening(func(): sy_after[0] = true)
+	await _frames(5)
+	var sy_scene: bool = g.state == "scene" and g.cutscene.is_panel()
+	var sy_hud: bool = not g.ui.hud.visible
+	var sy_panels := 0
+	var sy_tick0: int = g.frame
+	for sy_k in 4:
+		await _frames(40)
+		_shot("story_panel_%d.png" % (sy_k + 1))
+		if g.cutscene.active and g.cutscene.is_panel():
+			sy_panels += 1
+		g.cutscene.advance()           # (the words all out)
+		await _frames(2)
+		g.cutscene.advance()           # (on)
+		await _frames(2)
+	var sy_open_ok: bool = sy_scene and sy_hud and sy_panels == 4 and not g.cutscene.active and g.state == "play" and sy_after[0] \
+		and g.story.seen("opening") and g.frame - sy_tick0 < 8 and g.ui.hud.visible
+	sy_rows.append("%sthe opening: a scene of panels %s, the HUD hidden %s, %d of 4 panels shown, done and back to play %s, the hints after %s, the world waited %s" % [
+		"" if sy_open_ok else "(!) ", sy_scene, sy_hud, sy_panels, g.state == "play", sy_after[0], g.frame - sy_tick0 < 8])
+	sy_ok = sy_ok and sy_open_ok
+	# a second time: nothing (a journey's opening plays once)
+	g.story.opening()
+	await _frames(2)
+	var sy_once: bool = not g.cutscene.active
+	sy_ok = sy_ok and sy_once
+	# a keeper's tomb: the first verse, in the world (letterboxed, the wisp speaking); then it goes on by itself
+	g.story.warden_fell(g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 40.0)
+	await _frames(70)
+	var sy_verse: bool = g.cutscene.active and not g.cutscene.is_panel() and g.cutscene.bubbles().size() == 1
+	_shot("story_verse.png")
+	var sy_auto := false
+	for sy_f in 1500:
+		await _frames(1)
+		if not g.cutscene.active:
+			sy_auto = true
+			break
+	var sy_v_ok: bool = sy_verse and sy_auto and int(g.items["story"].get("verses", 0)) == 1 and g.state == "play"
+	sy_rows.append("%sa keeper's tomb: the wisp's first verse in the world %s, went on by itself to the end %s, verses %d" % [
+		"" if sy_v_ok else "(!) ", sy_verse, sy_auto, int(g.items["story"].get("verses", 0))])
+	sy_ok = sy_ok and sy_v_ok
+	# Vulkhar: as he wakes (his words in an ember bubble over him), Esc skips the scene; as he falls
+	var sy_vul = g.spawn_enemy("golem", g.player.pos + g.basis_r(atan2(g.player.pos.y, g.player.pos.x)) * 90.0 - g.basis_d(atan2(g.player.pos.y, g.player.pos.x)) * 10.0)
+	g.story.vulkhar_wakes(sy_vul)
+	await _frames(100)
+	var sy_vb: Array = g.cutscene.bubbles()
+	var sy_ember: bool = not sy_vb.is_empty() and int(sy_vb[0][4]) == 3
+	_shot("story_vulkhar.png")
+	g.cutscene.key(KEY_ESCAPE)
+	await _frames(2)
+	var sy_skipped: bool = not g.cutscene.active and g.state == "play"
+	g.story.vulkhar_falls(sy_vul)
+	await _frames(5)
+	var sy_falls: bool = g.cutscene.active and String(g.cutscene.name_now) == "vulkhar_falls"
+	g.cutscene.key(KEY_ESCAPE)
+	await _frames(2)
+	g.enemies.erase(sy_vul)
+	var sy_vul_ok: bool = sy_ember and sy_skipped and sy_falls and g.story.seen("vulkhar_met") and g.story.seen("vulkhar_fell") and g.state == "play"
+	sy_rows.append("%sVulkhar: his words as he wakes, in ember %s; Esc skipped it %s; his last words as he falls %s" % ["" if sy_vul_ok else "(!) ", sy_ember, sy_skipped, sy_falls])
+	sy_ok = sy_ok and sy_vul_ok
+	# kept with the journey
+	var sy_js = JSON.parse_string(JSON.stringify(g.items))
+	var sy_kept: bool = sy_js is Dictionary and (sy_js["story"] as Dictionary).get("opening", false) and int((sy_js["story"] as Dictionary).get("verses", 0)) == 1
+	sy_ok = sy_ok and sy_kept
+	# the Hush in the night sky: a dark patch ringed in violet where the stars were
+	var sy_hush: float = g.story.hush_level()
+	var sy_t0: float = g.time
+	_go(sy_back + sy_back.normalized() * 220.0)
+	g.time = g.towns.time_for_hour(g.player.pos, 0.0)
+	await _frames(40)
+	_shot("story_hush_sky.png")
+	g.time = sy_t0
+	sy_rows.append("%sa new journey's story kept in its save %s; the Hush over the first world %.2f (picture story_hush_sky.png)" % ["" if sy_kept else "(!) ", sy_kept, sy_hush])
+	sy_ok = sy_ok and sy_hush > 0.2
+	g.items = sy_items0
+	g.story.enabled = false
+	_go(sy_back)
+	await _frames(20)
+	_ok("the story: the opening's panels, the keepers' verses, Vulkhar's words, skippable, kept, the Hush in the sky", sy_ok, "; ".join(sy_rows))

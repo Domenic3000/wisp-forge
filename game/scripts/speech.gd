@@ -14,7 +14,7 @@ extends RefCounted
 
 const PixelFont := preload("res://scripts/pixel_font.gd")
 
-enum { SPEECH, WISP, PROMPT }
+enum { SPEECH, WISP, PROMPT, EMBER }    # (EMBER: the old keepers and Vulkhar in the story's scenes, cutscene.gd)
 
 const POP := 7            # frames the box takes to open
 const TYPE_AT := 4        # the words start once the box is this far open
@@ -143,6 +143,12 @@ func draw(ci: CanvasItem, head: Vector2, text: String, alpha: float, key: String
 			ink = Color(0.88, 0.95, 1.0)
 			accent = Color(0.62, 0.9, 1.0)
 			shine = Color(0.4, 0.6, 1.0, 0.35)
+		EMBER:
+			fill = Color(0.07, 0.04, 0.04, 0.95)
+			edge = Color(1.0, 0.45, 0.16)
+			ink = Color(1.0, 0.86, 0.7)
+			accent = Color(1.0, 0.6, 0.25)
+			shine = Color(0.9, 0.3, 0.1, 0.3)
 		PROMPT:
 			fill = Color(0.07, 0.05, 0.13, 0.9)
 			edge = Color(0.93, 0.76, 0.36)

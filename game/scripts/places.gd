@@ -129,7 +129,9 @@ func guide(force := false) -> void:
 			game.planet_state["guided"] = gd
 			stats_guided += 1
 			if game.quest != null:
-				game.quest.say_later("Far below, on the other side of this world, its heart beats, and something guards it. I've marked it on your map.")
+				# (28 Nov, the story: user, "she tells me about vulkhar and 3 crypts with no story or reason i am going
+				# there"; story.gd)
+				game.quest.say_later("Far below, at this world's heart, its seal is held: the thing that keeps the Hush out. Something old guards it. I've marked it on your map.")
 			return
 	var best := {}
 	var bd := GUIDE_R
@@ -162,8 +164,11 @@ func guide(force := false) -> void:
 	stats_guided += 1
 	if game.quest != null:
 		var bp := Vector2(float(best["pos"][0]), float(best["pos"][1]))
-		var what := "a village, %s," % String(best["name"]) if String(best["kind"]) == "town" else "a dungeon, %s, with its warden," % String(best["name"])
-		game.quest.say_later("There's %s %s. I've marked it on your map." % [what, _way(bp, p)])
+		if String(best["kind"]) == "town":
+			game.quest.say_later("There's a village, %s, %s. I've marked it on your map." % [String(best["name"]), _way(bp, p)])
+		else:
+			# (a keeper's tomb: a verse of the wisp's memory lies there; story.gd)
+			game.quest.say_later("There's an old tomb, %s, %s: one of the seal's keepers lies there, and something of mine is buried with them. I've marked it on your map." % [String(best["name"]), _way(bp, p)])
 
 func tick() -> void:
 	if game.frame % GUIDE_EVERY == 120 and not game.space.active and not game.pocket.active:

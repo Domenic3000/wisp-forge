@@ -49,6 +49,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | `docs/physics.md` | Rigid chunks (felled trees, falling building pieces), standing on the curved world, chests at rest, scaffold |
 | `docs/performance.md` | Making a planet quickly, the profiler, the benchmarks, quality levels for lower-end PCs, hot paths, no stalls, read-back |
 | `docs/testing.md` | The test mode in full: time limits, running one section, the checks that sometimes fail |
+| `docs/story.md` | The story (the Hush, the Choir, the keepers, Vulkhar, the wisp's twist), the cutscenes (panels and moments in the world), the Hush in the sky |
 | `docs/release.md` | Building the shareable .exe, music, sound effects and ambience, save slots, the window |
 
 ## Rules that hold everywhere

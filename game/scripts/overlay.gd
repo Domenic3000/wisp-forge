@@ -1410,6 +1410,8 @@ func _draw_all() -> void:
 		var aim: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px)
 		_draw_mage(game.player, aim, Defs.SPELLS[game.known[game.sel]]["color"], not blink)
 	bubbles.append_array(game.test_bubbles)
+	if game.cutscene != null and game.cutscene.active:
+		bubbles.append_array(game.cutscene.bubbles())       # (a scene's words: cutscene.gd)
 	for bb in bubbles:
 		_bubble(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5])
 	tq = _part("draw: mages", tq)
@@ -1428,7 +1430,9 @@ func _draw_all() -> void:
 		for k in 12:
 			var wa := float(k) / 12.0 * TAU
 			draw_rect(Rect2((ws + Vector2(cos(wa), sin(wa)) * wr).floor(), Vector2.ONE), Color(0.7, 0.92, 1.0, 0.35))
-	if game.quest != null and game.quest.say_t > 0 and game.quest.say_text != "":
+	if game.cutscene != null and game.cutscene.active:
+		pass                        # (a scene's own words only: cutscene.gd)
+	elif game.quest != null and game.quest.say_t > 0 and game.quest.say_text != "":
 		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.quest.say_text, clampf(float(game.quest.say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)
 	elif game.wisp_say_t > 0 and game.wisp_say != "":
 		_bubble(game.wisp + _down_at(game.wisp) * 9.0, game.wisp_say, clampf(float(game.wisp_say_t) / 30.0, 0.0, 1.0), "wisp", Speech.WISP, 1.0)

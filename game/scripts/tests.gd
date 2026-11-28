@@ -219,6 +219,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_gear()
+		elif only == "story":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_story()
 		elif only == "loop":
 			_go(g.player.pos)
 			await _frames(60)
@@ -1353,7 +1357,15 @@ func run() -> void:
 	# a little further along; 28 Nov, the test planet's ground changed with terrain 4)
 	var wall_at: Vector2 = spot.call(10.0, 2.0)
 	var wall_first := 0
-	for wo in [[10.0, 2.0], [10.0, 4.0], [24.0, 4.0], [-30.0, 4.0], [40.0, 4.0]]:
+	# (the plants there taken away first: tufts and bushes are background, and a back wall goes up only where there's
+	# none; on the test planet's terrain 4 its start has undergrowth, and the wall went up in three cells)
+	var wcc: Vector2i = Build.cell_of(wall_at)
+	var wclr := PackedInt32Array()
+	wclr.resize(24 * 16)
+	wclr.fill(0xFF)
+	g.stamps.append({"x0": posmod(wcc.x - 12, Defs.NS), "y0": wcc.y - 12, "w": 24, "h": 16, "data": wclr})
+	await _frames(4)
+	for wo in [[10.0, 2.0], [10.0, 3.0], [24.0, 2.0], [-30.0, 2.0], [40.0, 2.0]]:
 		wall_at = spot.call(float(wo[0]), float(wo[1]))
 		g.test_aim = wall_at
 		g.test_cast = true
@@ -2475,6 +2487,7 @@ func run() -> void:
 			shown += 1               # (the workshops' mixes are pages of the book too: one card or secret page each)
 	await _test_gear()
 	await _test_loop()
+	await _test_story()
 	await _test_towns()
 	await _test_guards()
 	await _test_vfx()

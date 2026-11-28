@@ -24,6 +24,8 @@ const Quest := preload("res://scripts/quest.gd")
 const MysteryCtl := preload("res://scripts/mystery.gd")
 const PlacesCtl := preload("res://scripts/places.gd")
 const MendingCtl := preload("res://scripts/mending.gd")
+const StoryCtl := preload("res://scripts/story.gd")
+const Cutscene := preload("res://scripts/cutscene.gd")
 const Pursuit := preload("res://scripts/pursuit.gd")
 const Workshops := preload("res://scripts/workshops.gd")
 const Summoning := preload("res://scripts/summoning.gd")
@@ -697,6 +699,8 @@ var wisp_t := 0.0
 var mystery                 # a deep ocean world's sunken mystery, as you play it (mystery.gd)
 var places                  # the places to discover on this world, as you play (places.gd; 27 Nov)
 var mending                 # the world mending itself, the Worldsong (mending.gd; 27 Nov)
+var story                   # the story: the Hush, the Choir, the keepers and Vulkhar (story.gd; 28 Nov)
+var cutscene                # the story's scenes: panels and moments in the world (cutscene.gd; state "scene")
 var quest                   # the main quest (quest.gd): the wisp's guidance, the HUD's line, the journal (L)
 var quest_test := false     # (the test mode runs the quest only in its own check)
 var wisp_ward_t := 0        # Wisp Ward: ticks until it can take a hit again
@@ -749,6 +753,7 @@ func _ready() -> void:
 	mystery = MysteryCtl.new(self)
 	places = PlacesCtl.new(self)
 	mending = MendingCtl.new(self)
+	story = StoryCtl.new(self)
 	_init_trait_stats()
 	workshops = Workshops.new(self)
 	summoning = Summoning.new(self)
@@ -797,6 +802,8 @@ func _ready() -> void:
 	ui = UI.new()
 	ui.game = self
 	add_child(ui)
+	cutscene = Cutscene.new(self)
+	add_child(cutscene)
 	audio = Audio.new()
 	audio.game = self
 	add_child(audio)
@@ -826,6 +833,7 @@ func _ready() -> void:
 			return
 		_tests = tests_script.new()   # kept as a member: a local would be freed before the tests run
 		_tests.g = self
+		story.enabled = false          # (the story's scenes would stop the checks: only its own check plays them)
 		_tests.run.call_deferred()
 		return
 	_migrate_old_saves()
@@ -963,6 +971,8 @@ func _process(delta: float) -> void:
 		for k2 in wsteps:
 			workshops.work_all()
 		ui.update_station()
+	if state == "scene":
+		cutscene.tick()                  # (the world waits while a scene plays: cutscene.gd)
 	if state == "shipyard":
 		shipyard.process(delta)
 		ui.update_shipyard(self)
@@ -972,13 +982,13 @@ func _process(delta: float) -> void:
 			_gpu_frame(true, 1)
 		ui.update_hud(self)
 		map_view.queue_redraw()
-	if state == "play" or state == "dead" or state == "forge" or state == "shop" or state == "station":
+	if state == "play" or state == "dead" or state == "forge" or state == "shop" or state == "station" or state == "scene":
 		tp = Time.get_ticks_usec()
 		if (space.active and not space.live) or travelling or pocket.active:
 			overlay.queue_redraw()          # (out in space the planet's cells rest: nothing for the GPU)
 			lights.clear()
 		else:
-			_gpu_frame(state == "forge" or state == "shop" or state == "station" or menu_up, steps)
+			_gpu_frame(state == "forge" or state == "shop" or state == "station" or state == "scene" or menu_up, steps)
 		prof_add("GPU submit", Time.get_ticks_usec() - tp)
 		tp = Time.get_ticks_usec()
 		ui.update_hud(self)
@@ -1151,7 +1161,7 @@ func _cell_rows(c: Vector2) -> void:
 		gpu.setp(gpu.ROWT + j, Vector4(n, xa, fr, 0.0))
 		_rows[j * 2] = n
 		_rows[j * 2 + 1] = fr
-	gpu.setp(124, Vector4(ca, y0, 0.0, 0.0))
+	gpu.setp(124, Vector4(ca, y0, story.hush_level() if story != null else 0.0, 0.0))   # (.z: the Hush in the night sky)
 	_pic_next = {"mode": 1, "rows": _rows.duplicate(), "a": ca, "y0": y0, "zoom": zoom}
 
 ## Hands the view's shader the picture now on screen: how it was drawn, and from where.
@@ -4019,6 +4029,7 @@ func _kill_enemy(e: Enemy) -> void:
 		player.inv[Defs.EMBER] += 40
 		player.inv[Defs.OBSIDIAN] += 20
 		ui.toast("Vulkhar falls! You claim the EMBER HEART.", Color(1, 0.7, 0.3), 6.0)
+		story.vulkhar_falls(e)
 		ui.toast("+40 Ember Crystal, +20 Obsidian. The Core Siphon can now be forged.", Color(1, 0.85, 0.3), 6.0)
 		shake = 18.0
 		save_game()
@@ -4163,6 +4174,7 @@ func _warden_falls(e: Enemy) -> void:
 		dead_list.append(key)
 	planet_state["bosses_dead"] = dead_list
 	ui.toast("%s falls!" % bd["name"], bd["col"], 6.0)
+	story.warden_fell(e.pos)               # (a keeper's tomb: a verse of the wisp's memory)
 	var loot: Dictionary = bd["loot"]
 	for mt in loot:
 		player.inv[int(mt)] += int(loot[mt])
@@ -4534,6 +4546,7 @@ func _update_enemies() -> void:
 				if not e.awake and dist < 150:
 					e.awake = true
 					ui.toast("VULKHAR, THE EMBER GOLEM awakens!", Color(1, 0.48, 0.16), 4.0)
+					story.vulkhar_wakes(e)
 					audio.play("roar", e.pos, 1.2)
 					shake = 10.0
 				if e.awake and not tgt.dead and not Pursuit.tick(self, e, tgt, Pursuit.walk_key(e, 5.2, g), 3, false):
@@ -6553,6 +6566,9 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if ui.settings_panel.visible:
 			return                               # (nothing else while the pause menu or the settings are open)
+		if state == "scene":
+			cutscene.key(k)                      # (on, or Esc skips: cutscene.gd)
+			return
 		if state == "play" or state == "forge":
 			if key_is(k, "forge") or (k == KEY_ESCAPE and state == "forge"):
 				toggle_forge()
@@ -6665,6 +6681,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 					player.inv[m] += 200
 			learn_all()
 			ui.toast("Creative stock: +200 of every material, and every recipe", Color(0.6, 1, 0.6))
+	elif state == "scene" and ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+		cutscene.advance()
 	elif state == "map" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
 		_map_mouse(ev)
 	elif state == "shipyard" and (ev is InputEventMouseButton or ev is InputEventMouseMotion):
@@ -9462,9 +9480,14 @@ func start_game(use_save: bool) -> void:
 	ui.show_hud()
 	state = "play"
 	if s == null:
-		ui.toast("Right-click to excavate. Left-click casts your selected spell.", Color.WHITE, 7.0)
-		ui.toast("Press C to open the Wisp Forge. Press M for the map.", Color(1, 0.82, 0.23), 9.0)
+		# (a new journey: the story's opening first, then the first hints; story.gd)
+		story.opening(_first_hints)
 	save_game()
+
+## a new journey's first hints (after the story's opening)
+func _first_hints() -> void:
+	ui.toast("Right-click to excavate. Left-click casts your selected spell.", Color.WHITE, 7.0)
+	ui.toast("Press C to open the Wisp Forge. Press M for the map.", Color(1, 0.82, 0.23), 9.0)
 
 func _enter_planet(index: int) -> void:
 	_make_world(index, false)
