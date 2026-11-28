@@ -124,7 +124,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
 ## Terrain 3 (27 Nov; user: "the ocean isnt nearly deep enough on the water world i went to. how do we make it really feel like a deep dark vast ocean. same thing with other worlds. they feel a bit shallow still i can dig away the entire surface very easily. Underground feels vast, but i want the biomes to feel vast as well. i also feel a lack of enemies digging underground, we need developed cave systel with underground foliage and creatures living there as well."; chose "New journeys only", "Abyssal", and all of "Deeper biome ground", "A cave layer per biome", "Wider biomes")
 - `Defs.TERRAIN_SET` 3: new journeys only (a journey saved with "tset" 2 keeps terrain 2; 1 keeps 1). Everything of
   terrain 2 holds as well (gen.comp `TV2` is true on 3; `TV3` adds).
-- Abyssal seas (surface.comp): an "ocean" biome gets flags 32 from gpu_world `build_surface` on terrain 3. Its
+- Abyssal seas (surface.comp): an "ocean" biome gets flags 32 from gpu_world `build_surface` on terrain 3 (not
+  on the exotic worlds: the deep ocean world's "ocean" biomes are its shallow shelves round its own abyss). Its
   columns keep the sandy shelf for `shelf` cells (120 +-45) out from each shore, dip 20 toward the lip, then drop off
   over 60-100 cells into the abyss: 500-800 cells of water (fbm /330), with trenches a few hundred cells across (a ridged fbm /420 to the
   6th power) up to 280 deeper. The deep ground under it follows (deepR = rs - 40). The floor's plants are the deep

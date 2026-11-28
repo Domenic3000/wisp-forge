@@ -314,7 +314,8 @@ func build_surface(planet: Dictionary) -> void:
 	for b in bl.size():
 		var bd: Dictionary = Defs.BIOMES[bl[b]]
 		# (terrain 3: an ocean is abyssal, flags 32: surface.comp; 27 Nov)
-		var bfl: int = int(bd["flags"]) | (32 if Defs.terrain >= 3 and String(bl[b]) == "ocean" else 0)
+		# (not on the exotic worlds: the deep ocean world's "ocean" is its shallow shelves round its own abyss)
+		var bfl: int = int(bd["flags"]) | (32 if Defs.terrain >= 3 and String(bl[b]) == "ocean" and not planet.has("exotic") else 0)
 		setp(8 + 2 * b, Vector4(bd["off"], bd["amp"], bd["top"], bfl))
 		setp(9 + 2 * b, Vector4(bd["sub"], bd["topD"], bd["subD"], int(bd["ug"]) + int(bd["flora"]) * 16))
 	# where each biome starts round the planet (biomes have widths of their own)
