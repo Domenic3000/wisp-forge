@@ -292,7 +292,10 @@ maybe a way to cycle through nearby objects")
   Not in space. overlay `_draw_f_target` brackets `f_target()` in pulsing gold and names it ("F  Open the chest"),
   with "Z: next 2/3" when there's more than one. Z (`f_cycle`) sets `f_pick` (its key, `_f_key`); F then uses that one
   (`_f_use`: towns `talk(m, pick)`, workshops `interact(m, pick)`, `_try_open_chest(pick)`, `_set_door`) until you walk
-  out of its reach. A bed (home) isn't listed: it's read from the GPU only when F is pressed. Test: in
+  out of its reach. A bed (home) is listed too (28 Nov; user: "the bed isnt highlighting for pressing f on it. the
+  door near the bed is highlighted and when i press f the bed activates"): `_bed_look` asks for the cells round you
+  (`gpu.request_rect`) every few ticks and `_bed_in` finds the nearest bed in them; it comes before the doors when
+  within 12 cells, as F tries it, or with no door in reach within 26. Tested in the home check ("F's bracket on it"). Test: in
   `_test_inworld` ("F highlight", picture `f_highlight.png`).
 
 ## Taking back what you built (27 Nov)

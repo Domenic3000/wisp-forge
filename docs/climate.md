@@ -34,6 +34,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - main `_weather_fx` (from `_update_climate`, near the surface only, not in space or on the map) says what
   falls: the biome's "weather" while `sky_rain` is up (the GPU's rain, snow and ash cells still fall too:
   real matter), a blizzard in wind, dust storms, embers on a hot world, the sandstorm and hail events.
+  (28 Nov; user: "the snow has snowflake and also pixel snow same with the rain. i like the newer fancier graphics they
+  should be the only one and that should land on the ground the way the pixel version does") render.comp doesn't draw
+  rain, snow or ash cells still falling from the clouds (life 1 from react.comp, nothing under them yet): weather.gd's
+  drops and flakes are what's seen falling, and the cells appear once they land, gathering as before.
   A hail storm drops NO rain cells (P.p[3].x 0: render.comp draws a falling drop pale, just like a hailstone),
   only weather.gd's stones, with a cold haze (`sky_tint`); a sting cracks a stone on your hat.
 - Test: in `_test_sky` (hail: stones bounced and lay, no rain cells; rain: splashes; `sky_rain.png`).

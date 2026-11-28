@@ -1349,21 +1349,28 @@ func run() -> void:
 	g.build_cat = 0
 	g.build_idx[0] = 0
 	g.build_shape = 0                # painted with the brush
+	# (a back wall goes up only where there's no background yet: where plants or the ground's own back fill the spot,
+	# a little further along; 28 Nov, the test planet's ground changed with terrain 4)
 	var wall_at: Vector2 = spot.call(10.0, 2.0)
-	g.test_aim = wall_at
-	g.test_cast = true
-	await _frames(12)
-	g.test_cast = false
-	await _frames(6)
 	var wall_first := 0
-	var rawf: PackedByteArray = g.gpu.read_world()
-	var cqf: Vector2i = Build.cell_of(wall_at)
-	for djf in range(-34, 70):
-		for dif in range(-16, 17):
-			var kf: int = Defs.raw_idx(cqf.y + djf, posmod(cqf.x + dif, Defs.NS)) * 4
-			var af: int = rawf.decode_u32(Defs.total_cells() * 4 + kf)
-			if (af & 255) == Defs.PLANK and (af & 0x4000) != 0:
-				wall_first += 1
+	for wo in [[10.0, 2.0], [10.0, 4.0], [24.0, 4.0], [-30.0, 4.0], [40.0, 4.0]]:
+		wall_at = spot.call(float(wo[0]), float(wo[1]))
+		g.test_aim = wall_at
+		g.test_cast = true
+		await _frames(12)
+		g.test_cast = false
+		await _frames(6)
+		wall_first = 0
+		var rawf: PackedByteArray = g.gpu.read_world()
+		var cqf: Vector2i = Build.cell_of(wall_at)
+		for djf in range(-34, 70):
+			for dif in range(-16, 17):
+				var kf: int = Defs.raw_idx(cqf.y + djf, posmod(cqf.x + dif, Defs.NS)) * 4
+				var af: int = rawf.decode_u32(Defs.total_cells() * 4 + kf)
+				if (af & 255) == Defs.PLANK and (af & 0x4000) != 0:
+					wall_first += 1
+		if wall_first >= 8:
+			break
 	# a table
 	g.build_cat = 2
 	g.build_idx[2] = 0
@@ -1631,6 +1638,7 @@ func run() -> void:
 	var home_set := false
 	var bed_placed := false
 	var woke_at := -1.0
+	var bed_lit := false
 	if house_ok and forged:
 		_go(house_at)
 		await _frames(30)
@@ -1650,6 +1658,11 @@ func run() -> void:
 			g._toggle_build()
 		await _frames(10)
 		g.planet_state.erase("home")
+		# (28 Nov; user: "the bed isnt highlighting for pressing f on it") F's bracket is on the bed
+		for bl_k in 30:
+			g._f_refresh()
+			await _frames(1)
+		bed_lit = String(g.f_target().get("kind", "")) == "bed"
 		g._interact()
 		home_set = g.planet_state.has("home")
 		if home_set:
@@ -1663,8 +1676,8 @@ func run() -> void:
 		g.planet_state.erase("home")
 	if g.build_on:
 		g._toggle_build()
-	_ok("a bed in a room makes a home you wake up in", open_why != "" and bed_placed and home_set and woke_at >= 0.0 and woke_at < 4.0,
-		"a bed in the open needs %s; the bed set down in the house: %s, home set: %s, woke %.1f from it" % [open_why if open_why != "" else "nothing (wrong)", bed_placed, home_set, woke_at])
+	_ok("a bed in a room makes a home you wake up in", open_why != "" and bed_placed and bed_lit and home_set and woke_at >= 0.0 and woke_at < 4.0,
+		"a bed in the open needs %s; the bed set down in the house: %s, F's bracket on it %s, home set: %s, woke %.1f from it" % [open_why if open_why != "" else "nothing (wrong)", bed_placed, bed_lit, home_set, woke_at])
 
 	# ---- holding background harvest over a wall (no furniture there) costs next to nothing ----
 	_go(wall_at + wall_at.normalized() * 10.0)

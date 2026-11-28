@@ -1795,7 +1795,31 @@ func f_cycle() -> void:
 	f_pick = _f_key(f_list[(k + 1) % f_list.size()])
 	audio.play("ui_click", player.pos, 0.4)
 
+## a bed near you, looked for now and then without stalling the frame (`gpu.request_rect`): {box, d (cells), f}
+var _bed_seen := {}
+var _bed_req := {}
+func _bed_look() -> void:
+	if not _bed_req.is_empty():
+		var rr: Dictionary = gpu.take_rect(int(_bed_req["id"]))
+		if rr.is_empty():
+			if frame - int(_bed_req["f"]) > 30:
+				_bed_req = {}
+			return
+		var box := _bed_in(rr["bg"], _bed_req["cc"], 26)
+		_bed_req = {}
+		_bed_seen = {}
+		if not box.is_empty():
+			_bed_seen = {"box": box, "d": float(box["d"]), "f": frame}
+		return
+	if player == null or space.active or pocket.active or player.aboard != null:
+		_bed_seen = {}
+		return
+	var cc := Build.cell_of(player.pos)
+	var half := 26 + PICK_HALF
+	_bed_req = {"id": gpu.request_rect(posmod(cc.x - half, Defs.NS), cc.y - half, half * 2 + 1, half * 2 + 1), "cc": cc, "f": frame}
+
 func _f_refresh() -> void:
+	_bed_look()
 	f_list = _f_gather(player) if player != null and not player.dead and state == "play" else []
 	if f_pick != "":
 		var still := false
@@ -1850,6 +1874,16 @@ func _f_gather(m: Mage) -> Array:
 		if dd < F_DOOR:
 			dl.append([dd, d])
 	dl.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	# (28 Nov; user: "the bed isnt highlighting for pressing f on it. the door near the bed is highlighted and when
+	# i press f the bed activates") a bed, in the order F tries it: right beside you before a door, further off
+	# only with no door in reach. Found by a read that goes out with the next frame (`_bed_look`), not at once.
+	if not _bed_seen.is_empty() and frame - int(_bed_seen["f"]) < 40:
+		var bb: Dictionary = _bed_seen["box"]
+		var bp := (Build.cell_pos(int(bb["c0"]), int(bb["r0"])) + Build.cell_pos(int(bb["c1"]), int(bb["r1"]))) * 0.5
+		var bd: float = float(_bed_seen["d"])
+		if bd <= 12.0 or (bd <= 26.0 and dl.is_empty()):
+			out.append({"kind": "bed", "pos": bp, "half": Vector2(float(int(bb["c1"]) - int(bb["c0"]) + 1), float(int(bb["r1"]) - int(bb["r0"]) + 1)) * 0.5,
+				"name": "Make this bed your home", "ref": null})
 	for e2 in dl:
 		var d2: Dictionary = e2[1]
 		out.append({"kind": "door", "pos": d2["pos"], "half": Vector2(float(d2["w"]), float(d2["h"])) * 0.5, "name": "Close the door" if bool(d2["open"]) else "Open the door", "ref": d2})
@@ -1890,6 +1924,7 @@ func _f_use(m: Mage) -> bool:
 			var d: Dictionary = t["ref"]
 			_set_door(d, not bool(d["open"]), m.pos)
 			return true
+		"bed": return _try_home(m, 26)
 	return false
 
 ## Chests near a mage obey gravity: one rigid object, so it falls and lands whole. A chest
@@ -3545,7 +3580,12 @@ func _bed_near(pos: Vector2, reach: int) -> Dictionary:
 	var n := (reach + PICK_HALF) * 2 + 1
 	var half := reach + PICK_HALF
 	var rr: Dictionary = gpu.read_rect(cc.x - half, cc.y - half, n, n)
-	var bgs: PackedInt32Array = rr["bg"]
+	return _bed_in(rr["bg"], cc, reach)
+
+## the nearest bed in a block of back cells read round cell cc (reach + PICK_HALF each way): its box, or {}
+func _bed_in(bgs: PackedInt32Array, cc: Vector2i, reach: int) -> Dictionary:
+	var n := (reach + PICK_HALF) * 2 + 1
+	var half := reach + PICK_HALF
 	var start := -1
 	var best := 1 << 30
 	for dj in range(-reach, reach + 1):
@@ -3560,7 +3600,7 @@ func _bed_near(pos: Vector2, reach: int) -> Dictionary:
 	var cells := _furniture_piece(bgs, n, start)
 	if cells.is_empty():
 		return {}
-	var box := {"c0": 1 << 30, "r0": 1 << 30, "c1": -(1 << 30), "r1": -(1 << 30), "n": cells.size()}
+	var box := {"c0": 1 << 30, "r0": 1 << 30, "c1": -(1 << 30), "r1": -(1 << 30), "n": cells.size(), "d": sqrt(float(best))}
 	for k in cells:
 		var col := cc.x - half + k % n
 		var row := cc.y - half + k / n
@@ -4826,19 +4866,28 @@ func _try_spawn() -> void:
 	# floor, a flier is in open air, a swimmer in water; it waits there, still, until you come near.
 	# The read goes out with the next GPU frame (`gpu.request_rect`) and `_spawn_finish` places it when
 	# it's back: read at once, it stalled the frame (user, 22 Nov: a hitch).
-	_spawn_req = {"type": type, "reach": reach_x, "surf_flier": r > sa.x - 14.0 and not swim, "tries": 0}
+	# (28 Nov; user: "i am digging down into the planet and i still dont see any creatures down there in the cave
+	# systems"): underground the look is a far bigger block (SPAWN_UG_W x SPAWN_UG_H) and up to SPAWN_UG_TRIES of them:
+	# a small one beside a shaft you dug was nearly always solid rock, so nothing ever came; now the caves round you
+	# are found wherever they wind)
+	var ug: bool = r <= sa.x - 14.0
+	_spawn_req = {"type": type, "reach": reach_x, "surf_flier": r > sa.x - 14.0 and not swim, "tries": 0,
+		"rw": SPAWN_UG_W if ug else SPAWN_RW, "rh": SPAWN_UG_H if ug else SPAWN_RH, "max": SPAWN_UG_TRIES if ug else 3}
 	_spawn_ask()
 
 ## a waiting spawn's next look: a rectangle off to one side of you
 func _spawn_ask() -> void:
 	var pc := Build.cell_of(player.pos)
 	var side := -1 if randf() < 0.5 else 1
-	var dc := side * int(maxf(float(_spawn_req["reach"]), SPAWN_MIN_DIST) + randf_range(10.0, 70.0))
-	var c0 := pc.x + dc - SPAWN_RW / 2
-	var r0 := pc.y - (70 if bool(_spawn_req["surf_flier"]) else 45)
+	var rw: int = int(_spawn_req.get("rw", SPAWN_RW))
+	var rh: int = int(_spawn_req.get("rh", SPAWN_RH))
+	var dc := side * int(maxf(float(_spawn_req["reach"]), SPAWN_MIN_DIST) + randf_range(10.0, 70.0) + float(rw) * 0.5)
+	var c0 := pc.x + dc - rw / 2
+	var r0 := pc.y - (70 if bool(_spawn_req["surf_flier"]) else rh / 2)
+	r0 = clampi(r0, 0, maxi(0, Defs.ROWS - rh - 1))
 	_spawn_req["c0"] = c0
 	_spawn_req["r0"] = r0
-	_spawn_req["id"] = gpu.request_rect(posmod(c0, Defs.NS), r0, SPAWN_RW, SPAWN_RH)
+	_spawn_req["id"] = gpu.request_rect(posmod(c0, Defs.NS), r0, rw, rh)
 	_spawn_req["t"] = frame
 	_spawn_req["tries"] = int(_spawn_req["tries"]) + 1
 
@@ -4852,6 +4901,9 @@ func _spawn_room() -> int:
 
 const SPAWN_RW := 40
 const SPAWN_RH := 90
+const SPAWN_UG_W := 120
+const SPAWN_UG_H := 200
+const SPAWN_UG_TRIES := 5
 var _spawn_req := {}
 
 ## A waiting spawn's rectangle is back: find an open box the foe's size in it (a walker on a floor);
@@ -4871,34 +4923,35 @@ func _spawn_finish() -> void:
 	var bh := int(ceil(float(d["h"]))) + 2
 	var c0: int = _spawn_req["c0"]
 	var fgs: PackedInt32Array = rr["fg"]
-	var RW := SPAWN_RW
-	var RH := SPAWN_RH
-	# open[x + y * RW], then run[...]: how many open cells end at that one, counting down from above
-	var run := PackedInt32Array()
-	run.resize(RW * RH)
-	for yy in RH:
-		for xx in RW:
-			var kd: int = Defs.KIND[fgs[yy * RW + xx] & 255]
-			var op: bool = (kd == Defs.K_LIQUID) if swim else (kd == Defs.K_EMPTY or kd == Defs.K_GAS)
-			run[yy * RW + xx] = ((run[(yy - 1) * RW + xx] if yy > 0 else 0) + 1) if op else 0
+	var RW: int = int(_spawn_req.get("rw", SPAWN_RW))
+	var RH: int = int(_spawn_req.get("rh", SPAWN_RH))
+	# per column (worked out only for the columns looked at): how many open cells end at each, counting down
+	var runs := {}
 	var i0 := randi() % RW
-	for q in 12:
+	var q_n := 12 if RW <= SPAWN_RW else 30
+	for q in q_n:
 		var ic := (i0 + q * 7) % RW
 		if ic - bw / 2 < 0 or ic + bw / 2 >= RW:
 			continue
+		var run_c: PackedInt32Array = _spawn_col_run(runs, fgs, RW, RH, ic, swim)
 		for jb in range(bh, RH - 1):
 			if walker:
 				var ft: int = Defs.KIND[fgs[jb * RW + ic] & 255]
 				if ft != Defs.K_SOLID and ft != Defs.K_POWDER:
 					continue
+			if run_c[jb - 1] < bh:
+				continue
 			var fits := true
 			for xx2 in range(ic - bw / 2, ic + bw / 2 + 1):
-				if run[(jb - 1) * RW + xx2] < bh:
+				if _spawn_col_run(runs, fgs, RW, RH, xx2, swim)[jb - 1] < bh:
 					fits = false
 					break
 			if not fits:
 				continue
-			var sp := Build.cell_pos(c0 + ic, jb - bh / 2)
+			# (its row in the world: the look's top row and down; 28 Nov: the top row was left out, so since 22 Nov
+			# whatever came in this way was put in near the top of the sky over where it was found, and the caves
+			# stayed empty)
+			var sp := Build.cell_pos(c0 + ic, int(_spawn_req["r0"]) + jb - bh / 2)
 			if surf_flier and sp.length() < gpu.surf_at(atan2(sp.y, sp.x)).x + 4.0:
 				continue                  # (a bird of the surface comes in through the air, not a cave)
 			if sp.distance_to(player.pos) < SPAWN_MIN_DIST - 2.0:
@@ -4913,10 +4966,26 @@ func _spawn_finish() -> void:
 				spawn_enemy(type, sp + basis_r(atan2(sp.y, sp.x)) * 6.0 - basis_d(atan2(sp.y, sp.x)) * 4.0)
 			_spawn_req = {}
 			return
-	if int(_spawn_req["tries"]) < 3:
+	if int(_spawn_req["tries"]) < int(_spawn_req.get("max", 3)):
 		_spawn_ask()
 	else:
 		_spawn_req = {}
+
+## one column of a spawn's look: how many open cells (open air, or water for a swimmer) end at each row, counting
+## down from the top (kept in `runs` so each column is worked out once)
+func _spawn_col_run(runs: Dictionary, fgs: PackedInt32Array, rw: int, rh: int, x: int, swim: bool) -> PackedInt32Array:
+	if runs.has(x):
+		return runs[x]
+	var out := PackedInt32Array()
+	out.resize(rh)
+	var n := 0
+	for y in rh:
+		var kd: int = Defs.KIND[fgs[y * rw + x] & 255]
+		var op: bool = (kd == Defs.K_LIQUID) if swim else (kd == Defs.K_EMPTY or kd == Defs.K_GAS)
+		n = n + 1 if op else 0
+		out[y] = n
+	runs[x] = out
+	return out
 
 ## Inside a cloud: wisps of vapour stream past you with the wind, in front of everything.
 func _cloud_wisps() -> void:
@@ -9000,27 +9069,44 @@ var stats_pages := 0                 # (for the tests)
 
 # ==================================================================== map ===
 ## The map (M) is a menu of its own: the game waits while it's open (the play camera never zooms
-## out). "planet": the GPU draws the planet zoomed out, turned to `map_ang` (A/D or a drag turn it;
-## W/S or the wheel zoom, the last level fits the whole planet); map_view.gd draws the markers.
+## out). "planet": the GPU draws the planet zoomed out; map_view.gd draws the markers. (28 Nov; user: "I cannot pan
+## the map. it would be nice if i could smoothly zoom in and out and pan around on the world map") Where it looks is
+## a point, `map_ang` round the planet and `map_r` from its middle (the view's up always points out from the middle,
+## as on the ground); a drag or WASD moves it (left and right round the planet, up and down out and in), the wheel
+## or + / - zoom smoothly about the cursor (`map_z` eases to `map_zt`), from close in out to the whole planet,
+## and zooming far out draws the view in toward the planet's middle so the whole of it fits. H: back to you.
 ## "space" (Tab): the galaxy chart (map_view.gd). Out in space it opens on that.
 var map_tab := "planet"
-var map_zoom_i := 1
 var map_ang := 0.0
+var map_r := 0.0
+var map_z := 4.0               # cells a pixel now
+var map_zt := 4.0              # and where it's easing to
+var _map_anchor := []          # [screen point, world point]: what's under the cursor stays there while zooming
 var _map_back := {}
 var _map_drag := false
 var _map_moved := 0.0          # (how far the mouse went while held: a click sets a waypoint, a drag pans)
+var _map_grab := Vector2.ZERO  # (the world point under the mouse when it was pressed)
+const MAP_Z_MIN := 1.5
+const MAP_Z_START := 6.0
+const MAP_WHOLE_FROM := 0.75   # (past this share of the farthest zoom, the view draws in toward the middle)
 
-func map_zooms() -> Array:
-	# (the last fits the whole planet with its orbit band, whatever its size)
-	return [4.0, 10.0, 2.0 * (Defs.R_SPACE + 30.0) / float(mini(VW, VH))]
+## the farthest out the map goes: the whole planet with its orbit band, whatever its size
+func map_z_max() -> float:
+	return 2.0 * (Defs.R_SPACE + 30.0) / float(mini(VW, VH))
+
+## how far from the planet's middle the view may be at this zoom: anywhere out to the top of the orbit band when
+## close in; drawn in to the middle as the whole planet comes into view
+func _map_r_lim(z: float) -> float:
+	var zm := map_z_max()
+	return lerpf(Defs.R_SPACE, 1.0, smoothstep(zm * MAP_WHOLE_FROM, zm, z))
 
 func open_map() -> void:
 	if state != "play" or travelling or player == null:
 		return
 	state = "map"
 	_map_back = {"cam": cam_c, "zoom": zoom, "view": view_rect.visible}
-	map_ang = atan2(player.pos.y, player.pos.x)
 	map_tab = "space" if space.active and not space.live else "planet"
+	_map_on_you()
 	map_view.centre_on_you()
 	_map_drag = false
 	_map_moved = 0.0
@@ -9028,6 +9114,13 @@ func open_map() -> void:
 	overlay.queue_redraw()
 	ui.show_map(self)
 	_map_camera()
+
+func _map_on_you() -> void:
+	map_ang = atan2(player.pos.y, player.pos.x)
+	map_r = clampf(player.pos.length(), 1.0, Defs.R_SPACE)
+	map_z = MAP_Z_START
+	map_zt = MAP_Z_START
+	_map_anchor = []
 
 func close_map() -> void:
 	if state != "map":
@@ -9048,20 +9141,39 @@ func close_map() -> void:
 var _map_shown := 0
 
 func _map_camera() -> void:
-	var zs: Array = map_zooms()
-	map_zoom_i = clampi(map_zoom_i, 0, zs.size() - 1)
-	zoom = float(zs[map_zoom_i])
-	var up := Vector2(cos(map_ang), sin(map_ang))
-	var r: float = clampf(player.pos.length(), Defs.R_IN + 20.0, Defs.R_TOP)
-	if map_zoom_i == zs.size() - 1:
-		cam_c = up                               # (the whole planet: its middle, turned to map_ang)
-	elif zoom >= 8.0:
-		cam_c = up * maxf(Defs.R_IN + 20.0, r * 0.55)
-	else:
-		cam_c = up * r * 0.85
+	map_z = clampf(map_z, MAP_Z_MIN, map_z_max())
+	map_zt = clampf(map_zt, MAP_Z_MIN, map_z_max())
+	zoom = map_z
+	map_r = clampf(map_r, 1.0, _map_r_lim(map_z))
+	cam_c = Vector2(cos(map_ang), sin(map_ang)) * map_r
+	view_c = Vector2.ZERO
 	view_rect.visible = map_tab == "planet"
 
-func _map_tick(_delta: float) -> void:
+## move the view by `d` screen pixels (what's on screen slides the other way): right is round the planet, down is in
+func _map_pan(d: Vector2) -> void:
+	map_ang -= d.x * map_z / maxf(map_r, 200.0)        # (the screen's right is the way the angle falls)
+	map_r -= d.y * map_z
+	map_ang = fposmod(map_ang, TAU)
+	_map_anchor = []
+	_map_camera()
+
+## keep world point `wp` under screen point `sp` (a couple of passes: moving round the planet turns the view too)
+func _map_hold(sp: Vector2, wp: Vector2) -> void:
+	for k in 3:
+		_map_camera()
+		var now := screen_to_world(sp)
+		var c := cam_c + (wp - now)
+		map_ang = atan2(c.y, c.x)
+		map_r = c.length()
+	_map_camera()
+
+## zoom toward (f < 1) or away by f, about screen point sp (the middle of the screen when none)
+func _map_zoom(f: float, sp := Vector2(-1, -1)) -> void:
+	var at := sp if sp.x >= 0.0 else Vector2(VW, VH) * 0.5
+	_map_anchor = [at, screen_to_world(at)]
+	map_zt = clampf(map_zt * f, MAP_Z_MIN, map_z_max())
+
+func _map_tick(delta: float) -> void:
 	if map_tab == "space":
 		# the galaxy chart: WASD or the arrows pan
 		var pv := Vector2.ZERO
@@ -9076,13 +9188,26 @@ func _map_tick(_delta: float) -> void:
 		if pv != Vector2.ZERO:
 			map_view.pan(pv * 6.0)
 		return
-	var turn := 0.0
+	# WASD or the arrows move the view, as fast on screen at any zoom
+	var pv2 := Vector2.ZERO
 	if key_held("left"):
-		turn += 1.0
+		pv2.x -= 1.0
 	if key_held("right"):
-		turn -= 1.0
-	if turn != 0.0:
-		map_ang += turn * 4.0 * zoom / maxf(player.pos.length(), 200.0)
+		pv2.x += 1.0
+	if key_held("jump"):
+		pv2.y -= 1.0
+	if key_held("down"):
+		pv2.y += 1.0
+	if pv2 != Vector2.ZERO:
+		_map_pan(pv2 * 360.0 * minf(delta, 0.1))
+	# the zoom eases toward where it's going (by ratios, so it feels the same close in and far out)
+	if absf(log(map_z / map_zt)) > 0.002:
+		var k := 1.0 - exp(-14.0 * minf(delta, 0.1))
+		map_z = exp(lerpf(log(map_z), log(map_zt), k))
+		if absf(log(map_z / map_zt)) <= 0.002:
+			map_z = map_zt
+		if not _map_anchor.is_empty() and map_z < map_z_max() * MAP_WHOLE_FROM:
+			_map_hold(_map_anchor[0], _map_anchor[1])
 	_map_camera()
 
 func _map_key(k: int) -> void:
@@ -9105,12 +9230,13 @@ func _map_key(k: int) -> void:
 			space.waypoint = null
 	elif k == KEY_BACKSPACE or k == KEY_DELETE:
 		planet_state.erase("waypoint")
-	elif key_is(k, "jump") or key_is(k, "zoom_in"):
-		map_zoom_i -= 1
+	elif k == KEY_H:
+		_map_on_you()
 		_map_camera()
-	elif key_is(k, "down") or key_is(k, "zoom_out"):
-		map_zoom_i += 1
-		_map_camera()
+	elif key_is(k, "zoom_in"):
+		_map_zoom(1.0 / 1.6)
+	elif key_is(k, "zoom_out"):
+		_map_zoom(1.6)
 
 ## A waypoint on this planet (user, 24 Nov: "waypoints and such" for planets too): set by a click on the
 ## planet map, kept in planet_state (saved with the world), shown on the map and the minimap, cleared
@@ -9146,23 +9272,32 @@ func _map_mouse(ev: InputEvent) -> void:
 		if ev.button_index == MOUSE_BUTTON_LEFT:
 			if ev.pressed:
 				_map_moved = 0.0
+				_map_grab = screen_to_world(ev.position / float(scale_px))
 			elif _map_drag and _map_moved < 3.0:
 				set_planet_waypoint(screen_to_world(ev.position / float(scale_px)))
 				audio.play("ui_click", null, 0.5)
 			_map_drag = ev.pressed
 		elif ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
 			planet_state.erase("waypoint")
-		elif ev.pressed and ev.button_index == MOUSE_BUTTON_WHEEL_UP:
-			map_zoom_i -= 1
-			_map_camera()
-		elif ev.pressed and ev.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			map_zoom_i += 1
-			_map_camera()
+		elif ev.pressed and (ev.button_index == MOUSE_BUTTON_WHEEL_UP or ev.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+			# (smoothly, about the cursor: what's under it stays under it)
+			_map_zoom(1.0 / 1.3 if ev.button_index == MOUSE_BUTTON_WHEEL_UP else 1.3, ev.position / float(scale_px))
 	elif ev is InputEventMouseMotion and _map_drag and map_tab == "planet":
-		_map_moved += (ev.relative / float(scale_px)).length()
-		# (the planet follows the mouse: dragging right turns it so what was on the left comes over)
-		map_ang += ev.relative.x / float(scale_px) * zoom / maxf(player.pos.length(), 200.0)
-		_map_camera()
+		var rel: Vector2 = ev.relative / float(scale_px)
+		_map_moved += rel.length()
+		# (the land follows the mouse: what was under it when pressed stays under it)
+		if _map_moved >= 3.0:
+			_map_anchor = []
+			map_zt = map_z
+			if _map_r_lim(map_z) < Defs.RS0 * 0.6:
+				# (far out, the view is drawn in to the middle: a drag turns the planet, what you grabbed going
+				# round with the mouse; held as a point there, the view's up swung about wildly)
+				var now := screen_to_world(ev.position / float(scale_px))
+				if now.length() > 20.0 and _map_grab.length() > 20.0:
+					map_ang = fposmod(map_ang + wrapf(atan2(_map_grab.y, _map_grab.x) - atan2(now.y, now.x), -PI, PI), TAU)
+				_map_camera()
+			else:
+				_map_hold(ev.position / float(scale_px), _map_grab)
 
 ## the galaxy chart: the wheel zooms about the cursor, a drag pans, a click marks a waypoint (it shows
 ## out in space), a right click clears it

@@ -31,7 +31,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   `spawn_mult`), x `FIRST_CALM` (1.7) on planet 0; at most `spawn_cap(night)` (planet 0: 3 by day, 5 at night;
   else 5 / 7; a blood moon 12). Every spawn is at least `SPAWN_MIN_DIST` (160) cells to the side, past the
   screen's edge: on the ground by the surface table; in caves and for fliers by `gpu.read_rect` (40 x 90 cells
-  beside you, three tries) for an open box the size of the foe (water for swimmers), walkers with a floor under
+  beside you, three tries; underground 120 x 200 and five tries, and the row is the look's own: until 28 Nov
+  `_spawn_finish` left the look's top row out, so whatever came in that way was put near the top of the sky over where
+  it was found, and the caves stayed empty; user: "i still dont see any creatures down there in the cave systems";
+  `_spawn_col_run` works out only the columns looked at; test "underground, creatures come into the caves round you") for an open box the size of the foe (water for swimmers), walkers with a floor under
   it, surface fliers above the ground (the collision grid is only about as wide as the view, so a spot in it was
   always over or under the screen). Killing the last roused foe within 320 (`_check_cleared`, from `_kill_enemy`)
   makes the area quiet: no spawns for `QUIET_TICKS` (90 s) within `QUIET_R` (450) of there (a blood moon

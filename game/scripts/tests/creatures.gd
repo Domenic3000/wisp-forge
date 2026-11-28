@@ -1062,6 +1062,9 @@ func _test_hearts() -> void:
 		var hb_slept: bool = not hb_e.awake
 		_go(_cell_pos(hb_mid - 40, g.builds.ground_row(hb_mid - 40) - 12))
 		g.player.dead = false
+		# (once the collision grid is round you here: read from one still centred 200 cells off, the planet's curve
+		# put the floor under a wide boss a few cells up into it, so it looked stuck; 28 Nov)
+		await _frames(2)
 		var hb_lg0: Vector2 = g.to_grid(hb_e.pos)
 		var hb_stuck: bool = g.box_solid(hb_lg0.x - hb_e.w * 0.5 + 1.0, hb_lg0.y - hb_e.h * 0.5 + 1.0, hb_e.w - 2.0, hb_e.h - 3.0)
 		var hb_walk := 0.0
@@ -1417,3 +1420,52 @@ func _test_spawns() -> void:
 	await _frames(20)
 	_ok("foes come in fewer and farther: out of view, never near, and a cleared area stays quiet", made >= 2 and most <= cap and near == 0 and seen == 0 and quiet and after == 0,
 		"%d came in (at most %d at once, the cap %d), %d nearer than %d, %d in view; cleared: quiet %s, %d came after" % [made, most, cap, near, int(g.SPAWN_MIN_DIST), seen, quiet, after])
+	# ---- (28 Nov; user: "i am digging down into the planet and i still dont see any creatures down there in the cave
+	# systems") underground, what comes in comes into the caves round you: below the ground, in open space, standing on
+	# a floor if it walks
+	var ug_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 30, 40, 40, 6)
+	var ug_pk := PackedInt32Array()
+	ug_pk.resize(30 * 40)
+	ug_pk.fill(0xFF00)
+	var ug_row: int = ug_st.y + 150
+	g.stamps.append({"x0": posmod(ug_st.x + 5, Defs.NS), "y0": ug_row, "w": 30, "h": 40, "data": ug_pk})
+	await _frames(4)
+	_go(_cell_pos(ug_st.x + 20, ug_row + 30))
+	await _frames(20)
+	g.test_no_wild = false
+	g.quiet_until = -1
+	for ue0 in g.enemies.duplicate():
+		if not ue0.boss:
+			g.enemies.erase(ue0)
+	var ug_known := {}
+	var ug_made := 0
+	var ug_in_ground := 0
+	var ug_open := 0
+	var ug_kinds := {}
+	for uk in 240:
+		g.spawn_timer = 0
+		g._try_spawn()
+		await _frames(1)
+		for ue in g.enemies:
+			if ue.boss or ug_known.has(ue.get_instance_id()):
+				continue
+			ug_known[ue.get_instance_id()] = true
+			ug_made += 1
+			ug_kinds[ue.type] = int(ug_kinds.get(ue.type, 0)) + 1
+			var ua: float = atan2(ue.pos.y, ue.pos.x)
+			if ue.pos.length() < g.gpu.surf_at(ua).x - 14.0:
+				ug_in_ground += 1
+			var ucell: Vector2i = Build.cell_of(ue.pos)
+			var urr: Dictionary = g.gpu.read_rect(ucell.x, ucell.y, 1, 1)
+			var ukd: int = Defs.KIND[int(urr["fg"][0]) & 255]
+			if ukd != Defs.K_SOLID and ukd != Defs.K_POWDER:
+				ug_open += 1
+		# (keep room under the cap: those found are let go)
+		for ue2 in g.enemies.duplicate():
+			if not ue2.boss:
+				g.enemies.erase(ue2)
+	g.test_no_wild = true
+	_go(sw_back)
+	await _frames(20)
+	_ok("underground, creatures come into the caves round you", ug_made >= 3 and ug_in_ground == ug_made and ug_open == ug_made,
+		"%d came in 4 s of spawning 150 down (%s): %d under the ground, %d in open space" % [ug_made, str(ug_kinds), ug_in_ground, ug_open])

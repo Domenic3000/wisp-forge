@@ -1626,6 +1626,30 @@ func _test_loop() -> void:
 	g.workshops.list.erase(lp_lect)
 	_ok("an artifact studied at a Lectern teaches a recipe of its world", lp_study and lp_learned and not g.workshops.studying(lp_lect),
 		"laid %s, learned Pearl Fins %s" % [str(lp_study), str(lp_learned)])
+	# (28 Nov; user: "i cant walk past the lectern like other workshops") you walk past a Lectern as past a kiln:
+	# on level ground, each set down ahead, the mage walks right for 3 s
+	var lw_rows := []
+	var lw_ok := true
+	var lw_st := _clear_stretch(int(fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * Defs.NS) + 40, 110, 50, 3)
+	for lw_kind in ["kiln", "lectern"]:
+		var lw_a0: float = (float(lw_st.x) + 8.5) / float(Defs.NS) * TAU
+		var lw_as: float = (float(lw_st.x) + 50.5) / float(Defs.NS) * TAU
+		_go(Vector2.from_angle(lw_a0) * (g.gpu.surf_at(lw_a0).x + 12.0))
+		await _frames(20)
+		var lw_s = g.workshops.add(lw_kind, Vector2.from_angle(lw_as) * (g.gpu.surf_at(lw_as).x + float(Defs.STATIONS[lw_kind]["h"]) * 0.5 + 1.0))
+		await _frames(20)
+		var lw_c0: float = fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * float(Defs.NS)
+		g.test_move = 1 if g.basis_r(g.view_angle()).dot(Vector2.from_angle(lw_as) - Vector2.from_angle(lw_a0)) > 0.0 else -1
+		await _frames(180)
+		g.test_move = 0
+		var lw_c1: float = fposmod(atan2(g.player.pos.y, g.player.pos.x), TAU) / TAU * float(Defs.NS)
+		var lw_go: float = absf(wrapf(lw_c1 - lw_c0, -float(Defs.NS) * 0.5, float(Defs.NS) * 0.5))
+		var lw_past: bool = lw_go > 60.0
+		lw_ok = lw_ok and lw_past
+		lw_rows.append("%s%s: walked %.0f columns (it stood 42 on), state %s" % ["" if lw_past else "(!) ", lw_kind, lw_go, g.state])
+		g.workshops.list.erase(lw_s)
+		g.state = "play"
+	_ok("you walk past a Lectern as past any workshop", lw_ok, "; ".join(lw_rows))
 	# rolled traits: read by gear(), the once-given ones given once; reforging at an anvil rolls them again
 	g.roll_traits = true
 	var lp_anv = g.workshops.add("anvil", g.player.pos + g.basis_r(g.view_angle()) * 10.0)

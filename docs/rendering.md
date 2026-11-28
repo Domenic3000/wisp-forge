@@ -47,9 +47,14 @@ Notes for development sessions on this part of the game. The rules that apply ev
   bends the corners past the margin), on the map and in the unrolled setting it is drawn as before ("mode" 0).
 
 ## The map
-- The map (M, `main.open_map`; state "map", the game waits): "planet" renders the planet zoomed out (`map_zooms()`:
-  4, 10 and one that fits the whole planet with its band; turned to `map_ang`: A/D or a drag; W/S or the wheel
-  zoom), `scripts/map_view.gd` draws the markers (you, the party, home, the skiff) and, on Tab, "system": the round
+- The map (M, `main.open_map`; state "map", the game waits): "planet" renders the planet zoomed out. Where it looks is a
+  point, `map_ang` round the planet and `map_r` from its middle (the view's up always outward), at `map_z` cells a pixel
+  easing to `map_zt` (28 Nov; user: "I cannot pan the map. it would be nice if i could smoothly zoom in and out and pan
+  around on the world map"): a drag holds what you grabbed under the mouse (`_map_hold`), WASD move it, the wheel or +
+  / - zoom smoothly about the cursor (`_map_zoom`, `_map_anchor`), from MAP_Z_MIN (1.5) out to `map_z_max()` (the whole
+  planet with its band); past MAP_WHOLE_FROM of that the view is drawn in to the middle (`_map_r_lim`) and a drag turns
+  the planet instead; H back to you (MAP_Z_START 6). Test: in `_test_minimap` (dragged, zoomed about the cursor, the
+  whole planet, opened at 24 places and left alone it holds still); `scripts/map_view.gd` draws the markers (you, the party, home, the skiff) and, on Tab, "system": the round
   of planets laid out round their middle (`space.disc_texture`), the one you're on marked. The play camera never
   zooms out any more (zoom_levels[0] = 1); closing hides the picture until one from the play camera is back.
 

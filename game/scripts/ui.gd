@@ -1630,7 +1630,7 @@ func show_map(g) -> void:
 		map_hint.text = "WASD or drag: move    wheel or + / -: zoom    click: waypoint (right click clears)    H: you    Tab: the planet    M: close"
 	else:
 		map_title.text = "Map of %s" % String(g.planet.get("name", ""))
-		map_hint.text = "A / D or drag: turn    W / S or wheel: zoom    click: waypoint (right click clears)    Tab: the galaxy    M or Esc: close"
+		map_hint.text = "WASD or drag: move    wheel or + / -: zoom    click: waypoint (right click clears)    H: you    Tab: the galaxy    M or Esc: close"
 	map_bar.visible = true
 
 func hide_map() -> void:

@@ -636,6 +636,14 @@ void main() {
 		int ci = idxAt(pos);
 		uint c = ci < 0 ? 0u : world.cells[ci];
 		uint ab = ci < 0 ? 0u : aux.a[ci];
+		// (28 Nov; user: "the snow has snowflake and also pixel snow same with the rain. i like the newer fancier
+		// graphics they should be the only one"): rain, snow and ash still falling from the clouds (life 1, react.comp,
+		// nothing under them yet) aren't drawn: weather.gd's drops and flakes are what you see falling; the cells
+		// show once they land, and gather as before
+		if (((c >> 16) & 255u) == 1u && ((c & 255u) == M_WATER || (c & 255u) == M_SNOW || (c & 255u) == M_ASH)) {
+			uint under = cellAt(pos - pos / max(r, 1.0)) & 255u;
+			if (under == 0u || KIND[under] == K_GAS) c = 0u;
+		}
 		uint t = c & 255u, b = ab & 255u;
 		ivec2 w = cellCoord(pos);
 		uint cu = cellAt(screenToWorld(px + vec2(0.0, -1.0)));

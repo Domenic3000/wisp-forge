@@ -1434,6 +1434,132 @@ func _test_minimap() -> void:
 	var ok2: bool = you_dir.dot(want_dir.normalized()) > 0.9 and on_ground and wp_mm == 1 and cleared
 	rows.append("%sthe map's arrow points the way you face %s; a click set a waypoint on the ground under it %s; on the minimap %s; cleared when you got there %s" % ["" if ok2 else "(!) ", you_dir.dot(want_dir.normalized()) > 0.9, on_ground, wp_mm == 1, cleared])
 	ok = ok and ok2
+	# ---- (28 Nov; user: "I cannot pan the map. it would be nice if i could smoothly zoom in and out and pan around on
+	# the world map") a drag moves the map with the mouse, the wheel zooms smoothly about the cursor (what's under it
+	# stays there), far out the whole planet fits, H comes back to you
+	g.open_map()
+	await _frames(5)
+	var mp_c0: Vector2 = g.cam_c
+	var mp_at := Vector2(g.VW * 0.5, g.VH * 0.5)
+	var mp_w0: Vector2 = g.screen_to_world(mp_at)
+	var mp_ev := InputEventMouseButton.new()
+	mp_ev.button_index = MOUSE_BUTTON_LEFT
+	mp_ev.pressed = true
+	mp_ev.position = mp_at * float(g.scale_px)
+	g._map_mouse(mp_ev)
+	for mp_k in 10:
+		var mm_ev := InputEventMouseMotion.new()
+		mm_ev.relative = Vector2(-8.0, 5.0) * float(g.scale_px)
+		mm_ev.position = (mp_at + Vector2(-8.0, 5.0) * float(mp_k + 1)) * float(g.scale_px)
+		g._map_mouse(mm_ev)
+	var mp_up: InputEventMouseButton = mp_ev.duplicate()
+	mp_up.pressed = false
+	mp_up.position = (mp_at + Vector2(-80.0, 50.0)) * float(g.scale_px)
+	g._map_mouse(mp_up)
+	await _frames(2)
+	# (the point that was in the middle is now where the mouse let go)
+	var mp_drag_err: float = g.world_to_screen(mp_w0).distance_to(mp_at + Vector2(-80.0, 50.0))
+	var mp_no_wp: bool = g.planet_waypoint() == null
+	# the wheel, in toward a point off the middle: it eases there over a few frames, the point held under the cursor
+	var mp_cur := Vector2(g.VW * 0.7, g.VH * 0.35)
+	var mp_w1: Vector2 = g.screen_to_world(mp_cur)
+	var mp_z0: float = g.map_z
+	for mp_n in 3:
+		var wh := InputEventMouseButton.new()
+		wh.button_index = MOUSE_BUTTON_WHEEL_UP
+		wh.pressed = true
+		wh.position = mp_cur * float(g.scale_px)
+		g._map_mouse(wh)
+	await _frames(1)
+	var mp_z_mid: float = g.map_z
+	await _frames(40)
+	var mp_z1: float = g.map_z
+	var mp_hold_err: float = g.world_to_screen(mp_w1).distance_to(mp_cur)
+	_shot("map_zoomed.png")
+	# far out: the whole planet
+	for mp_n2 in 30:
+		var wh2 := InputEventMouseButton.new()
+		wh2.button_index = MOUSE_BUTTON_WHEEL_DOWN
+		wh2.pressed = true
+		wh2.position = mp_cur * float(g.scale_px)
+		g._map_mouse(wh2)
+	await _frames(60)
+	var mp_whole: bool = absf(g.map_z - g.map_z_max()) < 0.01 * g.map_z_max() and g.cam_c.length() < 5.0
+	_shot("map_whole.png")
+	g._map_key(KEY_H)
+	await _frames(3)
+	var mp_home: float = g.cam_c.distance_to(g.player.pos)
+	g.close_map()
+	await _frames(10)
+	var ok_mp: bool = mp_c0.distance_to(g.cam_c) >= 0.0 and mp_drag_err < 4.0 and mp_no_wp and mp_z_mid < mp_z0 and mp_z_mid > mp_z0 / 2.197 + 0.01 \
+		and absf(mp_z1 - mp_z0 / 2.197) < 0.05 and mp_hold_err < 4.0 and mp_whole and mp_home < 2.0
+	rows.append("%sthe map: dragged, what was in the middle followed the mouse to %.1f px of it (no waypoint set %s); the wheel zoomed %.1f -> %.2f -> %.2f smoothly, the point under the cursor held to %.1f px; far out the whole planet %s; H back to you %.1f cells" % [
+		"" if ok_mp else "(!) ", mp_drag_err, mp_no_wp, mp_z0, mp_z_mid, mp_z1, mp_hold_err, mp_whole, mp_home])
+	ok = ok and ok_mp
+	# ---- (28 Nov; user: "sometimes when i open the map when i am standing a certain way it is spinning rapidly or
+	# vibrating back and forth") opened at eight places round the planet, on the ground, up in the sky and down deep,
+	# and left alone, the map holds still; far out, a drag turns the planet smoothly
+	var mv_worst := 0.0
+	var mv_where := ""
+	var mv_back: Vector2 = g.player.pos
+	for mv_k in 8:
+		var mv_a: float = atan2(mv_back.y, mv_back.x) + float(mv_k) * TAU / 8.0 + 0.013 * float(mv_k)
+		for mv_h in [6.0, 180.0, -160.0]:
+			var mv_p: Vector2 = Vector2.from_angle(mv_a) * (g.gpu.surf_at(mv_a).x + float(mv_h))
+			g.player.pos = mv_p
+			g.player.vx = 0.0
+			g.player.vy = 0.0
+			g.cam_c = mv_p
+			await _frames(3)
+			g.open_map()
+			await _frames(4)
+			var mv_a0: float = g.view_angle()
+			var mv_c0: Vector2 = g.cam_c
+			var mv_most := 0.0
+			for mv_f in 20:
+				await _frames(1)
+				g.player.pos = mv_p
+				mv_most = maxf(mv_most, absf(wrapf(g.view_angle() - mv_a0, -PI, PI)) + g.cam_c.distance_to(mv_c0) / 1000.0)
+			if mv_most > mv_worst:
+				mv_worst = mv_most
+				mv_where = "%d/8 round, %+.0f" % [mv_k, mv_h]
+			g.close_map()
+			await _frames(2)
+	# far out: a drag turns it
+	g.player.pos = mv_back
+	g.cam_c = mv_back
+	await _frames(3)
+	g.open_map()
+	g.map_z = g.map_z_max()
+	g.map_zt = g.map_z
+	await _frames(3)
+	var fo_a0: float = g.map_ang
+	var fo_at := Vector2(g.VW * 0.5, g.VH * 0.2)
+	var fo_ev := InputEventMouseButton.new()
+	fo_ev.button_index = MOUSE_BUTTON_LEFT
+	fo_ev.pressed = true
+	fo_ev.position = fo_at * float(g.scale_px)
+	g._map_mouse(fo_ev)
+	var fo_steps := []
+	for fo_k in 12:
+		var fo_m := InputEventMouseMotion.new()
+		fo_m.relative = Vector2(6.0, 0.0) * float(g.scale_px)
+		fo_m.position = (fo_at + Vector2(6.0 * float(fo_k + 1), 0.0)) * float(g.scale_px)
+		var fo_before: float = g.map_ang
+		g._map_mouse(fo_m)
+		fo_steps.append(absf(wrapf(g.map_ang - fo_before, -PI, PI)))
+	var fo_up: InputEventMouseButton = fo_ev.duplicate()
+	fo_up.pressed = false
+	g._map_mouse(fo_up)
+	await _frames(2)
+	var fo_turned: float = absf(wrapf(g.map_ang - fo_a0, -PI, PI))
+	var fo_jump: float = fo_steps.max()
+	g.close_map()
+	await _frames(5)
+	var ok_mv: bool = mv_worst < 0.002 and fo_turned > 0.05 and fo_jump < 0.1
+	rows.append("%sthe map held still wherever it was opened (worst %.4f at %s); far out a drag turned the planet %.2f rad, at most %.3f a step" % [
+		"" if ok_mv else "(!) ", mv_worst, mv_where, fo_turned, fo_jump])
+	ok = ok and ok_mv
 	# ---- up into space in the skiff
 	if g.skiff == null or not g.items.has("skiff"):
 		var sf_rec: Dictionary = {}

@@ -1,7 +1,7 @@
 ## The map (M), a menu of its own: the game waits while it's open.
 ##
-## "planet": the GPU draws the planet zoomed out (main sets the camera from `map_zoom_i` and
-## `map_ang`; past the orbit band the picture is clear), and this draws the markers over it: you,
+## "planet": the GPU draws the planet zoomed out (main sets the camera from `map_ang`, `map_r` and
+## `map_z`: a drag or WASD moves it, the wheel zooms smoothly; past the orbit band the picture is clear), and this draws the markers over it: you,
 ## the rest of the party, your home, the skiff.
 ## "space" (Tab; user, 22 Nov: "there is no space map"): a chart of the galaxy, north up, from a few
 ## sectors across out to hundreds of systems (`gz`, cells a pixel; wheel or + / - zoom, WASD or a drag
