@@ -72,7 +72,8 @@ const LENGTH := {"wander": [150, 300], "graze": [180, 360], "sniff": [60, 120], 
 ## soft ground: what a burrower can swim through
 static func soft(t: int) -> bool:
 	return t == Defs.DIRT or t == Defs.GRASS or t == Defs.SAND or t == Defs.MUD or t == Defs.GRAVEL or t == Defs.SNOW \
-		or t == Defs.ASH or t == Defs.SANDSTONE or t == Defs.LITTER or t == Defs.MYCELIUM or t == Defs.DRYGRASS
+		or t == Defs.ASH or t == Defs.SANDSTONE or t == Defs.LITTER or t == Defs.MYCELIUM or t == Defs.DRYGRASS \
+		or t == Defs.ROOT          # (27 Nov: the rootlets under small plants are in the soil, and a burrower goes through them)
 
 static func _ground(t: int) -> bool:
 	var kd: int = Defs.KIND[t]

@@ -290,6 +290,13 @@ func _draw_planet() -> void:
 		var alt: bool = st.kind == "altar"
 		var sname: String = String((Defs.STATIONS.get(st.kind, {}) as Dictionary).get("name", String(st.kind).capitalize()))
 		_place(_pp(me, s, st.pos), sname, Color(1.0, 0.5, 0.75) if alt else Color(0.85, 0.7, 0.5), "altar" if alt else "workshop")
+	# (27 Nov) places to discover you've found, or an artifact showed you
+	if g.places != null:
+		for pm in g.places.marks():
+			_place(_pp(me, s, pm[0]), String(pm[1]), pm[2], "place")
+	for gu in g.planet_state.get("guided", []):
+		_place(_pp(me, s, Vector2(float(gu["pos"][0]), float(gu["pos"][1]))), String(gu["name"]),
+			Color(1.0, 0.45, 0.4) if gu["kind"] == "heart" else (Color(0.95, 0.85, 0.6) if gu["kind"] == "town" else Color(0.75, 0.6, 1.0)), "guided")
 	for ch in g.planet_state.get("charted", []):
 		_place(_pp(me, s, Vector2(float(ch["pos"][0]), float(ch["pos"][1]))), String(ch["name"]),
 			Color(1.0, 0.45, 0.4) if ch["kind"] == "lair" else Color(0.75, 0.6, 1.0), "charted")

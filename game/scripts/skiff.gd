@@ -621,7 +621,35 @@ func fly(want: Vector2, piloted: bool, g: float, in_space: bool, cruise: float, 
 	omega += angle_difference(ang, (nd * float(facing)).angle()) * 0.05
 	omega *= 0.78
 	ang += omega
-	look = move_toward(look, float(facing), 0.14)
+	look = move_toward(look, float(facing), TURN_STEP)
+
+## Turning round (user, 27 Nov: the old flip narrowed it to its edge, "it looks like a piece of paper ... maybe we
+## can use the pixel identity somehow"): the hull is redrawn column by column, a line of wisp light sweeping from
+## its stern to its new bow, the columns behind the line already facing the new way (overlay `_draw_skiff`).
+const TURN_STEP := 0.12         # (`look` a tick: about 17 ticks for a whole turn)
+## how far through a turn it is: 0 just turned (drawn as before), 1 done
+func sweep_u() -> float:
+	return clampf((look * float(facing) + 1.0) * 0.5, 0.0, 1.0)
+
+## where the sweep line is, along the body's x (from the centre of mass, the new bow +): from the far end of
+## either picture to the other's, so both are covered
+func sweep_s() -> float:
+	var l0 := minf(-com.x, com.x - float(w))
+	var l1 := maxf(float(w) - com.x, com.x)
+	return lerpf(l0, l1, sweep_u())
+
+## the hull's cells in the sweep line's column (either picture's), for its light and its sparks: [j]
+func sweep_rows() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var s := sweep_s()
+	var i_new := int(floor(s + com.x))
+	var i_old := int(floor(com.x - s))
+	for j in h:
+		var a := i_new >= 0 and i_new < w and cells[j * w + i_new] != 0
+		var b := i_old >= 0 and i_old < w and cells[j * w + i_old] != 0
+		if a or b:
+			out.append(j)
+	return out
 
 ## Move by this tick's velocity, in steps small enough not to pass through the ground, colliding
 ## at each (no `solid`: out in space, or away from any collision grid); then how much air is under

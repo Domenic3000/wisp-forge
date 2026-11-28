@@ -478,6 +478,37 @@ func _draw_mystery() -> void:
 		if k2 < ech.size():
 			_flame(game.world_to_screen(ech[k2]), 0.6, k2 + 7, view)
 
+## a sealed sanctum's braziers (places.gd): an iron bowl on each pedestal, a flame in it while it burns, a puff of
+## red for a wrong one
+func _draw_places() -> void:
+	var view := Rect2(-12.0, -12.0, float(game.VW) + 24.0, float(game.VH) + 24.0)
+	for pl in game.places.list():
+		if String(pl["kind"]) != "sanctum":
+			continue
+		var mid: Vector2 = pl["mid"]
+		if mid.distance_to(game.player.pos) > 400.0:
+			continue
+		var bz: Array = pl["braziers"]
+		for k in bz.size():
+			var bw: Vector2 = bz[k]["pos"]
+			var sp: Vector2 = game.world_to_screen(bw)
+			if not view.has_point(sp):
+				continue
+			var z: float = game.zoom
+			var lc: Color = _lit(sp)
+			var iron := Color(0.3, 0.29, 0.32) * Color(lc.r, lc.g, lc.b, 1.0)
+			var rim := Color(0.5, 0.47, 0.44) * Color(lc.r, lc.g, lc.b, 1.0)
+			draw_set_transform(sp.floor(), 0.0, Vector2.ONE / z)
+			draw_rect(Rect2(-3, -2, 7, 1), rim)
+			draw_rect(Rect2(-2, -1, 5, 1), iron)
+			draw_rect(Rect2(-1, 0, 3, 1), iron)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			var fk := "%s:%d" % [String(pl["id"]), k]
+			if game.places.flash.has(fk):
+				draw_rect(Rect2((sp - Vector2(1, 2) / z).floor(), Vector2(2, 2) / z), Color(1.0, 0.35, 0.3, 0.8))
+			elif game.places.is_lit(String(pl["id"]), k):
+				_flame(sp - Vector2(0, 2.0 / z), 0.8, k + 3, view)
+
 ## a dying star's sun lenses: the light from the well, lens to lens, as bright beams (into the eye once it gets
 ## there), the last one fading out where it reaches nothing; each lens's way shown as a short dim tick
 func _draw_lenses(md: Dictionary, view: Rect2) -> void:
@@ -765,7 +796,35 @@ func _lit(sp: Vector2) -> Color:
 ## so it can't flicker a pixel up and down against the terrain while the camera eases (with
 ## an odd body height the centre sits right on a half pixel, and rounding it flipped back and
 ## forth). Returns [drawn position, unsnapped position].
-func _feet(wpos: Vector2, body_h: float, grounded: bool, body_w := 0.0) -> Array:
+## (27 Nov; user: "the lizards in the desert move up and down a few pixels as the player moves left and right again ...
+## make sure this is fixed for all creatures and npc's"): the collision grid is sampled round you at your exact
+## place, so as you walk the grid cells under a creature standing still slide by fractions of a cell, and the
+## ground row it finds under its feet (and the row it rests on) flips a cell now and then. `_rest` remembers, per
+## body, the world column it stands in and the ground it was drawn on: standing in the same column on ground that
+## only seems to move by a cell, it stays where it was drawn (the higher of the two: a cell the grid skipped is still
+## there); a real step (it walks to another column, falls, climbs) moves it at once.
+var _rest := {}          # instance id -> [world column, radius its feet were drawn at, frame]
+func _steady_feet(who: Object, feet: Vector2, r: float) -> float:
+	if who == null:
+		return r
+	var id := who.get_instance_id()
+	var col := int(floor(fposmod(atan2(feet.y, feet.x), TAU) / TAU * float(Defs.NS)))
+	var was: Array = _rest.get(id, [])
+	var out := r
+	if not was.is_empty() and int(was[0]) == col and int(game.frame) - int(was[2]) <= 2 and absf(r - float(was[1])) <= 1.01:
+		out = maxf(r, float(was[1])) if absf(r - float(was[1])) > 0.01 else r
+		# (only a cell's flicker, the true ground the higher: if it is truly a cell lower now, its
+		# column changes as it moves on, or the physics drops it further and it's let go below)
+		if feet.length() < float(was[1]) - 1.6:
+			out = r
+	_rest[id] = [col, out, int(game.frame)]
+	if _rest.size() > 600:
+		for k in _rest.keys():
+			if int(game.frame) - int(_rest[k][2]) > 120:
+				_rest.erase(k)
+	return out
+
+func _feet(wpos: Vector2, body_h: float, grounded: bool, body_w := 0.0, who: Object = null) -> Array:
 	var up := wpos.normalized()
 	if game.pocket.active:
 		up = Vector2(0, -1)                  # (the pocket's isle: its up is the screen's)
@@ -783,9 +842,11 @@ func _feet(wpos: Vector2, body_h: float, grounded: bool, body_w := 0.0) -> Array
 		# else to the nearest cell row (rows are whole numbers of radius: R_TOP is a whole number)
 		var gt: float = game.ground_top(feet, body_w) if body_w > 0.0 else -1.0
 		if gt > 0.0 and absf(gt - feet.length()) < 1.2:
-			feet = up * gt
+			feet = up * _steady_feet(who, feet, gt)
 		else:
-			feet = up * roundf(feet.length())
+			feet = up * _steady_feet(who, feet, roundf(feet.length()))
+	elif who != null:
+		_rest.erase(who.get_instance_id())
 	var sp: Vector2 = game.world_to_screen(feet)
 	if game.close_view() or absf(wrapf(atan2(game.cam_c.y, game.cam_c.x) - atan2(wpos.y, wpos.x), -PI, PI)) < 0.02:
 		sp = _snap(sp)
@@ -799,9 +860,9 @@ func _snap(p: Vector2) -> Vector2:
 	var k := float(game.scale_px)
 	return (p * k).round() / k
 
-func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false, body_w := 0.0, glow := false) -> void:
+func _sprite(key: String, wpos: Vector2, flip: bool, white: bool, body_h: float, grounded := false, alpha := 1.0, squash := 1.0, tint := Color(1, 1, 1), turn := false, body_w := 0.0, glow := false, who: Object = null) -> void:
 	var t: Texture2D = tex[key]
-	var sp: Vector2 = _feet(wpos, body_h, grounded, body_w)[0]
+	var sp: Vector2 = _feet(wpos, body_h, grounded, body_w, who)[0]
 	# upright in the close view (crisp pixels: turned a few degrees they'd go jagged); turned with the
 	# planet's curve in the round map view. `turn`: always turned with the world under it (an open door
 	# stands with its house, which leans with the curve: upright it seemed to turn as you walked)
@@ -871,7 +932,7 @@ func _draw_mage(m, aim_w: Vector2, gem: Color, visible_now: bool, place: Array =
 	if not _masks.has(key):
 		_masks[key] = MageRig.body_mask(key)
 	var t: Texture2D = tex[key]
-	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground, m.w)[0]
+	var sp: Vector2 = _feet(m.pos, m.h, m.on_ground, m.w, null if m == game.player else m)[0]
 	var rot := 0.0 if game.close_view() else wrapf((game.view_angle() if game.space.active else atan2(game.cam_c.y, game.cam_c.x)) - a, -PI, PI)
 	# (out in space, zoomed out by hand: true to scale up to 4x, then held there so you can still find him)
 	var zs: float = minf(game.zoom, 4.0) if game.space.active else game.zoom
@@ -933,10 +994,52 @@ func _skiff_xf(sk) -> Transform2D:
 	var yn := Vector2(-xn.y, xn.x)
 	if yn.dot(ey) < 0.0:
 		yn = -yn                     # (the same way round as the world's own axes: mirrored when it is)
-	# turning round, it narrows to its edge and opens out the other way
-	var turn: float = sk.look * float(sk.facing)
-	turn = signf(turn) * maxf(absf(turn), 0.08) if turn != 0.0 else 0.08
-	return Transform2D(xn * turn / zs, yn / zs, p)
+	# turning round (skiff.gd `sweep_u`): the picture is redrawn column by column behind a line of light,
+	# never squeezed; this is the way most of it faces (riders, crates), `_skiff_xf_way` each way
+	return Transform2D(xn * (1.0 if sk.sweep_u() >= 0.5 else -1.0) / zs, yn / zs, p)
+
+## the skiff's map facing its new way (way 1) or still its old way (way -1)
+func _skiff_xf_way(sk, way: float) -> Transform2D:
+	var xf := _skiff_xf(sk)
+	var xa := xf.x.normalized() * (1.0 if sk.sweep_u() >= 0.5 else -1.0)
+	return Transform2D(xa * way * xf.x.length(), xf.y, xf.origin)
+
+## a picture of the skiff (hull or back) mid-turn: the columns behind the sweep line facing the new way, the rest
+## the old (user, 27 Nov: "use the pixel identity"; not a paper flip)
+func _draw_swept(sk, tex: Texture2D, col: Color) -> void:
+	var u: float = sk.sweep_u()
+	var xn := _skiff_xf_way(sk, 1.0)
+	if u >= 0.999:
+		draw_set_transform_matrix(xn)
+		draw_texture(tex, -sk.com, col)
+		return
+	var s: float = sk.sweep_s()
+	var hh := float(sk.h)
+	var cn := clampf(round(s + sk.com.x), 0.0, float(sk.w))
+	var co := clampf(round(sk.com.x - s), 0.0, float(sk.w))
+	if cn > 0.0:
+		draw_set_transform_matrix(xn)
+		draw_texture_rect_region(tex, Rect2(-sk.com.x, -sk.com.y, cn, hh), Rect2(0, 0, cn, hh), col)
+	if co > 0.0:
+		draw_set_transform_matrix(_skiff_xf_way(sk, -1.0))
+		draw_texture_rect_region(tex, Rect2(-sk.com.x, -sk.com.y, co, hh), Rect2(0, 0, co, hh), col)
+
+## the sweep's line of wisp light over the hull's cells in its column, a dimmer column trailing it
+func _draw_sweep_line(sk) -> void:
+	var u: float = sk.sweep_u()
+	if u >= 0.999 or u <= 0.001:
+		return
+	var s: float = sk.sweep_s()
+	draw_set_transform_matrix(_skiff_xf_way(sk, 1.0))
+	var x := floorf(s)
+	var fl := 0.75 + 0.25 * sin(float(game.frame) * 1.7)
+	for j in sk.sweep_rows():
+		var y: float = float(j) - sk.com.y
+		draw_rect(Rect2(x, y, 1, 1), Color(0.8, 0.97, 1.0, 0.95 * fl))
+		draw_rect(Rect2(x - 1.0, y, 1, 1), Color(0.4, 0.75, 1.0, 0.55 * fl))
+		if (j + int(x)) % 3 == 0:
+			draw_rect(Rect2(x + 1.0, y, 1, 1), Color(0.55, 0.85, 1.0, 0.35 * fl))
+	draw_set_transform_matrix(Transform2D.IDENTITY)
 
 ## The skiff, with its riders seated in it (drawn first: the hull hides their legs, the canopy
 ## is glass), turning and mirroring with it.
@@ -977,8 +1080,8 @@ func _draw_skiff() -> void:
 		return
 	var rot := wrapf(xf.y.angle() - PI * 0.5, -PI, PI)
 	# the cabin's back (glass, and whatever is built there), then whoever sits in it, then the hull
+	_draw_swept(sk, sk.back_texture(), Color(_lit(p), 1.0))
 	draw_set_transform_matrix(xf)
-	draw_texture(sk.back_texture(), -sk.com, Color(_lit(p), 1.0))
 	# the hold's crates (trade goods), stacked away from the helm
 	var cargo_ids := []
 	var cargo: Dictionary = game.items.get("cargo", {})
@@ -1003,9 +1106,9 @@ func _draw_skiff() -> void:
 		var gem2: Color = Defs.SPELLS[game.known[game.sel]]["color"] if m2 == game.player else Color("#46e6f0")
 		var aim2: Vector2 = game.screen_to_world(get_viewport().get_mouse_position() / game.scale_px) if m2 == game.player else m2.input.aim
 		_draw_mage(m2, aim2, gem2, true, [feet2, rot, xf.y.length()])
-	draw_set_transform_matrix(xf)
-	draw_texture(sk.texture(), -sk.com, Color(_lit(p), 1.0))
+	_draw_swept(sk, sk.texture(), Color(_lit(p), 1.0))
 	draw_set_transform_matrix(Transform2D.IDENTITY)
+	_draw_sweep_line(sk)
 	# (the pocket is below decks now: aboard and parked, a word on how to go down)
 	if game.player.aboard == sk and not game.player.deck and game.items.has("skiff") and game.shipyard.parked():
 		_bubble(sk.pos - game.view_up() * 30.0, "[G] Go below to the pocket", 0.9, "door", Speech.PROMPT)
@@ -1218,6 +1321,14 @@ func _draw_all() -> void:
 				"pillar": at = md["pillars"][int(nr["i"])]["pos"]
 				"vault": at = md["vault"]
 			bubbles.append([at - game.basis_d(atan2(at.y, at.x)) * 6.0, mp, 0.85, "mystery", Speech.PROMPT, 1.0])
+	# the places to discover: a sanctum's braziers (places.gd), and what F would do in reach
+	if game.places != null and not game.places.list().is_empty():
+		_draw_places()
+		var plp: String = game.places.prompt()
+		if plp != "":
+			var bpos = game.places.near_pos()
+			if bpos != null:
+				bubbles.append([bpos - game.basis_d(atan2(bpos.y, bpos.x)) * 10.0, plp, 0.85, "place", Speech.PROMPT, 1.0])
 	tq = _part("draw: words, carcasses", tq)
 	# (a foe winding up an attack glows hot and flickers: the tell; a leaper crouches)
 	var vr := Rect2(-120.0, -120.0, float(game.VW) + 240.0, float(game.VH) + 240.0)
@@ -1246,14 +1357,14 @@ func _draw_all() -> void:
 				continue
 			if plan == "bird" and e.on_ground and not e.under:
 				# (standing on the ground: feet on it, as the walkers)
-				_sprite(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, true, 1.0, 1.0, tint, false, e.w)
+				_sprite(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, true, 1.0, 1.0, tint, false, e.w, false, e)
 				_eco_marks(e)
 				continue
 			if plan == "bird":
 				_sprite_mid(_boss_frame(e), e.pos, e.facing < 0, e.flash > 0, tint)
 				_eco_marks(e)
 				continue
-		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground or e.off_t <= 3, 1.0, sq, tint, false, e.w)
+		_sprite(_foe_frame(e), e.pos, e.facing < 0, e.flash > 0, e.h, e.on_ground or e.off_t <= 3, 1.0, sq, tint, false, e.w, false, e)
 		_eco_marks(e)
 	tq = _part("draw: foes", tq)
 	# projectiles
@@ -1461,7 +1572,7 @@ func _draw_folk() -> void:
 			continue
 		# (turned with the world under them, like the open doors: upright on screen they leaned with your up as
 		# you moved; user, 26 Nov: "villagers rotate with the player up and down direction instead of the world")
-		_sprite(fk + "_" + _folk_frame(v), v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), true, v.w)
+		_sprite(fk + "_" + _folk_frame(v), v.pos, v.facing < 0, false, v.h, v.on_ground, game.towns.alpha_of(v), 1.0, Color(1, 1, 1), true, v.w, false, v)
 
 ## Which of a villager's frames (folk_art.gd POSES) to show (user, 26 Nov: "villagers are still basic
 ## animations"): running from a foe with both arms up; a four-step walk; talking to you (a hand out, then at

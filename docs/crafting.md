@@ -161,3 +161,7 @@ Notes for development sessions on this part of the game. The rules that apply ev
   and DELVER'S BREW (coal, dry grass, water: `d_delve`, digging half again as fast). Each with a hint villagers tell.
   `_test_lights` checks every mix is its station's only one of those kinds (a station works only an exact mix) and
   every secret's draught or gear is real.
+
+## The exploration loop's workshops (27 Nov; see exploration.md)
+- Parts gear is built from: Cut Lens (Kiln), Runed Frame and Star Setting (Smelter), Spellthread (Still) in `Defs.PROCESS`;
+  the Lectern (`STATIONS` "lectern") studies artifacts; the anvil also reforges rolled traits. Details in docs/exploration.md.

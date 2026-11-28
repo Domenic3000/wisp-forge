@@ -38,6 +38,7 @@ why things are the way they are (quoted, with the date), the names in the code, 
 | `docs/progression.md` | The main quest, getting off the first planet, barriers by kind, cores, ores and gear, hazards, skiff upgrades |
 | `docs/climate.md` | Settlement and climate per planet kind, weather, sky events |
 | `docs/towns.md` | Living towns: villagers, requests, trade, sleep, memory, rebuilding |
+| `docs/exploration.md` | The exploration loop: world-bound finds, places to discover, parts, rolled traits, artifacts and the Lectern, the Worldsong (the world mending itself), bigger worlds, roots |
 | `docs/crafting.md` | Workshops, crafting as one system, mana for shaping the world, recipes you discover |
 | `docs/building.md` | Build mode, furniture, doors, stairs, precise removal, torches, carried pieces, home |
 | `docs/effects.md` | Spell effects (vfx.gd) |

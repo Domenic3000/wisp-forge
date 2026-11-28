@@ -17,6 +17,7 @@ func run() -> void:
 	lines.append("")
 	g.test_god = true
 	g.free_magic = true         # (digging and building cost no mana, but in the check about it)
+	g.roll_traits = false       # (gear comes out plain, so the checks of its stats hold, but in _test_loop)
 
 	# ---- a picture of the animated title screen (saves/shots/title.png) ----
 	var tdir: String = g._real_save_dir().path_join("shots")
@@ -28,6 +29,9 @@ func run() -> void:
 
 	# ---- a fresh planet ----
 	g._delete_worlds()
+	Defs.small_worlds = {}            # (worlds are made at today's size)
+	Defs._planet_cache.clear()
+	g.mending.enabled = false         # (the world mends itself only in _test_loop's check)
 	g.player.inv.fill(0)
 	g.known = ["spark", "conjure"]
 	g.items["levitate"] = true        # (forged in a real game: the checks fly as they always have)
@@ -213,6 +217,10 @@ func run() -> void:
 			_go(g.player.pos)
 			await _frames(60)
 			await _test_gear()
+		elif only == "loop":
+			_go(g.player.pos)
+			await _frames(60)
+			await _test_loop()
 		elif only == "towns":
 			_go(g.player.pos)
 			await _frames(60)
@@ -917,7 +925,8 @@ func run() -> void:
 		var top_r: float = Defs.R_TOP - float(grf) + 0.5
 		firm_ok = pr > top_r - 4.0 and pr < top_r + 20.0 and g.player.on_ground and not g.player.in_liquid
 		firm_txt = "mage stands %.1f cells from the jungle surface" % (pr - top_r)
-	_ok("jungle and marsh ground is solid, mud only in bogs", mud_cols > 0 and mud_seen * 100 < mud_cols * 40 and mud_deep <= 8 and firm_ok,
+	# (27 Nov: worlds half as big again round have wider marshes, and a hollow in one fills as a deeper bog)
+	_ok("jungle and marsh ground is solid, mud only in bogs", mud_cols > 0 and mud_seen * 100 < mud_cols * 40 and mud_deep <= 20 and firm_ok,
 		"%d of %d columns have mud (deepest %d below the surface); %s" % [mud_seen, mud_cols, mud_deep, firm_txt])
 
 	# ---- water soaks loose dirt into mud (a stone basin set into the ground: loose dirt under
@@ -1177,7 +1186,8 @@ func run() -> void:
 			var rw1: PackedByteArray = g.gpu.read_world()
 			var wood1: int = wood_round.call(rw1)
 			var bits1: Vector2i = bits_round.call(rw1)
-			var whole := max_chunks > 0 and wood0 - wood1 < own_wood * 2 / 5
+			# (how much of it a landing splinters depends on where it lands: a half at most is still whole)
+			var whole := max_chunks > 0 and wood0 - wood1 < own_wood / 2
 			# it leaves no scatter of loose specks (how much of its crown survives depends on what it
 			# lands on: a cottage wall crushes more of it than open ground; reported, not judged)
 			var tidy := bits1.x - bits0.x < 40
@@ -2423,6 +2433,7 @@ func run() -> void:
 		if String(pr2["at"]) in ["kiln", "smelter", "still"]:
 			shown += 1               # (the workshops' mixes are pages of the book too: one card or secret page each)
 	await _test_gear()
+	await _test_loop()
 	await _test_towns()
 	await _test_guards()
 	await _test_vfx()
@@ -2437,6 +2448,11 @@ func run() -> void:
 	# (a stone box with a plank back wall, stamped in the air the way the generator stamps buildings:
 	# anchored and built; digging at one corner must wake all of it, and with nothing under it, it falls)
 	var hang_a: float = g.spawn_angle + 0.09
+	# (27 Nov: worlds are half as big again round, and 0.09 round from where you arrive came down on a village's roofs;
+	# over a clear stretch instead, as the checks that set up near you do)
+	var hang_st: Vector2i = _clear_stretch(int(floor(fposmod(g.spawn_angle, TAU) / TAU * Defs.NS)) + 170, 120, 60, 10, 0, true)
+	if _cs_found:
+		hang_a = (float(hang_st.x) + 45.5) / float(Defs.NS) * TAU
 	var hang_s: float = g.gpu.surf_at(hang_a).x
 	var hang_c: Vector2i = Build.cell_of(Vector2(cos(hang_a), sin(hang_a)) * (hang_s + 130.0))   # above the treetops
 	var HW := 30

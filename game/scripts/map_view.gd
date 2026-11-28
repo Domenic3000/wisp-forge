@@ -48,6 +48,12 @@ func _draw_planet() -> void:
 		if bool(t["living"]) and seen.has(int(t["seed"])):
 			var tc := float(int(t["x0"]) + int(t["w"]) / 2)
 			_dot(g.world_to_screen(_cell_world(tc, float(g.builds.ground_row(int(tc))) - 6.0)), Color(0.95, 0.85, 0.6), String(t["name"]))
+	if g.places != null:
+		for pm in g.places.marks():
+			_dot(g.world_to_screen(pm[0]), pm[2], String(pm[1]))
+	for gu in g.planet_state.get("guided", []):
+		var gp := Vector2(float(gu["pos"][0]), float(gu["pos"][1]))
+		_dot(g.world_to_screen(gp), Color(1.0, 0.45, 0.4) if gu["kind"] == "heart" else (Color(0.95, 0.85, 0.6) if gu["kind"] == "town" else Color(0.75, 0.6, 1.0)), String(gu["name"]))
 	for ch in g.planet_state.get("charted", []):
 		var cp := Vector2(float(ch["pos"][0]), float(ch["pos"][1]))
 		_dot(g.world_to_screen(cp), Color(1.0, 0.45, 0.4) if ch["kind"] == "lair" else Color(0.75, 0.6, 1.0), String(ch["name"]))

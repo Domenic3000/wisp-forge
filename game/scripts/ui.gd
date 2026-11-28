@@ -101,6 +101,8 @@ var _st_title: Label
 var _st_body: VBoxContainer
 var _st_status: Label
 var _st_heat: ProgressBar
+var _st_heat_l: Label
+var _st_prog_l: Label
 var _st_prog: ProgressBar
 var _st_fuel: Label
 var title
@@ -961,10 +963,12 @@ func _build_station() -> void:
 	v.add_child(_st_status)
 	var bars := _box(false, 6)
 	v.add_child(bars)
-	bars.add_child(_label("Heat", 12, DIM))
+	_st_heat_l = _label("Heat", 12, DIM)
+	bars.add_child(_st_heat_l)
 	_st_heat = _bar(Color(1.0, 0.45, 0.15))
 	bars.add_child(_st_heat)
-	bars.add_child(_label("Batch", 12, DIM))
+	_st_prog_l = _label("Batch", 12, DIM)
+	bars.add_child(_st_prog_l)
 	_st_prog = _bar(GOLD)
 	bars.add_child(_st_prog)
 	_st_fuel = _label("", 12, DIM)
@@ -1003,8 +1007,15 @@ func update_station() -> void:
 	_st_fuel.text = "" if burn <= 0.0 else "Fuel: %d s" % int(st.fuel / burn / 60.0)
 	_st_heat.visible = burn > 0.0
 	_st_prog.visible = burn > 0.0
+	_st_heat_l.visible = burn > 0.0
+	_st_prog_l.visible = burn > 0.0 or st.kind == "lectern"
+	_st_prog_l.text = "Study" if st.kind == "lectern" else "Batch"
 	var txt := ""
-	if burn <= 0.0:
+	if st.kind == "lectern":
+		_st_prog.visible = true
+		_st_prog.value = clampf(st.prog / float(Defs.STUDY_TICKS) * 100.0, 0.0, 100.0) if ws.studying(st) else 0.0
+		txt = ("Studying the %s..." % String(ws.study_of(st).get("n", "artifact"))) if ws.studying(st) else "Lay an artifact on it to study it."
+	elif burn <= 0.0:
 		txt = String(sd["desc"])
 	elif not ws.loaded(st):
 		txt = "Load something to work (click your satchel below), and feed the fire."
@@ -1020,7 +1031,7 @@ func update_station() -> void:
 			_:
 				txt = ("Working: %s" % what) if st.heat > 0.95 else ("Warming up to make %s" % what)
 	_st_status.text = txt
-	var key := "%s|%s|%s|%s|%d" % [str(st.store), str(st.out), _inv_key_now(), st.cur, int(st.fuel > 0.0)]
+	var key := "%s|%s|%s|%s|%d|%d" % [str(st.store), str(st.out), _inv_key_now(), st.cur, int(st.fuel > 0.0), (game.items.get("artifacts", []) as Array).size()]
 	if key != _st_key:
 		_st_key = key
 		_render_station()
@@ -1065,6 +1076,44 @@ func _out_icon(key: String) -> Texture2D:
 	var own: Texture2D = Icons.thing(key)
 	return own if own != null else Icons.thing("recipe")
 
+## the Lectern's panel (27 Nov): what's being studied, and the artifacts in your satchel to lay on it
+func _render_lectern(st) -> void:
+	var ws = game.workshops
+	if ws.studying(st):
+		var a: Dictionary = ws.study_of(st)
+		var row := _box(false, 4)
+		row.add_child(_tex(Icons.artifact(a)))
+		row.add_child(_label("On the lectern: %s" % String(a["n"]), 12, CREAM))
+		var tb := _button("Take it back")
+		tb.tooltip_text = "Its study so far is lost"
+		tb.pressed.connect(func():
+			ws.unstudy(st)
+			_st_key = "")
+		row.add_child(tb)
+		_st_body.add_child(row)
+	_st_section("Your artifacts (study one: it takes a while, while you're on this world)")
+	var arts: Array = game.items.get("artifacts", [])
+	if arts.is_empty():
+		var al := _label("No artifacts yet. They're found in the places to discover on far worlds (archives, sanctums, fallen ships) and in guardians' hoards.", 12, CREAM)
+		al.autowrap_mode = TextServer.AUTOWRAP_WORD
+		al.custom_minimum_size.x = 440
+		_st_body.add_child(al)
+		return
+	for k in arts.size():
+		var a2: Dictionary = arts[k]
+		var r2 := _box(false, 4)
+		r2.add_child(_tex(Icons.artifact(a2)))
+		var kd := String(a2["k"])
+		var left: int = game.study_pool(kd).size()
+		r2.add_child(_label("%s · from a %s world · %s" % [String(a2["n"]), "deep ocean" if kd == "abyss" else kd, ("%d recipe%s it could teach" % [left, "" if left == 1 else "s"]) if left > 0 else "nothing new to teach"], 12, CREAM))
+		var sb := _button("Study")
+		var kk := k
+		sb.pressed.connect(func():
+			ws.study(st, kk)
+			_st_key = "")
+		r2.add_child(sb)
+		_st_body.add_child(r2)
+
 func _render_station() -> void:
 	for c in _st_body.get_children():
 		c.queue_free()
@@ -1073,6 +1122,9 @@ func _render_station() -> void:
 	var sd: Dictionary = Defs.STATIONS[st.kind]
 	_st_title.text = String(sd["name"])
 	var burn := float(sd["burn"])
+	if st.kind == "lectern":
+		_render_lectern(st)
+		return
 	if burn <= 0.0:
 		# the anvil: the gear you've forged, upgraded a level at a time (27 Nov; main `upgrade_gear`, Defs.UPGRADES)
 		_st_section("Upgrade your gear: each level makes every effect of it stronger")
@@ -1085,7 +1137,7 @@ func _render_station() -> void:
 			var grow := _box(false, 4)
 			var gic: Texture2D = Icons.thing(String(gid))
 			grow.add_child(_tex(gic if gic != null else Icons.thing("recipe")))
-			var gnm := _label("%s · %s" % [String(Defs.GEAR[gid]["name"]), "as forged" if glv == 0 else String(Defs.UPGRADES[glv - 1]["name"])], 12, CREAM)
+			var gnm := _label("%s · %s" % [game.gear_name(String(gid)), "as forged" if glv == 0 else String(Defs.UPGRADES[glv - 1]["name"])], 12, CREAM)
 			gnm.tooltip_text = String(Defs.GEAR[gid].get("desc", ""))
 			gnm.mouse_filter = Control.MOUSE_FILTER_PASS
 			grow.add_child(gnm)
@@ -1114,6 +1166,26 @@ func _render_station() -> void:
 			else:
 				gline.add_child(_label("fully upgraded", 12, DIM))
 			_st_body.add_child(gline)
+			# (27 Nov) its traits, and reforging them: a roll again, as good as the forging here
+			var tline := _box(false, 4)
+			var tpad := Control.new()
+			tpad.custom_minimum_size.x = 20
+			tline.add_child(tpad)
+			var ttx: String = game.gear_traits_text(String(gid))
+			tline.add_child(_label(ttx if ttx != "" else "no traits", 11, MANA if ttx != "" else DIM))
+			var rcost: Dictionary = Defs.reforge_cost(String(gid))
+			for rcm in rcost:
+				tline.add_child(_cost_chip(int(rcm), int(rcost[rcm])))
+			var rfb := _button("Reforge")
+			var rwhy: String = game.reforge_block(String(gid))
+			rfb.disabled = rwhy != ""
+			rfb.tooltip_text = rwhy if rwhy != "" else "Roll its traits again. %s" % game.forge_quality_text(String(gid))
+			var rgid := String(gid)
+			rfb.pressed.connect(func():
+				game.reforge_gear(rgid)
+				_st_key = "")
+			tline.add_child(rfb)
+			_st_body.add_child(tline)
 		if not any:
 			var al := _label("Forge ore gear, an alloy or a core's gear (C), then bring it here: each piece can be upgraded five times as the journey goes on (ingots and coal, then wisp ingots and obsidian, star iron and crystal, a world's core, the void's essence).", 12, CREAM)
 			al.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -1365,6 +1437,22 @@ func toggle_journal(g) -> void:
 			else:
 				list.add_child(_label("· " + String(ms["title"]), 12, Color(0.62, 0.6, 0.8)))
 		list.add_child(_label(({"abyss": "The song: ", "giant": "The beacons: ", "star": "The relay: ", "void": "The Gate: "}.get(Defs.exotic_kind(mw), "")) + q.mystery_notes(), 12, Color(0.7, 0.85, 1.0)))
+	# places to discover on this world (places.gd)
+	if g.places != null and not g.places.list().is_empty() and not g.space.active:
+		list.add_child(_rule(200))
+		var ps: Array = g.places.summary()
+		var nf := 0
+		for e in ps:
+			if String(e[1]) == "":
+				nf += 1
+		list.add_child(_label("Places to discover on %s: %d of %d found" % [String(g.planet.get("name", "this world")), ps.size() - nf - _revealed_n(ps), ps.size()], 12, CREAM))
+		for e2 in ps:
+			if String(e2[1]) == "found":
+				list.add_child(_label("✓ " + String(e2[0]), 12, Color(0.55, 0.6, 0.72)))
+			elif String(e2[1]) == "revealed":
+				list.add_child(_label("✦ %s: an artifact's markings showed where (on your map)" % String(e2[0]), 12, MANA))
+		if nf > 0:
+			list.add_child(_label("· %d still hidden: the wisp feels them when you come near" % nf, 12, Color(0.62, 0.6, 0.8)))
 	list.add_child(_rule(200))
 	list.add_child(_label("The wisp's gifts", 12, CREAM))
 	for pw in QuestScript.POWERS:
@@ -1377,6 +1465,13 @@ func toggle_journal(g) -> void:
 	ft.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(ft)
 	_sfx("ui_click")
+
+func _revealed_n(ps: Array) -> int:
+	var n := 0
+	for e in ps:
+		if String(e[1]) == "revealed":
+			n += 1
+	return n
 
 ## Esc in play (the pause page, or a step back out of it), the title screen's Settings (straight to the settings)
 func toggle_settings() -> void:
@@ -2088,16 +2183,21 @@ func _update_satchel(g) -> void:
 		if g.player.inv[m] <= 0 or Defs.KIND[m] == Defs.K_EMPTY or m == Defs.TORCH or m == Defs.WOODDOOR:
 			continue                     # (torches and doors are set down whole: below)
 		groups[_sat_group(m)].append(m)
-	for gi in 3:
+	for gi in 4:
 		(groups[gi] as Array).sort_custom(func(x, y): return String(Defs.NAMES[x]) < String(Defs.NAMES[y]))
 	var n := 0
-	for gi2 in 3:
+	for gi2 in 4:
 		if (groups[gi2] as Array).is_empty():
 			continue
-		var gr := _sat_section(["Blocks", "Nature", "Ores & ingots"][gi2])
+		var gr := _sat_section(["Blocks", "Nature", "Ores & ingots", "Rare finds & parts"][gi2])
 		for m2 in groups[gi2]:
 			var can: bool = Defs.PLACE[m2] != 0
-			var tip := "%s  ×%d\n%s\nShift + right-click: discard" % [Defs.NAMES[m2], g.player.inv[m2], "Click: Conjure places it\nRight-click: pin it to the belt" if can else "Kept for forging and trade"]
+			var use_t := "Click: Conjure places it\nRight-click: pin it to the belt" if can else "Kept for forging and trade"
+			if Defs.is_reagent(m2):
+				use_t = Defs.reagent_where(m2) + "\nFor the better gear, and reforging it at an anvil"
+			elif Defs.is_part(m2):
+				use_t = "A part made at a workshop: gear is built from it"
+			var tip := "%s  ×%d\n%s\nShift + right-click: discard" % [Defs.NAMES[m2], g.player.inv[m2], use_t]
 			var sl := _sat_slot(gr, Icons.mat(m2), _count(g.player.inv[m2]), m2 == g.mat, tip, String(Defs.NAMES[m2]))
 			if can:
 				sl.gui_input.connect(_on_mat_input.bind(m2))
@@ -2194,6 +2294,14 @@ func _update_satchel(g) -> void:
 		if String(sk).begins_with("sigil_") and int(g.items[sk]) > 0 and Defs.BOSSES.has(String(sk).substr(6)):
 			var sb2: String = String(sk).substr(6)
 			used.append([Icons.thing(String(sk)), int(g.items[sk]), "%s  ×%d\nLay it on a Summoning Altar in the %s (F) to call %s" % [Defs.sigil_name(sb2), int(g.items[sk]), String(Defs.BIOMES[sb2]["name"]) if Defs.BIOMES.has(sb2) else sb2, Defs.BOSSES[sb2]["name"]], Defs.sigil_name(sb2), ""])
+	# artifacts to study (27 Nov): at a Lectern
+	var arts: Array = g.items.get("artifacts", [])
+	if not arts.is_empty():
+		var ga := _sat_section("Artifacts")
+		for ak in arts.size():
+			var a: Dictionary = arts[ak]
+			_sat_slot(ga, Icons.artifact(a), "", false, "%s\nFrom a %s world. Lay it on a Lectern (F) and study it to learn what its makers knew" % [String(a["n"]), "deep ocean" if String(a["k"]) == "abyss" else String(a["k"])], String(a["n"]))
+			n += 1
 	if not used.is_empty():
 		var gu := _sat_section("Draughts & sigils")
 		for u in used:
@@ -2217,6 +2325,8 @@ func _update_satchel(g) -> void:
 
 ## which section of the open satchel a material goes in: 0 blocks, 1 nature, 2 ores and ingots
 func _sat_group(m: int) -> int:
+	if Defs.is_reagent(m) or Defs.is_part(m):
+		return 3
 	if m in [Defs.WOOD, Defs.LEAF, Defs.SHROOM, Defs.CACTUS, Defs.TIMBER, Defs.LITTER, Defs.CAP, Defs.STALK,
 			Defs.DRYGRASS, Defs.ROOT, Defs.GRASS]:
 		return 1
@@ -2597,6 +2707,12 @@ func _recipe_card(r: Dictionary) -> Control:
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD
 	dl.custom_minimum_size = Vector2(138, 0)
 	v.add_child(dl)
+	if r.has("gear") and not done and unlocked:
+		# (27 Nov: rolled traits, better where it's forged better)
+		var ql := _label(game.forge_quality_text(String(r["id"])), 10, MANA)
+		ql.autowrap_mode = TextServer.AUTOWRAP_WORD
+		ql.custom_minimum_size = Vector2(138, 0)
+		v.add_child(ql)
 	# (the cards of a row are as tall as its tallest: everything below the description sits at the
 	# bottom, so the costs and the button line up across the row whatever the text above them)
 	var gap := Control.new()

@@ -34,6 +34,7 @@ static func frames(kind: String) -> Dictionary:
 			_still(body, fire, fill)
 		"anvil": _anvil(body)
 		"altar": _altar(body, fire)
+		"lectern": _lectern(body, fire)
 	_outline(body)
 	var out := {"body": body, "fire0": fire[0], "fire1": fire[1], "fill": fill}
 	_cache[kind] = out
@@ -383,3 +384,63 @@ static func _altar(body: Image, fire: Array) -> void:
 			fi3.set_pixel(px + 1, 1, core if k3 == 0 else glow[1])
 			fi3.set_pixel(px, 0, core if k3 == 1 else glow[0])
 
+
+
+## The Lectern (27 Nov: where artifacts are studied): a carved wooden stand on a foot, its slanted top holding an
+## open book of pale pages; studying, the pages' glyphs and a little floating mote glow (the "fire" frames).
+static func _lectern(body: Image, fire: Array) -> void:
+	var w := body.get_width()
+	var h := body.get_height()
+	var wood := Color8(120, 80, 46)
+	var hi := Color8(160, 112, 66)
+	var dk := Color8(78, 50, 28)
+	var page := Color8(226, 214, 186)
+	var page_dk := Color8(186, 170, 140)
+	var ink := Color8(70, 56, 92)
+	# the foot
+	for x in range(1, w - 1):
+		body.set_pixel(x, h - 1, dk)
+		body.set_pixel(x, h - 2, wood if x > 1 and x < w - 2 else dk)
+	for x in range(2, w - 2):
+		body.set_pixel(x, h - 3, hi if x == 2 else wood)
+	# the post, carved with two rings
+	var cx := w / 2
+	for y in range(6, h - 3):
+		for x in range(cx - 1, cx + 1):
+			var c := wood if x == cx - 1 else dk
+			if y == 9 or y == h - 6:
+				c = hi
+			body.set_pixel(x, y, c)
+	# the slanted top under the book
+	for k in w:
+		var y := 6 - int(float(k) * 0.35)
+		if y >= 1:
+			body.set_pixel(k, y, dk)
+			body.set_pixel(k, mini(y + 1, 6), wood)
+	# the open book on it: two pages, a spine in the middle
+	for k in range(1, w - 1):
+		var top := 5 - int(float(k) * 0.35)
+		for d in range(1, 3):
+			var y2 := top - d
+			if y2 >= 0:
+				body.set_pixel(k, y2, page if d == 2 else page_dk)
+		if k == cx - 1:
+			for d2 in range(0, 3):
+				if top - d2 >= 0:
+					body.set_pixel(k, top - d2, Color8(140, 60, 50))
+	# the glyphs on the pages (lit when studying), and a mote over the book
+	for f in 2:
+		var img: Image = fire[f]
+		for k2 in range(2, w - 2, 2):
+			if k2 == cx - 1:
+				continue
+			var y3 := 5 - int(float(k2) * 0.35) - 2
+			if y3 >= 0 and _h(k2, f) % 3 != 0:
+				img.set_pixel(k2, y3, Color(0.6, 0.85, 1.0))
+		var my := 0 if f == 0 else 1
+		img.set_pixel(cx - 1, my, Color(0.85, 0.95, 1.0))
+	# (a little ink on the pages unlit, so the book reads as written in)
+	for k3 in range(2, w - 2, 3):
+		var y4 := 5 - int(float(k3) * 0.35) - 2
+		if y4 >= 0 and k3 != cx - 1:
+			body.set_pixel(k3, y4, ink)

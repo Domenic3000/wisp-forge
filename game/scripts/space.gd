@@ -472,6 +472,7 @@ func _tick() -> void:
 				game._ride(pm)                     # (up and about on its deck)
 		if sk.thrusting:
 			game._skiff_exhaust()
+		game._skiff_turn_fx()
 	_pmark("skiff")
 	_flare_tick(m, sk, focus)
 	_age_bolts()

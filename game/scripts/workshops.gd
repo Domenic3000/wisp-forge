@@ -339,6 +339,7 @@ func take_at(m, p: Vector2) -> bool:
 			game.player.inv[int(mt)] += int(st.store[mt])
 		st.store.clear()
 		take_out(st)
+		unstudy(st)                       # (an artifact on a lectern comes back with it)
 		var key: String = "st_" + st.kind
 		game.items[key] = int(game.items.get(key, 0)) + 1
 		arr.remove_at(k)
@@ -453,11 +454,12 @@ func _pocket_physics() -> void:
 					game.player.inv[int(mt)] += int(st.store[mt])
 				st.store.clear()
 				take_out(st)
+				unstudy(st)
 				game.items["st_" + st.kind] = int(game.items.get("st_" + st.kind, 0)) + 1
 				pocket_list.remove_at(k)
 				game.ui.toast("The %s fell from the isle: it's back in your satchel" % Defs.STATIONS[st.kind]["name"], Color(1, 0.85, 0.5), 2.5)
 			continue
-		if st.lit and st.kind != "altar":
+		if st.lit and st.kind != "altar" and st.kind != "lectern":
 			var top := _world(st, Vector2(0, -st.h * 0.5 + 0.5))
 			var mouth := _world(st, Vector2(0, st.h * 0.5 - 3.0))
 			var hk: float = st.heat
@@ -471,9 +473,68 @@ func _pocket_physics() -> void:
 			var gp := _world(st, Vector2((randf() - 0.5) * st.w * 0.6, -st.h * 0.5 - 2.0))
 			game._particle(gp, Vector2(0, -0.25), 45, Color(1.0, 0.85, 0.35), true, -0.004)
 
+# ------------------------------------------------------------ the lectern ---
+## (27 Nov; user chose "study artifacts"): an artifact laid on a Lectern (`st.cur` "art:<kind>:<seed>", its
+## `prog` the ticks studied) is studied while you're on its world; done, main `study_done` teaches what it can.
+func studying(st) -> bool:
+	return st.kind == "lectern" and String(st.cur).begins_with("art:")
+
+func study_of(st) -> Dictionary:
+	if not studying(st):
+		return {}
+	var parts := String(st.cur).split(":")
+	if parts.size() < 3:
+		return {}
+	return Defs.make_artifact(parts[1], int(parts[2]))
+
+## lay the satchel's artifact k on the lectern (another one already on it goes back first)
+func study(st, k: int) -> bool:
+	var arts: Array = game.items.get("artifacts", [])
+	if st.kind != "lectern" or k < 0 or k >= arts.size():
+		return false
+	unstudy(st)
+	var a: Dictionary = arts[k]
+	arts.remove_at(k)
+	game.items["artifacts"] = arts
+	st.cur = "art:%s:%d" % [String(a.get("k", "temperate")), int(a.get("s", 0))]
+	st.prog = 0.0
+	game.audio.play("page", st.pos, 0.7)
+	return true
+
+## take the artifact off the lectern again (its study so far is lost)
+func unstudy(st) -> void:
+	if not studying(st):
+		return
+	var a := study_of(st)
+	var arts: Array = game.items.get("artifacts", [])
+	arts.append(a)
+	game.items["artifacts"] = arts
+	st.cur = ""
+	st.prog = 0.0
+
+func _study(st) -> void:
+	if not studying(st):
+		st.lit = false
+		st.heat = maxf(st.heat - COOL * 8.0, 0.0)
+		return
+	st.lit = true
+	st.heat = minf(st.heat + WARM, 1.0)
+	st.prog += 1.0
+	if _t % 40 == 0 and st.pos.distance_squared_to(game.player.pos) < 260.0 * 260.0:
+		game._particle(_world(st, Vector2((randf() - 0.5) * st.w * 0.6, -st.h * 0.5 - 1.0)), Vector2(0, -0.2) + Vector2(randf() - 0.5, 0) * 0.2,
+			40, Color(0.6, 0.85, 1.0), true, -0.003)
+	if st.prog >= float(Defs.STUDY_TICKS):
+		var a := study_of(st)
+		st.cur = ""
+		st.prog = 0.0
+		game.study_done(a, st)
+
 func _work(st) -> void:
 	if st.kind == "altar":
 		st.lit = true                  # (its runes always glow a little: no fire, no fuel)
+		return
+	if st.kind == "lectern":
+		_study(st)
 		return
 	var sd: Dictionary = Defs.STATIONS[st.kind]
 	var burn := float(sd["burn"])
@@ -562,7 +623,7 @@ func _physics() -> void:
 			st.vy = 0.0
 			# (still in water? the fire can't burn there)
 			st.in_liquid = game.box_count(l.x - st.w * 0.5, l.y + st.h * 0.5 - 4.0, st.w, 3.0, Defs.WATER) > st.w
-		if st.lit and st.kind != "altar":
+		if st.lit and st.kind != "altar" and st.kind != "lectern":
 			_fire(st)
 		if not st.out.is_empty() and (_t + int(absf(st.pos.x))) % 24 == 0:
 			# (something made waits in it: a glint over it)

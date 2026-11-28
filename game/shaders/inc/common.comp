@@ -9,6 +9,7 @@
 // ground. An anchored built cell wakes when a built neighbour is awake (support.comp), so once you
 // dig near any part of a building the whole of it obeys the physics and can come down.
 #define ST_BUILT 0x80000000u
+#define BUILT_SOFT 2u        // (what's built of this hardness or softer comes away whatever the staff: brush.comp)
 #define ST_MAX 63u
 uint stOf(uint c) { return (c >> 24) & 63u; }
 uint withST(uint c, uint st) { return (c & 0xc0ffffffu) | (min(st, ST_MAX) << 24); }

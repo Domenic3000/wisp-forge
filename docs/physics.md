@@ -56,3 +56,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   the game by `_test_fire` (tests/building.gd, section "fire"): one fire blast in a 64x44 plank house on level
   ground and one at a forest tree. With the old fire: the whole house in 8 s and 77% of the forest round the tree;
   now about a fifth of the house (its roof and a patch of back wall) and about 5% of the forest.
+
+## Steady feet (27 Nov)
+- overlay `_steady_feet`: each creature and villager remembers its world column and the ground it was drawn on; a
+  cell's flicker of the grid (sampled at your exact place) under one standing still no longer moves it (user: "the
+  lizards in the desert move up and down a few pixels as the player moves").

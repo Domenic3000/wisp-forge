@@ -4,7 +4,7 @@ const Props := preload("res://scripts/props.gd")
 ## Materials are defined once here; the GPU shaders get the same tables
 ## through glsl_prefix(), so CPU and GPU always agree.
 
-const NM := 72
+const NM := 84
 const K_EMPTY := 0
 const K_SOLID := 1
 const K_POWDER := 2
@@ -91,6 +91,23 @@ const RIMECORE := 68      # frozen
 const WILDCORE := 69      # wild
 const CROWNCORE := 70     # realm
 const ABYSSCORE := 71     # the deep ocean world: the rarest
+# world-bound finds (27 Nov; user: "what else can we add content wise to make finding and exploring distant worlds have
+# meaning ... it seems very easy to get the new gear once you find a recipe"): each kind of world's own, found only
+# there (its places to discover, its deep caves' creatures, its guardians and its heart), never cells in the world;
+# the better gear and reforging want them (KIND_REAGENT, `gear_cost`)
+const PHOENIXASH := 72    # volcanic
+const SIRENSCALE := 73    # ocean
+const MIRAGEGLASS := 74   # desert
+const BOGLOTUS := 75      # marsh
+const EVERFROST := 76     # frozen
+const HEARTSAP := 77      # wild
+const KINGSGILT := 78     # realm
+const LEVIINK := 79       # the deep ocean world
+# parts made at the workshops from what you gather (multi-step crafting: gear wants them; Defs.PROCESS)
+const LENS := 80          # Cut Lens (Kiln): foci and anything that aims a spell
+const FRAME := 81         # Runed Frame (Smelter): armour and what stands against blows
+const THREAD := 82        # Spellthread (Still): what you wear to move, breathe and channel
+const SETTING := 83       # Star Setting (Smelter): the mount a world's heart is set in (core gear)
 ## The GPU's counters, CNT per player: one per material (what the staff collected this frame) below
 ## C_HARD, then the rest. (They used to start at 50, so star iron counted as "too hard".)
 const CNT := 128
@@ -119,6 +136,8 @@ const MAT_NAMES := {
 	37: "MOSSBLOCK", 38: "TREASURE", 39: "TORCH", 40: "OPENCHEST", 41: "SCAFFOLD", 42: "RUNESTONE", 43: "DECOR", 44: "WOODDOOR", 45: "CAP", 46: "STALK", 47: "MYCELIUM", 48: "DRYGRASS", 49: "ROOT", 50: "STARIRON",
 	51: "FIREOPAL", 52: "ABYSSPEARL", 53: "SUNSTONE", 54: "BOGIRON", 55: "RIMECRYSTAL", 56: "AMBER", 57: "SILVER", 58: "COPPERBAR", 59: "WISPBAR", 60: "HULL", 61: "XENITE", 62: "WISPCELL", 63: "VOIDESS",
 	64: "EMBERCORE", 65: "TIDECORE", 66: "SUNCORE", 67: "MIRECORE", 68: "RIMECORE", 69: "WILDCORE", 70: "CROWNCORE", 71: "ABYSSCORE",
+	72: "PHOENIXASH", 73: "SIRENSCALE", 74: "MIRAGEGLASS", 75: "BOGLOTUS", 76: "EVERFROST", 77: "HEARTSAP", 78: "KINGSGILT", 79: "LEVIINK",
+	80: "LENS", 81: "FRAME", 82: "THREAD", 83: "SETTING",
 }
 
 # ---- planet geometry: rings ("shells") of cells, set per planet by set_geometry(radius) ----
@@ -288,6 +307,21 @@ func _init() -> void:
 			[ABYSSCORE, "Abyss Core", ["#3a2a8a", "#7a5aff", "#1a1050", "#e8deff"], Vector3(0.45, 0.3, 1.0)]]:
 		_def(int(kc[0]), String(kc[1]), K_SOLID, kc[2], {"hard": 4, "self": 1, "glow": kc[3]})
 		PLACE[int(kc[0])] = 0
+	# (world-bound finds and workshop parts: only ever in the satchel)
+	for rf in [[PHOENIXASH, "Phoenix Ash", ["#ff7a2a", "#ffc860", "#b83a10", "#fff2c0"]],
+			[SIRENSCALE, "Siren Scale", ["#3ac8c0", "#9af0e0", "#1a7a8a", "#e8fff8"]],
+			[MIRAGEGLASS, "Mirage Glass", ["#f0d890", "#fff6d0", "#c8a050", "#ffffff"]],
+			[BOGLOTUS, "Bog Lotus", ["#e07aa8", "#ffc0d8", "#7a3a6a", "#9ad060"]],
+			[EVERFROST, "Everfrost", ["#b8f0ff", "#ffffff", "#6ab0e0", "#e0fbff"]],
+			[HEARTSAP, "Heartwood Sap", ["#e0a030", "#ffd878", "#8a5a18", "#fff0b0"]],
+			[KINGSGILT, "Kingsgilt", ["#e8c050", "#fff0a0", "#a07820", "#ffffff"]],
+			[LEVIINK, "Leviathan Ink", ["#3a2a7a", "#8a6aff", "#140c3a", "#d8ccff"]],
+			[LENS, "Cut Lens", ["#a8e0f0", "#f0ffff", "#5a98b8", "#ffffff"]],
+			[FRAME, "Runed Frame", ["#a87850", "#d8b088", "#6a4a30", "#9ab8ff"]],
+			[THREAD, "Spellthread", ["#8a7aff", "#c8c0ff", "#4a3aa8", "#f0ecff"]],
+			[SETTING, "Star Setting", ["#c8d0e8", "#ffffff", "#7a84a8", "#ffe890"]]]:
+		_def(int(rf[0]), String(rf[1]), K_SOLID, rf[2], {"hard": 2})
+		PLACE[int(rf[0])] = 0
 	PLACE[TIMBER] = 0
 	PLACE[LITTER] = 0
 	PLACE[TREASURE] = 0
@@ -1207,6 +1241,101 @@ const GEAR := {
 	"emberamber": {"name": "Emberamber Heart", "ore": [FIREOPAL, AMBER], "cost": {FIREOPAL: 10, AMBER: 10, STARIRON: 6}, "mods": {"max_hp": 30.0, "lava_dmg": 0.5}, "desc": "+30 max health, and lava hurts you half as much."},
 }
 
+## each kind of world's own find (none for a temperate world, a gas giant, a dying star or the Hollow)
+const KIND_REAGENT := {"volcanic": PHOENIXASH, "ocean": SIRENSCALE, "desert": MIRAGEGLASS, "marsh": BOGLOTUS,
+	"frozen": EVERFROST, "wild": HEARTSAP, "realm": KINGSGILT, "abyss": LEVIINK}
+func is_reagent(m: int) -> bool:
+	return m >= PHOENIXASH and m <= LEVIINK
+func is_part(m: int) -> bool:
+	return m >= LENS and m <= SETTING
+func reagent_kind(m: int) -> String:
+	for k in KIND_REAGENT:
+		if int(KIND_REAGENT[k]) == m:
+			return k
+	return ""
+## a planet's own find, or -1
+func kind_reagent(pl: Dictionary) -> int:
+	return int(KIND_REAGENT.get(String(pl.get("kind", "temperate")), -1))
+## where a find comes from, for its tooltip and a recipe card
+func reagent_where(m: int) -> String:
+	var k := reagent_kind(m)
+	if k == "":
+		return ""
+	var wn := {"volcanic": "volcanic", "ocean": "ocean", "desert": "desert", "marsh": "marsh", "frozen": "frozen", "wild": "wild",
+		"realm": "realm", "abyss": "deep ocean"}
+	return "Found only on %s worlds: in their places to discover, from creatures deep in their caves, and in their guardians' hoards" % String(wn.get(k, k))
+
+## Gear as a project (27 Nov; user chose "multi-step crafting"): what a piece is made of beyond its ore. Its TIER:
+## an ore's first piece 0, its second 1, its third 2; an alloy 2; a world's heart's gear 3 (space's own 1). Its PART
+## by what it does (`gear_part`): foci and spells a Cut Lens, armour a Runed Frame, what you wear to move a Spellthread.
+## Tier 0 wants a part; 1 two parts and 2 of its world's find; 2 two parts and 4 (an alloy 3 of each world's);
+## 3 two parts, a Star Setting and 5 of its world's find. (`gear_cost`: the forge's cost; GEAR "cost" is the base.)
+const PART_STATS := {
+	"dig_rate": LENS, "spell_fireball": LENS, "spell_spark": LENS, "spell_frost": LENS, "mana_cost": LENS, "light": LENS,
+	"reach": LENS, "dig_r": LENS, "undead_dmg": LENS,
+	"dmg_taken": FRAME, "knock": FRAME, "max_hp": FRAME, "lava_dmg": FRAME, "fire_dmg": FRAME,
+	"swim": THREAD, "speed": THREAD, "jump": THREAD, "levitate": THREAD, "breath": THREAD, "calm_wild": THREAD,
+	"draught_heal": THREAD, "max_mana": THREAD, "mana_regen": THREAD, "space_mana": THREAD,
+}
+func gear_tier(id: String) -> int:
+	var gd: Dictionary = GEAR[id]
+	if gd.has("core"):
+		return 3
+	var ores := gear_ores(id)
+	if ores.size() > 1:
+		return 2
+	if int(ores[0]) == VOIDESS:
+		return 1
+	var n := 0
+	for gid in GEAR:
+		if gid == id:
+			break
+		if gear_ores(gid).size() == 1 and int(gear_ores(gid)[0]) == int(ores[0]):
+			n += 1
+	return mini(n, 2)
+
+func gear_part(id: String) -> int:
+	for st in (GEAR[id]["mods"] as Dictionary):
+		if PART_STATS.has(st):
+			return int(PART_STATS[st])
+	return LENS
+
+## the world kinds a piece belongs to (its ores' worlds, or its heart's): its finds, and where it forges best
+func gear_kinds(id: String) -> Array:
+	var out := []
+	for om in gear_ores(id):
+		var k := ""
+		if is_kind_core(int(om)):
+			for kk in KIND_CORE:
+				if int(KIND_CORE[kk]) == int(om):
+					k = kk
+		else:
+			k = ore_kind(int(om))
+		if k != "" and not out.has(k):
+			out.append(k)
+	return out
+
+var _gear_cost := {}
+func gear_cost(id: String) -> Dictionary:
+	if _gear_cost.has(id):
+		return _gear_cost[id]
+	var c: Dictionary = (GEAR[id]["cost"] as Dictionary).duplicate()
+	var t := gear_tier(id)
+	var pt := gear_part(id)
+	c[pt] = int(c.get(pt, 0)) + (1 if t == 0 else 2)
+	if t == 3:
+		c[SETTING] = int(c.get(SETTING, 0)) + 1
+	var kinds := gear_kinds(id)
+	var each: int = [0, 2, 4, 5][t]
+	if kinds.size() > 1:
+		each = 3
+	for k in kinds:
+		var rg := int(KIND_REAGENT.get(k, -1))
+		if rg >= 0 and each > 0:
+			c[rg] = int(c.get(rg, 0)) + each
+	_gear_cost[id] = c
+	return c
+
 ## the ores a piece of gear is made from (one, or two for an alloy)
 func gear_ores(id: String) -> Array:
 	var o = GEAR[id]["ore"]
@@ -1218,7 +1347,7 @@ func gear_recipes() -> Array:
 	for id in GEAR:
 		var gd: Dictionary = GEAR[id]
 		var ores := gear_ores(id)
-		out.append({"id": id, "cat": "Core Arts" if gd.has("core") else ("Ore Gear" if ores.size() == 1 else "Alloys"), "name": gd["name"], "cost": gd["cost"], "ore": ores[0], "ores": ores, "desc": gd["desc"], "gear": true})
+		out.append({"id": id, "cat": "Core Arts" if gd.has("core") else ("Ore Gear" if ores.size() == 1 else "Alloys"), "name": gd["name"], "cost": gear_cost(id), "ore": ores[0], "ores": ores, "desc": gd["desc"], "gear": true})
 	return out
 
 # ------------------------------------------------------- learning recipes ---
@@ -1264,9 +1393,15 @@ func learn_of(r: Dictionary) -> Dictionary:
 	if r.has("learn"):
 		return r["learn"]                 # (a plan's own: Build.plans)
 	if r.has("gear"):
+		# (27 Nov, the user chose "study artifacts" for how the better recipes are learned: an artifact of the piece's
+		# world, studied at a Lectern, teaches it; `game.study_pool`)
+		var kinds := gear_kinds(id)
+		var sk := String(kinds[0]) if not kinds.is_empty() else ""
 		var ores: Array = r["ores"]
+		if GEAR[id].has("core"):
+			return {"study": sk, "hoard": true}
 		if ores.size() > 1:
-			return {"hoard": true}
+			return {"hoard": true, "study": sk}
 		var n := 0
 		for gid in GEAR:
 			if gid == id:
@@ -1276,8 +1411,8 @@ func learn_of(r: Dictionary) -> Dictionary:
 		if n == 0:
 			return {"find": [int(ores[0])]}
 		if n == 1:
-			return {"shop": "smithy", "kind": ore_kind(int(ores[0])), "price": 70}
-		return {"hoard": true}
+			return {"shop": "smithy", "kind": ore_kind(int(ores[0])), "price": 70, "study": sk}
+		return {"hoard": true, "study": sk}
 	return {"start": true}
 
 const PLAN_HALVES := 2      # the Wisp Skiff's plans: a half from each guardian beaten, two halves teach it
@@ -1298,6 +1433,9 @@ func learn_hint(r: Dictionary) -> String:
 		ways.append("sold by village %s%s" % [LEARN_WHO.get(String(L["shop"]), "keepers"), (" on %s worlds" % kd) if kd != "" else ""])
 	if L.has("hoard"):
 		ways.append("in a guardian's hoard or a crypt's reliquary")
+	if L.has("study"):
+		var skd := String(L["study"])
+		ways.append("studied from an artifact%s at a Lectern" % ((" found on a %s world" % ("deep ocean" if skd == "abyss" else skd)) if skd != "" else ""))
 	if L.has("guardians"):
 		ways.append("its plans are torn in halves that the guardians keep: summon and beat %d of them" % int(L["guardians"]))
 	var t := "; or ".join(ways)
@@ -1373,7 +1511,17 @@ func make_planet(i: int) -> Dictionary:
 
 ## the cache's key for planet i of system ws (its biome set and its terrain set: a planet grows differently by both)
 func planet_key(ws: int, i: int) -> String:
-	return "%d:%d:%s:%d" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", 3 if terrain >= 3 else 2]
+	return "%d:%d:%s:%d:%s" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", 3 if terrain >= 3 else 2, "s" if small_worlds.has(i) else "g"]
+
+## Bigger worlds (27 Nov; user: "make the worlds larger still while not making it to hard to find key quest and
+## progression enemies"; chose 1.5x with the wisp's guidance): a world first made from now on is WORLD_GROWTH times as
+## big round (the exotic ones as they were); one made before keeps its size (`small_worlds`: the journey's planets with
+## a world file when the save was first loaded after this came in; saved as "small_worlds", GROWTH_SET "gset").
+const WORLD_GROWTH := 1.5
+const GROWTH_SET := 1
+var small_worlds := {}
+func growth_of(i: int) -> float:
+	return 1.0 if small_worlds.has(i) or i >= EXOTIC else WORLD_GROWTH
 
 ## planet i of the system grown from ws (0: the classic one); a fresh copy each time
 func make_planet_for(ws: int, i: int) -> Dictionary:
@@ -1392,7 +1540,7 @@ func _classic_planet(i: int) -> Dictionary:
 		base["name"] = "%s %d" % [base["name"], cycle + 1]
 	base["rich"] = float(base["rich"]) * (1.0 + cycle * 0.25)
 	# depths were set for a planet of Verdance's size: the mantle sits as deep in proportion
-	base["radius"] = float(base["radius"]) * PLANET_SCALE
+	base["radius"] = float(base["radius"]) * PLANET_SCALE * growth_of(i)
 	base["magmaR"] = float(base["magmaR"]) * float(base["radius"]) / 1304.0
 	return base
 
@@ -1586,7 +1734,7 @@ func _grown_planet(ws: int, i: int) -> Dictionary:
 	for q in bl.size():
 		starts.append(acc / wt)
 		acc += ws_[q]
-	var radius := rng.randf_range(float(kd["radius"][0]), float(kd["radius"][1])) * PLANET_SCALE
+	var radius := rng.randf_range(float(kd["radius"][0]), float(kd["radius"][1])) * PLANET_SCALE * growth_of(i)
 	var sea := -1.0
 	if float(kd["sea"][0]) >= 0.0:
 		sea = rng.randf_range(float(kd["sea"][0]), float(kd["sea"][1]))
@@ -1856,6 +2004,9 @@ const STATIONS := {
 		"desc": "Upgrade the gear you've forged here (F), level by level, each one making every effect of it stronger."},
 	"altar": {"name": "Summoning Altar", "w": 22, "h": 15, "burn": 0.0, "spark": 0.0, "cost": {MASONRY: 24, STONE: 20, CRYSTAL: 2},
 		"desc": "Lay a guardian's sigil on it (F) to call the guardian of the land it stands in. Build it where there's room to fight."},
+	# (27 Nov: the better recipes are learned by studying artifacts found on far worlds)
+	"lectern": {"name": "Lectern", "w": 12, "h": 17, "burn": 0.0, "spark": 0.0, "cost": {PLANK: 12, GLASS: 2, CRYSTAL: 1},
+		"desc": "Lay an artifact you've found on it (F) and study it: in a little while it teaches you what its makers knew. It studies while you're on this world."},
 }
 
 ## Summoning (user, 22 Nov: "maybe we move away from guardian lairs and go to a summoning them mechanic";
@@ -1928,6 +2079,11 @@ const PROCESS := [
 		"secret": true, "once": true, "name": "Wispsteel Band", "hint": "Copper and wisp melted into one ring with a prism set between them: spells come cheaper."},
 	{"id": "s_edge", "at": "smelter", "in": {STARIRON: 2, COAL: 2, MAGMAROCK: 2}, "item": "gear:staredge", "ticks": 600,
 		"secret": true, "once": true, "name": "Starsteel Edge", "hint": "Star iron melted with coal and the rock that glows in the deep takes an edge that sharpens every spell."},
+	# the parts gear is built from (27 Nov, "multi-step crafting"; Defs.gear_cost)
+	{"id": "k_lens", "at": "kiln", "in": {GLASS: 4, CRYSTAL: 1}, "give": {LENS: 1}, "ticks": 420},
+	{"id": "s_frame", "at": "smelter", "in": {COPPERBAR: 2, WISPBAR: 1}, "give": {FRAME: 1}, "ticks": 420},
+	{"id": "s_setting", "at": "smelter", "in": {STARIRON: 1, WISPCELL: 2, CRYSTAL: 1}, "give": {SETTING: 1}, "ticks": 600},
+	{"id": "t_thread", "at": "still", "in": {LEAF: 6, WISP: 2, WATER: 2}, "give": {THREAD: 1}, "ticks": 420},
 	{"id": "t_heal", "at": "still", "in": {SHROOM: 4, LEAF: 4, WATER: 4}, "item": "potion", "ticks": 300},
 	{"id": "t_ember", "at": "still", "in": {SHROOM: 2, EMBER: 2, WATER: 4}, "item": "d_ember", "ticks": 360, "secret": true,
 		"name": "Ember Draught", "hint": "A glowcap steeped with an ember crystal: drink it and fire forgets you."},
@@ -1970,6 +2126,89 @@ const UPGRADES := [
 	{"name": "Heartbound", "q": 1.6, "cost": {CORE: 4, STARIRON: 3}},
 	{"name": "Voidwrought", "q": 1.8, "cost": {VOIDESS: 3, XENITE: 4, STARIRON: 4}},
 ]
+
+## Rolled traits (27 Nov; user chose "gear with rolled traits"): a piece comes out of the forge with up to three of
+## these, each at its own strength ("v" at full; strength 0.6..1.0, more for a better forging), so there's always a
+## better piece to chase; the anvil reforges them (`reforge_cost`). "add": an amount added (else a multiplier, 1 + v x
+## strength, or 1 - v x strength for "less"); max_hp, max_mana and mana_regen are given once, like gear's own.
+const TRAITS := {
+	"swift": {"name": "Swift", "stat": "speed", "v": 0.08, "say": "runs %d%% faster"},
+	"keen": {"name": "Keen", "stat": "dig_rate", "v": 0.14, "say": "digs %d%% faster"},
+	"thrifty": {"name": "Thrifty", "stat": "mana_cost", "v": 0.08, "less": true, "say": "spells cost %d%% less"},
+	"warded": {"name": "Warded", "stat": "dmg_taken", "v": 0.07, "less": true, "say": "%d%% less damage"},
+	"steady": {"name": "Steady", "stat": "knock", "v": 0.22, "less": true, "say": "knocked about %d%% less"},
+	"deep": {"name": "Deep-lunged", "stat": "breath", "v": 0.35, "say": "breath lasts %d%% longer"},
+	"bright": {"name": "Bright", "stat": "light", "v": 16.0, "add": true, "say": "a light of %d about you"},
+	"springy": {"name": "Springy", "stat": "jump", "v": 0.07, "say": "jumps %d%% higher"},
+	"hardy": {"name": "Hardy", "stat": "max_hp", "v": 14.0, "add": true, "say": "+%d max health"},
+	"brimming": {"name": "Brimming", "stat": "max_mana", "v": 20.0, "add": true, "say": "+%d max mana"},
+	"far": {"name": "Far-reaching", "stat": "reach", "v": 0.12, "say": "reaches %d%% further"},
+	"tidal": {"name": "Tidal", "stat": "swim", "v": 0.18, "say": "swims %d%% faster"},
+	"cooled": {"name": "Cooled", "stat": "lava_dmg", "v": 0.2, "less": true, "say": "lava hurts %d%% less"},
+	"fiery": {"name": "Fiery", "stat": "spell_fireball", "v": 0.14, "say": "Fireball %d%% stronger"},
+	"crackling": {"name": "Crackling", "stat": "spell_spark", "v": 0.14, "say": "Spark Bolt %d%% stronger"},
+	"biting": {"name": "Biting", "stat": "spell_frost", "v": 0.14, "say": "Frostbite %d%% stronger"},
+}
+const TRAIT_ONCE := ["max_hp", "max_mana", "mana_regen"]
+## how many traits a forging gets, by its quality 0..3 (`game.forge_quality`): weights for 0, 1, 2, 3
+const TRAIT_ODDS := [[45, 45, 10, 0], [20, 50, 27, 3], [8, 40, 40, 12], [2, 28, 45, 25]]
+const GRADES := ["", "Fine", "Superior", "Exquisite"]
+## what a trait does at a strength: its value for gear() (a multiplier, or an amount for an added stat)
+func trait_value(tid: String, strength: float) -> float:
+	var td: Dictionary = TRAITS[tid]
+	if td.get("add", false):
+		return float(td["v"]) * strength
+	if td.get("less", false):
+		return 1.0 - float(td["v"]) * strength
+	return 1.0 + float(td["v"]) * strength
+## in words: "Swift (runs 7% faster)"
+func trait_text(tid: String, strength: float) -> String:
+	var td: Dictionary = TRAITS[tid]
+	var n := float(td["v"]) * strength
+	var shown := int(round(n)) if td.get("add", false) else int(round(n * 100.0))
+	return "%s (%s)" % [td["name"], String(td["say"]) % shown]
+## reforging a piece's traits at the anvil: two of its world's finds and a Wisp Cell (space's own: void essence)
+func reforge_cost(id: String) -> Dictionary:
+	var c := {WISPCELL: 1}
+	var kinds := gear_kinds(id)
+	var any := false
+	for k in kinds:
+		var rg := int(KIND_REAGENT.get(k, -1))
+		if rg >= 0:
+			c[rg] = int(c.get(rg, 0)) + (2 if kinds.size() == 1 else 1)
+			any = true
+	if not any:
+		c[VOIDESS] = 3 if int(gear_ores(id)[0]) == VOIDESS else 0
+		if int(c[VOIDESS]) == 0:
+			c.erase(VOIDESS)
+			c[CRYSTAL] = 2
+	return c
+
+## Artifacts (27 Nov; user chose "study artifacts"): strange things left by those who lived on a world before, found
+## in its places to discover and its bosses' hoards; studied at a Lectern they teach a recipe from that kind of world
+## (`game.study_pool`). Kept in items["artifacts"]: [{k: world kind, n: name, s: seed}]. Named from parts.
+const ART_STUFF := {
+	"volcanic": ["Obsidian", "Scorched", "Cinder-glass", "Basalt"], "ocean": ["Coral", "Pearl-inlaid", "Tide-worn", "Shell"],
+	"desert": ["Sandstone", "Sun-bleached", "Gilded", "Glass"], "marsh": ["Bog-oak", "Mossy", "Reed-woven", "Peat-dark"],
+	"frozen": ["Rime-cased", "Ice-clear", "Frostbitten", "Whalebone"], "wild": ["Amber", "Root-bound", "Antler", "Thorned"],
+	"realm": ["Silver", "Crowned", "Heraldic", "Marble"], "abyss": ["Abyssal", "Ink-black", "Drowned", "Lantern-eyed"],
+	"temperate": ["Old", "Weathered", "Copper", "Carved"],
+}
+const ART_THING := ["Idol", "Tablet", "Mask", "Orrery", "Reliquary", "Censer", "Astrolabe", "Codex"]
+const ART_COL := {"volcanic": Color(1.0, 0.5, 0.2), "ocean": Color(0.3, 0.8, 0.85), "desert": Color(0.95, 0.82, 0.45),
+	"marsh": Color(0.55, 0.75, 0.35), "frozen": Color(0.7, 0.92, 1.0), "wild": Color(0.9, 0.65, 0.25), "realm": Color(0.85, 0.85, 0.95),
+	"abyss": Color(0.5, 0.4, 1.0), "temperate": Color(0.75, 0.62, 0.45)}
+const STUDY_TICKS := 2700        # (45 s of study at a Lectern)
+static func make_artifact(kind: String, seed_v: int) -> Dictionary:
+	var stuff: Array = ART_STUFF.get(kind, ART_STUFF["temperate"])
+	var a := posmod(seed_v * 2654435761, 2147483647)
+	return {"k": kind, "s": seed_v, "n": "%s %s" % [stuff[a % stuff.size()], ART_THING[(a / 7) % ART_THING.size()]]}
+static func artifact_thing(a: Dictionary) -> int:
+	var nm := String(a.get("n", ""))
+	for k in ART_THING.size():
+		if nm.ends_with(String(ART_THING[k])):
+			return k
+	return 0
 
 func process_by_id(id: String) -> Dictionary:
 	for pr in PROCESS:

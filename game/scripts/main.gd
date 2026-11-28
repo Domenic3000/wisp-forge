@@ -22,6 +22,8 @@ const Chunks := preload("res://scripts/chunks.gd")
 const Towns := preload("res://scripts/towns.gd")
 const Quest := preload("res://scripts/quest.gd")
 const MysteryCtl := preload("res://scripts/mystery.gd")
+const PlacesCtl := preload("res://scripts/places.gd")
+const MendingCtl := preload("res://scripts/mending.gd")
 const Pursuit := preload("res://scripts/pursuit.gd")
 const Workshops := preload("res://scripts/workshops.gd")
 const Summoning := preload("res://scripts/summoning.gd")
@@ -692,6 +694,8 @@ var pending_place: int:
 var wisp := Vector2.ZERO
 var wisp_t := 0.0
 var mystery                 # a deep ocean world's sunken mystery, as you play it (mystery.gd)
+var places                  # the places to discover on this world, as you play (places.gd; 27 Nov)
+var mending                 # the world mending itself, the Worldsong (mending.gd; 27 Nov)
 var quest                   # the main quest (quest.gd): the wisp's guidance, the HUD's line, the journal (L)
 var quest_test := false     # (the test mode runs the quest only in its own check)
 var wisp_ward_t := 0        # Wisp Ward: ticks until it can take a hit again
@@ -742,6 +746,9 @@ func _ready() -> void:
 	towns = Towns.new(self)
 	quest = Quest.new(self)
 	mystery = MysteryCtl.new(self)
+	places = PlacesCtl.new(self)
+	mending = MendingCtl.new(self)
+	_init_trait_stats()
 	workshops = Workshops.new(self)
 	summoning = Summoning.new(self)
 	pix.add_child(space)
@@ -1037,6 +1044,11 @@ func _gpu_frame(paused: bool, sim_steps := 1) -> void:
 	gpu.step(centers, frames, brushes.size() > 0 and not paused, false, sim_steps if not paused else 1, false)
 	perf_us += Time.get_ticks_usec() - t0
 	perf_n += 1
+	# (the Worldsong: where the ground was dug or blasted, mending.gd)
+	if not paused and not space.active and not pocket.active:
+		for br in brushes:
+			if int(br[2]) == 1 or int(br[2]) == 2 or int(br[2]) == 6:
+				mending.note(br[0])
 	brushes.clear()
 	overlay.queue_redraw()
 
@@ -1720,6 +1732,8 @@ func _interact() -> void:
 		return
 	if mystery.interact(player):          # (a tide-stone, a resonance pillar, the sunken vault)
 		return
+	if places.interact(player):           # (a sealed sanctum's brazier)
+		return
 	if towns.talk(player):                # (a villager: a word, or a keeper's shop)
 		return
 	if workshops.interact(player):        # (a workshop station: its panel)
@@ -1805,6 +1819,10 @@ func _f_gather(m: Mage) -> Array:
 		var mp = mystery.near_pos()
 		if mp != null:
 			out.append({"kind": "mystery", "pos": mp, "half": Vector2(6, 8), "name": mystery.near_name(), "ref": null})
+	if not places.near.is_empty():
+		var pp = places.near_pos()
+		if pp != null:
+			out.append({"kind": "place", "pos": pp, "half": Vector2(4, 5), "name": places.near_name(), "ref": null})
 	var fl := []
 	for v in towns.folk:
 		var dv: float = v.pos.distance_to(m.pos)
@@ -1855,6 +1873,7 @@ func _f_use(m: Mage) -> bool:
 			_try_open_chest(t["ref"])
 			return true
 		"mystery": return mystery.interact(m)
+		"place": return places.interact(m)
 		"folk": return towns.talk(m, t["ref"])
 		"station": return workshops.interact(m, t["ref"])
 		"door":
@@ -1979,6 +1998,12 @@ func _try_open_chest(pick: Chest = null) -> void:
 		items["potion"] = int(items.get("potion", 0)) + 1
 		ui.toast("+1 Healing Draught (H to drink)", Color(0.6, 1.0, 0.65), 3.0)
 	_rare_find(rare)
+	# (27 Nov) a place to discover's chest holds its world's finds and an artifact; a chest deep down now and then a find
+	var cpl: Dictionary = places.place_at(centre) if places != null else {}
+	if not cpl.is_empty():
+		place_loot(cpl)
+	elif centre.length() < gpu.surf_at(atan2(centre.y, centre.x)).x - 120.0 and randf() < 0.3:
+		give_reagent(1 + randi() % 2)
 	# a recipe scroll, now and then (more in grander and deeper places)
 	var lvl := 3 if rare >= 0.4 else (2 if rare >= 0.25 else 1)
 	if centre.length() < gpu.surf_at(atan2(centre.y, centre.x)).x - 150.0:
@@ -2754,6 +2779,8 @@ func _tick() -> void:
 	workshops.tick()
 	summoning.tick()
 	mystery.tick()
+	places.tick()
+	mending.tick()
 	prof_add("foes and chests", Time.get_ticks_usec() - tq)
 	if chunks != null:
 		tq = Time.get_ticks_usec()
@@ -3865,6 +3892,9 @@ func _kill_enemy(e: Enemy) -> void:
 		if not slain.has(e.guard_id):
 			slain.append(e.guard_id)
 		planet_state["slain"] = slain
+		var slt: Dictionary = planet_state.get("slain_t", {})
+		slt[str(e.guard_id)] = Time.get_unix_time_from_system()      # (they come back to their posts: mending.gd)
+		planet_state["slain_t"] = slt
 	if e.type == "mimic":
 		_rare_find(0.6)
 	# it bursts apart in its own colours (bones, slime, embers...), with a puff of sparks
@@ -3886,6 +3916,11 @@ func _kill_enemy(e: Enemy) -> void:
 			var n := 1 + randi() % int(dr[1])
 			player.inv[int(dr[0])] += n
 			ui.toast("+%d %s" % [n, Defs.NAMES[int(dr[0])]], Defs.COLOR[int(dr[0])])
+	# (27 Nov) a creature of the deep caves now and then carries its world's own find
+	if not e.boss and not space.active and not pocket.active:
+		var dpt: float = gpu.surf_at(atan2(e.pos.y, e.pos.x)).x - e.pos.length()
+		if dpt > 120.0 and randf() < (0.12 if dpt > 300.0 else 0.06):
+			give_reagent(1)
 	if e.boss and e.d.has("def"):
 		if e.d.has("echo"):
 			mystery.echo_falls(e)          # (a black hole's echo of a guardian: its shrine's shard)
@@ -3953,6 +3988,8 @@ func _heart_falls(e: Enemy) -> void:
 		player.inv[int(mt)] += int(loot[mt])
 	_hoard_ore(24)
 	_hoard_recipe()
+	give_reagent(6)
+	add_artifact("", "from the heart's hoard")
 	items["coins"] = int(items.get("coins", 0)) + 120
 	_roll_loot(6, 2.0)
 	shake = 18.0
@@ -3995,6 +4032,8 @@ func _guardian_falls(e: Enemy) -> void:
 	skiff_plan_found()
 	_hoard_ore(16)
 	_hoard_recipe()
+	give_reagent(3)
+	add_artifact("", "from the guardian's hoard")
 	items["coins"] = int(items.get("coins", 0)) + 60
 	_roll_loot(4, 1.5)
 	shake = 16.0
@@ -4045,6 +4084,9 @@ func _warden_falls(e: Enemy) -> void:
 	items["potion"] = int(items.get("potion", 0)) + 1
 	_hoard_ore(6)
 	_hoard_recipe()
+	give_reagent(2)
+	if randf() < 0.5:
+		add_artifact("", "from the warden's reliquary")
 	items["coins"] = int(items.get("coins", 0)) + 30
 	_roll_loot(3, 1.4)
 	for wl in builds.warden_list:
@@ -4072,6 +4114,8 @@ func _warden_falls(e: Enemy) -> void:
 func _spawn_guardians() -> void:
 	summoning.on_load(planet_state)          # (a guardian called when the world was saved: its sigil back)
 	mystery.load_from(planet_state)
+	places.load_from(planet_state)
+	mending.load_from(planet_state)
 	towns.replay_growth()                    # (the houses villages grew as you helped them: planned again)
 	var dead_list: Array = planet_state.get("bosses_dead", [])
 	for lr in builds.lair_list:
@@ -5767,6 +5811,20 @@ func gear(stat: String, m: Mage = null) -> float:
 			# (upgraded at an anvil: each level every effect of it bigger; Defs.UPGRADES, `upgrade_gear`)
 			var q := float(who.items.get("q_" + id, 1.0))
 			v = v + float(mods[stat]) * q if add else v * (1.0 + (float(mods[stat]) - 1.0) * q)
+	# (a piece's rolled traits, `roll_gear_traits`; the once-given ones aren't read here)
+	if not Defs.TRAIT_ONCE.has(stat) and _trait_stats.has(stat):
+		if _trait_keys.is_empty():
+			for gid0 in Defs.GEAR:
+				_trait_keys.append([String(gid0), "t_" + String(gid0)])
+		for tkp in _trait_keys:
+			var tk: String = tkp[1]
+			if not who.items.has(tk) or not who.items.has(tkp[0]):
+				continue
+			for tr in who.items[tk]:
+				var tid := String(tr[0])
+				if Defs.TRAITS.has(tid) and String(Defs.TRAITS[tid]["stat"]) == stat:
+					var tv := Defs.trait_value(tid, float(tr[1]))
+					v = v + tv if add else v * tv
 	for id2 in Defs.WORK_GEAR:
 		var mods2: Dictionary = Defs.WORK_GEAR[id2]["mods"]
 		if mods2.has(stat) and who.items.has(id2):
@@ -5783,6 +5841,226 @@ func gear(stat: String, m: Mage = null) -> float:
 		if mods3.has(stat):
 			v = v + float(mods3[stat]) if add else v * float(mods3[stat])
 	return v
+
+# ------------------------------------------------- the exploration loop (27 Nov) ---
+## (user: "it seems very easy to get the new gear once you find a recipe. it doesnt really feel like a very developed
+## gameplay loop yet"; chose world-bound finds, places to discover, multi-step crafting, rolled traits and recipes
+## learned by studying artifacts.) docs/exploration.md has the whole loop.
+var roll_traits := true      # (the test mode forges plain gear but in its own check)
+var _trait_keys := []        # [[gear id, "t_<id>"]] (gear() reads traits often)
+var _trait_stats := {}       # the stats a trait can touch
+func _init_trait_stats() -> void:
+	for tid in Defs.TRAITS:
+		_trait_stats[String(Defs.TRAITS[tid]["stat"])] = true
+
+## How good a forging of gear piece `id` is here, 0..3, and why: an anvil within reach (a proper workshop), its own
+## world (the ore sings near home), inside a Wisp Archive (places.gd). [quality, [reasons]]
+func forge_quality(id: String, m: Mage = null) -> Array:
+	var who: Mage = m if m != null else player
+	var q := 0
+	var why := []
+	if anvil_near(who):
+		q += 1
+		why.append("an anvil at hand")
+	if Defs.GEAR.has(id) and Defs.gear_kinds(id).has(String(planet.get("kind", ""))) and not space.active and not pocket.active:
+		q += 1
+		why.append("its own world")
+	if places != null and not space.active and not pocket.active and not places.place_at(who.pos, "archive").is_empty():
+		q += 1
+		why.append("a Wisp Archive")
+	return [q, why]
+
+## for a gear card at the forge: what forging it here is like
+func forge_quality_text(id: String) -> String:
+	var fq := forge_quality(id)
+	var nm: String = ["a plain forging", "a good forging", "a fine forging", "the finest forging"][int(fq[0])]
+	var tail := " (%s)" % ", ".join(fq[1]) if not (fq[1] as Array).is_empty() else " (forge it at an anvil, on its own world, or in a Wisp Archive for better traits)"
+	return "Here: %s%s" % [nm, tail]
+
+## roll a piece's traits (`items["t_<id>"]` [[trait, strength]]), the once-given stats raised by what they add and
+## lowered by what the old ones did; "" or the traits in words for the toast
+func roll_gear_traits(id: String, who: Mage) -> String:
+	if not roll_traits:
+		return ""
+	_trait_once(who, who.items.get("t_" + id, []), -1.0)
+	var q := int(forge_quality(id, who)[0])
+	var odds: Array = Defs.TRAIT_ODDS[clampi(q, 0, 3)]
+	var tot := 0
+	for o in odds:
+		tot += int(o)
+	var r := randi() % maxi(tot, 1)
+	var n := 0
+	for k in odds.size():
+		r -= int(odds[k])
+		if r < 0:
+			n = k
+			break
+	var pool: Array = Defs.TRAITS.keys()
+	pool.shuffle()
+	var out := []
+	for k2 in n:
+		var strength := snappedf(randf_range(0.6, 1.0) * (1.0 + 0.12 * float(q)), 0.01)
+		out.append([String(pool[k2]), strength])
+	who.items["t_" + id] = out
+	_trait_once(who, out, 1.0)
+	if out.is_empty():
+		return ""
+	var words := []
+	for tr in out:
+		words.append(Defs.trait_text(String(tr[0]), float(tr[1])))
+	return " %s: %s" % [Defs.GRADES[mini(out.size(), 3)], ", ".join(words)]
+
+func _trait_once(who: Mage, traits: Array, sgn: float) -> void:
+	for tr in traits:
+		var tid := String(tr[0])
+		if not Defs.TRAITS.has(tid):
+			continue
+		var st := String(Defs.TRAITS[tid]["stat"])
+		var tv := Defs.trait_value(tid, float(tr[1])) * sgn
+		match st:
+			"max_hp":
+				who.max_hp = maxf(1.0, who.max_hp + tv)
+				who.hp = clampf(who.hp + tv, 1.0, who.max_hp)
+			"max_mana":
+				who.max_mana = maxf(1.0, who.max_mana + tv)
+				who.mana = clampf(who.mana, 0.0, who.max_mana)
+			"mana_regen":
+				who.mana_regen += tv
+
+## a piece's name with its grade ("Fine Fire Opal Focus")
+func gear_name(id: String, m: Mage = null) -> String:
+	var who: Mage = m if m != null else player
+	var nm := String(Defs.GEAR[id]["name"]) if Defs.GEAR.has(id) else id
+	var tr: Array = who.items.get("t_" + id, [])
+	return ("%s %s" % [Defs.GRADES[mini(tr.size(), 3)], nm]) if not tr.is_empty() else nm
+
+## its traits in words, one line ("" with none)
+func gear_traits_text(id: String, m: Mage = null) -> String:
+	var who: Mage = m if m != null else player
+	var words := []
+	for tr in who.items.get("t_" + id, []):
+		if Defs.TRAITS.has(String(tr[0])):
+			words.append(Defs.trait_text(String(tr[0]), float(tr[1])))
+	return ", ".join(words)
+
+## can its traits be reforged here and now? "" if so
+func reforge_block(id: String, m: Mage = null) -> String:
+	var who: Mage = m if m != null else player
+	if not Defs.GEAR.has(id) or not who.items.has(id):
+		return "not yours"
+	if not anvil_near(who):
+		return "at an anvil"
+	var cost := Defs.reforge_cost(id)
+	for cm in cost:
+		if who.inv[int(cm)] < int(cost[cm]):
+			return "needs %d %s" % [int(cost[cm]), Defs.NAMES[int(cm)]]
+	return ""
+
+## reforge a piece's traits at the anvil: paid from the satchel, rolled again as good as the forging here
+func reforge_gear(id: String, m: Mage = null) -> bool:
+	var who: Mage = m if m != null else player
+	if reforge_block(id, who) != "":
+		return false
+	var cost := Defs.reforge_cost(id)
+	for cm in cost:
+		who.inv[int(cm)] -= int(cost[cm])
+	var was := roll_traits
+	roll_traits = true
+	var txt := roll_gear_traits(id, who)
+	roll_traits = was
+	_apply_gear()
+	var an = _anvil_at(who)
+	if an != null:
+		for k in 20:
+			var dv := Vector2.from_angle(randf() * TAU)
+			_particle(an.pos + dv * randf() * 4.0, dv * randf_range(0.6, 2.2), 14 + randi() % 16, Color(0.7, 0.85, 1.0), true, 0.04)
+	audio.play("forge", who.pos, 0.8)
+	ui.toast("Reforged: %s.%s" % [gear_name(id, who), txt if txt != "" else " Plain this time: no traits"], Color(0.75, 0.9, 1.0), 5.0)
+	save_game()
+	return true
+
+## an artifact found (`kind` its world's; "" this one's), into the satchel; true
+func add_artifact(kind := "", why := "") -> bool:
+	var k := kind if kind != "" else String(planet.get("kind", "temperate"))
+	if not Defs.ART_STUFF.has(k):
+		k = "temperate"
+	var a := Defs.make_artifact(k, randi() % 1000000)
+	var arts: Array = items.get("artifacts", [])
+	arts.append(a)
+	items["artifacts"] = arts
+	stats_artifacts += 1
+	ui.toast("ARTIFACT: %s%s. Study it at a Lectern (forge one: Workshops)" % [String(a["n"]), (" " + why) if why != "" else ""], Defs.ART_COL.get(k, Color(1, 0.85, 0.5)), 6.0)
+	audio.play("rare")
+	return true
+var stats_artifacts := 0
+
+## the recipes an artifact of `kind` can teach (learned by "study", not known yet): its own world's, or any for an
+## artifact of a temperate world
+func study_pool(kind: String) -> Array:
+	var out := []
+	for r in recipes:
+		var L: Dictionary = Defs.learn_of(r)
+		if not L.has("study") or knows(r):
+			continue
+		if kind == "temperate" or kind == "" or String(L["study"]) == kind:
+			out.append(String(r["id"]))
+	return out
+
+## an artifact's study is done (workshops.gd `_study`): it teaches a recipe from its world, or, with none left to
+## teach, gives up its worth in that world's finds; its markings may show the way to a place not yet found
+func study_done(a: Dictionary, st = null) -> void:
+	var k := String(a.get("k", "temperate"))
+	var nm := String(a.get("n", "artifact"))
+	var pool := study_pool(k)
+	var at: Vector2 = st.pos if st != null else player.pos
+	if not pool.is_empty():
+		learn(String(pool[randi() % pool.size()]), "studied from the %s" % nm)
+	else:
+		var rg := int(Defs.KIND_REAGENT.get(k, -1))
+		if rg >= 0:
+			player.inv[rg] += 3
+			ui.toast("The %s has nothing left to teach: you take its %s inlay (+3)" % [nm, Defs.NAMES[rg]], Color(0.8, 0.9, 1.0), 5.0)
+		else:
+			items["coins"] = int(items.get("coins", 0)) + 40
+			ui.toast("The %s has nothing left to teach: a collector would pay well (+40 coins)" % nm, Color(0.8, 0.9, 1.0), 5.0)
+	if places != null and randf() < 0.6:
+		var pl: Dictionary = places.reveal_one()
+		if not pl.is_empty():
+			ui.toast("Its markings are a map: a %s lies somewhere on this world (on your map now)" % String(pl["name"]), Color(0.75, 0.9, 1.0), 6.0)
+	for q in 24:
+		var dv := Vector2.from_angle(randf() * TAU)
+		_particle(at + dv * randf() * 5.0, dv * randf_range(0.4, 1.4), 30 + randi() % 20, Color(0.65, 0.88, 1.0), true, -0.005)
+	audio.play("page", at, 0.8)
+	save_game()
+
+## a world's own finds (Defs.KIND_REAGENT) into the satchel: n of this world's (none on a world without one)
+func give_reagent(n: int, kind := "") -> void:
+	var rg := Defs.kind_reagent(planet) if kind == "" else int(Defs.KIND_REAGENT.get(kind, -1))
+	if rg < 0 or n <= 0:
+		return
+	player.inv[rg] += n
+	ui.toast("+%d %s" % [n, Defs.NAMES[rg]], Defs.COLOR[rg].lightened(0.2), 3.5)
+
+## what a place's chest holds besides the usual (places.gd): its world's finds, an artifact, and its own
+func place_loot(pl: Dictionary) -> void:
+	match String(pl["kind"]):
+		"archive":
+			give_reagent(2 + randi() % 3)
+			add_artifact("", "from the Wisp Archive")
+			player.inv[Defs.CRYSTAL] += 2
+		"sanctum":
+			give_reagent(3 + randi() % 3)
+			add_artifact("", "from the Sealed Sanctum")
+			if randf() < 0.5:
+				add_artifact("", "")
+		"wreck":
+			give_reagent(1 + randi() % 2)
+			player.inv[Defs.HULL] += 6 + randi() % 5
+			player.inv[Defs.STARIRON] += 1 + randi() % 2
+			player.inv[Defs.WISPCELL] += 2
+			ui.toast("+Hull Plating, Star Iron and Wisp Cells from the wreck", Color(0.78, 0.84, 0.95), 3.5)
+			if randf() < 0.7:
+				add_artifact("", "from the Fallen Starship")
 
 ## how far a piece of forged gear has been upgraded at the anvil (0: as forged; Defs.UPGRADES). A piece made
 ## masterwork at the forge before upgrading came in counts as level 2 (its 1.25).
@@ -6114,7 +6392,13 @@ func craft(r: Dictionary) -> bool:
 		mana_regen += float(mods.get("mana_regen", 0.0)) * qm
 		if mods.has("dig_r"):
 			dig_r = maxf(dig_r, float(mods["dig_r"]))
+		# (27 Nov: it comes out with traits of its own, as good as where it was forged: `roll_gear_traits`)
+		var gt_txt := roll_gear_traits(String(r["id"]), player)
 		_apply_gear()
+		if not craft_quiet:
+			ui.toast("%s forged!%s" % [gear_name(String(r["id"])), gt_txt], Color(1, 0.82, 0.23), 6.0)
+			save_game()
+		return true
 	if not r.has("spell") and not r.has("give") and not craft_quiet:
 		ui.toast("%s forged!" % r["name"], Color(1, 0.82, 0.23), 4.0)
 	if not craft_quiet:
@@ -8041,6 +8325,7 @@ func _update_remove(m: Mage, piece: Dictionary) -> void:
 		elif not r.has("mana"):
 			ui.toast("Nothing there to take" if not r["hard"] else "Too hard for your staff", Color(1, 0.7, 0.5), 1.2)
 
+const BUILT_SOFT := 2      # (shaders/inc/common.comp's: what's built this soft comes away whatever the staff)
 ## Takes away `layer` ("front" blocks, "back" walls and plants, "furn" furniture and torches, "all") from
 ## these cells: reads them (exactly), stamps them out, puts what they give into the satchel and wakes
 ## what's round them. Returns {n: cells taken, hard: something was too hard for the staff}.
@@ -8071,7 +8356,8 @@ func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
 		var kd: int = Defs.KIND[t]
 		if (layer == "front" or layer == "all") and t != 0 and t != Defs.TREASURE and t != Defs.WOODDOOR \
 				and (kd == Defs.K_SOLID or kd == Defs.K_POWDER or kd == Defs.K_LIQUID):
-			if Defs.HARD[t] <= m.tier:
+			# (what's built of something soft enough comes away whatever the staff: brush.comp BUILT_SOFT)
+			if Defs.HARD[t] <= m.tier or (fgs[k] < 0 and Defs.HARD[t] <= BUILT_SOFT):
 				v = (v & ~0xff)
 				mana += dig_mana(t)
 				var gm := _collect_as(t)
@@ -8082,7 +8368,7 @@ func remove_cells(m: Mage, cells: Array, layer: String) -> Dictionary:
 		if bm != 0 and bm != Defs.TREASURE and bm != Defs.OPENCHEST:
 			var furn := bm == Defs.DECOR or bm == Defs.TORCH
 			var take_bg := (layer == "furn" and furn) or (layer == "back" and not furn) or layer == "all"
-			if take_bg and Defs.HARD[bm] > m.tier and not furn:
+			if take_bg and Defs.HARD[bm] > m.tier and not furn and not ((b & 0x4000) != 0 and Defs.HARD[bm] <= BUILT_SOFT):
 				hard = true
 				take_bg = false
 			if take_bg:
@@ -8948,6 +9234,7 @@ func start_game(use_save: bool) -> void:
 		# a new journey: a system of planets of its own (the test mode keeps the classic one)
 		Defs.world_seed = test_seed if testing else 1 + randi() % 0xFFFFFE
 		Defs.legacy_biomes = {}                  # (a new journey: every planet grows today's biomes)
+		Defs.small_worlds = {}                   # (and every world at today's size)
 		Defs.terrain = Defs.TERRAIN_SET          # (and today's terrain)
 		Defs._planet_cache.clear()
 		space.load_state({})
@@ -9132,6 +9419,10 @@ func _make_world(index: int, arriving: bool) -> void:
 		await tree.process_frame
 		_phase_go()
 	builds = Buildings.new()
+	# (places to discover, 27 Nov: on a world first made from now on; one saved before has no "places" and gets none)
+	if not loaded:
+		planet_state["places"] = {"v": 1}
+	builds.with_places = planet_state.has("places")
 	if arriving:
 		# (planning touches no GPU and no nodes: it runs beside the game)
 		var task := WorkerThreadPool.add_task(builds.plan.bind(planet, gpu.surface, spawn_angle, boss_a, not loaded))
@@ -9271,6 +9562,7 @@ func _update_skiff() -> void:
 			skiff.vel -= up * maxf(skiff.vel.dot(up), 0.0)
 	if skiff.thrusting:
 		_skiff_exhaust()
+	_skiff_turn_fx()
 	# coming down fast through the air, it glows where it meets it
 	if skiff.pos.length() < Defs.R_TOP and skiff.vel.length() > Skiff.CRUISE * skiff.power + 1.0 and skiff.vel.dot(up) < 0.0:
 		var lead: Vector2 = skiff.pos + skiff.vel.normalized() * 14.0
@@ -9745,6 +10037,27 @@ func _skiff_exhaust() -> void:
 	if not space.active:
 		lights.append([stern, 40.0, Color(0.6, 0.7, 1.3)])
 
+## turning round (skiff.gd `sweep_u`, overlay `_draw_swept`): wisp sparks lift off the line that redraws the hull,
+## and a light goes with it on the planet
+func _skiff_turn_fx() -> void:
+	if skiff == null:
+		return
+	var u: float = skiff.sweep_u()
+	if u >= 0.999 or u <= 0.001:
+		return
+	var rows: PackedInt32Array = skiff.sweep_rows()
+	if rows.is_empty():
+		return
+	var s: float = skiff.sweep_s()
+	var upv: Vector2 = -skiff.axis_y()
+	for k in 2:
+		var j: int = rows[randi() % rows.size()]
+		var at: Vector2 = skiff.to_world(Vector2(s + 0.5, float(j) + 0.5 - skiff.com.y))
+		_particle(at, upv * randf_range(0.15, 0.6) + skiff.axis_x() * randf_range(0.1, 0.5) + skiff.vel * 0.8,
+			10 + randi() % 10, Color(0.6, 0.9, 1.0).lerp(Color(1, 1, 1), randf() * 0.5), true, -0.01)
+	if not space.active:
+		lights.append([skiff.to_world(Vector2(s, 0.0)), 26.0, Color(0.5, 0.8, 1.3)])
+
 # ------------------------------------------------------ the pocket's ways in ---
 ## (user, 24 Nov: "a return to ship function/return home function ... as a spell"; chose: the pocket is home):
 ## WISP RECALL, a channel of RECALL_CHANNEL ticks (hurt breaks it), takes you into your ship's pocket from
@@ -10082,7 +10395,8 @@ func save_game() -> void:
 	var d := {"planet": planet.get("index", 0), "world_seed": Defs.world_seed, "inv": Array(player.inv), "known": known, "tier": tier, "dig_r": dig_r,
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1, "learned": learned.keys(),
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played, "space": space.save_state(),
-		"bset": Defs.BIOME_SET, "legacy_biomes": Defs.legacy_biomes.keys(), "tset": Defs.terrain}
+		"bset": Defs.BIOME_SET, "legacy_biomes": Defs.legacy_biomes.keys(), "tset": Defs.terrain,
+		"gset": Defs.GROWTH_SET, "small_worlds": Defs.small_worlds.keys()}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
@@ -10114,6 +10428,17 @@ func _apply_save(s: Dictionary) -> void:
 			for fn in sd.get_files():
 				if fn.begins_with("world_") and fn.ends_with(".wfw"):
 					Defs.legacy_biomes[int(fn.trim_prefix("world_").trim_suffix(".wfw"))] = true
+	# (bigger worlds, 27 Nov: the worlds a journey made before keep their size; Defs.growth_of)
+	Defs.small_worlds = {}
+	if int(s.get("gset", 0)) >= Defs.GROWTH_SET:
+		for gi in s.get("small_worlds", []):
+			Defs.small_worlds[int(gi)] = true
+	else:
+		var gd := DirAccess.open(_save_dir())
+		if gd != null:
+			for gfn in gd.get_files():
+				if gfn.begins_with("world_") and gfn.ends_with(".wfw"):
+					Defs.small_worlds[int(gfn.trim_prefix("world_").trim_suffix(".wfw"))] = true
 	Defs._planet_cache.clear()
 	var sps = s.get("space", {})
 	space.load_state(sps if sps is Dictionary else {})
@@ -10303,6 +10628,8 @@ func _world_meta_body(without_skiff: bool) -> String:
 	workshops.save_to(planet_state)
 	summoning.on_save(planet_state)
 	mystery.save_to(planet_state)
+	places.save_to(planet_state)
+	mending.save_to(planet_state)
 	var ast = space.rocks_state(int(planet["index"]))
 	if ast != null:
 		planet_state["asteroids"] = ast

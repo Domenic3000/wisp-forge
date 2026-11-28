@@ -290,7 +290,7 @@ static func plan_name(id: String) -> String:
 ## the workshops, forged at the Wisp Forge into the satchel (items "st_<kind>"), then set down from it
 static func workshop_recipes() -> Array:
 	var out := []
-	for k in ["kiln", "smelter", "still", "anvil", "altar"]:
+	for k in ["kiln", "smelter", "still", "anvil", "altar", "lectern"]:
 		var sd: Dictionary = Defs.STATIONS[k]
 		out.append({"id": "st_" + k, "cat": "Workshops", "name": String(sd["name"]), "cost": sd["cost"], "station": k,
 			"desc": String(sd["desc"]) + " Goes into your satchel: click it there (I) to set it down."})

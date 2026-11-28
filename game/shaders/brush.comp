@@ -33,13 +33,20 @@ void main() {
 		float R = rnd3(uint(i), uint(pc.b.y), uint(bi) * 31u + 5u);
 		uint power = uint(B.y);
 		uint bgm = ab & 255u;
+		// (27 Nov; user: "on the planet i crafted brick ... conjured it using the rectangle tool in the front and back wall.
+		// now i cannot use the right click gather or unmake to remove it"): what's built (blocks laid, back walls) of a
+		// soft enough material comes away whatever the staff: you can always take back what you could lay
+		// (only for taking away: digging and deconstructing; a blast is as strong as it is)
+		bool take = mode == 1 || mode == 8;
+		uint powF = (take && (c & ST_BUILT) != 0u && HARD[t] <= BUILT_SOFT) ? max(power, BUILT_SOFT) : power;
+		uint powB = (take && (ab & BG_WALL) != 0u && HARD[bgm] <= BUILT_SOFT) ? max(power, BUILT_SOFT) : power;
 		// digging and blasts disturb the ground around them: natural rock nearby is no longer
 		// treated as part of the planet, so a piece you cut free will fall
 		// (only what this staff could dig: a wall of something harder, like a vault's obsidian,
 		// stays exactly where it is even if you dig all the way round it)
 		if ((mode == 1 || mode == 2 || mode == 6 || mode == 8 || mode == 11) && dist < rad + 12.0) {
-			if ((c & ST_ANCHOR) != 0u && HARD[t] <= power) c &= ~ST_ANCHOR;
-			if (HARD[bgm] <= power) ab &= ~BG_ANCHOR;    // a generated building's walls wake up too
+			if ((c & ST_ANCHOR) != 0u && HARD[t] <= powF) c &= ~ST_ANCHOR;
+			if (HARD[bgm] <= powB) ab &= ~BG_ANCHOR;    // a generated building's walls wake up too
 		}
 		if (mode == 2 && B.x > 0.5 && B.x < 1.5 && dist < rad + 2.5 && R < 0.5) {
 			// fire spells set burnable things alight (foreground and background plants)
@@ -49,7 +56,7 @@ void main() {
 		if (mode == 11) continue;   // (only that: what was round cells taken away precisely wakes)
 		if (mode == 1 && dist > rad && dist < rad + 1.6) {
 			// knock off lone pixels around the hole so the mage doesn't snag on them
-			if (isBlock(t) && HARD[t] <= power && COLLECT[t] == 1u) {
+			if (isBlock(t) && HARD[t] <= powF && COLLECT[t] == 1u) {
 				int open = 0;
 				for (int dd = 0; dd < 4; dd++) { if (!isBlock(tAt(nbr(s, y, x, dd)))) open++; }
 				if (open >= 3) { atomicAdd(counts.n[ob + (collectAs(t))], 1u); c = withFG(c, 0u, 0u); }
@@ -70,7 +77,7 @@ void main() {
 			}
 			if (t == 0u || COLLECT[t] == 0u) continue;
 			if (t == M_TREASURE) { atomicAdd(counts.n[ob + C_TREASURE], 1u); continue; }   // digging at a chest opens it
-			if (HARD[t] > power) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
+			if (HARD[t] > powF) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
 			float rate = (KIND[t] == K_LIQUID ? 0.25 : 0.32 / (1.0 + float(HARD[t]) * 1.2)) * (1.0 + B.z);   // (B.z: a faster staff)
 			if (R > rate) continue;
 			atomicAdd(counts.n[ob + (collectAs(t))], 1u);
@@ -99,7 +106,7 @@ void main() {
 			}
 		} else if (mode == 8) { // deconstruct: take background tiles (back walls, furniture, plants)
 			if (bgm != 0u && bgm != M_TREASURE) {
-				if (HARD[bgm] > power) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
+				if (HARD[bgm] > powB) { atomicAdd(counts.n[ob + C_HARD], 1u); continue; }
 				if (R > 0.35) continue;
 				// (a torch's flame goes out: torches come back whole, picked up as a piece)
 				if (bgm == M_TORCH) { ab = 0u; continue; }

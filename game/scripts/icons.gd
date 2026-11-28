@@ -17,7 +17,20 @@ const MAT_STYLE := {
 	44: "door", 7: "log", 8: "leaf", 49: "log", 50: "ingot", 51: "gem", 52: "pearl", 53: "gem", 54: "ore",
 	55: "gem", 56: "gem", 57: "ingot", 58: "ingot", 59: "ingot", 61: "gem", 62: "orb", 63: "gem",
 	64: "orb", 65: "orb", 66: "orb", 67: "orb", 68: "orb", 69: "orb", 70: "orb", 71: "orb", 45: "shroom", 46: "plank", 47: "grass", 48: "grass", 27: "pile", 24: "pile",
+	72: "art", 73: "art", 74: "gem", 75: "art", 76: "gem", 77: "drop", 78: "ingot", 79: "drop", 80: "art", 81: "art", 82: "art", 83: "art",
 }
+## drawn from rows (27 Nov: the world-bound finds and the workshop parts): "#" the colour, "h" lighter, "l" darker,
+## "d" darkest, "w" white, "a" its accent (ART_ACCENT)
+const ART_MATS := {
+	72: ["......h..", ".....h#..", "....h##..", "...h##l..", "..h##l...", ".h##l....", ".##l.....", "#l.......", "d........"],
+	73: ["..#####..", ".#hhhh##.", "#hh##h###", "#h####l##", "##h##l###", ".##ll###.", "..#####..", "...###...", "....#...."],
+	75: ["....h....", "...h#h...", ".h.###.h.", "h##h#h##h", ".#######.", "..l###l..", "...aaa...", "..aaaaa..", "........."],
+	80: ["...lll...", "..lhhhl..", ".lhw##hl.", ".lh####l.", ".lh####l.", ".l####hl.", "..l##hl..", "...lll...", "........."],
+	81: ["lllllllll", "l#######l", "l#l...l#l", "l#.a.a.#l", "l#..a..#l", "l#.a.a.#l", "l#l...l#l", "l#######l", "lllllllll"],
+	82: ["lllllllll", ".l#####l.", "..h#h#h..", "..#h#h#..", "..h#h#h..", "..#h#h#..", ".l#####l.", "lllllllll", "........."],
+	83: ["....a....", "...aaa...", ".h.aaa.h.", ".hh.a.hh.", "..h###h..", "..#####..", ".##lll##.", "#lllllll#", "........."],
+}
+const ART_ACCENT := {75: Color(0.45, 0.75, 0.3), 81: Color(0.55, 0.75, 1.0), 83: Color(1.0, 0.88, 0.4)}
 
 ## spell glyphs, 11 x 11: "#" the spell's colour, "o" its light, "w" white-hot
 const SPELL_ART := {
@@ -351,6 +364,42 @@ static func sketch(src: Texture2D) -> ImageTexture:
 	_cache[key] = t
 	return t
 
+## an artifact (Defs.make_artifact): its shape by what it is (idol, tablet, mask...), in its world's colour, with a glint
+const ARTIFACT_ART := [
+	["...hh....", "..h##l...", "..#ww#...", "..l##l...", ".h####l..", ".#h##l#..", "..####...", "..l##l...", ".dddddd.."],
+	[".hhhhhh..", ".h#g#g#l.", ".#g#g##l.", ".##g#g#l.", ".#g##g#l.", ".##g#g#l.", ".#g#g##l.", ".lllllll.", "........."],
+	["..hhhhh..", ".h#####l.", "h#d###d#l", "h#dg#gd#l", "##.###.#l", ".###l###.", ".#l#l#l#.", "..#####..", "...lll..."],
+	["....g....", "..h.#.h..", ".h.###.l.", "g.##w##.g", ".l.###.h.", "..l.#.l..", "....#....", "...###...", "..ddddd.."],
+	["...hhh...", "..h#g#l..", ".hhhhhhh.", ".#g###g#.", ".#######.", ".#g###g#.", ".lllllll.", ".d.....d.", "........."],
+	["...ggg...", "....g....", "..hhhhh..", ".h##g##l.", ".#######.", "..l###l..", "...###...", "..#####..", ".ddddddd."],
+	["..hhhhh..", ".h.....l.", "h..g#g..l", "h.g###g.l", "#..#w#..l", "#.g###g.l", ".#..g..l.", "..#####..", "...ddd..."],
+	["hhhhhhhh.", "h#ggg##l.", "h#g####l.", "h#ggg##l.", "h#####gl.", "h#ggg##l.", "h######l.", "llllllll.", "........."],
+]
+static func artifact(a: Dictionary) -> ImageTexture:
+	var k := "art_%s_%d" % [String(a.get("k", "")), Defs.artifact_thing(a)]
+	if _cache.has(k):
+		return _cache[k]
+	var base: Color = Defs.ART_COL.get(String(a.get("k", "temperate")), Color(0.75, 0.62, 0.45))
+	var hi := base.lightened(0.35)
+	var lo := base.darkened(0.35)
+	var dk := base.darkened(0.6)
+	var glow := base.lightened(0.6)
+	var img := Image.create(9, 9, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var rows: Array = ARTIFACT_ART[Defs.artifact_thing(a) % ARTIFACT_ART.size()]
+	for y in 9:
+		for x in 9:
+			match String(rows[y])[x]:
+				"#": img.set_pixel(x, y, base)
+				"h": img.set_pixel(x, y, hi)
+				"l": img.set_pixel(x, y, lo)
+				"d": img.set_pixel(x, y, dk)
+				"w": img.set_pixel(x, y, Color(1, 1, 1))
+				"g": img.set_pixel(x, y, glow)
+	var tex := _outlined(img)
+	_cache[k] = tex
+	return tex
+
 static func mat(m: int) -> ImageTexture:
 	var key := "m_%d" % m
 	if _cache.has(key):
@@ -430,6 +479,19 @@ static func mat(m: int) -> ImageTexture:
 							img.set_pixel(x8, y8, cc)
 					img.set_pixel(1, 2, Color(1, 1, 1, 0.9))
 					img.set_pixel(2, 1, Color(1, 1, 1, 0.9))
+		"art":
+			var rows_a: Array = ART_MATS.get(m, [])
+			var acc: Color = ART_ACCENT.get(m, hi)
+			for y in mini(9, rows_a.size()):
+				for x in 9:
+					var cha: String = String(rows_a[y])[x]
+					match cha:
+						"#": img.set_pixel(x, y, base)
+						"h": img.set_pixel(x, y, hi)
+						"l": img.set_pixel(x, y, lo)
+						"d": img.set_pixel(x, y, dk)
+						"w": img.set_pixel(x, y, Color(1, 1, 1))
+						"a": img.set_pixel(x, y, acc)
 		"pile":
 			# a mound of grains
 			for y in range(2, 9):

@@ -154,3 +154,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Test: `_test_terrain3` (the "worlds" section): fewer biomes a planet over 20 seeds; a new game's planet made on
   terrain 3: the soil's depth at 12 columns, the cave layer's themed rock and plants (picture cave_layer.png); an
   ocean world made: its deepest water, the share past 300, a shelf (picture abyss.png).
+
+## Places to discover and roots (27 Nov; see exploration.md)
+- places.gd plans an archive, a sanctum and a fallen starship per 8192 columns on worlds made from now on (after
+  everything else, its own RNG). gen.comp `rootlets` threads front ROOT cells under the small plants; gen.comp's
+  mend mode (pc.a.w = 1) puts the made world back for mending.gd. docs/exploration.md.

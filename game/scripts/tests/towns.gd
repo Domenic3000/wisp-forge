@@ -433,6 +433,7 @@ func _test_rebuild(t: Dictionary) -> void:
 	var rows := []
 	var Bd = load("res://scripts/buildings.gd")
 	var b2 = Bd.new()
+	b2.with_places = g.builds.with_places          # (as main sets it from the world's save: places to discover planned too)
 	b2.plan(g.planet, g.gpu.surface, g.spawn_angle, fposmod(g.spawn_angle + PI, TAU), false)
 	b2.finish_all()
 	var grn: Dictionary = g.planet_state.get("grown", {})

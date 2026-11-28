@@ -44,8 +44,8 @@ func _test_gear() -> void:
 			ge_before[ge_st] = g.gear(ge_st)
 		var ge_hp0: float = g.max_hp
 		var ge_mana0: float = g.max_mana
-		for ge_c in ge_d["cost"]:
-			g.player.inv[int(ge_c)] += int(ge_d["cost"][ge_c])
+		for ge_c in ge_rec["cost"]:
+			g.player.inv[int(ge_c)] += int(ge_rec["cost"][ge_c])
 		var ge_made: bool = g.craft(ge_rec) and g.recipe_done(ge_rec)
 		var ge_good := ge_made
 		for ge_st2 in ge_mods:
@@ -1299,8 +1299,9 @@ func _test_cores() -> void:
 	g.player.inv[Defs.EMBERCORE] = 1
 	g.player.inv[Defs.ABYSSCORE] = 0
 	g._learn_from_finds()
-	var ok2: bool = g.learned.has("cinder") and g.learned.has("cindercrown") and not g.learned.has("leviathan")
-	rows.append("%san Ember Core taught Cinderstorm %s and the Cinder Crown %s (not the Abyss Core's: %s)" % ["" if ok2 else "(!) ", g.learned.has("cinder"), g.learned.has("cindercrown"), not g.learned.has("leviathan")])
+	# (its gear is studied from an artifact since 27 Nov: Defs.learn_of "study")
+	var ok2: bool = g.learned.has("cinder") and not g.learned.has("cindercrown") and Defs.learn_of(g.recipe_by_id("cindercrown")).has("study") and not g.learned.has("leviathan")
+	rows.append("%san Ember Core taught Cinderstorm %s, and the Cinder Crown is studied from a volcanic artifact %s (not the Abyss Core's: %s)" % ["" if ok2 else "(!) ", g.learned.has("cinder"), not g.learned.has("cindercrown"), not g.learned.has("leviathan")])
 	ok = ok and ok2
 	# ---- every core spell flies and lands
 	var god0: bool = g.test_god
@@ -1502,3 +1503,249 @@ func _au_peak(w: AudioStreamWAV) -> Array:
 			at += 1
 	var last := absi(d.decode_s16((n - 1) * 2)) if n > 0 else 0
 	return [float(mx) / 32000.0, float(at) / float(maxi(1, n)), float(last) / 32000.0]
+
+## The exploration loop (27 Nov; places.gd, docs/exploration.md): world-bound finds and workshop parts in every
+## better piece's cost, the places to discover planned on a new world (archive, sanctum, fallen starship), found as
+## you come near and marked, a sanctum's braziers kindled in their order opening its runestone wall, a place's
+## chest holding an artifact, a Lectern's study teaching a recipe, rolled traits read by gear(), reforging at an
+## anvil, and two drawing fixes: the skiff's sweep turn and creatures' steady feet.
+func _test_loop() -> void:
+	var lp_items0: Dictionary = g.items.duplicate(true)
+	var lp_inv0: PackedInt32Array = g.player.inv.duplicate()
+	var lp_pos0: Vector2 = g.player.pos
+	var lp_vals0 := [g.max_hp, g.max_mana, g.mana_regen, g.hp]
+	# costs: every piece wants its part, the better ones its world's finds (a heart's gear a Star Setting)
+	var lp_bad := []
+	for lp_id in Defs.GEAR:
+		var lp_c: Dictionary = Defs.gear_cost(lp_id)
+		var lp_t := Defs.gear_tier(lp_id)
+		var lp_ok: bool = lp_c.has(Defs.gear_part(lp_id))
+		var lp_rg := 0
+		for lp_m in lp_c:
+			if Defs.is_reagent(int(lp_m)):
+				lp_rg += int(lp_c[lp_m])
+		if lp_t >= 1 and int(Defs.gear_ores(lp_id)[0]) != Defs.VOIDESS:
+			lp_ok = lp_ok and lp_rg >= 2
+		if lp_t == 3:
+			lp_ok = lp_ok and lp_c.has(Defs.SETTING)
+		if lp_t >= 1 and not Defs.learn_of(g.recipe_by_id(lp_id)).has("study") and int(Defs.gear_ores(lp_id)[0]) != Defs.VOIDESS:
+			lp_ok = false
+		if not lp_ok:
+			lp_bad.append(lp_id)
+	var lp_mats := true
+	for lp_mm in range(Defs.PHOENIXASH, Defs.SETTING + 1):
+		lp_mats = lp_mats and String(Defs.NAMES[lp_mm]) != "" and Defs.PLACE[lp_mm] == 0 and Icons.mat(lp_mm) != null
+	_ok("gear is a project: each piece wants a workshop part, the better ones their world's own finds", lp_bad.is_empty() and lp_mats and Defs.NM < 112,
+		"bad %s; NM %d" % [str(lp_bad), Defs.NM])
+	# places on this world (made new for the tests)
+	var lp_pl: Array = g.places.list()
+	var lp_kinds := {}
+	for lp_p in lp_pl:
+		lp_kinds[String(lp_p["kind"])] = true
+	_ok("a new world hides places to discover: an archive, a sanctum and a fallen starship", lp_kinds.size() == 3 and g.planet_state.has("places"),
+		"%d places: %s" % [lp_pl.size(), str(lp_kinds.keys())])
+	if lp_kinds.size() < 3:
+		return
+	var lp_arch: Dictionary = {}
+	var lp_sanc: Dictionary = {}
+	var lp_wreck: Dictionary = {}
+	for lp_p2 in lp_pl:
+		match String(lp_p2["kind"]):
+			"archive": lp_arch = lp_p2
+			"sanctum": lp_sanc = lp_p2
+			"wreck": lp_wreck = lp_p2
+	# the archive: found as you come in, on the minimap, and pictured
+	var lp_am: Vector2 = lp_arch["mid"]
+	_go(lp_am - lp_am.normalized() * 20.0)
+	await _frames(90)
+	var lp_found: bool = g.places.found.has(String(lp_arch["id"]))
+	var lp_mark := false
+	for lp_mk in g.places.marks():
+		lp_mark = lp_mark or String(lp_mk[1]) == String(lp_arch["name"])
+	var lp_in: bool = not g.places.place_at(g.player.pos, "archive").is_empty()
+	var lp_q: int = int(g.forge_quality("amber")[0])
+	_shot("place_archive.png")
+	_ok("coming into a Wisp Archive finds it: named, on the map, and forging in it is better", lp_found and lp_mark and lp_in and lp_q >= 1,
+		"found %s, marked %s, inside %s, quality %d" % [str(lp_found), str(lp_mark), str(lp_in), lp_q])
+	# its chest: an artifact
+	var lp_a0: int = (g.items.get("artifacts", []) as Array).size()
+	g.place_loot(lp_arch)
+	var lp_a1: int = (g.items.get("artifacts", []) as Array).size()
+	_ok("a place's chest holds an artifact to study", lp_a1 == lp_a0 + 1, "%d -> %d" % [lp_a0, lp_a1])
+	# the sanctum: a wrong brazier puts them out, the right order opens the wall
+	var lp_sm: Vector2 = lp_sanc["mid"]
+	_go(lp_sm)
+	await _frames(60)
+	_shot("place_sanctum.png")
+	var lp_sid := String(lp_sanc["id"])
+	var lp_bz: Array = lp_sanc["braziers"]
+	var lp_order: Array = lp_sanc["order"]
+	var lp_by_g := {}
+	for lp_k in lp_bz.size():
+		lp_by_g[int(lp_bz[lp_k]["glyph"])] = lp_k
+	var lp_w0 := int(g.places.stats["wrong"])
+	g.places.kindle(lp_sid, int(lp_by_g[int(lp_order[1])]), g.player)
+	var lp_wrong: bool = int(g.places.stats["wrong"]) == lp_w0 + 1 and (g.places.lit.get(lp_sid, []) as Array).is_empty()
+	for lp_g in lp_order:
+		g.places.kindle(lp_sid, int(lp_by_g[int(lp_g)]), g.player)
+	await _frames(30)
+	var lp_wr: Dictionary = lp_sanc["ward"]
+	var lp_wmid: Vector2 = Defs.stamp_pos(int(lp_wr["y0"]) + int(lp_wr["h"]) / 2, int(lp_wr["ax"]), int(lp_wr["aw"]), Defs.k_of(int(lp_wr["x0"]) + int(lp_wr["w"]) / 2, int(lp_wr["ax"])))
+	var lp_open_t: int = g.type_at(lp_wmid)
+	_shot("place_sanctum_open.png")
+	_ok("a sanctum's braziers: the wrong one puts them out, all three in their order break its runestone wall",
+		lp_wrong and g.places.opened.has(lp_sid) and lp_open_t != Defs.RUNESTONE,
+		"wrong %s, opened %s, the wall now %s" % [str(lp_wrong), str(g.places.opened.has(lp_sid)), Defs.NAMES[lp_open_t] if lp_open_t >= 0 and lp_open_t < Defs.NM else str(lp_open_t)])
+	# the fallen starship, pictured from beside it
+	var lp_wm: Vector2 = lp_wreck["mid"]
+	_go(lp_wm + lp_wm.normalized() * 30.0)
+	await _frames(60)
+	_shot("place_wreck.png")
+	_ok("a fallen starship lies half buried on the surface", g.places.found.has(String(lp_wreck["id"])), "found %s" % str(g.places.found.has(String(lp_wreck["id"]))))
+	# a Lectern: an ocean artifact studied teaches an ocean piece not known yet
+	_go(lp_pos0)
+	await _frames(30)
+	var lp_lect = g.workshops.add("lectern", g.player.pos + g.basis_r(g.view_angle()) * 14.0)
+	g.learned.erase("pearlfins")
+	var lp_arts: Array = g.items.get("artifacts", [])
+	lp_arts.append(Defs.make_artifact("ocean", 4242))
+	g.items["artifacts"] = lp_arts
+	var lp_study: bool = g.workshops.study(lp_lect, lp_arts.size() - 1)
+	lp_lect.prog = float(Defs.STUDY_TICKS) - 2.0
+	for lp_t2 in 4:
+		g.workshops.work_all()
+	var lp_learned: bool = g.learned.has("pearlfins")
+	g.workshops.open_st = lp_lect
+	g.state = "station"
+	g.ui.show_station(lp_lect)
+	await _frames(10)
+	_shot("lectern_panel.png")
+	g.workshops.close()
+	g.ui.hide_station()
+	g.state = "play"
+	g.workshops.list.erase(lp_lect)
+	_ok("an artifact studied at a Lectern teaches a recipe of its world", lp_study and lp_learned and not g.workshops.studying(lp_lect),
+		"laid %s, learned Pearl Fins %s" % [str(lp_study), str(lp_learned)])
+	# rolled traits: read by gear(), the once-given ones given once; reforging at an anvil rolls them again
+	g.roll_traits = true
+	var lp_anv = g.workshops.add("anvil", g.player.pos + g.basis_r(g.view_angle()) * 10.0)
+	g.items["amber"] = true
+	g._trait_once(g.player, g.items.get("t_amber", []), -1.0)
+	g.items["t_amber"] = [["swift", 1.0]]
+	var lp_sp1: float = g.gear("speed")
+	g.items["t_amber"] = []
+	var lp_sp0: float = g.gear("speed")
+	var lp_swift: bool = absf(lp_sp1 / lp_sp0 - Defs.trait_value("swift", 1.0)) < 0.001
+	var lp_hp0: float = g.max_hp
+	g.items["t_amber"] = [["hardy", 1.0]]
+	g._trait_once(g.player, g.items["t_amber"], 1.0)
+	var lp_rc: Dictionary = Defs.reforge_cost("amber")
+	for lp_rm in lp_rc:
+		g.player.inv[int(lp_rm)] += int(lp_rc[lp_rm])
+	var lp_wc0: int = g.player.inv[Defs.WISPCELL]
+	var lp_ref: bool = g.reforge_gear("amber")
+	var lp_hard := 0.0
+	for lp_tr in g.items.get("t_amber", []):
+		if String(lp_tr[0]) == "hardy":
+			lp_hard += Defs.trait_value("hardy", float(lp_tr[1]))
+	var lp_hp_ok: bool = absf(g.max_hp - (lp_hp0 + lp_hard)) < 0.01
+	var lp_q2: int = int(g.forge_quality("amber")[0])
+	g.workshops.list.erase(lp_anv)
+	g.roll_traits = false
+	_ok("gear's rolled traits count in gear(), and reforging at an anvil rolls them again (paid, health given once)",
+		lp_swift and lp_ref and g.player.inv[Defs.WISPCELL] == lp_wc0 - 1 and lp_hp_ok and lp_q2 >= 1,
+		"swift %.3f/%.3f, reforged %s, health ok %s, quality at the anvil %d, now: %s" % [lp_sp1, lp_sp0, str(lp_ref), str(lp_hp_ok), lp_q2, g.gear_traits_text("amber")])
+	# the skiff's turn: a sweep, never squeezed
+	var lp_sk_ok := true
+	if g.skiff != null:
+		var lp_look0: float = g.skiff.look
+		g.skiff.look = -float(g.skiff.facing)
+		var lp_u0: float = g.skiff.sweep_u()
+		g.skiff.look = 0.0
+		var lp_um: float = g.skiff.sweep_u()
+		g.skiff.look = float(g.skiff.facing)
+		var lp_u1: float = g.skiff.sweep_u()
+		g.skiff.look = lp_look0
+		lp_sk_ok = lp_u0 < 0.01 and absf(lp_um - 0.5) < 0.01 and lp_u1 > 0.99 and absf(g.overlay._skiff_xf(g.skiff).x.length() * g.zoom - 1.0) < 0.05
+	# steady feet: a cell's flicker under a creature standing in one column doesn't move it; a real fall does
+	var lp_obj := RefCounted.new()
+	var lp_ft: Vector2 = g.player.pos
+	var lp_r := roundf(lp_ft.length())
+	var lp_f0: float = g.overlay._steady_feet(lp_obj, Vector2.from_angle(atan2(lp_ft.y, lp_ft.x)) * lp_r, lp_r)
+	var lp_f1: float = g.overlay._steady_feet(lp_obj, Vector2.from_angle(atan2(lp_ft.y, lp_ft.x)) * (lp_r - 0.5), lp_r - 1.0)
+	var lp_f2: float = g.overlay._steady_feet(lp_obj, Vector2.from_angle(atan2(lp_ft.y, lp_ft.x)) * (lp_r - 3.0), lp_r - 3.0)
+	_ok("the skiff turns by a sweep (never narrowed), and creatures' feet hold steady over the grid's flicker",
+		lp_sk_ok and lp_f0 == lp_r and lp_f1 == lp_r and lp_f2 == lp_r - 3.0, "skiff %s, feet %.0f %.0f %.0f (from %.0f)" % [str(lp_sk_ok), lp_f0 - lp_r, lp_f1 - lp_r, lp_f2 - lp_r, lp_r])
+	# a world made today is half as big again round (Defs.WORLD_GROWTH), and the wisp marks its heart on your map
+	var lp_rad_ok: bool = absf(float(g.planet["radius"]) - 1304.0 * Defs.PLANET_SCALE * Defs.WORLD_GROWTH) < 1.0
+	g.planet_state.erase("guided")
+	g.places.guide()
+	var lp_heart := false
+	for lp_gu in g.planet_state.get("guided", []):
+		lp_heart = lp_heart or String(lp_gu["kind"]) == "heart"
+	g.places.guide()
+	_ok("worlds are bigger (x%.1f), and the wisp marks the heart and the nearest dungeon or village" % Defs.WORLD_GROWTH, lp_rad_ok and lp_heart,
+		"radius %.0f, %d columns; marked: %s" % [float(g.planet["radius"]), Defs.NS, str((g.planet_state.get("guided", []) as Array).map(func(e): return e["name"]))])
+	# roots under the small plants, in the soil's first rows, near where you arrived
+	var lp_sc := int(floor(fposmod(atan2(lp_pos0.y, lp_pos0.x), TAU) / TAU * Defs.NS))
+	var lp_roots := 0
+	for lp_off in [-400, -200, 200, 400]:
+		var lp_c0: int = lp_sc + lp_off - 100
+		var lp_gr: int = g.builds.ground_row(lp_c0 + 100)
+		var lp_rr: Dictionary = g.gpu.read_rect(posmod(lp_c0, Defs.NS), lp_gr - 30, 200, 50)
+		for lp_v in lp_rr["fg"]:
+			if (lp_v & 255) == Defs.ROOT:
+				lp_roots += 1
+	_ok("plants root into the ground: threads of root under bushes and tufts", lp_roots > 20, "%d root cells in the soil" % lp_roots)
+	# the Worldsong: a pit dug in open ground fills back in from its walls; a brick laid comes back with a plain staff
+	var lp_st: Vector2i = _clear_stretch(lp_sc + 300, 40, 20, 3, 30)
+	var lp_mend_ok := false
+	var lp_brick_ok := false
+	var lp_air0 := 0
+	var lp_air1 := 0
+	if _cs_found:
+		var lp_pit := []
+		for lp_pi in range(lp_st.x + 10, lp_st.x + 26):
+			for lp_pj in range(lp_st.y + 4, lp_st.y + 16):
+				lp_pit.append(Vector2i(lp_pi, lp_pj))
+		g.stamps.append(Build.shape_stamp(lp_pit, Defs.AIR, false))
+		await _frames(6)
+		var lp_r0: Dictionary = g.gpu.read_rect(posmod(lp_st.x + 10, Defs.NS), lp_st.y + 4, 16, 12)
+		for lp_v0 in lp_r0["fg"]:
+			if (lp_v0 & 255) == Defs.AIR:
+				lp_air0 += 1
+		var lp_w := [lp_st.x + 18, lp_st.y + 10, 0.0, 0]
+		for lp_k3 in 14:
+			g.mending.run(lp_w, 1000)
+			await _frames(2)
+		var lp_r1: Dictionary = g.gpu.read_rect(posmod(lp_st.x + 10, Defs.NS), lp_st.y + 4, 16, 12)
+		for lp_v1 in lp_r1["fg"]:
+			if (lp_v1 & 255) == Defs.AIR:
+				lp_air1 += 1
+		lp_mend_ok = lp_air0 > 150 and lp_air1 < lp_air0 / 2
+		_go(_cell_pos(lp_st.x + 18, lp_st.y - 12))
+		await _frames(20)
+		_shot("worldsong.png")
+		# a brick laid with a plain staff (hardness 2 over its 1) still comes back to the satchel
+		var lp_tier0: int = g.tier
+		g.tier = 1
+		var lp_bc := [Vector2i(lp_st.x + 30, lp_st.y - 2), Vector2i(lp_st.x + 31, lp_st.y - 2), Vector2i(lp_st.x + 30, lp_st.y - 3), Vector2i(lp_st.x + 31, lp_st.y - 3)]
+		g.stamps.append(Build.shape_stamp(lp_bc, Defs.BRICK, false))
+		await _frames(6)
+		var lp_b0: int = g.player.inv[Defs.BRICK]
+		var lp_rm: Dictionary = g.remove_cells(g.player, lp_bc, "front")
+		await _frames(6)
+		lp_brick_ok = int(lp_rm["n"]) == 4 and g.player.inv[Defs.BRICK] == lp_b0 + 4
+		g.tier = lp_tier0
+	_ok("the Worldsong mends a dug pit from its walls in, and what you laid comes back whatever your staff", lp_mend_ok and lp_brick_ok,
+		"pit %d empty cells -> %d after 14 passes; brick taken back with a plain staff: %s" % [lp_air0, lp_air1, str(lp_brick_ok)])
+	# (back as it was)
+	g.items = lp_items0
+	g.player.inv = lp_inv0
+	g.max_hp = float(lp_vals0[0])
+	g.max_mana = float(lp_vals0[1])
+	g.mana_regen = float(lp_vals0[2])
+	g.hp = float(lp_vals0[3])
+	g.learn_all()
+	_go(lp_pos0)
+	await _frames(20)

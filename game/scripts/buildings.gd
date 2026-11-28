@@ -56,6 +56,15 @@ var spawn_col := 0
 var boss_col := 0
 var biome_names := []
 var _quiet := false               # the first structure near your arrival has no guards
+## places to discover (places.gd; 27 Nov): {id, kind, name, mid, x0, w, ymin, ymax, braziers, order, ward, panel}.
+## Planned only on a world first made since they came in (main sets `with_places` from planet_state["places"]).
+var places := []
+var with_places := false
+const Places := preload("res://scripts/places.gd")
+
+## a blueprint, for the part planners in other scripts (places.gd)
+func new_bp(x: int, y: int, ww: int, hh: int) -> BP:
+	return BP.new(x, y, ww, hh)
 
 class BP:
 	var chests := []          # Vector2i(left column, floor row), local
@@ -320,6 +329,7 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 	towns.clear()
 	warden_list.clear()
 	mystery = {}
+	places.clear()
 	landing = Vector2.INF
 	lair_why.clear()
 	_lair_cols.clear()
@@ -403,6 +413,12 @@ func plan(planet: Dictionary, surface: PackedFloat32Array, spawn_angle: float, b
 		_lairs(build)
 		rng = keep_rng
 	plan_times["lairs"] = (Time.get_ticks_usec() - pt) / 1000
+	# places to discover (an archive, a sanctum, a fallen starship...), last and with their own sequence, so adding
+	# them moved nothing else; not on the exotic worlds (they have their mysteries)
+	pt = Time.get_ticks_usec()
+	if with_places and exo == "":
+		Places.plan_all(self, build)
+	plan_times["places"] = (Time.get_ticks_usec() - pt) / 1000
 
 func _pick(weights: Dictionary) -> String:
 	var tot := 0.0

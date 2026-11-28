@@ -113,3 +113,7 @@ Notes for development sessions on this part of the game. The rules that apply ev
 - Skiff upgrades (Travel): Star-Iron Engine (`items["engine"]`: `skiff.power` 1.5, thrust and top speed in space,
   cruise in the air), Prospector's Beam (`items["beam"]`: the pilot holds dig in space, space.gd `_beam` mines
   asteroids within `BEAM_REACH` of the skiff via `_mine_at`; drawn as a line to `beam_to`).
+
+## Gear as a project (27 Nov; see exploration.md)
+- The forge's gear cost is `Defs.gear_cost(id)` (parts and world-bound finds by tier); the better pieces are learned by
+  studying artifacts (LEARN "study"); forged gear rolls traits. docs/exploration.md has it all.

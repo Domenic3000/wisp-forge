@@ -197,3 +197,8 @@ Notes for development sessions on this part of the game. The rules that apply ev
   it (its downward speed is taken off), and the water drags at it; so it rides on the top. Going in hard it splashes
   (vfx `splash_in`, size 2.6); under way along the top it leaves a wake; deep in, bubbles. Test: in `_test_water`
   (ui section), a ship let fall into a tank rides on the top (ship_float.png).
+
+## The turn (27 Nov)
+- skiff.gd `sweep_u`/`sweep_s`/`sweep_rows`, overlay `_draw_swept`/`_draw_sweep_line`, main `_skiff_turn_fx`: turning
+  round redraws the hull column by column behind a line of wisp light (user: the narrowing flip "looks like a piece of
+  paper ... use the pixel identity").

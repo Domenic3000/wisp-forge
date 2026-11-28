@@ -381,6 +381,26 @@ func generate_prepare(spawn_angle: float, boss: Vector4, sites: Array) -> Array:
 			y = ye
 	return jobs
 
+## The world mending itself (mending.gd, gen.comp's mend mode): the generator's own inputs for a world loaded from its
+## save (the sites its structures stand on, the heart's chamber), so what it puts back is what it was made with
+func mend_prepare(boss: Vector4, sites: Array) -> void:
+	flush()
+	var sd := PackedFloat32Array()
+	sd.resize((MAX_SITES + 1) * 4)
+	var nsite := mini(sites.size(), MAX_SITES)
+	sd[0] = nsite
+	for k in nsite:
+		var q: Vector2 = sites[k]
+		sd[(k + 1) * 4] = q.x
+		sd[(k + 1) * 4 + 1] = q.y
+	var sb := sd.to_byte_array()
+	rd.buffer_update(sites_buf, 0, sb.size(), sb)
+	setp(120, boss)
+
+## a window to mend, done with the next frame's simulation: [shell, row0, row1, col0 (that shell's), width, chance 0..1000]
+var mend_jobs := []
+var mend_n := 0              # (passes run, for the tests)
+
 func generate_band(job: Array) -> void:
 	var s: int = job[0]
 	var y: int = job[1]
@@ -612,6 +632,10 @@ func step(sim_centers: Array, grid_frames: Array, with_brushes: bool, sim_only: 
 	var win := _windows(sim_centers)
 	rd.capture_timestamp("start")
 	var cl := rd.compute_list_begin()
+	for mj in mend_jobs:
+		_dispatch(cl, "gen", "gen", [int(mj[0]), int(mj[1]), int(mj[2]), 1, int(mj[3]), int(mj[4]), int(mj[5]), frame + mend_n], [], groups(int(mj[4]), 16), groups(int(mj[2]) - int(mj[1]), 16))
+		mend_n += 1
+	mend_jobs.clear()
 	if with_brushes:
 		for w in win:
 			_dispatch(cl, "brush", "brush", [0, w.y0, w.y1, 0, 0, frame + 1], _wf(w), groups(w.maxc, 16), groups(w.y1 - w.y0, 16))

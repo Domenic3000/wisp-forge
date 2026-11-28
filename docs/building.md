@@ -294,3 +294,8 @@ maybe a way to cycle through nearby objects")
   (`_f_use`: towns `talk(m, pick)`, workshops `interact(m, pick)`, `_try_open_chest(pick)`, `_set_door`) until you walk
   out of its reach. A bed (home) isn't listed: it's read from the GPU only when F is pressed. Test: in
   `_test_inworld` ("F highlight", picture `f_highlight.png`).
+
+## Taking back what you built (27 Nov)
+- Anything built (a block laid, a back wall) of hardness `BUILT_SOFT` (2) or less comes away whatever the staff:
+  brush.comp `powF`/`powB`, main `remove_cells` (user: "i crafted brick ... i cannot use the right click gather or
+  unmake to remove it").
