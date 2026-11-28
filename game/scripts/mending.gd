@@ -116,7 +116,7 @@ func tick() -> void:
 			if (hp as Vector2).distance_to(game.player.pos) < SAY_R:
 				game.items["worldsong"] = true
 				if game.quest != null:
-					game.quest.say("Feel that? The ground here has knitted itself back together. Every world remembers the shape it was made in, and sings itself back to it while no one's looking. The old wisps called it the Worldsong. It leaves alone what you build.")
+					game.quest.say_later("Feel that? The ground here has knitted itself back together. Every world remembers the shape it was made in, and sings itself back to it while no one's looking. The old wisps called it the Worldsong. It leaves alone what you build.")
 				break
 
 func _mend_one() -> void:

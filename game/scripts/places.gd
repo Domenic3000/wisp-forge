@@ -129,7 +129,7 @@ func guide(force := false) -> void:
 			game.planet_state["guided"] = gd
 			stats_guided += 1
 			if game.quest != null:
-				game.quest.say("Far below, on the other side of this world, its heart beats, and something guards it. I've marked it on your map.")
+				game.quest.say_later("Far below, on the other side of this world, its heart beats, and something guards it. I've marked it on your map.")
 			return
 	var best := {}
 	var bd := GUIDE_R
@@ -163,7 +163,7 @@ func guide(force := false) -> void:
 	if game.quest != null:
 		var bp := Vector2(float(best["pos"][0]), float(best["pos"][1]))
 		var what := "a village, %s," % String(best["name"]) if String(best["kind"]) == "town" else "a dungeon, %s, with its warden," % String(best["name"])
-		game.quest.say("There's %s %s. I've marked it on your map." % [what, _way(bp, p)])
+		game.quest.say_later("There's %s %s. I've marked it on your map." % [what, _way(bp, p)])
 
 func tick() -> void:
 	if game.frame % GUIDE_EVERY == 120 and not game.space.active and not game.pocket.active:
@@ -211,7 +211,7 @@ func discover(pl: Dictionary) -> void:
 	game.ui.toast("Discovered: %s" % String(pl["name"]), kd["col"], 5.0)
 	game.audio.play("rare", pl["mid"], 0.6)
 	if game.quest != null:
-		game.quest.say(String(kd["found"]))
+		game.quest.say_later(String(kd["found"]))
 	game.save_game()
 
 func _way(to: Vector2, from: Vector2) -> String:
@@ -233,7 +233,7 @@ func _hint(pl: Dictionary, p: Vector2) -> void:
 	stats["hinted"] = int(stats["hinted"]) + 1
 	var what := {"archive": "an old wisp-place, full of learning", "sanctum": "something sealed, and waiting", "wreck": "cold metal, fallen from the sky"}
 	if game.quest != null:
-		game.quest.say("I can feel something %s: %s." % [_way(pl["mid"], p), what.get(String(pl["kind"]), "something old")])
+		game.quest.say_later("I can feel something %s: %s." % [_way(pl["mid"], p), what.get(String(pl["kind"]), "something old")])
 
 ## studying an artifact: its markings show the way to a place on this world not yet found (true if there was one)
 func reveal_one() -> Dictionary:
@@ -356,7 +356,7 @@ func _open(pl: Dictionary) -> void:
 	game.audio.play("rare")
 	game.ui.toast("The three fires burn in their order: the runestone wall of the sanctum crumbles!", Color(1.0, 0.85, 0.5), 6.0)
 	if game.quest != null:
-		game.quest.say("The wall is gone. What they sealed in there is yours.")
+		game.quest.say_later("The wall is gone. What they sealed in there is yours.")
 	game.save_game()
 
 # ------------------------------------------------------------ planning ---

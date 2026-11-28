@@ -1739,6 +1739,23 @@ func _test_loop() -> void:
 		g.tier = lp_tier0
 	_ok("the Worldsong mends a dug pit from its walls in, and what you laid comes back whatever your staff", lp_mend_ok and lp_brick_ok,
 		"pit %d empty cells -> %d after 14 passes; brick taken back with a plain staff: %s" % [lp_air0, lp_air1, str(lp_brick_ok)])
+	# the wisp's first words stay up long enough to read, and its asides wait their turn (user, 27 Nov: "the first
+	# message from the wisp went away too quickly when i started a new game")
+	var lp_wq = g.quest
+	lp_wq.said_later.clear()
+	var lp_long := "I'm your wisp. I'll guide you from here. " + "Dig down a little way first, and see what the ground holds. ".repeat(2)
+	lp_wq.say(lp_long)
+	var lp_t0: int = lp_wq.say_t
+	lp_wq.say_later("An aside.")
+	var lp_kept: bool = lp_wq.say_text == lp_long and lp_wq.said_later.size() == 1
+	lp_wq.say_t = 1
+	lp_wq.tick()
+	lp_wq.tick()
+	var lp_next: bool = lp_wq.say_text == "An aside."
+	lp_wq.say_t = 0
+	lp_wq.said_later.clear()
+	_ok("the wisp's long lines stay up to be read, and its asides wait till it's done", lp_t0 > lp_wq.SAY_TICKS and lp_kept and lp_next,
+		"%d letters up %.1f s (at least %.1f); the aside waited %s, then said %s" % [lp_long.length(), lp_t0 / 60.0, lp_wq.SAY_TICKS / 60.0, str(lp_kept), str(lp_next)])
 	# (back as it was)
 	g.items = lp_items0
 	g.player.inv = lp_inv0

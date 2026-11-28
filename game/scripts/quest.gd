@@ -32,6 +32,7 @@ var chapter := -1
 var at := 0
 var say_text := ""
 var say_t := 0
+var said_later := []     # lines waiting their turn (`say_later`): the wisp's asides never talk over what it's saying
 var stats := {"done": 0, "said": 0, "rewards": 0}
 
 func _init(g) -> void:
@@ -44,11 +45,14 @@ func reset() -> void:
 	at = 0
 	say_t = 0
 	say_text = ""
+	said_later.clear()
 
 ## every tick (main `_tick`): every half second, tick off what's done and speak up for what's next
 func tick() -> void:
 	if say_t > 0:
 		say_t -= 1
+	elif not said_later.is_empty():
+		say(String(said_later.pop_front()))
 	if game.testing and not game.quest_test:
 		return
 	if game.frame % 30 != 0:
@@ -100,12 +104,25 @@ func hud_line() -> String:
 		return ""
 	return String(steps[at]["title"])
 
+## (27 Nov; user: "the first message from the wisp went away too quickly when i started a new game": a long line
+## stays up as long as it takes to read, about 14 letters a second, and at least SAY_TICKS)
+func say_ticks(t: String) -> int:
+	return clampi(int(60.0 * (2.5 + float(t.length()) / 14.0)), SAY_TICKS, 60 * 20)
+
 func say(t: String) -> void:
 	say_text = t
-	say_t = SAY_TICKS
+	say_t = say_ticks(t)
 	stats["said"] = int(stats["said"]) + 1
 	if game.space.active and not game.space.live:
 		game.ui.toast("Wisp: " + t, Color(0.62, 0.86, 1.0), 6.0)     # (out there the overlay draws no bubble)
+
+## an aside (a place felt or found, a mark on the map, the Worldsong): said once the wisp has finished what it's
+## saying, never over it (the first words of a journey were cut short by the heart's mark, 27 Nov)
+func say_later(t: String) -> void:
+	if say_t <= 0 and said_later.is_empty():
+		say(t)
+	elif not said_later.has(t) and said_later.size() < 4:
+		said_later.append(t)
 
 func _announce() -> void:
 	if at < steps.size():
