@@ -824,7 +824,7 @@ func _test_newbiomes() -> void:
 	nb_pl["sea"] = 26.0
 	nb_pl["kind"] = "wild"
 	nb_pl["name"] = "Newfold"
-	Defs._planet_cache["0:%d:v2" % NB_I] = nb_pl
+	Defs._planet_cache[Defs.planet_key(0, NB_I)] = nb_pl
 	g._enter_planet(NB_I)
 	g.ui.title.visible = false
 	await _frames(60)

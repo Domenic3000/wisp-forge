@@ -145,7 +145,9 @@ Notes for development sessions on this part of the game. The rules that apply ev
   So every cave wall in it shows it. Its plants (`caveFlora`, background, keyed by the floor or roof they grow from):
   Glowroot: glowcap clusters, tall glowing stalks, moss and ferns on floors, roots and vines (some with a glowing
   bud) hanging from roofs; Prism: crystal clusters up and down; Frostvein: frost blooms, snow, icicles; Smoldering:
-  ember vents, ash, glowing drips. Deeper than the stone, glowcaps now and then. Materials reused (no new world
+  ember vents, ash, glowing drips. Deeper than the stone, glowcaps now and then. The glowing ones are kept about as sparse as
+  terrain 2's cave plants (whatever lights rock counts as seen and lifts the fog there: the fog check failed at 3x
+  the density); the plain ones (moss, ferns, roots, sand, snow, ash, icicles) carry the look. Materials reused (no new world
   materials: they stay under 64).
 - Creatures: see creatures.md (each cave layer's own, and more of them underground).
 - Test: `_test_terrain3` (the "worlds" section): fewer biomes a planet over 20 seeds; a new game's planet made on

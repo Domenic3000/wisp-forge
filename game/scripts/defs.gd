@@ -1371,9 +1371,13 @@ const NAME_C := ["dance", "drel", "lassa", "re", "hollow", "mere", "holm", "dor"
 func make_planet(i: int) -> Dictionary:
 	return make_planet_for(world_seed, i)
 
+## the cache's key for planet i of system ws (its biome set and its terrain set: a planet grows differently by both)
+func planet_key(ws: int, i: int) -> String:
+	return "%d:%d:%s:%d" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", 3 if terrain >= 3 else 2]
+
 ## planet i of the system grown from ws (0: the classic one); a fresh copy each time
 func make_planet_for(ws: int, i: int) -> Dictionary:
-	var key := "%d:%d:%s:%d" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", 3 if terrain >= 3 else 2]
+	var key := planet_key(ws, i)
 	if not _planet_cache.has(key):
 		_planet_cache[key] = _exotic_planet(ws, i) if i >= EXOTIC else (_classic_planet(i) if ws == 0 else _grown_planet(ws, i))
 	return (_planet_cache[key] as Dictionary).duplicate(true)

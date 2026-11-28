@@ -332,3 +332,10 @@ Notes for development sessions on this part of the game. The rules that apply ev
   pirate's wreck drifted in) loaded only its saved rocks, and stations, outposts and monoliths are never saved
   (grown by seed), so the station never came back. Now a changed sector grows those three from its content as well.
   Test: in `_test_stations`, a sector given saved state still plans its station.
+
+## A crash under the Starsail (27 Nov; user: "when i was using the shift key in space to travel faster the game crashed when i pressed it and let go a few times")
+- Under the Starsail a system's derelict station and its trading outpost stream in a moment apart, each grown on a
+  worker thread (space.gd `_stream`), and both painted through station.gd's colour table (`_ensure_lut`) and
+  station_art's wall tiles (`_tile`): two threads could fill one array or dictionary at once. Both are filled under a
+  Mutex now (the table built into new arrays and put in place whole). (Also possible: Windows' Sticky Keys prompt
+  after five Shift presses; the Starsail's key can be rebound in Settings, Controls.)

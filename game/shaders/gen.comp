@@ -666,19 +666,20 @@ uint caveFlora(vec2 p, float r, float th, int ug, bool shallow) {
 			float hv = h2(ivec2(col, int(fr)), SEED + 41);
 			float hw = h2(ivec2(col / 3, int(fr) + 7), SEED + 42);
 			if (ug == 0) {
-				if (hv < 0.16 && float(k) <= 2.0 + floor(hv * 30.0)) return M_SHROOM;
-				if (hw < 0.12 && float(k) <= 4.0 + floor(hw * 60.0) && (col % 3) == 1) return float(k) > 2.0 + floor(hw * 50.0) ? M_SHROOM : M_STALK;
-				if (hv > 0.7 && float(k) <= 1.0 + floor((hv - 0.7) * 10.0)) return M_LEAF;           // moss and ferns
+				if (hv < 0.07 && float(k) <= 2.0 + floor(hv * 60.0)) return M_SHROOM;
+				if (hw < 0.06 && float(k) <= 4.0 + floor(hw * 120.0) && (col % 3) == 1) return float(k) > 2.0 + floor(hw * 100.0) ? M_SHROOM : M_STALK;
+				if (hv > 0.55 && float(k) <= 1.0 + floor((hv - 0.55) * 9.0)) return M_LEAF;          // moss and ferns
 			} else if (ug == 1) {
-				if (hv < 0.07 && float(k) <= 2.0 + floor(hv * 110.0)) return M_CRYSTAL;
+				if (hv < 0.035 && float(k) <= 2.0 + floor(hv * 220.0)) return M_CRYSTAL;
+				if (hv > 0.85 && float(k) <= 1.0) return M_SAND;
 			} else if (ug == 2) {
-				if (hv < 0.06 && float(k) <= 2.0 + floor(hv * 70.0)) return M_FROST;
+				if (hv < 0.035 && float(k) <= 2.0 + floor(hv * 120.0)) return M_FROST;
 				if (hv > 0.85 && float(k) <= 1.0) return M_SNOW;
 			} else {
-				if (hv < 0.05 && float(k) <= 1.0 + floor(hv * 50.0)) return M_EMBER;
+				if (hv < 0.03 && float(k) <= 1.0 + floor(hv * 80.0)) return M_EMBER;
 				if (hv > 0.8 && float(k) <= 1.0) return M_ASH;
 			}
-			if (!shallow && hv > 0.97 && float(k) <= 2.0) return M_SHROOM;
+			if (!shallow && hv > 0.985 && float(k) <= 2.0) return M_SHROOM;
 			return 0u;
 		}
 	}
@@ -692,15 +693,15 @@ uint caveFlora(vec2 p, float r, float th, int ug, bool shallow) {
 			if (ug == 0) {
 				// roots and vines hanging down, a glowing bud at the end of some
 				float L = 3.0 + floor(hl * 14.0);
-				if (hl < 0.45 && hv2 < 0.5 && float(k2) <= L) return float(k2) > L - 1.0 && hl < 0.12 ? M_SHROOM : (hl < 0.25 ? M_ROOT : M_LEAF);
+				if (hl < 0.45 && hv2 < 0.5 && float(k2) <= L) return float(k2) > L - 1.0 && hl < 0.04 ? M_SHROOM : (hl < 0.25 ? M_ROOT : M_LEAF);
 			} else if (ug == 1) {
-				if (hv2 < 0.06 && float(k2) <= 2.0 + floor(hv2 * 80.0)) return M_CRYSTAL;
+				if (hv2 < 0.03 && float(k2) <= 2.0 + floor(hv2 * 160.0)) return M_CRYSTAL;
 			} else if (ug == 2) {
 				// icicles
 				float L2 = 2.0 + floor(hl * 9.0);
 				if (hl < 0.35 && (col2 % 3) == 0 && float(k2) <= L2) return M_ICE;
 			} else {
-				if (hv2 < 0.04 && float(k2) <= 1.0 + floor(hv2 * 60.0)) return M_EMBER;
+				if (hv2 < 0.02 && float(k2) <= 1.0 + floor(hv2 * 120.0)) return M_EMBER;
 			}
 			return 0u;
 		}
