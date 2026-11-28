@@ -61,6 +61,7 @@ var grid_buf: RID
 var light_a: RID
 var light_b: RID
 var view_buf: RID
+var view_off := -1      # where the picture's bytes start in `grid` (the read-back buffer), RGBA8, PW x PH
 var seen_buf: RID        # what you've seen of the planet (fog over the rest underground: inc/seen.comp), binding 12
 
 var VW := 480
@@ -310,7 +311,7 @@ func build_surface(planet: Dictionary) -> void:
 	var sky: Color = planet["sky"]
 	setp(4, Vector4(sky.r, sky.g, sky.b, bl.size()))
 	setp(7, Vector4(planet["magmaR"], planet["sea"], planet["lava"], planet["rich"]))
-	setp(26, Vector4(float(Defs.terrain), 0.0, 0.0, 0.0))          # (the journey's terrain: surface.comp, gen.comp)
+	setp(26, Vector4(float(planet.get("terrain", Defs.terrain)), 0.0, 0.0, 0.0))   # (this world's terrain: surface.comp, gen.comp; Defs.terrain_of)
 	for b in bl.size():
 		var bd: Dictionary = Defs.BIOMES[bl[b]]
 		# (terrain 3: an ocean is abyssal, flags 32: surface.comp; 27 Nov)
@@ -715,6 +716,7 @@ func flush() -> void:
 	grid = all
 	grid_off = rb_off[3]
 	light_off = rb_off[1]
+	view_off = rb_off[2]
 	read_parts["read: unpack"] = Time.get_ticks_usec() - tq
 	tq = Time.get_ticks_usec()
 	view_img = Image.create_from_data(PW, PH, false, Image.FORMAT_RGBA8, vb)

@@ -25,7 +25,8 @@ float cloudLow(vec2 pos) {
 // mountains instead of starting right on top of them.
 float cloudHigh(vec2 pos) {
 	float r = length(pos);
-	float hgt = r - RS0;
+	// (terrain 4's worlds have taller peaks and a higher sky: the upper layer sits 130 higher, still over them)
+	float hgt = r - RS0 - (P.p[26].x > 3.5 ? 130.0 : 0.0);
 	if (hgt < 215.0 || hgt > 370.0) return 0.0;
 	float wnd = P.p[121].y * 1.7;
 	float cw = cos(wnd), sw = sin(wnd);

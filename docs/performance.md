@@ -85,3 +85,15 @@ Notes for development sessions on this part of the game. The rules that apply ev
   ready. (Grown on the main thread the first time the planet's guardians and wardens were drawn, the first frame
   took 750 ms: the user's start-up hitch.) The tests print `[startup]` frames over 40 ms (`_trace_frames`), and
   F3 shows the overlay's parts ("draw: foes", "draw: mages"...).
+- Smoothing frames (user, 27 Nov: "do the performance updates as well to smooth things across frames as long as it
+  wont break anything"; the bench's worst frames were a tree or a block coming loose: "lifting pieces out" 13.6 ms,
+  "lift: make" 10.1, "falling pieces" 10.8):
+  - Frame pacing: main `_ticks_for(delta)` counts a frame within PACE_SNAP (2 ms) of 1/60 s as exactly one tick (the
+    measured time wobbles; at 60 fps a frame now and then ran 0 ticks and the next 2: a stutter). Slower frames
+    still catch up, up to 4 ticks.
+  - chunks.gd lifts pieces out until LIFT_BUDGET (5 ms) is spent, the rest the next frame (`_poll`, oldest first), matches a
+    piece's colours to the screen from the read-back bytes (`gpu.view_off` into `gpu.grid`, with the picture's
+    size and light cell size kept in R[7]: no engine call per cell), builds its pictures from bytes
+    (`textures`: `Image.create_from_data`, not a `set_pixelv` a cell), and sets at most two resting pieces down a
+    frame (`update`). Its parts are timed: "fall: crush", "fall: moving", "fall: settle".
+  - The progress save runs at frame % 3600 == 1800, half a minute off the autosave's start.

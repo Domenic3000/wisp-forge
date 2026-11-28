@@ -26,7 +26,10 @@ void put(int idx, int i, int j, int w, int col, int row) {
 		uint c = world.cells[idx];
 		uint kc = KIND[c & 255u];
 		bool fillOnly = (d & 0x10000u) != 0u;
-		if (!fillOnly || !(kc == K_SOLID || kc == K_POWDER)) {
+		// (a door shutting, bit 28 with bit 27 and the background kept: it fills over loose sand or snow that drifted
+		// into its doorway, as it does over air; main.gd _set_door, 27 Nov)
+		bool overPowder = (d & 0x8000000u) != 0u && bc == 255u && (d & 0x10000000u) != 0u && kc == K_POWDER && (c & ST_BUILT) == 0u;
+		if (!fillOnly || overPowder || !(kc == K_SOLID || kc == K_POWDER)) {
 			uint v = (d & 0x8000000u) != 0u ? ((d >> 19) & 255u) : (hashu(uint(col) * 2654435761u ^ uint(row) * 40503u ^ uint(pc.b.y)) & 255u);
 			uint anchor = ((d & 0x20000u) != 0u && KIND[fc] == K_SOLID) ? ST_ANCHOR : 0u;
 			// (bit 19 without a fixed variant: natural rock, part of the land rather than built: a lair's

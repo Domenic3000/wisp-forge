@@ -100,7 +100,13 @@ Notes for development sessions on this part of the game. The rules that apply ev
   (skeleton lunge + blade reach), `ranged` (archers' arrows, imps' fire; `shoot` leads the target and allows for
   drop), `swoop` (bats), `blink` (imps). Every wind-up is a tell: overlay.gd tints the foe (`FoeAI.tell`).
   Foes with `ai.doors` open doors by walking into them (`move_body` -> `_door_bump`, `door_t` stops them turning
-  back). Archers are a third of structure guards (hooded, cloaked, a quiver and a long bow; sprite "archer_draw" while
+  back). Powder in doorways (27 Nov; user: "snow and sand and loose solids like that block some doorways and make
+  it so the skeletons get stuck since they cant fit through the doors on the buildings anymore"): a walking foe held
+  up by loose powder kicks it away (`_shove_powder`, brush.comp mode 12, every SHOVE_EVERY frames: what's ahead if
+  that's only powder, else the powder under its feet ahead so it sinks under a lintel); every 40 frames an open
+  door with a door-opening foe within 160 is swept (`_sweep_doorways`: the door brush, opening, clears unbuilt
+  powder in its doorway); shutting a door fills over unbuilt powder (brush mode 9, and the shut-as-it-is stamp's
+  bit 28 in stamp.comp). Never what was built. Tested in `_test_terrain4`. Archers are a third of structure guards (hooded, cloaked, a quiver and a long bow; sprite "archer_draw" while
   winding up, picked by overlay `_foe_frame` for any `<spr>_draw`; their arrows are drawn bone-pale with red fletching
   and a spectral green head, wake and faint light; picked by position in `_guard`); the dead walk at night.
   Other levels (`FoeAI.climb`, used by skeletons/archers, slimes/mimics and wild walking/hopping creatures, never

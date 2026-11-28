@@ -95,6 +95,8 @@ void main() {
 			else if (mode == 6 && HARD[t] >= 1u && R < 0.2) nt = M_GRAVEL;
 			else if (B.x > 0.5 && B.x < 1.5 && R < 0.12) { nt = M_FIRE; life = 10u + uint(R * 200.0); }
 			c = withFG(c, nt, life);
+		} else if (mode == 12) { // a foe kicks loose powder out of its way (main.gd _shove_powder): never what was built
+			if (KIND[t] == K_POWDER && (c & ST_BUILT) == 0u) c = withFG(c, 0u, 0u);
 		} else if (mode == 7) { // open a chest: the treasure is taken, an opened chest stays behind
 			if (bgm == M_TREASURE) {
 				atomicAdd(counts.n[ob + C_CHEST_OPEN], 1u);
@@ -128,13 +130,15 @@ void main() {
 			float u = dot(dd, tg), vv = dot(dd, rdir);
 			if (abs(u) < B.y && abs(vv) < B.z) {
 				if (B.x > 0.5) {
-					if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID || t == M_SNOW || t == M_ASH) {
+					if (t == 0u || KIND[t] == K_GAS || KIND[t] == K_LIQUID || (KIND[t] == K_POWDER && (c & ST_BUILT) == 0u)) {
 						uint row = uint(clamp(B.z - vv, 0.0, 31.0));
 						uint col = uint(clamp(u + B.y, 0.0, 3.0));
 						c = M_WOODDOOR | (((row << 2) | col) << 8) | ST_ANCHOR | ST_BUILT;
 					}
 				} else if (t == M_WOODDOOR) {
 					c = 0u;
+				} else if (KIND[t] == K_POWDER && (c & ST_BUILT) == 0u) {
+					c = withFG(c, 0u, 0u);     // (opening it sweeps out the sand or snow that drifted in: main.gd _sweep_doorways)
 				}
 			}
 		} else if (mode == 10) { // build: a back wall of material B.x where there is no background yet (budget B.z)

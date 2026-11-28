@@ -1893,7 +1893,7 @@ func _make_bodies(force := false) -> void:
 	for r in sys:
 		for i in Defs.planets_of(r):
 			var pl: Dictionary = Defs.make_planet(i)
-			var top: float = float(pl["radius"]) + Defs.ATMO
+			var top: float = float(pl["radius"]) + Defs.atmo_of(pl)
 			# (a disc is ~17 ms of script: kept until the sun has moved well round, and a new system's
 			# grown one a tick (`_grow_disc`), a plain disc of its colour meanwhile)
 			var dk := "%d_%d" % [Defs.world_seed, i]
@@ -1954,7 +1954,7 @@ func _disc_image(pl: Dictionary, light: Vector2) -> Image:
 	var sea := float(pl["sea"]) > 0.0
 	var sky: Color = pl["sky"]
 	var haze := Color(0.45, 0.65, 1.0) * sky
-	var rs := float(pl["radius"]) / (float(pl["radius"]) + Defs.ATMO)
+	var rs := float(pl["radius"]) / (float(pl["radius"]) + Defs.atmo_of(pl))
 	var half := n * 0.5
 	for y in n:
 		for x in n:

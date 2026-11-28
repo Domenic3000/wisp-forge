@@ -26,6 +26,7 @@ const Props := preload("res://scripts/props.gd")
 
 const GRAV := 0.17                # as for bodies (cells per frame per frame, times the planet's pull)
 const MAX_CHUNKS := 28
+const LIFT_BUDGET := 5000         # microseconds of lifting pieces out a frame (at least one piece)
 const MAX_PTS := 90               # collision points per chunk (its outline, thinned)
 const MAX_SOFT := 140             # crown-edge points checked for crushing
 const ROCK_HURT_FALL := 8.0       # (as main.gd's: how far a piece must fall before it hurts)
@@ -142,18 +143,30 @@ func textures(c: Chunk) -> void:
 		mx = mx.max(p)
 	var w := int(mx.x - mn.x) + 1
 	var h := int(mx.y - mn.y) + 1
-	var imf := Image.create(w, h, false, Image.FORMAT_RGBA8)
-	var imb := Image.create(w, h, false, Image.FORMAT_RGBA8)
-	imf.fill(Color(0, 0, 0, 0))
-	imb.fill(Color(0, 0, 0, 0))
+	# (filled as bytes and made into images once: a pixel at a time was two engine calls a cell, each time the
+	# piece changed; 27 Nov, smoothing frames)
+	var bf := PackedByteArray()
+	var bb := PackedByteArray()
+	bf.resize(w * h * 4)
+	bb.resize(w * h * 4)
+	var mnx := int(mn.x)
+	var mny := int(mn.y)
 	for k in c.ip.size():
-		var q := Vector2i(c.ip[k] - mn)
+		var o: int = ((int(c.ip[k].y) - mny) * w + (int(c.ip[k].x) - mnx)) * 4
 		if c.fg[k] != 0:
-			imf.set_pixelv(q, c.cf[k])
+			var cf: Color = c.cf[k]
+			bf[o] = int(clampf(cf.r, 0.0, 1.0) * 255.0 + 0.5)
+			bf[o + 1] = int(clampf(cf.g, 0.0, 1.0) * 255.0 + 0.5)
+			bf[o + 2] = int(clampf(cf.b, 0.0, 1.0) * 255.0 + 0.5)
+			bf[o + 3] = int(clampf(cf.a, 0.0, 1.0) * 255.0 + 0.5)
 		if c.bg[k] != 0:
-			imb.set_pixelv(q, c.cb[k])
-	c.tex_f = ImageTexture.create_from_image(imf)
-	c.tex_b = ImageTexture.create_from_image(imb)
+			var cb: Color = c.cb[k]
+			bb[o] = int(clampf(cb.r, 0.0, 1.0) * 255.0 + 0.5)
+			bb[o + 1] = int(clampf(cb.g, 0.0, 1.0) * 255.0 + 0.5)
+			bb[o + 2] = int(clampf(cb.b, 0.0, 1.0) * 255.0 + 0.5)
+			bb[o + 3] = int(clampf(cb.a, 0.0, 1.0) * 255.0 + 0.5)
+	c.tex_f = ImageTexture.create_from_image(Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, bf))
+	c.tex_b = ImageTexture.create_from_image(Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, bb))
 	c.img_origin = mn - Vector2(0.5, 0.5) - c.com
 
 # ------------------------------------------------------------------ finding ---
@@ -170,12 +183,16 @@ func _poll() -> void:
 	if _polled == g.frame:
 		return
 	_polled = g.frame
-	for k in range(_pend.size() - 1, -1, -1):
+	var t0 := Time.get_ticks_usec()
+	var k := 0
+	while k < _pend.size():              # (oldest first)
 		var p: Array = _pend[k]
 		var rr: Dictionary = g.gpu.take_rect(int(p[4]))
 		if rr.is_empty():
 			if g.frame - int(p[10]) > 30:
 				_pend.remove_at(k)            # (lost: a new planet, a save)
+			else:
+				k += 1
 			continue
 		_pend.remove_at(k)
 		var R := [p[5], p[6], p[7], p[8], rr["fg"], rr["bg"], p[9]]
@@ -183,6 +200,11 @@ func _poll() -> void:
 			_take_tree(p[1], p[2], R, bool(p[3]))
 		else:
 			_take_block(p[1], p[2], R)
+		# (pieces come out until LIFT_BUDGET is spent, the rest the next frame: two big trees felled together come out
+		# over two frames instead of one long one; a building's walls giving way still come out nearly all at once,
+		# being small, as they must before the rest crumbles; 27 Nov, smoothing frames)
+		if Time.get_ticks_usec() - t0 > LIFT_BUDGET:
+			return
 
 ## ask for a block of shell-0 cells around a world point (see `_read_around`), to be lifted out from later
 func _ask(kind: String, m, wp: Vector2, size: Vector2i, up_frac: float, big := false) -> void:
@@ -597,21 +619,41 @@ func _rebuild(c: Chunk) -> void:
 	# what it collides with: its outline. A tree's crown is soft (leaves give way and crush against the
 	# ground), so a tree collides by its wood alone: the trunk comes to lie on the ground, not propped
 	# up on its leaves
-	var hard: Dictionary = c.key        # (a building piece: all of it)
-	if c.tree:
-		hard = {}
-		for k in n:
-			var bm: int = c.bg[k] & 255
-			if c.fg[k] != 0 or (bm != Defs.LEAF and bm != Defs.SNOW and bm != Defs.CAP):
-				hard[Vector2i(c.ip[k])] = true
-		if hard.is_empty():
-			hard = c.key
+	# (on a byte grid over the piece's box rather than dictionaries of cells: 1 in the piece, 2 also hard; a big
+	# tree took ~8 dictionary look-ups a cell here; 27 Nov, smoothing frames)
+	var mnx := 1 << 30
+	var mny := 1 << 30
+	var mxx := -(1 << 30)
+	var mxy := -(1 << 30)
+	for k in n:
+		var q: Vector2 = c.ip[k]
+		mnx = mini(mnx, int(q.x))
+		mny = mini(mny, int(q.y))
+		mxx = maxi(mxx, int(q.x))
+		mxy = maxi(mxy, int(q.y))
+	var bw := mxx - mnx + 3
+	var bh := mxy - mny + 3
+	var cell := PackedByteArray()
+	cell.resize(bw * bh)
+	var at := PackedInt32Array()
+	at.resize(n)
+	var nhard := 0
+	for k in n:
+		var q2: Vector2 = c.ip[k]
+		var i := (int(q2.y) - mny + 1) * bw + (int(q2.x) - mnx + 1)
+		at[k] = i
+		var bm: int = c.bg[k] & 255
+		var is_hard := not c.tree or c.fg[k] != 0 or (bm != Defs.LEAF and bm != Defs.SNOW and bm != Defs.CAP)
+		cell[i] = 2 if is_hard else 1
+		if is_hard:
+			nhard += 1
+	var hv := 2 if nhard > 0 else 1         # (a crown with no wood at all collides by all of it)
 	var outline := PackedVector2Array()
 	for k in n:
-		var p: Vector2i = Vector2i(c.ip[k])
-		if not hard.has(p):
+		var i2: int = at[k]
+		if cell[i2] < hv:
 			continue
-		if not hard.has(p + Vector2i(1, 0)) or not hard.has(p - Vector2i(1, 0)) or not hard.has(p + Vector2i(0, 1)) or not hard.has(p - Vector2i(0, 1)):
+		if cell[i2 + 1] < hv or cell[i2 - 1] < hv or cell[i2 + bw] < hv or cell[i2 - bw] < hv:
 			outline.append(c.px[k])
 	var stride := maxi(1, int(ceil(float(outline.size()) / float(MAX_PTS))))
 	c.pts = PackedVector2Array()
@@ -623,10 +665,10 @@ func _rebuild(c: Chunk) -> void:
 	if c.tree:
 		var edge := PackedInt32Array()
 		for k in n:
-			var p2: Vector2i = Vector2i(c.ip[k])
-			if hard.has(p2):
+			var i3: int = at[k]
+			if cell[i3] >= hv:
 				continue
-			if not c.key.has(p2 + Vector2i(1, 0)) or not c.key.has(p2 - Vector2i(1, 0)) or not c.key.has(p2 + Vector2i(0, 1)) or not c.key.has(p2 - Vector2i(0, 1)):
+			if cell[i3 + 1] == 0 or cell[i3 - 1] == 0 or cell[i3 + bw] == 0 or cell[i3 - bw] == 0:
 				edge.append(k)
 		var st2 := maxi(1, int(ceil(float(edge.size()) / float(MAX_SOFT))))
 		for k in range(0, edge.size(), st2):
@@ -648,19 +690,25 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 			pal = _decor[((b >> 16) & 63) % _decor.size()]
 		pal = pal * Color(0.72, 0.72, 0.76)             # background layers are drawn darker
 		pal.a = 1.0
-	if hidden or g.gpu.view_img == null or g._fxb < 1.0:
+	if hidden or g._fxb < 1.0:
 		return pal          # (below high quality, the material's own colour: matching the screen's costs ~10 ms a tree)
-	# (where the cell is on screen: one step from the block's corner, worked out once per block)
+	# (where the cell is on screen: one step from the block's corner, worked out once per block; with the picture's
+	# bytes, its size and the light's cell size, so each cell after the first touches no object: 27 Nov, smoothing
+	# frames, this was most of a ~13 ms frame when a big tree came down)
 	if R.size() < 8:
+		var gv = g.gpu
 		var s0: Vector2 = g.world_to_pic(cell_pos(int(R[0]), int(R[1])))
-		R.append([s0, g.world_to_pic(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_pic(cell_pos(int(R[0]), int(R[1]) + 1)) - s0])
+		R.append([s0, g.world_to_pic(cell_pos(int(R[0]) + 1, int(R[1]))) - s0, g.world_to_pic(cell_pos(int(R[0]), int(R[1]) + 1)) - s0,
+			gv.grid, int(gv.view_off), int(gv.PW), int(gv.PH), int(gv.LS), gv.view_img != null])
 		R.append({})                                    # light by light cell (each covers several pixels)
 	var lin: Array = R[7]
-	var sp: Vector2 = ((lin[0] as Vector2) + (lin[1] as Vector2) * float(k % w) + (lin[2] as Vector2) * float(k / w)).floor()
-	var img: Image = g.gpu.view_img
-	if sp.x < 0 or sp.y < 0 or sp.x >= img.get_width() or sp.y >= img.get_height():
+	if not bool(lin[8]) or int(lin[4]) < 0:
 		return pal
-	var ls: int = g.gpu.LS
+	var sp: Vector2 = ((lin[0] as Vector2) + (lin[1] as Vector2) * float(k % w) + (lin[2] as Vector2) * float(k / w)).floor()
+	var pw: int = lin[5]
+	if sp.x < 0 or sp.y < 0 or sp.x >= pw or sp.y >= int(lin[6]):
+		return pal
+	var ls: int = lin[7]
 	var lk: int = int(sp.x) / ls * 65536 + int(sp.y) / ls
 	var lc: Dictionary = R[8]
 	var lit: Color
@@ -672,7 +720,11 @@ func _colour_of(f: int, b: int, R: Array, k: int, hidden: bool) -> Color:
 	var lum := (lit.r + lit.g + lit.b) / 3.0
 	if lum < 0.25 or lit.a < 0.9:
 		return pal          # (too dark, or in the fog over the unseen underground: its own colour)
-	var s := img.get_pixel(int(sp.x), int(sp.y))
+	var vbytes: PackedByteArray = lin[3]
+	var vo: int = int(lin[4]) + (int(sp.y) * pw + int(sp.x)) * 4
+	if vo + 3 >= vbytes.size():
+		return pal
+	var s := Color(vbytes[vo] / 255.0, vbytes[vo + 1] / 255.0, vbytes[vo + 2] / 255.0)
 	var cap := Color(clampf(s.r / maxf(lit.r, 0.2), 0, 1), clampf(s.g / maxf(lit.g, 0.2), 0, 1), clampf(s.b / maxf(lit.b, 0.2), 0, 1), 1.0)
 	# what's on screen there may not be this cell (sky through a gap in the leaves, a sprite in front):
 	# only trust a colour near the material's own
@@ -729,6 +781,7 @@ func update() -> void:
 	if list.is_empty():
 		return
 	_occ.clear()
+	var settled := 0
 	for c in list:
 		var ax := _axes(c)
 		for v in c.pts:
@@ -743,7 +796,9 @@ func update() -> void:
 		_gs = g.GS
 		_gbase = g.gpu.grid_off + m.slot * _gs * _gs
 		if not g.in_grid(c.pos, c.radius + 4.0) or c.age > MAX_AGE:
+			var ts0 := Time.get_ticks_usec()
 			_settle(c)
+			g.prof_add("fall: settle", Time.get_ticks_usec() - ts0)
 			list.remove_at(ci)
 			continue
 		if c.ip.is_empty():
@@ -752,13 +807,17 @@ func update() -> void:
 		var speed := c.vel.length() + absf(c.omega) * c.radius
 		var steps := clampi(int(ceil(speed / 1.2)), 1, 6)
 		# a crown crushes against the ground once a frame (it rebuilds the whole piece, so not every step)
+		var tc0 := Time.get_ticks_usec()
 		if not c.soft.is_empty() and c.age > 2:
 			_crush(c, _axes(c))
+		g.prof_add("fall: crush", Time.get_ticks_usec() - tc0)
+		tc0 = Time.get_ticks_usec()
 		var v0 := c.vel
 		var p0 := c.pos
 		for s in steps:
 			_step(c, 1.0 / float(steps))
 		_strike(c, v0, c.pos - p0)
+		g.prof_add("fall: moving", Time.get_ticks_usec() - tc0)
 		# at rest: it hasn't gone anywhere for a while (a piece resting on two points jiggles a little
 		# in place; that counts as resting too)
 		var far_end := absf(wrapf(c.phi - c.rest_phi, -PI, PI)) * c.radius
@@ -768,8 +827,13 @@ func update() -> void:
 			c.rest_pos = c.pos
 			c.rest_phi = c.phi
 			c.rest_t = 0
-		if c.rest_t > SLEEP_FRAMES:
+		# (at most two pieces come to rest a frame: a tree's pieces landing together are set down over a few frames
+		# rather than all in one; 27 Nov, smoothing frames)
+		if c.rest_t > SLEEP_FRAMES and settled < 2:
+			settled += 1
+			var ts1 := Time.get_ticks_usec()
 			_settle(c)
+			g.prof_add("fall: settle", Time.get_ticks_usec() - ts1)
 			list.remove_at(ci)
 	g._use_grid(g.player)
 

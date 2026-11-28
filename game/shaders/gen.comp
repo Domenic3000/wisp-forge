@@ -12,6 +12,51 @@ layout(local_size_x = 16, local_size_y = 16) in;
 int SEED;
 bool TV2;        // terrain 2 (P.p[26].x: Defs.terrain, the journey's): new journeys from 26 Nov
 bool TV3;        // terrain 3 (27 Nov, new journeys: abyssal seas, ground far deeper, a cave layer per biome)
+bool TV4;        // terrain 4 (27 Nov, new worlds: broad mountains, scrub on steep slopes, caves into mountainsides)
+
+// How steep the land is at angle th: the rise over 8 cells, in cells a cell (0 level, 1 a 45-degree slope)
+float slopeAt(float th) {
+	float d = 4.0 / RS0;
+	return abs(surfA(th + d).x - surfA(th - d).x) / 8.0;
+}
+
+// Caves into the sides of mountains (terrain 4; user, 27 Nov: "i would like to see caves going into the sides of
+// mountains"): now and then where a tall biome's slope is steep, a tunnel opens in it and runs into the hill (uphill,
+// dipping a little as it goes), wandering, 9-16 tall, ending in a chamber. One mouth at most per SIDE_SLOT columns.
+const float SIDE_SLOT = 260.0;
+bool sideCave(vec2 p, float r, float rs) {
+	if (r >= rs + 0.5 || rs - r > 140.0) return false;
+	float arc = angleOf(p) * RS0;
+	int k0 = int(floor(arc / SIDE_SLOT));
+	for (int k = -1; k <= 1; k++) {
+		int kk = k0 + k;
+		float h = h2(ivec2(kk, 610), SEED);
+		if (h > 0.7) continue;
+		// (the mouth: the first of five places in the slot where tall land is steep)
+		float mx = 0.0, rise = 0.0;
+		vec4 ma = vec4(0.0);
+		bool found = false;
+		for (int j = 0; j < 5 && !found; j++) {
+			mx = (float(kk) + 0.1 + 0.8 * h2(ivec2(kk, 611 + j), SEED)) * SIDE_SLOT;
+			ma = surfA(mx / RS0);
+			if (P.p[8 + 2 * int(ma.y)].y < 26.0) continue;          // (only tall land: mountains and the like)
+			rise = surfA((mx + 4.0) / RS0).x - surfA((mx - 4.0) / RS0).x;
+			found = abs(rise) / 8.0 >= 0.45;                         // (a steep side)
+		}
+		if (!found) continue;
+		float dir = rise > 0.0 ? 1.0 : -1.0;                        // (into the hill: the way the land rises)
+		float x = (arc - mx) * dir;
+		float L = 90.0 + h2(ivec2(kk, 612), SEED) * 90.0;
+		if (x < -6.0 || x > L + 20.0) continue;
+		// (the tunnel's roof starts a little above the mouth's ground, so it opens there; then the hill climbs away
+		// over it far faster than it dips)
+		float rc = ma.x - 5.0 - max(x, 0.0) * 0.14 + (sin(max(x, 0.0) / 23.0 + h * 40.0) - sin(h * 40.0)) * 4.0;
+		float hh = 6.0 + 2.5 * sin(x / 17.0 + h * 9.0) + smoothstep(L - 40.0, L, x) * 9.0 * (1.0 - smoothstep(L + 4.0, L + 20.0, x));
+		if (x > L + 4.0) hh *= 1.0 - smoothstep(L + 4.0, L + 20.0, x);
+		if (abs(r - rc) < hh && hh > 1.0) return true;
+	}
+	return false;
+}
 
 bool onSite(float th, float margin) {
 	int n = int(sites.s[0].x);
@@ -75,6 +120,7 @@ bool caves2(vec2 p, float r, float d, float k, float df) {
 
 bool carvedAt(vec2 p, float r, float rs, float coreR) {
 	float d = rs - r;
+	if (TV4 && r > coreR + 3.0 && siteDist(angleOf(p)) > 40.0 && sideCave(p, r, rs)) return true;
 	if (d < 2.0 || r <= coreR + 3.0) return false;
 	float th = angleOf(p);
 	float entr = fbm(normalize(p) * RS0 / 34.0, SEED + 11, 1);
@@ -818,6 +864,7 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 		if (sp * RS0 < 30.0) continue;
 		if (onSite(tth, 26.0)) continue;
 		if (tb.y > ta.x + 0.5 && !(ft == 14 && tb.y < ta.x + 12.0)) continue; // trunk would be underwater (a mangrove stands in it)
+		if (TV4 && slopeAt(tth) > 0.75) continue;      // (terrain 4: no tree on a slope this steep; scrub grows there)
 		float base = floor(ta.x);
 		vec2 q = vec2(da, r - base);
 		if (q.y > 112.0 || q.y < -18.0) continue;
@@ -863,6 +910,32 @@ uint flora(vec2 p, float r, float th, int floraType, bool inWater, bool rootsOnl
 	vec4 sa = surfA(th);
 	float dy = r - floor(sa.x);
 	if (dy < 0.0) return 0u;
+	// (terrain 4; user, 27 Nov: "trees dont grow on super steep slopes, maybe we could make different foliage for
+	// that"): on a steep slope, low scrub hugging the rock and tufts of hardy grass, in clumps
+	if (TV4 && floraType != 3 && floraType != 11 && floraType != 13 && floraType != 15 && slopeAt(th) > 0.75 && !inWater) {
+		float bw5 = 7.0;
+		int b5 = int(floor(arc / bw5));
+		for (int k = -1; k <= 1; k++) {
+			int bb = b5 + k;
+			float hb = h2(ivec2(bb, 620), SEED);
+			if (hb > 0.45) continue;
+			float cx = (float(bb) + 0.5) * bw5;
+			float by = r - floor(surfA(cx / RS0).x);
+			float rx = 1.6 + hb * 4.0, ry = 1.2 + hb * 2.4;
+			// (a mound measured up from each column's own ground, so a clump hugs the slope and every column of it
+			// stands on the ground: nothing in it hangs loose to fall)
+			float dx = arc - cx;
+			float mh = ry * 1.4 * sqrt(max(0.0, 1.0 - (dx * dx) / (rx * rx))) * (1.0 - nz * 0.3);
+			if (by > -12.0 && mh >= 1.0 && dy < mh) {
+				floraId = 0xC000u | uint(bb + 600000) % 16000u;
+				return M_LEAF;
+			}
+		}
+		floraId = 0u;
+		float hr5 = h2(ivec2(col, 621), SEED);
+		if (hr5 < 0.4 && dy < 1.0 + floor(hr5 * 5.0)) return hr5 < 0.18 ? M_DRYGRASS : M_LEAF;
+		return 0u;
+	}
 	if (floraType == 1 || floraType == 2 || floraType == 4 || floraType == 7) {
 		// bushes (and young pines in pine country); the jungle's are bigger and everywhere
 		bool jng = floraType == 7;
@@ -1156,6 +1229,7 @@ void main() {
 	SEED = int(P.p[0].w);
 	TV2 = P.p[26].x > 1.5;
 	TV3 = P.p[26].x > 2.5;
+	TV4 = P.p[26].x > 3.5;
 	vec2 p = cellCenter(s, y, x);
 	float r = length(p);
 	float th = angleOf(p);

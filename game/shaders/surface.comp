@@ -47,6 +47,23 @@ void main() {
 		// (rg averages 0.77: centred there, so the ridges stand up from the ground's mean instead of sinking it)
 		rs = RS0 - off - swell - n1b * relief * 3.8 * (1.0 - 0.45 * flt) - (rg - 0.77) * relief * 1.4 * (1.0 - 0.7 * flt)
 			- n2b * amp * 0.8 * (1.0 - 0.85 * flt) - n3 * min(amp + 2.0, 12.0) * 0.3 * (1.0 - 0.8 * flt);
+		if (P.p[26].x > 3.5) {
+			// terrain 4 (worlds made from 27 Nov on; user: "some mountain areas that go up and down a bit too aggresively
+			// ... i wanted more height variation in the sense of higher mountains and lower valleys but over a bit larger
+			// distances"): the height moves out of the short hills into massifs ~900 across and ranges ~220, with broad
+			// ridgelines ~260 across; tall biomes get peaks about half again higher and valleys far deeper, all of it
+			// over longer slopes; the low biomes stay gentle. Held inside the surface shell.
+			float nm = fbm(dir * RS0 / 900.0, seed + 44, 2) - 0.5;
+			float n1c = fbm(dir * RS0 / 220.0, seed + 1, 3) - 0.5;
+			float rgB = 1.0 - abs(fbm(dir * RS0 / 260.0, seed + 45, 3) * 2.0 - 1.0);
+			swell *= 1.3;                 // (a bog's or lava lake's level follows it, as before)
+			rs = RS0 - off - swell - nm * relief * 4.2 - n1c * relief * 2.3 * (1.0 - 0.45 * flt)
+				- (rgB - 0.7) * relief * 1.8 * (1.0 - 0.6 * flt) - n2b * amp * 0.3 * (1.0 - 0.85 * flt)
+				- n3 * min(amp + 2.0, 12.0) * 0.25 * (1.0 - 0.8 * flt);
+			// (held inside the surface shell, rounding off rather than flattening: peaks top out near RS0 + 290)
+			if (rs > RS0 + 230.0) rs = RS0 + 230.0 + 60.0 * tanh((rs - RS0 - 230.0) / 60.0);
+			if (rs < RS0 - 240.0) rs = RS0 - 240.0 - 60.0 * tanh((RS0 - 240.0 - rs) / 60.0);
+		}
 	} else {
 		float n1 = fbm(dir * RS0 / 110.0, seed + 1, 3) - 0.5;
 		float n2 = fbm(dir * RS0 / 26.0, seed + 2, 2) - 0.5;

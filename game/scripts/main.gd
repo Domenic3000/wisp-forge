@@ -182,6 +182,7 @@ class Enemy extends Body:
 	var aim := Vector2.ZERO    # a bat's dive heading
 	var blink_cd := 0
 	var door_t := 0            # frames waiting for a door it opened to swing out of the way
+	var shove_f := -100        # the frame it last kicked loose powder out of its way (_shove_powder)
 	# a biome guardian (scripts/boss_ai.gd)
 	var move := ""             # the move under way ("charge", "spit2"...)
 	var mi := -1               # (which move came last)
@@ -948,23 +949,17 @@ func _process(delta: float) -> void:
 	var menu_up := menu_paused()
 	if (state == "play" or state == "dead") and not menu_up:
 		played += delta
-		_tick_acc += minf(delta, 0.1)
-		steps = mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
-		_tick_acc = minf(_tick_acc - steps / 60.0, 1.0 / 60.0)
+		steps = _ticks_for(delta)
 		for k in steps:
 			_tick()
 	elif state == "forge" and not menu_up:
 		# (the world waits while the forge is open; the summoned forge keeps its own clock)
-		_tick_acc += minf(delta, 0.1)
-		var fsteps := mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
-		_tick_acc = minf(_tick_acc - fsteps / 60.0, 1.0 / 60.0)
+		var fsteps := _ticks_for(delta)
 		for k3 in fsteps:
 			_forge_tick()
 	elif state == "station":
 		# (the world waits while a station's panel is open, but the stations keep working: you watch it)
-		_tick_acc += minf(delta, 0.1)
-		var wsteps := mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
-		_tick_acc = minf(_tick_acc - wsteps / 60.0, 1.0 / 60.0)
+		var wsteps := _ticks_for(delta)
 		for k2 in wsteps:
 			workshops.work_all()
 		ui.update_station()
@@ -1004,6 +999,21 @@ func _process(delta: float) -> void:
 	perf_cpu_ms = lerpf(perf_cpu_ms, (Time.get_ticks_usec() - t0 - gpu.wait_us) / 1000.0, 0.1)
 	perf_wait_ms = lerpf(perf_wait_ms, gpu.wait_us / 1000.0, 0.1)
 	perf_steps = lerpf(perf_steps, float(steps), 0.1)
+
+## How many 60-a-second ticks this frame runs. (27 Nov, smoothing frames: the user's "smooth things across frames")
+## A frame that took about a tick's time (within PACE_SNAP of 1/60 s) counts as exactly one: the time measured between
+## frames wobbles by a millisecond or so, and at 60 fps that wobble used to land a frame on 0 ticks now and then and
+## the next on 2 (the world stood still, then jumped: a stutter). Steadier, one tick a frame; a 59.94 Hz screen runs
+## the world 0.1% slower, unseen. Longer frames still catch up (up to 4 ticks), and faster screens are as before.
+const PACE_SNAP := 0.002
+func _ticks_for(delta: float) -> int:
+	var dt := minf(delta, 0.1)
+	if absf(dt - 1.0 / 60.0) < PACE_SNAP:
+		dt = 1.0 / 60.0
+	_tick_acc += dt
+	var n := mini(int(floor(_tick_acc * 60.0 + 0.001)), 4)
+	_tick_acc = minf(_tick_acc - n / 60.0, 1.0 / 60.0)
+	return n
 
 ## Where a mage's collision grid goes: near the mage, but locked to the planet's cell lattice
 ## (a whole number of radius, a column edge). A grid centred exactly on the mage resampled the
@@ -1542,7 +1552,7 @@ func _set_door(d: Dictionary, open: bool, opener := Vector2.ZERO) -> void:
 		var dc: Array = d["cells"]
 		for k in dc.size():
 			if int(dc[k]) >= 0:
-				data[k] = Defs.WOODDOOR | 0xff00 | 0x10000 | 0x20000 | 0x8000000 | ((int(dc[k]) & 255) << 19)
+				data[k] = Defs.WOODDOOR | 0xff00 | 0x10000 | 0x20000 | 0x8000000 | 0x10000000 | ((int(dc[k]) & 255) << 19)
 		stamps.append({"x0": posmod(int(d["col"]), Defs.NS), "y0": int(d["row"]), "w": w, "h": int(d["h"]), "data": data, "ax": _door_ax(d), "aw": int(d.get("aw", 1))})
 	audio.play("door_open" if open else "door_close", d["pos"])
 
@@ -2385,6 +2395,39 @@ func _rest_on(x: float, y: float, st: float, w: float, h: float) -> float:
 		return top
 	return y
 
+## what fills a box: 0 nothing solid, 1 only loose powder (sand, snow, gravel, ash...), 2 something firm
+func _box_powder(x: float, y: float, w: float, h: float) -> int:
+	var any := 0
+	for yy in range(int(floor(y)), int(floor(y + h - 0.001)) + 1):
+		for xx in range(int(floor(x)), int(floor(x + w - 0.001)) + 1):
+			if gsolid(xx, yy):
+				if Defs.KIND[gtype(xx, yy)] != Defs.K_POWDER:
+					return 2
+				any = 1
+	return any
+
+## (27 Nov; user: "snow and sand and loose solids like that block some doorways and make it so the skeletons get
+## stuck since they cant fit through the doors on the buildings anymore") a walking foe held up by loose powder kicks
+## it out of its way: what's ahead of it, if that's only powder, or else (its head under a lintel, say, standing on a
+## drift) the powder under its feet ahead, so it sinks down to fit. brush.comp mode 12 (never what was built).
+const SHOVE_EVERY := 8
+func _shove_powder(e: Enemy, x: float, y: float, st: float) -> void:
+	if frame - e.shove_f < SHOVE_EVERY:
+		return
+	var bx := x + st + signf(st) * 1.0
+	var what := _box_powder(bx, y, e.w, e.h)
+	var by := y
+	var bh := e.h
+	if what != 1:
+		if not e.on_ground or _box_powder(bx, y + e.h, e.w, 4.0) != 1:
+			return
+		by = y + e.h - 1.0
+		bh = 5.0
+		what = 1
+	e.shove_f = frame
+	var c := from_grid(Vector2(bx + e.w * 0.5, by + bh * 0.5))
+	brushes.append([c, maxf(e.w, bh) * 0.5 + 1.0, 12, 0, 0, 0, 0])
+
 func box_count(x: float, y: float, w: float, h: float, m: int) -> int:
 	var n := 0
 	var x0 := int(floor(x))
@@ -2438,6 +2481,8 @@ func move_body(e: Body) -> void:
 			if not climbed:
 				e.vx = 0.0
 				e.hit_wall = true
+				if e is Enemy and walker:
+					_shove_powder(e as Enemy, x, y, st)
 				if box_count(x + st, y, e.w, e.h, Defs.WOODDOOR) > 0:
 					if e is Mage:
 						_door_bump(e)
@@ -2814,8 +2859,8 @@ func _tick() -> void:
 	hurt_flash *= 0.9
 	if frame % 60 == 30 and not testing_no_learn():
 		_learn_from_finds()
-	if frame % 3600 == 0:
-		save_game()
+	if frame % 3600 == 1800:
+		save_game()       # (half a minute off the autosave's start: the two don't land on one frame; 27 Nov, smoothing frames)
 	if frame % (3600 * clampi(int(settings["autosave"]), 1, 30)) == 0:
 		_autosave_begin()
 
@@ -4139,6 +4184,25 @@ func _spawn_guardians() -> void:
 		we.tether = float(wl["tether"])                 # (it stays in its hall)
 		we.ceil = float(wl["ceil"])
 
+## (27 Nov: snow and sand drifting into open doorways kept the skeletons out, the way-finding taking a doorway full of
+## powder for a wall) now and then an open doorway with a door-opening foe about has its loose powder swept out (the
+## door brush, opening: brush.comp mode 9 clears what isn't built; shutting it fills over powder too)
+func _sweep_doorways() -> void:
+	var n := 0
+	for d in doors:
+		if not bool(d["open"]):
+			continue
+		var dp: Vector2 = d["pos"]
+		for e in enemies:
+			if not e.dead and e.d.get("ai", {}).get("doors", false) and (e.pos as Vector2).distance_squared_to(dp) < 160.0 * 160.0:
+				var hw := float(d["w"]) * 0.5
+				var hh := float(d["h"]) * 0.5
+				brushes.append([dp, sqrt(hw * hw + hh * hh) + 1.5, 9, 0.0, hw, hh, 0.0, 3])
+				n += 1
+				break
+		if n >= 2:
+			return
+
 ## How high a walker must climb to get past the wall in front of it (cells), or -1 if it is
 ## taller than `reach`. Uses the collision grid currently in use.
 func _wall_height(e: Enemy, dir: float, reach: float) -> int:
@@ -4213,6 +4277,8 @@ const GIVE_UP_D := 520.0
 const GIVE_UP_T := 420
 
 func _update_enemies() -> void:
+	if frame % 40 == 17:
+		_sweep_doorways()
 	for k in range(enemies.size() - 1, -1, -1):
 		var e: Enemy = enemies[k]
 		if e.dead:
@@ -9235,6 +9301,7 @@ func start_game(use_save: bool) -> void:
 		Defs.world_seed = test_seed if testing else 1 + randi() % 0xFFFFFE
 		Defs.legacy_biomes = {}                  # (a new journey: every planet grows today's biomes)
 		Defs.small_worlds = {}                   # (and every world at today's size)
+		Defs.t3_worlds = {}                      # (and today's terrain on every world)
 		Defs.terrain = Defs.TERRAIN_SET          # (and today's terrain)
 		Defs._planet_cache.clear()
 		space.load_state({})
@@ -9365,8 +9432,8 @@ func _make_world(index: int, arriving: bool) -> void:
 	if weather != null:
 		weather.clear()
 	wind = 0.0
-	if absf(float(planet["radius"]) - Defs.RS0) > 0.5:
-		Defs.set_geometry(float(planet["radius"]))
+	if absf(float(planet["radius"]) - Defs.RS0) > 0.5 or absf(Defs.atmo_of(planet) - Defs.ATMO) > 0.5:
+		Defs.set_geometry(float(planet["radius"]), Defs.atmo_of(planet))
 		gpu.cleanup()
 		var ok := false
 		if arriving:
@@ -10396,7 +10463,7 @@ func save_game() -> void:
 		"max_hp": max_hp, "max_mana": max_mana, "mana_regen": mana_regen, "heat_ward": heat_ward, "items": items, "mat": mat, "cnt": 2, "start": 1, "learned": learned.keys(),
 		"furn": player.furn, "saved": Time.get_unix_time_from_system(), "played": played, "space": space.save_state(),
 		"bset": Defs.BIOME_SET, "legacy_biomes": Defs.legacy_biomes.keys(), "tset": Defs.terrain,
-		"gset": Defs.GROWTH_SET, "small_worlds": Defs.small_worlds.keys()}
+		"gset": Defs.GROWTH_SET, "small_worlds": Defs.small_worlds.keys(), "t4set": Defs.T4_SET, "t3_worlds": Defs.t3_worlds.keys()}
 	var f := FileAccess.open(_save_path(), FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(d))
@@ -10439,6 +10506,17 @@ func _apply_save(s: Dictionary) -> void:
 			for gfn in gd.get_files():
 				if gfn.begins_with("world_") and gfn.ends_with(".wfw"):
 					Defs.small_worlds[int(gfn.trim_prefix("world_").trim_suffix(".wfw"))] = true
+	# (terrain 4, 27 Nov: the worlds a journey made before keep their ground; Defs.terrain_of)
+	Defs.t3_worlds = {}
+	if int(s.get("t4set", 0)) >= Defs.T4_SET:
+		for ti in s.get("t3_worlds", []):
+			Defs.t3_worlds[int(ti)] = true
+	else:
+		var td := DirAccess.open(_save_dir())
+		if td != null:
+			for tfn in td.get_files():
+				if tfn.begins_with("world_") and tfn.ends_with(".wfw"):
+					Defs.t3_worlds[int(tfn.trim_prefix("world_").trim_suffix(".wfw"))] = true
 	Defs._planet_cache.clear()
 	var sps = s.get("space", {})
 	space.load_state(sps if sps is Dictionary else {})

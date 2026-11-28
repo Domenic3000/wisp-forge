@@ -346,6 +346,7 @@ func _test_worlds() -> void:
 		"%s (%s, radius %.0f): %s; %d structures; guardians wanted %s, callable %s; made in %d ms (%s)" % [wd_pl["name"], wd_pl["kind"], float(wd_pl["radius"]),
 		wd_pl["desc"], g.builds.infos.size(), str(wd_want), str(wd_lb), wd_ms, str(g.gen_times)])
 	await _test_terrain3()
+	await _test_terrain4()
 	Defs.world_seed = 0
 	g._delete_worlds()
 	g.test_god = wd_god0
@@ -476,6 +477,175 @@ func _test_terrain3() -> void:
 	Defs.terrain = t_keep
 	_ok("terrain 3: wider biomes, deep soil, a cave layer of the biome's own rock and plants, abyssal seas", bad.is_empty(),
 		("%.1f biomes a planet; soil %d cells deep (middle); cave layer %.0f%% themed rock, %d plants; the sea %.0f deep at most, %.0f%% past 300 (pictures cave_layer.png, abyss.png)" % [nb, soil_mid, th_f * 100.0, plants, deepest, deep_f * 100.0]) if bad.is_empty() else "; ".join(bad))
+
+## Terrain 4 (27 Nov; user: "some mountain areas that go up and down a bit too aggresively ... i wanted more height
+## variation in the sense of higher mountains and lower valleys but over a bit larger distances than that, and also if
+## we could make it so that trees dont grow on super steep slopes, maybe we could make different foliage for that. also
+## i would like to see caves going into the sides of mountains. you might have to raise the upper atmosphere a bit too";
+## and "snow and sand and loose solids like that block some doorways and make it so the skeletons get stuck"): the test
+## planet made the old way (terrain 3) and the new (4) from the same seed: its mountains' short-scale roughness,
+## their height range, the sky's height, no trunks on the steepest slopes but scrub, voids just under steep mountain
+## ground (the side caves); then a doorway full of sand swept out with a skeleton about, and a door shut over sand.
+func _test_terrain4() -> void:
+	var bad := []
+	var t4_keep: int = Defs.terrain
+	var t4_god: bool = g.test_god
+	g.test_god = true
+	Defs.terrain = 3
+	Defs.world_seed = 0
+	var t4_mi: int = (Defs.make_planet_for(0, 0)["biomes"] as Array).find("mountain")
+	var t4_m := []
+	for t4_way in [3, 4]:
+		Defs.t3_worlds = {0: true} if t4_way == 3 else {}
+		Defs._planet_cache.clear()
+		g._delete_worlds()
+		g._enter_planet(0)
+		await _frames(20)
+		var bs = g.builds
+		var sf: PackedFloat32Array = bs.surf
+		var n0: int = bs.N0
+		var hs := []
+		var curv := 0.0
+		var cn := 0
+		var steep := []
+		for x in n0:
+			if int(sf[x * 8 + 1]) != t4_mi:
+				continue
+			var h0: float = sf[x * 8]
+			hs.append(h0)
+			var hl: float = sf[posmod(x - 12, n0) * 8]
+			var hr: float = sf[posmod(x + 12, n0) * 8]
+			curv += absf(hl + hr - 2.0 * h0)
+			cn += 1
+			var sl: float = absf(sf[posmod(x + 4, n0) * 8] - sf[posmod(x - 4, n0) * 8]) / 8.0
+			if sl > 1.0:
+				steep.append(x)
+		hs.sort()
+		var rng: float = (float(hs[int(hs.size() * 0.97)]) - float(hs[int(hs.size() * 0.03)])) if hs.size() > 40 else 0.0
+		var top: float = float(hs[hs.size() - 1]) - Defs.RS0 if not hs.is_empty() else 0.0
+		# trunks and scrub on the steepest columns (the plants are in the back layer), up to 80 of them
+		var trunks := 0
+		var scrub := 0
+		var looked := 0
+		var stp: int = maxi(1, steep.size() / 80)
+		for k in range(0, steep.size(), stp):
+			var c: int = steep[k]
+			var gr: int = bs.ground_row(c)
+			var rr: Dictionary = g.gpu.read_rect(c, gr - 6, 1, 6)
+			var tr := false
+			var sc := false
+			for v in rr["bg"]:
+				var b: int = int(v) & 255
+				tr = tr or b == Defs.WOOD
+				sc = sc or b == Defs.LEAF or b == Defs.DRYGRASS
+			for v2 in rr["fg"]:
+				var f: int = int(v2) & 255
+				sc = sc or f == Defs.LEAF or f == Defs.DRYGRASS
+			trunks += 1 if tr else 0
+			scrub += 1 if sc else 0
+			looked += 1
+		# voids 6-20 under the ground of steep-ish mountain columns (every 3rd)
+		var voids := 0
+		var void_at := -1
+		for x2 in range(0, n0, 3):
+			if int(sf[x2 * 8 + 1]) != t4_mi:
+				continue
+			if absf(sf[posmod(x2 + 4, n0) * 8] - sf[posmod(x2 - 4, n0) * 8]) / 8.0 < 0.3:
+				continue
+			var gr2: int = bs.ground_row(x2)
+			var rv: Dictionary = g.gpu.read_rect(x2, gr2 + 6, 1, 14)
+			var air := 0
+			for v3 in rv["fg"]:
+				if int(v3) & 255 == 0:
+					air += 1
+			if air >= 4:
+				voids += 1
+				if void_at < 0:
+					void_at = x2
+		t4_m.append({"curv": curv / maxf(1.0, float(cn)), "range": rng, "top": top, "steep": steep.size(), "looked": looked,
+			"trunks": trunks, "scrub": scrub, "voids": voids, "atmo": Defs.ATMO, "rtop": Defs.R_TOP - Defs.RS0, "terrain": int(g.planet.get("terrain", 0))})
+		if t4_way == 4 and void_at >= 0:
+			var vp: Vector2 = _cell_pos(void_at, bs.ground_row(void_at) + 12)
+			g.player.pos = vp
+			g.player.vx = 0.0
+			g.player.vy = 0.0
+			g.cam_c = vp
+			await _frames(40)
+			_shot("side_cave.png")
+	var a3: Dictionary = t4_m[0]
+	var a4: Dictionary = t4_m[1]
+	if t4_mi < 0:
+		bad.append("the test planet has no mountains")
+	if int(a3["terrain"]) != 3 or int(a4["terrain"]) != 4:
+		bad.append("the worlds were made on terrain %d and %d (want 3, 4)" % [a3["terrain"], a4["terrain"]])
+	if float(a4["curv"]) > float(a3["curv"]) * 0.6:
+		bad.append("the mountains are still rough at short scale (%.2f against %.2f)" % [a4["curv"], a3["curv"]])
+	if float(a4["range"]) < float(a3["range"]) * 1.05:
+		bad.append("the mountains' heights span %.0f (terrain 3: %.0f)" % [a4["range"], a3["range"]])
+	if float(a4["top"]) > 300.0:
+		bad.append("a peak %.0f over the mean surface (the surface shell ends at 330)" % a4["top"])
+	if absf(float(a3["atmo"]) - 496.0) > 0.5 or absf(float(a4["atmo"]) - 640.0) > 0.5 or absf(float(a4["rtop"]) - 640.0) > 0.5:
+		bad.append("the sky: %.0f over terrain 3, %.0f (top %.0f) over terrain 4" % [a3["atmo"], a4["atmo"], a4["rtop"]])
+	if int(a4["looked"]) > 0 and float(a4["trunks"]) > float(a4["looked"]) * 0.06:
+		bad.append("%d of %d of the steepest columns have a tree trunk" % [a4["trunks"], a4["looked"]])
+	if int(a4["looked"]) >= 5 and float(a4["scrub"]) < float(a4["looked"]) * 0.15:
+		bad.append("scrub on only %d of %d of the steepest columns" % [a4["scrub"], a4["looked"]])
+	if int(a4["voids"]) < int(a3["voids"]) + 20:
+		bad.append("no caves into the mountainsides (%d hollow columns under steep ground, terrain 3: %d)" % [a4["voids"], a3["voids"]])
+	# ---- a doorway full of sand, a skeleton about: swept; a door shut over sand fills its doorway; opened again, it's whole
+	var door_note := "no door near"
+	var dk: Dictionary = {}
+	var dbest := 1e18
+	for d in g.doors:
+		var dd: float = (d["pos"] as Vector2).distance_squared_to(g.player.pos)
+		if dd < dbest:
+			dbest = dd
+			dk = d
+	if not dk.is_empty():
+		var dp: Vector2 = dk["pos"]
+		_go(dp + dp.normalized() * 40.0)
+		await _frames(20)
+		g._set_door(dk, true)
+		await _frames(6)
+		var dw: int = int(dk["w"])
+		var dh: int = int(dk["h"])
+		var sand := PackedInt32Array()
+		sand.resize(dw * dh)
+		sand.fill(Defs.SAND | 0xFF00 | 0x10000)
+		var dst := {"x0": posmod(int(dk["col"]), Defs.NS), "y0": int(dk["row"]), "w": dw, "h": dh, "data": sand, "ax": g._door_ax(dk), "aw": int(dk.get("aw", 1))}
+		var count_in := func(m: int) -> int:
+			var rr2: Dictionary = g.gpu.read_rect(int(dk["col"]), int(dk["row"]), dw, dh, g._door_ax(dk), int(dk.get("aw", 1)))
+			var n := 0
+			for v4 in rr2["fg"]:
+				if int(v4) & 255 == m:
+					n += 1
+			return n
+		g.stamps.append(dst.duplicate())
+		await _frames(6)
+		var sand0: int = count_in.call(Defs.SAND)
+		var sk = g.spawn_enemy("skeleton", dp + g.basis_r(atan2(dp.y, dp.x)) * 60.0 + dp.normalized() * 6.0)
+		await _frames(80)
+		var sand1: int = count_in.call(Defs.SAND)
+		g.enemies.erase(sk)
+		await _frames(4)
+		g.stamps.append(dst.duplicate())
+		await _frames(6)
+		g._set_door(dk, false)
+		await _frames(6)
+		var shut_n: int = count_in.call(Defs.WOODDOOR)
+		g._set_door(dk, true)
+		await _frames(6)
+		var still: bool = g.doors.has(dk)
+		door_note = "a doorway %dx%d: %d sand in it, %d after a skeleton came by; shut over sand %d of %d door cells, opened again it's %s" % [dw, dh, sand0, sand1, shut_n, dw * dh, "whole" if still else "gone"]
+		# (sand that spilled out beside the door slides back in between sweeps: most of it gone is the check)
+		if sand0 < dw * dh / 3 or sand1 * 4 > sand0 or shut_n < dw * dh * 9 / 10 or not still:
+			bad.append(door_note)
+	Defs.terrain = t4_keep
+	Defs.t3_worlds = {}
+	g.test_god = t4_god
+	_ok("terrain 4: broad mountains, a higher sky, scrub not trees on steep slopes, caves into mountainsides; doorways swept of sand", bad.is_empty(),
+		("mountains: roughness %.2f (was %.2f), heights span %.0f (was %.0f), top %.0f; sky %.0f (was %.0f); steepest columns: %d trunks, %d scrub of %d; hollow under steep ground %d (was %d); %s (picture side_cave.png)" % [
+		a4["curv"], a3["curv"], a4["range"], a3["range"], a4["top"], a4["atmo"], a3["atmo"], a4["trunks"], a4["scrub"], a4["looked"], a4["voids"], a3["voids"], door_note]) + ("" if bad.is_empty() else " -- " + "; ".join(bad)))
 
 ## Stamps land where they're meant, whatever their anchor (a default one near you, one given, of any
 ## width): `wrapc` once took % of negative numbers, which only came out right on a planet a power of
@@ -660,9 +830,10 @@ func _test_far_biomes() -> void:
 		for fb_sgn in [1, -1]:
 			var fb_c: int = fb_c0 + fb_sgn * fb_k
 			if fb_col < 0:
-				# (a stretch of open sea at least 30 deep, 60 across: not the slope of an island)
+				# (a stretch of open sea at least 30 deep, from 100 one way to 30 the other: the swimmers are let go
+				# along it, not on the slope of an island)
 				var fb_deep := true
-				for fb_q in range(-30, 31, 6):
+				for fb_q in range(-100, 31, 6):
 					if g.builds.ground_row(fb_c + fb_q) - g.builds.water_row(fb_c + fb_q) < 30:
 						fb_deep = false
 						break

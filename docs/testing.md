@@ -18,7 +18,7 @@ Notes for development sessions on this part of the game. The rules that apply ev
   stops at the first error per file (the expected Defs one), so it can't catch later parse errors in tests.gd:
   watch for a local that reuses a name already declared in the same function (lambdas included).
 - Running one test section: a non-empty `saves/test_only.txt` naming it ("climb", "nav", "guardians", "hearts", "newbiomes", "wardens", "biomes",
-  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "hand", "audio", "inworld", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "stations", "fuel", "ships" (also "shipyard" or "pocket"), "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "star", "void", "lights", "guards", "pursuit", "cores", "fire", "loop", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
+  "worlds", "creatures", "ecology", "fog", "start", "recipes", "sky", "gear", "towns", "vfx", "ui", "speech", "bench", "stairs", "workshops", "crafting", "harvest", "hand", "audio", "inworld", "galaxy", "remove", "spawns", "newgame", "indoors", "backdrop", "wrecks", "pirates", "outposts", "stations", "fuel", "ships" (also "shipyard" or "pocket"), "cargo", "voidlife", "spacebench", "quest", "abyss", "giant", "star", "void", "lights", "guards", "pursuit", "cores", "fire", "loop", "terrain4", "stampdiag" or "mines": a print of each mine the soundness pass cut, with where) runs just that
   section after the planet is made (25-50 s; "guardians" also prints a `[guardian]` trace every 15 frames); empty runs
   everything. Leave it empty when done. A section that can run alone is its own function (`_test_climb`,
   `_test_guardians`) called from `run()` in its usual place.
@@ -69,3 +69,9 @@ Notes for development sessions on this part of the game. The rules that apply ev
   so they don't spear the foes other checks set up near a village; `_test_guards` turns them on. A done request
   doesn't grow the village during `_test_requests` (`no_grow`). "foes appear out of sight" clears `quiet_until`
   first (an area an earlier check cleared stays quiet 90 s, and the later checks shifted that check into it).
+- Terrain 4 (27 Nov): the test planet (world 0 of the classic system) is made on terrain 4 now, like every new world.
+  Its layout changed, so "F opens a chest" takes any intact chest away from the deep places when none is near the
+  ground (and says what it looked at when none is found); "trees stand" allows 2% of a biome's plant cells to go in
+  200 frames (marsh and savanna lose ~1.2% as the weather and the wild go on; the old bug of trees falling apart was far
+  more); Thalassa's swimmers are let go along 130 columns of open sea, all checked deep. Seen failing now and then on
+  full runs: build-mode walls (also before), the solar flare's planet shadow (the orbits' timing).

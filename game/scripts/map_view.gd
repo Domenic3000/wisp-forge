@@ -328,7 +328,7 @@ func _draw_space() -> void:
 			for i in Defs.planets_of(r):
 				var psp := to_screen(Defs.planet_g(i))
 				var pl: Dictionary = Defs.make_planet(i)
-				var rad := clampf((float(pl["radius"]) + Defs.ATMO) / gz, 2.5, 14.0)
+				var rad := clampf((float(pl["radius"]) + Defs.atmo_of(pl)) / gz, 2.5, 14.0)
 				var tex: Texture2D = g.space.disc_texture(i)
 				var dr := rad * 1.25
 				draw_texture_rect(tex, Rect2(psp - Vector2(dr, dr), Vector2(dr, dr) * 2.0), false)

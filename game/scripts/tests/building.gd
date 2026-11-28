@@ -1739,7 +1739,7 @@ func _test_lights() -> void:
 	g._wisp_lights()
 	var wl_light := 0
 	for L2 in g.lights:
-		if absf(float(L2[1]) - g.WISPLIGHT_R) < 8.0:
+		if absf(float(L2[1]) - g.WISPLIGHT_R) <= g.WISPLIGHT_R * 0.11:     # (it pulses, 90-100% of its reach)
 			wl_light += 1
 	g._wisplight(m, wp + Vector2(2, 0), 10.0)
 	var n2: int = (g.planet_state["wisplights"] as Array).size()

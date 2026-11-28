@@ -154,7 +154,9 @@ const MAT_NAMES := {
 # structures anchor on themselves; things placed or picked up near you anchor on `anchor_c`, your
 # column (main sets it every tick), and so does `Build.cell_pos`/`cell_of`. In the surface shell
 # the mapping is just the surface column, whatever the anchor.
-const ATMO := 496.0          # the atmosphere's height above the mean surface
+var ATMO := 496.0            # the atmosphere's height above the mean surface (this planet's: `set_geometry`)
+const ATMO_BASE := 496.0
+const ATMO_HIGH := 640.0     # (terrain 4's worlds: taller peaks, the upper weather higher, more sky over it)
 const ORBIT_ROWS := 256      # the orbit band's height: room to build into space
 const R_IN := 80.0           # the planet's heart (not simulated)
 const SURF_HALF := 330.0     # the surface shell reaches this far above and below the mean surface
@@ -346,8 +348,9 @@ func _init() -> void:
 
 ## Lays out the shells for a planet of mean surface radius `rs`. The surface shell gets as many
 ## columns as fit square cells at the surface (a multiple of 64, so every shell inward halves evenly).
-func set_geometry(rs: float) -> void:
+func set_geometry(rs: float, atmo := ATMO_BASE) -> void:
 	RS0 = rs
+	ATMO = atmo
 	R_TOP = rs + ATMO
 	R_SPACE = R_TOP + ORBIT_ROWS
 	ROWS = int(R_TOP - R_IN)
@@ -1511,7 +1514,22 @@ func make_planet(i: int) -> Dictionary:
 
 ## the cache's key for planet i of system ws (its biome set and its terrain set: a planet grows differently by both)
 func planet_key(ws: int, i: int) -> String:
-	return "%d:%d:%s:%d:%s" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", 3 if terrain >= 3 else 2, "s" if small_worlds.has(i) else "g"]
+	return "%d:%d:%s:%d:%s" % [ws, i, "v1" if legacy_biomes.has(i) else "v2", terrain_of(i), "s" if small_worlds.has(i) else "g"]
+
+## Terrain 4 (27 Nov; user: "higher mountains and lower valleys but over a bit larger distances ... trees dont grow on
+## super steep slopes ... caves going into the sides of mountains. you might have to raise the upper atmosphere"): on a
+## journey of terrain 3, every world first made from now on; one made before keeps terrain 3 (`t3_worlds`: the worlds
+## with a world file when its save was first loaded after this came in; saved as "t3_worlds", "t4set"). Exotic worlds
+## keep the journey's.
+const T4_SET := 1
+var t3_worlds := {}
+func terrain_of(i: int) -> int:
+	if terrain >= 3 and i < EXOTIC and not t3_worlds.has(i):
+		return 4
+	return mini(terrain, 3) if terrain >= 3 else terrain
+## a planet's atmosphere height (terrain 4's is higher)
+func atmo_of(pl: Dictionary) -> float:
+	return float(pl.get("atmo", ATMO_BASE))
 
 ## Bigger worlds (27 Nov; user: "make the worlds larger still while not making it to hard to find key quest and
 ## progression enemies"; chose 1.5x with the wisp's guidance): a world first made from now on is WORLD_GROWTH times as
@@ -1527,7 +1545,10 @@ func growth_of(i: int) -> float:
 func make_planet_for(ws: int, i: int) -> Dictionary:
 	var key := planet_key(ws, i)
 	if not _planet_cache.has(key):
-		_planet_cache[key] = _exotic_planet(ws, i) if i >= EXOTIC else (_classic_planet(i) if ws == 0 else _grown_planet(ws, i))
+		var npl: Dictionary = _exotic_planet(ws, i) if i >= EXOTIC else (_classic_planet(i) if ws == 0 else _grown_planet(ws, i))
+		npl["terrain"] = terrain_of(i)
+		npl["atmo"] = ATMO_HIGH if terrain_of(i) >= 4 else ATMO_BASE
+		_planet_cache[key] = npl
 	return (_planet_cache[key] as Dictionary).duplicate(true)
 
 func _classic_planet(i: int) -> Dictionary:

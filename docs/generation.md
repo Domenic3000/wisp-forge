@@ -155,6 +155,28 @@ Notes for development sessions on this part of the game. The rules that apply ev
   terrain 3: the soil's depth at 12 columns, the cave layer's themed rock and plants (picture cave_layer.png); an
   ocean world made: its deepest water, the share past 300, a shelf (picture abyss.png).
 
+## Terrain 4 (27 Nov; user: "there are some mountain areas that go up and down a bit too aggresively in the mountain areas. i wanted more height variation in the sense of higher mountains and lower valleys but over a bit larger distances than that, and also if we could make it so that trees dont grow on super steep slopes, maybe we could make different foliage for that. also i would like to see caves going into the sides of mountains. you might have to raise the upper atmosphere a bit too."; new worlds only)
+- Per world, not per journey: on a journey of terrain 3, every world first made from now on is terrain 4
+  (`Defs.terrain_of(i)`); the worlds that had a world file when the save was first loaded after this came in keep
+  terrain 3 (`Defs.t3_worlds`, saved as "t3_worlds" with "t4set"; a new journey clears it). Exotic worlds keep the
+  journey's. The planet dict carries "terrain" and "atmo"; gpu_world `build_surface` sends the planet's terrain in
+  P[26].x (surface.comp and gen.comp's TV4 is > 3.5); `planet_key` includes it.
+- Broad mountains (surface.comp): the height moves out of the short hills (n1b at /120, n2b at /24) into massifs
+  ~900 across, ranges ~220 and broad ridgelines ~260; tall biomes about half again higher with deeper valleys, the
+  low biomes as gentle as before. Rounded off (tanh) inside the surface shell: peaks top out near RS0 + 290.
+- A higher sky: `Defs.ATMO` is per planet now (`set_geometry(rs, atmo)`, `Defs.atmo_of(pl)`; 496, or ATMO_HIGH 640 on
+  terrain 4); main re-runs the geometry when a world's atmosphere differs as well as its radius; space.gd and
+  map_view use the planet's. The upper cloud layer (inc/clouds.comp `cloudHigh`) sits 130 higher on terrain 4.
+- Steep slopes (gen.comp `slopeAt`: the rise over 8 cells): no tree where it is over 0.75; scrub grows there instead
+  (low mounds of leaf, each column of one standing on its own ground so none hangs loose, and tufts of leaf and dry
+  grass), but in deserts, oceans and a few others.
+- Caves into mountainsides (gen.comp `sideCave`, from `carvedAt`): per SIDE_SLOT (260) columns, 70% of slots look at
+  five places for tall land (biome amp >= 26) whose side is steep (>= 0.45); the first opens a tunnel uphill into the
+  hill, 9-16 tall, wandering and dipping a little, 90-180 long, ending in a chamber. Kept 40 from village sites.
+- Test: `_test_terrain4` ("terrain4"; in the full run after terrain 3): the test planet made on terrain 3 and 4 from
+  the same seed: its mountains' roughness at 12 columns and height span, the sky, trunks and scrub on the steepest
+  columns, hollows under steep mountain ground (picture side_cave.png); then the doorway check (creatures.md).
+
 ## Places to discover and roots (27 Nov; see exploration.md)
 - places.gd plans an archive, a sanctum and a fallen starship per 8192 columns on worlds made from now on (after
   everything else, its own RNG). gen.comp `rootlets` threads front ROOT cells under the small plants; gen.comp's
