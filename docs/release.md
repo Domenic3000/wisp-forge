@@ -79,6 +79,12 @@ hover over options and during the game occasional snaps that sound like audio cr
 - What's left is the desktop's own (26 Nov, LatencyMon there): nvlddmkm.sys DPCs up to 1.5 ms, Wdf01000.sys (the
   USB interface's driver framework) the most DPC time, nearly all on CPU 1; NVIDIA "Prefer maximum performance"
   made it better. The onboard output, YouTube and other games are clean.
+- 27 Nov, the desktop's Focusrite Scarlett 4i4 (3rd Gen) set to 96000 Hz, buffer 512, Safe Mode on (25.4 ms round
+  trip): user, "it was lining up when there was heavy processing things going on mostly. it is very minimal now though
+  and i dont really hear it anymore with these settings". So what's left goes with heavy moments in the game (a tree or
+  a building breaking loose, a planet arriving), not the quiet menu: smoothing those hitches comes before rebuilding
+  Godot (an MMCSS-registered, event-driven WASAPI thread with the mix kept off the game's lock: the fix if it ever
+  comes back).
 - Test "audio": no sample at the limit, every one-shot ends in silence, the limiter and the 16 players there.
 
 ## Saves and window
